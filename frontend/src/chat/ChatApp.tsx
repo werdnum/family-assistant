@@ -362,10 +362,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // Last steer error (e.g. a transient 5xx), shown in the SteerBar; the draft is
   // kept so the user can retry.
   const [steerError, setSteerError] = useState<string | null>(null);
-  useEffect(() => {
-    setSteerDraft('');
-    setSteerError(null);
-  }, [conversationId]);
   // A follow-up message queued while a stream was still settling (steer hit a
   // finished turn). Sent once the current stream's completion handler runs, so
   // it doesn't race the ending stream's shared-ref cleanup.
@@ -375,6 +371,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // loop never drained it), it's recovered as a normal follow-up rather than
   // left stale in a SteerBar that's about to unmount.
   const awaitingEchoSteerRef = useRef<string | null>(null);
+  useEffect(() => {
+    setSteerDraft('');
+    setSteerError(null);
+    // Drop any queued/awaiting steer so it can't fire into the new conversation.
+    awaitingEchoSteerRef.current = null;
+    pendingFollowupRef.current = null;
+  }, [conversationId]);
   // handleNew is defined after the streaming callbacks; the completion handler
   // reaches it via this ref to fire a queued follow-up.
   const handleNewRef = useRef<((message: { content: { text: string }[] }) => Promise<void>) | null>(
