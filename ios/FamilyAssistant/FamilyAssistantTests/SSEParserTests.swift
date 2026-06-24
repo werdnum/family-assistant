@@ -41,6 +41,23 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(decoded[2].toolResult, "Found it")
         XCTAssertEqual(decoded[2].attachments.first?.name, "result.pdf")
         XCTAssertEqual(decoded[3].seq, 7)
+        XCTAssertEqual(decoded[3].status, "complete")
+    }
+
+    func testDecodesUserInputEcho() {
+        let parser = SSEParser()
+
+        let decoded = parser.decode(
+            ServerSentEvent(
+                event: "user_input",
+                data: #"{"turn_id":"turn-1","content":"focus on tomorrow","seq":4}"#
+            )
+        )
+
+        XCTAssertEqual(decoded.type, .userInput)
+        XCTAssertEqual(decoded.turnID, "turn-1")
+        XCTAssertEqual(decoded.text, "focus on tomorrow")
+        XCTAssertEqual(decoded.seq, 4)
     }
 
     func testFailedTurnEndedDispatchesOnEventNameNotErrorPayload() {
@@ -58,6 +75,7 @@ final class SSEParserTests: XCTestCase {
         // generic error renderer.
         XCTAssertEqual(decoded.type, .turnEnded)
         XCTAssertEqual(decoded.errorMessage, "boom")
+        XCTAssertEqual(decoded.status, "failed")
         XCTAssertEqual(decoded.seq, 9)
     }
 

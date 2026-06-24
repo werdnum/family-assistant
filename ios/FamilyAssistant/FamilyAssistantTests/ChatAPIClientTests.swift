@@ -186,6 +186,7 @@ final class ChatAPIClientTests: XCTestCase {
         )
 
         XCTAssertFalse(start.alreadyComplete)
+        XCTAssertFalse(start.incomplete)
         XCTAssertEqual(start.firstSeq, 3)
         XCTAssertEqual(start.conversationID, "web_conv_stream")
         XCTAssertTrue(sawStartRequest)
@@ -234,7 +235,7 @@ final class ChatAPIClientTests: XCTestCase {
             let path = request.url?.path ?? ""
             if request.httpMethod == "POST", path == "/api/v1/chat/turns" {
                 return .json(
-                    #"{"turn_id":"turn-dup","conversation_id":"web_conv_dup","first_seq":0,"already_complete":true}"#
+                    #"{"turn_id":"turn-dup","conversation_id":"web_conv_dup","first_seq":0,"already_complete":true,"incomplete":true}"#
                 )
             }
             sawStreamRequest = true
@@ -250,8 +251,52 @@ final class ChatAPIClientTests: XCTestCase {
         )
 
         XCTAssertTrue(start.alreadyComplete)
+        XCTAssertTrue(start.incomplete)
         // The caller reloads history instead of subscribing, so no stream opens.
         XCTAssertFalse(sawStreamRequest)
+    }
+
+    func testCancelTurnPostsConversationID() async throws {
+        var payload: [String: Any]?
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertTrue(request.url?.absoluteString.contains("/api/v1/chat/turns/turn%20one/cancel") == true)
+            payload = try Self.jsonObject(from: request) as? [String: Any]
+            return .json(
+                #"{"turn_id":"turn one","conversation_id":"web_conv_cancel","status":"cancelling","already_complete":false}"#
+            )
+        }
+
+        let result = try await makeClient().cancelTurn(
+            turnID: "turn one",
+            conversationID: "web_conv_cancel"
+        )
+
+        XCTAssertEqual(payload?["conversation_id"] as? String, "web_conv_cancel")
+        XCTAssertEqual(result.status, "cancelling")
+        XCTAssertFalse(result.alreadyComplete)
+    }
+
+    func testSteerTurnPostsPrompt() async throws {
+        var payload: [String: Any]?
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/api/v1/chat/turns/turn-steer/steer")
+            payload = try Self.jsonObject(from: request) as? [String: Any]
+            return .json(
+                #"{"turn_id":"turn-steer","conversation_id":"web_conv_steer","accepted":true}"#
+            )
+        }
+
+        let result = try await makeClient().steerTurn(
+            turnID: "turn-steer",
+            conversationID: "web_conv_steer",
+            prompt: "focus on tomorrow"
+        )
+
+        XCTAssertEqual(payload?["conversation_id"] as? String, "web_conv_steer")
+        XCTAssertEqual(payload?["prompt"] as? String, "focus on tomorrow")
+        XCTAssertTrue(result.accepted)
     }
 
     func testConnectEventsSendsAckSeqAndEventTypeFilter() async throws {
@@ -272,6 +317,32 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(queryItems["from_seq"], "-1")
         XCTAssertEqual(queryItems["ack_seq"], "12")
         XCTAssertEqual(queryItems["event_types"], "message,turn_ended")
+    }
+
+    func testConnectEventsDecodesUserInputFrames() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text(
+                """
+                event: text
+                data: {"turn_id":"turn-live-steer","content":"Working","seq":1}
+
+                event: user_input
+                data: {"turn_id":"turn-live-steer","content":"focus on tomorrow","seq":2}
+
+                """
+            )
+        }
+
+        let stream = try await makeClient().connectEvents(conversationID: "web_conv_follow")
+        var events: [ChatStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(events.map(\.type), [.text, .userInput])
+        XCTAssertEqual(events.map(\.text), ["Working", "focus on tomorrow"])
+        XCTAssertEqual(events.map(\.turnID), ["turn-live-steer", "turn-live-steer"])
+        XCTAssertEqual(events.map(\.seq), [1, 2])
     }
 
     func testConnectEventsThrowsWhileConnectingOnHTTPError() async throws {

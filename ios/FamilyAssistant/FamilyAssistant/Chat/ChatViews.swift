@@ -399,6 +399,16 @@ private struct ChatComposerView: View {
             if !viewModel.draftAttachments.isEmpty {
                 DraftAttachmentStrip(viewModel: viewModel)
             }
+            if viewModel.isStreaming {
+                SteerComposerView(viewModel: viewModel)
+            }
+            if let stopWarning = viewModel.stopWarningMessage {
+                Text(stopWarning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("chat-stop-warning")
+            }
             HStack(alignment: .bottom, spacing: 4) {
                 PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                     Image(systemName: "photo")
@@ -434,7 +444,7 @@ private struct ChatComposerView: View {
 
                 Button {
                     if viewModel.isStreaming {
-                        viewModel.cancelStream()
+                        Task { await viewModel.stopTurn() }
                     } else {
                         Task { await viewModel.sendDraft() }
                     }
@@ -572,6 +582,64 @@ private struct DraftAttachmentStrip: View {
             "doc.text"
         case .file:
             "paperclip"
+        }
+    }
+}
+
+private struct SteerComposerView: View {
+    var viewModel: ChatViewModel
+
+    private var canSend: Bool {
+        !viewModel.steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .bottom, spacing: 6) {
+                Image(systemName: "arrow.triangle.turn.up.right.diamond")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 32)
+                TextField(
+                    "Steer",
+                    text: Binding(
+                        get: { viewModel.steerDraftText },
+                        set: { viewModel.steerDraftText = $0 }
+                    ),
+                    axis: .vertical
+                )
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .frame(minHeight: 32)
+                .accessibilityIdentifier("chat-steer-composer")
+
+                Button {
+                    Task { await viewModel.sendSteerDraft() }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .accessibilityIdentifier("chat-steer-send-button")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.tertiarySystemBackground))
+            )
+
+            if let steerError = viewModel.steerErrorMessage {
+                Text(steerError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("chat-steer-error")
+            }
         }
     }
 }

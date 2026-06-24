@@ -39,8 +39,9 @@ services to respond or perform actions.
     Send button in the chat box becomes a **Stop** button — click it to halt the current response
     immediately (it's marked "Stopped", not an error). A small **Steer** box also appears beside the
     chat input: type a quick course-correction there (for example, "actually, focus on next week")
-    and the assistant folds it into the work it's already doing without starting over. This is the
-    web equivalent of Telegram's `/interrupt` and mid-response follow-up messages.
+    and the assistant folds it into the work it's already doing without starting over. Native iOS
+    Chat has the same controls while a reply is running. This is the web and iOS equivalent of
+    Telegram's `/interrupt` and mid-response follow-up messages.
 
   ![Landing Page](../../screenshots/desktop/landing-page.png) *The Family Assistant landing page
   provides quick access to all major features*
@@ -482,16 +483,16 @@ various tasks with dark mode support and mobile optimization.
   The app is organized into four tabs along the bottom: **Chat**, **Notes**, **Documents**, and
   **More**. Chat and Notes are native screens; Documents and the items under More open the
   corresponding pages inside the app. Native Chat shares the same conversation history as the
-  browser, streams replies as they are generated, supports profile switching, shows Markdown and
-  tool calls, handles approve/reject confirmations, and can upload images, PDFs, plain text, and
-  Markdown files up to 100 MB. You can search, read, create, edit, and delete notes on iOS,
-  including changing whether a note is included in the assistant's system prompt. The **More** tab
-  gathers the long-tail destinations — Voice, Events, History, Automations, Tools, and more — and a
-  single **Settings** screen with notification controls and sign-out. Use the tab bar to move
-  between sections; each tab remembers where you were. When enabled, iOS notifications can open the
-  relevant tab or page, and confirmation notifications are actionable: they include approve/reject
-  actions, and tapping the notification opens an in-app confirmation dialog showing the full
-  request.
+  browser, streams replies as they are generated, supports stopping or steering a running reply,
+  supports profile switching, shows Markdown and tool calls, handles approve/reject confirmations,
+  and can upload images, PDFs, plain text, and Markdown files up to 100 MB. You can search, read,
+  create, edit, and delete notes on iOS, including changing whether a note is included in the
+  assistant's system prompt. The **More** tab gathers the long-tail destinations — Voice, Events,
+  History, Automations, Tools, and more — and a single **Settings** screen with notification
+  controls and sign-out. Use the tab bar to move between sections; each tab remembers where you
+  were. When enabled, iOS notifications can open the relevant tab or page, and confirmation
+  notifications are actionable: they include approve/reject actions, and tapping the notification
+  opens an in-app confirmation dialog showing the full request.
 
 - **Siri & Shortcuts (iOS):** The iOS app adds actions you can run with Siri or the **Shortcuts**
   app — no setup required. Just say or run:
@@ -516,6 +517,7 @@ various tasks with dark mode support and mobile optimization.
 - **Chat Features:**
 
   - Real-time streaming responses - see the assistant's replies as they're being generated
+  - Stop or steer a running reply from the web chat or native iOS Chat
   - Compact tool usage display - completed tool calls are summarized in collapsible groups
   - Easy conversation management and switching
   - Native iOS conversation list, profile picker, attachment previews, file downloads, and pending
