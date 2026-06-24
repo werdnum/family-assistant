@@ -305,7 +305,6 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
     api_test_client: AsyncClient,
     api_mock_llm_client: RuleBasedMockLLMClient,
     db_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stopping a turn rejects the durable confirmations it was waiting on.
 
@@ -314,19 +313,15 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
     Only this turn's confirmations are rejected (matched by source message);
     an unrelated pending confirmation is left untouched.
     """
+    # Use a turn that runs to completion: cancel rejects confirmations on the
+    # already-finished path too, and this avoids a gated producer holding the
+    # (shared, single-connection) SQLite session open while we create/read
+    # confirmations, which otherwise causes lock contention under CI.
     user_prompt = "Cancel with a pending confirmation"
     api_mock_llm_client.rules.append((
         lambda args: _user_message_contains(args, user_prompt),
-        _reply("never sent"),
+        _reply("all done"),
     ))
-
-    started = asyncio.Event()
-    release = asyncio.Event()
-    monkeypatch.setattr(
-        api_mock_llm_client,
-        "generate_response",
-        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
-    )
 
     turn_id = str(uuid.uuid4())
     conversation_id = f"conv_cancelconf_{uuid.uuid4().hex[:8]}"
@@ -342,7 +337,9 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
     assert post.status_code == 200, post.text
 
     hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
-    await asyncio.wait_for(started.wait(), timeout=5.0)
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
 
     # A confirmation tied to this turn (same source message the producer would
     # set) plus an unrelated one (no source message) that must survive.
@@ -380,12 +377,6 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
     assert await _confirmation_status(db_engine, turn_conf["id"]) == "rejected"
     assert await _confirmation_status(db_engine, other_conf["id"]) == "pending"
 
-    # Drain the cancelled producer so the test leaves no pending task.
-    await asyncio.gather(
-        *hub.get_active_producer_tasks(conversation_id), return_exceptions=True
-    )
-    release.set()
-
 
 async def test_cancel_returns_503_when_confirmation_rejection_fails(
     app_fixture: FastAPI,
@@ -399,19 +390,14 @@ async def test_cancel_returns_503_when_confirmation_rejection_fails(
     Reporting a clean stop while a state-changing confirmation stays approvable
     would be unsafe, so the failure propagates for the client to retry.
     """
+    # A completed turn: cancel still rejects this turn's confirmations on the
+    # already-finished path, and there's no gated producer holding the shared
+    # SQLite session (which would otherwise cause CI lock contention).
     user_prompt = "Cancel where reject fails"
     api_mock_llm_client.rules.append((
         lambda args: _user_message_contains(args, user_prompt),
-        _reply("never sent"),
+        _reply("all done"),
     ))
-
-    started = asyncio.Event()
-    release = asyncio.Event()
-    monkeypatch.setattr(
-        api_mock_llm_client,
-        "generate_response",
-        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
-    )
 
     # Pin a confirmation service on app state whose reject() always fails, so the
     # cancel endpoint resolves it via _get_confirmation_service.
@@ -437,7 +423,9 @@ async def test_cancel_returns_503_when_confirmation_rejection_fails(
     assert post.status_code == 200, post.text
 
     hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
-    await asyncio.wait_for(started.wait(), timeout=5.0)
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
 
     async with get_db_context(engine=db_engine) as ctx:
         user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
@@ -460,11 +448,6 @@ async def test_cancel_returns_503_when_confirmation_rejection_fails(
     # The confirmation is still pending (not silently dropped), so a retry can
     # re-attempt the rejection.
     assert await _confirmation_status(db_engine, conf["id"]) == "pending"
-
-    await asyncio.gather(
-        *hub.get_active_producer_tasks(conversation_id), return_exceptions=True
-    )
-    release.set()
 
 
 async def test_cancel_rejects_conversation_owned_by_another_user(
