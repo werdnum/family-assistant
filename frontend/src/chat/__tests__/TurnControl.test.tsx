@@ -57,6 +57,10 @@ const enc = new TextEncoder();
 const sse = (event: string, data: unknown) =>
   enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
+// Generous waits: the full suite runs many test files in parallel, so the async
+// chain (SSE event → state update → render) can take well over the 1s default.
+const WAIT = { timeout: 15000 } as const;
+
 describe('Web turn control (Stop / Steer)', () => {
   beforeEach(() => {
     resetLocalStorageMock();
@@ -91,12 +95,12 @@ describe('Web turn control (Stop / Steer)', () => {
       const controller = await ready;
 
       // Stop button is mounted only while running.
-      const stopButton = await screen.findByTestId('stop-button');
+      const stopButton = await screen.findByTestId('stop-button', undefined, WAIT);
       await user.click(stopButton);
 
       await waitFor(() => {
         expect(cancelledTurnId).toBe(turnIdRef.current);
-      });
+      }, WAIT);
       expect(cancelBody).not.toBeNull();
       expect(cancelBody!.conversation_id).toBeTruthy();
 
@@ -109,7 +113,7 @@ describe('Web turn control (Stop / Steer)', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Stopped.')).toBeInTheDocument();
-      });
+      }, WAIT);
       expect(screen.queryByText(/encountered an error/i)).not.toBeInTheDocument();
     },
     { timeout: 30000 }
@@ -141,13 +145,13 @@ describe('Web turn control (Stop / Steer)', () => {
       const controller = await ready;
 
       // Steer input appears only while running.
-      const steerInput = await screen.findByTestId('steer-input');
+      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
       await user.type(steerInput, 'focus on tomorrow');
       await user.click(screen.getByTestId('steer-button'));
 
       await waitFor(() => {
         expect(steerBody).not.toBeNull();
-      });
+      }, WAIT);
       expect(steerBody!.prompt).toBe('focus on tomorrow');
       expect(steerBody!.conversation_id).toBeTruthy();
 
@@ -159,7 +163,7 @@ describe('Web turn control (Stop / Steer)', () => {
 
       await waitFor(() => {
         expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
-      });
+      }, WAIT);
 
       controller.enqueue(
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
@@ -201,9 +205,9 @@ describe('Web turn control (Stop / Steer)', () => {
       await ready;
       await waitFor(() => {
         expect(turnsPosts).toBe(1);
-      });
+      }, WAIT);
 
-      const steerInput = await screen.findByTestId('steer-input');
+      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
       await user.type(steerInput, 'do it differently');
       await user.click(screen.getByTestId('steer-button'));
 
@@ -211,7 +215,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // not silently lost.
       await waitFor(() => {
         expect(turnsPosts).toBe(2);
-      });
+      }, WAIT);
     },
     { timeout: 30000 }
   );
