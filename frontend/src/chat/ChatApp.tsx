@@ -226,6 +226,48 @@ function extractMessagePreview(content: BackendConversationMessage['content']): 
   return '';
 }
 
+function normalizeAttachmentForToolArtifact(attachment: BackendAttachment): BackendAttachment {
+  const attachmentId =
+    typeof attachment.attachment_id === 'string'
+      ? attachment.attachment_id
+      : typeof attachment.id === 'string'
+        ? attachment.id
+        : undefined;
+  if (!attachmentId) {
+    return attachment;
+  }
+
+  const contentUrl =
+    typeof attachment.content_url === 'string' && attachment.content_url
+      ? attachment.content_url
+      : `/api/attachments/${encodeURIComponent(attachmentId)}`;
+  const mimeType =
+    typeof attachment.mime_type === 'string' && attachment.mime_type
+      ? attachment.mime_type
+      : typeof attachment.content_type === 'string' && attachment.content_type
+        ? attachment.content_type
+        : 'application/octet-stream';
+
+  let attachmentType: 'image' | 'tool_result' | 'user' = 'tool_result';
+  if (mimeType.startsWith('image/')) {
+    attachmentType = 'image';
+  } else if (
+    attachment.type === 'user' &&
+    typeof attachment.filename === 'string' &&
+    typeof attachment.size === 'number'
+  ) {
+    attachmentType = 'user';
+  }
+
+  return {
+    ...attachment,
+    attachment_id: attachmentId,
+    type: attachmentType,
+    mime_type: mimeType,
+    content_url: contentUrl,
+  };
+}
+
 function isToolOnlyAssistantMessage(message: Message): boolean {
   return (
     message.role === 'assistant' &&
@@ -1022,7 +1064,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           if (
             msg.role === 'assistant' &&
             ((msg.tool_calls && msg.tool_calls.length > 0) ||
-              (msg.metadata?.attachments && msg.metadata.attachments.length > 0))
+              (msg.metadata?.attachments && msg.metadata.attachments.length > 0) ||
+              (msg.attachments && msg.attachments.length > 0))
           ) {
             const content: MessageContent[] = [];
             if (msg.content) {
@@ -1072,7 +1115,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               msg.tool_calls.forEach((toolCall) => {
                 const attachments = toolAttachments.get(toolCall.id);
                 if (attachments && attachments.length > 0) {
-                  allToolAttachments.push(...attachments);
+                  allToolAttachments.push(...attachments.map(normalizeAttachmentForToolArtifact));
                   attachments.forEach((att) => {
                     if (typeof att.attachment_id === 'string') {
                       allAttachmentIds.push(att.attachment_id);
@@ -1086,9 +1129,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             // These are attachments queued by tools like attach_to_response
             const metadataAttachments = msg.metadata?.attachments;
             if (Array.isArray(metadataAttachments) && metadataAttachments.length > 0) {
-              // Add attachments from metadata to the collection
-              allToolAttachments.push(...metadataAttachments);
+              allToolAttachments.push(
+                ...metadataAttachments.map(normalizeAttachmentForToolArtifact)
+              );
               metadataAttachments.forEach((att) => {
+                if (typeof att.attachment_id === 'string') {
+                  allAttachmentIds.push(att.attachment_id);
+                }
+              });
+            }
+
+            const assistantAttachments = msg.attachments;
+            if (Array.isArray(assistantAttachments) && assistantAttachments.length > 0) {
+              allToolAttachments.push(
+                ...assistantAttachments.map(normalizeAttachmentForToolArtifact)
+              );
+              assistantAttachments.forEach((att) => {
                 if (typeof att.attachment_id === 'string') {
                   allAttachmentIds.push(att.attachment_id);
                 }
@@ -1632,11 +1688,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       return att;
     });
 
-    return {
-      ...message,
+    const { attachments: _attachments, ...messageWithoutAttachments } = message;
+    const convertedMessage = {
+      ...messageWithoutAttachments,
       content,
-      attachments: convertedAttachments,
     };
+    if (message.role === 'user' && convertedAttachments && convertedAttachments.length > 0) {
+      return { ...convertedMessage, attachments: convertedAttachments };
+    }
+    return convertedMessage;
   }, []);
 
   const runtime = useExternalStoreRuntime({
