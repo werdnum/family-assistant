@@ -513,7 +513,7 @@ class ChatPage(BasePage):
 
         This waits for either:
         1. Attachment previews to appear (successful case)
-        2. Tool result text to appear (loading/error states)
+        2. Terminal tool result text to appear (error states)
         3. Tool call container to exist (fallback for error cases)
 
         This is more semantic than waiting for generic tool visibility.
@@ -523,10 +523,30 @@ class ChatPage(BasePage):
             await self.wait_for_tool_call_display(timeout=timeout)
             await self.expand_tool_groups()
 
-            # First, wait for either attachment previews OR tool result text
-            await self.page.wait_for_selector(
-                '[data-testid="attachment-preview"], [data-testid="tool-result"]',
-                state="attached",
+            await self.page.wait_for_function(
+                """
+                () => {
+                    const toolContentSelector = '[data-ui="tool-call-content"], .tool-call-content';
+                    const previewSelector = `${toolContentSelector} [data-testid="attachment-preview"]`;
+                    if (document.querySelector(previewSelector)) {
+                        return true;
+                    }
+
+                    const terminalText = Array.from(
+                        document.querySelectorAll(
+                            `${toolContentSelector} [data-testid="tool-result"], ${toolContentSelector} [data-testid="attachment-error"]`
+                        )
+                    )
+                        .map((element) => element.textContent?.toLowerCase() ?? '')
+                        .join(' ');
+
+                    return (
+                        terminalText.includes('failed') ||
+                        terminalText.includes('error') ||
+                        terminalText.includes('no valid attachments found')
+                    );
+                }
+                """,
                 timeout=timeout,
             )
         except Exception:
@@ -538,22 +558,19 @@ class ChatPage(BasePage):
                     state="attached",
                     timeout=5000,  # Short timeout for fallback
                 )
-                # Tool container exists - this is acceptable, even without specific content
             except Exception:
                 # Neither content nor container - likely a more serious failure
-                tool_container = self.page.locator(self.MESSAGE_TOOL_CALL)
-                if await tool_container.count() > 0:
-                    # Tool container exists but no content - likely an error state
-                    tool_text = await tool_container.text_content()
-                    raise AssertionError(
-                        f"Tool container found but no attachment previews or tool results. "
-                        f"Tool content: {tool_text[:200] if tool_text else 'None'}"
-                    ) from None
-                else:
-                    # Tool container doesn't exist at all
-                    raise AssertionError(
-                        "No tool container found - tool execution may have failed"
-                    ) from None
+                raise AssertionError(
+                    "No tool container found - tool execution may have failed"
+                ) from None
+
+            tool_container = self.page.locator(self.MESSAGE_TOOL_CALL)
+            tool_text = await tool_container.first.text_content()
+            raise AssertionError(
+                f"Tool container found but no attachment previews or terminal "
+                f"attachment result. Tool content: "
+                f"{tool_text[:200] if tool_text else 'None'}"
+            ) from None
 
     # ast-grep-ignore: no-dict-any - tool call data has mixed-type fields from external LLM response
     async def get_tool_calls(self) -> list[dict[str, Any]]:

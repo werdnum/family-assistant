@@ -217,6 +217,12 @@ from family_assistant.tools.services import (
     get_delegation_status_tool,
     list_delegations_tool,
 )
+from family_assistant.tools.shopping import (
+    SHOPPING_TOOLS_DEFINITION,
+    shopify_add_to_cart_tool,
+    shopify_get_cart_tool,
+    shopify_transfer_checkout_to_human_tool,
+)
 from family_assistant.tools.stored_scripts import (
     STORED_SCRIPTS_TOOLS_DEFINITION,
     delete_script_tool,
@@ -372,6 +378,11 @@ __all__ = [
     # MQTT tools
     "MQTT_TOOLS_DEFINITION",
     "mqtt_publish_tool",
+    # Shopping/UCP tools
+    "SHOPPING_TOOLS_DEFINITION",
+    "shopify_add_to_cart_tool",
+    "shopify_get_cart_tool",
+    "shopify_transfer_checkout_to_human_tool",
     "COMPUTER_USE_TOOLS_DEFINITION",
     "computer_use_click_at",
     "computer_use_drag_and_drop",
@@ -495,6 +506,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + WORKER_TOOLS_DEFINITION
     + ENGINEERING_TOOLS_DEFINITION
     + MQTT_TOOLS_DEFINITION
+    + SHOPPING_TOOLS_DEFINITION
     + REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION
 )
 
@@ -628,6 +640,10 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_system_info": get_system_info,
     # MQTT tools
     "mqtt_publish": mqtt_publish_tool,
+    # Shopping/UCP tools
+    "shopify_add_to_cart": shopify_add_to_cart_tool,
+    "shopify_get_cart": shopify_get_cart_tool,
+    "shopify_transfer_checkout_to_human": shopify_transfer_checkout_to_human_tool,
     # Problem reporting
     "report_technical_problem": report_technical_problem_tool,
 }
@@ -1300,6 +1316,24 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.EXTERNAL_COMM,
         ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
+    ),
+    "shopify_add_to_cart": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "shopify_get_cart": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_UNTRUSTED,
+    ),
+    "shopify_transfer_checkout_to_human": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.EXTERNAL_COMM,
+        ToolTag.SHOPPING,
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     # Problem reporting
     "report_technical_problem": _metadata(

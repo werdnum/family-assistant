@@ -49,6 +49,7 @@ class ToolTag(StrEnum):
     AUTOMATION = "automation"
     WORKER = "worker"
     DATA = "data"
+    SHOPPING = "shopping"
 
 
 @dataclass(frozen=True, slots=True)
