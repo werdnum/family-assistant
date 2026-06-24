@@ -242,11 +242,25 @@ async def test_cancel_persists_stopped_reply(
             conversation_id=conversation_id,
             limit=50,
         )
+    user_rows = [row for row in rows if row["role"] == "user"]
     assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    # Exactly one user row: the endpoint persists it and the producer reuses it
+    # (idempotent), not a duplicate.
+    assert len(user_rows) == 1, f"Expected one user row, got {user_rows}"
     assert assistant_rows, "Expected a durable assistant row for the stopped turn"
     assert any("Stopped" in str(row["content"]) for row in assistant_rows), (
         f"Expected a stopped marker in the persisted reply, got {assistant_rows}"
     )
+    # The stopped reply is tagged with the same profile as the user message, so
+    # it loads into this profile's future context (history is profile-filtered)
+    # rather than leaving the prompt looking unanswered.
+    user_profile = user_rows[0]["processing_profile_id"]
+    assert user_profile is not None
+    assert any(
+        row["processing_profile_id"] == user_profile
+        and "Stopped" in str(row["content"])
+        for row in assistant_rows
+    ), "Stopped reply must carry the turn's processing_profile_id"
 
 
 async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:

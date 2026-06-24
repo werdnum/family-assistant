@@ -935,6 +935,26 @@ async def api_chat_create_turn(
                 user_id,
             )
 
+    # Persist the user message durably BEFORE launching the producer task. The
+    # producer normally persists it, but a Stop that cancels the producer task
+    # before its coroutine runs would otherwise lose the prompt entirely (the
+    # frontend can target Stop before this POST returns). The producer's
+    # _prepare_turn_messages_for_llm is idempotent on turn_id, so it reuses this
+    # row instead of inserting a duplicate. ``payload.prompt`` matches what the
+    # producer would store (the first text part of the trigger content).
+    async with get_db_context(request.app.state.database_engine) as user_msg_db:
+        await user_msg_db.message_history.add_message(
+            UserMessage(content=payload.prompt),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=f"temp_{payload.turn_id}",
+            turn_id=payload.turn_id,
+            timestamp=datetime.now(UTC),
+            user_id=user_id,
+            attachments=trigger_attachments,
+            processing_profile_id=selected_processing_service.service_config.id,
+        )
+
     # Fetch the attachment registry without raising: the producer only needs
     # it to resolve attachment metadata for attach_to_response tool calls, so
     # a turn with no such tool calls works fine without one.

@@ -305,6 +305,7 @@ async def run_turn_producer(
                 turn_id=turn_id,
                 user_id=user_id,
                 reply_text="".join(final_reply_parts),
+                processing_profile_id=processing_service.service_config.id,
             )
         await _fail_turn_best_effort(
             hub,
@@ -390,13 +391,17 @@ async def _persist_stopped_reply(
     turn_id: str,
     user_id: str,
     reply_text: str,
+    processing_profile_id: str,
 ) -> None:
     """Persist a durable assistant row for a user-stopped turn.
 
     Mirrors the optimistic 'stopped' bubble: the partial reply if any (what the
-    live client already rendered), else a Stopped marker. Uses its own short DB
-    context because the streaming transaction is being torn down by the
-    cancellation. Best-effort — failing to persist must not mask the stop.
+    live client already rendered), else a Stopped marker. Tagged with the active
+    ``processing_profile_id`` so it's loaded into this profile's future LLM
+    context (history is filtered by profile id) rather than leaving the user
+    prompt looking unanswered. Uses its own short DB context because the
+    streaming transaction is being torn down by the cancellation. Best-effort —
+    failing to persist must not mask the stop.
     """
     content = reply_text.strip() or "_Stopped._"
     try:
@@ -408,6 +413,7 @@ async def _persist_stopped_reply(
                 timestamp=datetime.now(UTC),
                 turn_id=turn_id,
                 user_id=user_id,
+                processing_profile_id=processing_profile_id,
             )
     except Exception:
         logger.warning(

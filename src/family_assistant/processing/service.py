@@ -581,21 +581,34 @@ class ProcessingService:
             trigger_message = SystemMessage(content=user_content_for_history)
         else:
             trigger_message = UserMessage(content=user_content_for_history)
-        saved_user_msg_record = await self._save_history_message(
-            db_context,
-            message=trigger_message,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=actual_interface_message_id,
-            turn_id=turn_id,
-            thread_root_id=thread_root_id_for_turn,
-            timestamp=self.clock.now(),
-            attachments=trigger_attachments,
-            subconversation_id=subconversation_id,
-            user_id=user_id,
-            is_internal=trigger_is_internal,
-            save_with_isolated_context=save_history_with_isolated_context,
+        # Idempotent on turn_id: if this turn's user message is already persisted,
+        # reuse it instead of inserting a duplicate. The web endpoint persists the
+        # user message before launching the (cancellable) producer task, so a Stop
+        # that cancels the producer before it runs still leaves the prompt durable;
+        # this also makes any retry of the same turn safe.
+        existing_user_row = (
+            await db_context.message_history.get_user_row_by_turn_id(turn_id)
+            if trigger_role == "user"
+            else None
         )
+        if existing_user_row is not None:
+            saved_user_msg_record = existing_user_row["internal_id"]
+        else:
+            saved_user_msg_record = await self._save_history_message(
+                db_context,
+                message=trigger_message,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=actual_interface_message_id,
+                turn_id=turn_id,
+                thread_root_id=thread_root_id_for_turn,
+                timestamp=self.clock.now(),
+                attachments=trigger_attachments,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
+                is_internal=trigger_is_internal,
+                save_with_isolated_context=save_history_with_isolated_context,
+            )
         if saved_user_msg_record is not None and thread_root_id_for_turn is None:
             thread_root_id_for_turn = saved_user_msg_record
             logger.info("Established new thread_root_id: %s", thread_root_id_for_turn)
