@@ -359,9 +359,9 @@ default_profile_settings:
       - "list_worker_tasks"
       - "cancel_worker_task"
       - "mqtt_publish"
-      - "shopify_add_to_cart"
-      - "shopify_get_cart"
-      - "shopify_transfer_checkout_to_human"
+      - "ucp_add_to_cart"
+      - "ucp_get_cart"
+      - "ucp_transfer_checkout_to_human"
     on_demand_mcp_server_ids:
       - "homeassistant"
   tools_policy:
@@ -421,9 +421,9 @@ default_profile_settings:
             - "list_worker_tasks"
             - "cancel_worker_task"
             - "mqtt_publish"
-            - "shopify_add_to_cart"
-            - "shopify_get_cart"
-            - "shopify_transfer_checkout_to_human"
+            - "ucp_add_to_cart"
+            - "ucp_get_cart"
+            - "ucp_transfer_checkout_to_human"
         decision: "allow"
         priority: 10
       - match:
@@ -597,9 +597,9 @@ service_profiles:
               - "browser_request_handoff"
               - "browser_claim_handback"
               - "attach_to_response"
-              - "shopify_add_to_cart"
-              - "shopify_get_cart"
-              - "shopify_transfer_checkout_to_human"
+              - "ucp_add_to_cart"
+              - "ucp_get_cart"
+              - "ucp_transfer_checkout_to_human"
           decision: "allow"
           priority: 10
         - match:

@@ -38,6 +38,10 @@ class _RecordedRequest:
 class _FakeAsyncClient:
     requests: list[_RecordedRequest] = []
     responses: list[httpx.Response] = []
+    # Profile responses returned by GET /.well-known/ucp during discovery.
+    # Defaults to a 404 so tools fall back to the Shopify endpoint convention.
+    profile_responses: list[httpx.Response] = []
+    profile_requests: list[str] = []
 
     def __init__(self, **_kwargs: object) -> None:
         pass
@@ -47,6 +51,17 @@ class _FakeAsyncClient:
 
     async def __aexit__(self, *_args: object) -> None:
         return None
+
+    async def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        self.profile_requests.append(url)
+        if self.profile_responses:
+            return self.profile_responses.pop(0)
+        return httpx.Response(404)
 
     async def post(
         self,
@@ -58,7 +73,7 @@ class _FakeAsyncClient:
         body = json.loads((content or b"{}").decode("utf-8"))
         self.requests.append(_RecordedRequest(url=url, headers=headers, body=body))
         if not self.responses:
-            msg = "No fake Shopify response configured."
+            msg = "No fake UCP response configured."
             raise AssertionError(msg)
         return self.responses.pop(0)
 
@@ -100,14 +115,16 @@ def _checkout_response() -> dict[str, object]:
     }
 
 
-async def test_shopify_add_to_cart_creates_unsigned_cart_request(
+async def test_ucp_add_to_cart_creates_unsigned_cart_request(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = []
+    _FakeAsyncClient.profile_requests = []
     _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
 
-    result = await shopping.shopify_add_to_cart_tool(
+    result = await shopping.ucp_add_to_cart_tool(
         _context(AppConfig(server_url="https://assistant.example")),
         business_url="https://shop.example.com/products/sweater",
         line_items=[
@@ -120,6 +137,11 @@ async def test_shopify_add_to_cart_creates_unsigned_cart_request(
     )
 
     assert "https://shop.example.com/cart/c/cart_abc123" in result.get_text()
+    # Discovery probes the merchant profile; with no profile served the tool
+    # falls back to the Shopify endpoint convention.
+    assert _FakeAsyncClient.profile_requests == [
+        "https://shop.example.com/.well-known/ucp"
+    ]
     request = _FakeAsyncClient.requests[0]
     assert request.url == "https://shop.example.com/api/ucp/mcp"
     assert request.headers["UCP-Agent"] == (
@@ -135,7 +157,42 @@ async def test_shopify_add_to_cart_creates_unsigned_cart_request(
     }
 
 
-async def test_shopify_transfer_checkout_to_human_returns_signed_continue_url(
+async def test_ucp_add_to_cart_uses_discovered_merchant_endpoint(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://shop.example.com/ucp/rpc",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop.example.com/ucp/rpc"
+
+
+async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -149,7 +206,7 @@ async def test_shopify_transfer_checkout_to_human_returns_signed_continue_url(
         ),
     )
 
-    result = await shopping.shopify_transfer_checkout_to_human_tool(
+    result = await shopping.ucp_transfer_checkout_to_human_tool(
         _context(app_config),
         business_url="https://shop.example.com",
         cart_id="gid://shopify/Cart/cart_abc123",
@@ -165,7 +222,7 @@ async def test_shopify_transfer_checkout_to_human_returns_signed_continue_url(
     assert arguments["cart_id"] == "gid://shopify/Cart/cart_abc123"
 
 
-async def test_shopify_transfer_checkout_to_human_rejects_cart_error_outcome(
+async def test_ucp_transfer_checkout_to_human_rejects_cart_error_outcome(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -200,14 +257,14 @@ async def test_shopify_transfer_checkout_to_human_rejects_cart_error_outcome(
     )
 
     with pytest.raises(ValueError, match="Cart was not found or has expired"):
-        await shopping.shopify_transfer_checkout_to_human_tool(
+        await shopping.ucp_transfer_checkout_to_human_tool(
             _context(app_config),
             business_url="https://shop.example.com",
             cart_id="gid://shopify/Cart/missing",
         )
 
 
-async def test_shopify_transfer_checkout_to_human_requires_checkout_id(
+async def test_ucp_transfer_checkout_to_human_requires_checkout_id(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -236,14 +293,14 @@ async def test_shopify_transfer_checkout_to_human_requires_checkout_id(
     )
 
     with pytest.raises(ValueError, match="checkout ID"):
-        await shopping.shopify_transfer_checkout_to_human_tool(
+        await shopping.ucp_transfer_checkout_to_human_tool(
             _context(app_config),
             business_url="https://shop.example.com",
             cart_id="gid://shopify/Cart/cart_abc123",
         )
 
 
-async def test_shopify_tool_raises_for_json_rpc_error(
+async def test_ucp_tool_raises_for_json_rpc_error(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -267,14 +324,14 @@ async def test_shopify_tool_raises_for_json_rpc_error(
     ]
 
     with pytest.raises(ValueError, match="Signature verification failed"):
-        await shopping.shopify_get_cart_tool(
+        await shopping.ucp_get_cart_tool(
             _context(AppConfig(server_url="https://assistant.example")),
             business_url="https://shop.example.com",
             cart_id="gid://shopify/Cart/cart_abc123",
         )
 
 
-async def test_shopify_tool_raises_for_http_error_with_json_body(
+async def test_ucp_tool_raises_for_http_error_with_json_body(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -284,14 +341,14 @@ async def test_shopify_tool_raises_for_http_error_with_json_body(
     ]
 
     with pytest.raises(ValueError, match="HTTP error 429"):
-        await shopping.shopify_get_cart_tool(
+        await shopping.ucp_get_cart_tool(
             _context(AppConfig(server_url="https://assistant.example")),
             business_url="https://shop.example.com",
             cart_id="gid://shopify/Cart/cart_abc123",
         )
 
 
-async def test_shopify_get_cart_raises_for_unusable_cart_message(
+async def test_ucp_get_cart_raises_for_unusable_cart_message(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -320,14 +377,14 @@ async def test_shopify_get_cart_raises_for_unusable_cart_message(
     ]
 
     with pytest.raises(ValueError, match="Cart was not found or has expired"):
-        await shopping.shopify_get_cart_tool(
+        await shopping.ucp_get_cart_tool(
             _context(AppConfig(server_url="https://assistant.example")),
             business_url="https://shop.example.com",
             cart_id="gid://shopify/Cart/missing",
         )
 
 
-async def test_shopify_get_cart_raises_when_cart_envelope_is_missing(
+async def test_ucp_get_cart_raises_when_cart_envelope_is_missing(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -344,14 +401,14 @@ async def test_shopify_get_cart_raises_when_cart_envelope_is_missing(
     ]
 
     with pytest.raises(ValueError, match="did not include a cart"):
-        await shopping.shopify_get_cart_tool(
+        await shopping.ucp_get_cart_tool(
             _context(AppConfig(server_url="https://assistant.example")),
             business_url="https://shop.example.com",
             cart_id="gid://shopify/Cart/cart_abc123",
         )
 
 
-async def test_shopify_add_to_existing_cart_preserves_supported_cart_state(
+async def test_ucp_add_to_existing_cart_preserves_supported_cart_state(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -383,7 +440,7 @@ async def test_shopify_add_to_existing_cart_preserves_supported_cart_state(
         httpx.Response(200, json=updated_cart),
     ]
 
-    await shopping.shopify_add_to_cart_tool(
+    await shopping.ucp_add_to_cart_tool(
         _context(AppConfig(server_url="https://assistant.example")),
         business_url="https://shop.example.com",
         cart_id="gid://shopify/Cart/cart_abc123",

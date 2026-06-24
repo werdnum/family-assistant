@@ -1,18 +1,25 @@
-"""Shopping tools backed by Shopify's UCP MCP endpoints."""
+"""Shopping tools backed by UCP merchant MCP endpoints.
+
+These tools work with any merchant that advertises a Universal Commerce Protocol
+(UCP) profile at ``/.well-known/ucp``. The merchant's shopping MCP endpoint is
+discovered from that profile; when a merchant does not advertise one, the tools
+fall back to the Shopify convention (``/api/ucp/mcp``).
+"""
 
 from __future__ import annotations
 
 import json
 import logging
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
 
 from family_assistant.services.ucp import (
     UCPConfigurationError,
+    discover_merchant_ucp_profile,
     has_ucp_signing_key,
+    merchant_origin,
     sign_ucp_request,
     ucp_agent_header,
     ucp_profile_url,
@@ -26,17 +33,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-SHOPIFY_MCP_PATH = "/api/ucp/mcp"
+SHOPIFY_FALLBACK_MCP_PATH = "/api/ucp/mcp"
 
 
 SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
-            "name": "shopify_add_to_cart",
+            "name": "ucp_add_to_cart",
             "description": (
-                "Create or update a Shopify/UCP cart with selected product variants. "
-                "Use after the buyer selects specific variants and quantities."
+                "Create or update a UCP merchant cart with selected product variants. "
+                "Works with any merchant that supports the Universal Commerce Protocol "
+                "(UCP). Use after the buyer selects specific variants and quantities."
             ),
             "parameters": {
                 "type": "object",
@@ -59,7 +67,10 @@ SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "properties": {
                                 "variant_id": {
                                     "type": "string",
-                                    "description": "Shopify ProductVariant GID.",
+                                    "description": (
+                                        "Merchant product variant ID (a Shopify "
+                                        "ProductVariant GID for Shopify stores)."
+                                    ),
                                 },
                                 "quantity": {
                                     "type": "integer",
@@ -90,8 +101,8 @@ SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
-            "name": "shopify_get_cart",
-            "description": "Fetch the current Shopify/UCP cart state before editing or handoff.",
+            "name": "ucp_get_cart",
+            "description": "Fetch the current UCP cart state before editing or handoff.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -101,7 +112,7 @@ SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "cart_id": {
                         "type": "string",
-                        "description": "Shopify cart ID.",
+                        "description": "UCP cart ID.",
                     },
                 },
                 "required": ["business_url", "cart_id"],
@@ -111,10 +122,10 @@ SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
-            "name": "shopify_transfer_checkout_to_human",
+            "name": "ucp_transfer_checkout_to_human",
             "description": (
-                "Create a Shopify/UCP checkout session from a cart and return the "
-                "merchant checkout URL for the buyer to complete payment themselves. "
+                "Create a UCP checkout session from a cart and return the merchant "
+                "checkout URL for the buyer to complete payment themselves. "
                 "This never completes checkout autonomously."
             ),
             "parameters": {
@@ -126,7 +137,7 @@ SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "cart_id": {
                         "type": "string",
-                        "description": "Shopify cart ID to convert to checkout.",
+                        "description": "UCP cart ID to convert to checkout.",
                     },
                 },
                 "required": ["business_url", "cart_id"],
@@ -142,16 +153,25 @@ def _get_app_config(exec_context: ToolExecutionContext) -> AppConfig:
         and exec_context.processing_service.app_config is not None
     ):
         return exec_context.processing_service.app_config
-    msg = "Shopify shopping tools require application configuration."
+    msg = "UCP shopping tools require application configuration."
     raise ValueError(msg)
 
 
-def _shopify_ucp_endpoint(business_url: str) -> str:
-    parsed = urlparse(business_url)
-    if parsed.scheme != "https" or not parsed.netloc:
+async def _resolve_ucp_endpoint(business_url: str, *, client: httpx.AsyncClient) -> str:
+    """Resolve the merchant's shopping MCP endpoint for ``business_url``.
+
+    Discovers the endpoint from the merchant's ``/.well-known/ucp`` profile and
+    falls back to the Shopify convention (``/api/ucp/mcp``) when the merchant
+    advertises no shopping MCP binding.
+    """
+    origin = merchant_origin(business_url)
+    if origin is None:
         msg = "business_url must be an https merchant origin."
         raise ValueError(msg)
-    return f"https://{parsed.netloc}{SHOPIFY_MCP_PATH}"
+    profile = await discover_merchant_ucp_profile(business_url, client=client)
+    if profile is not None and profile.mcp_endpoint is not None:
+        return profile.mcp_endpoint
+    return f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}"
 
 
 def _normalize_line_items(
@@ -216,23 +236,23 @@ def _json_rpc_error_text(error: dict[object, object]) -> str:
             return content
     if isinstance(message, str) and message:
         return message
-    return "Shopify UCP request failed."
+    return "UCP request failed."
 
 
-def _raise_for_shopify_failure(
+def _raise_for_ucp_failure(
     response: httpx.Response, response_data: dict[object, object]
 ) -> None:
     error = response_data.get("error")
     if isinstance(error, dict):
-        msg = f"Shopify UCP JSON-RPC error: {_json_rpc_error_text(error)}"
+        msg = f"UCP JSON-RPC error: {_json_rpc_error_text(error)}"
         raise ValueError(msg)
 
     if response.is_error:
-        msg = f"Shopify UCP HTTP error {response.status_code}."
+        msg = f"UCP HTTP error {response.status_code}."
         raise ValueError(msg)
 
 
-async def _post_shopify_tool_call(
+async def _post_ucp_tool_call(
     app_config: AppConfig,
     *,
     business_url: str,
@@ -240,38 +260,39 @@ async def _post_shopify_tool_call(
     arguments: dict[str, object],
     require_signed: bool = False,
 ) -> dict[str, object]:
-    endpoint = _shopify_ucp_endpoint(business_url)
     body = _json_rpc_body(tool_name, _with_ucp_meta(app_config, arguments))
 
     if require_signed and not has_ucp_signing_key(app_config):
         msg = (
-            "Shopify checkout handoff requires UCP signing configuration. "
+            "UCP checkout handoff requires UCP signing configuration. "
             "Set UCP_SIGNING_KEY_ID and UCP_SIGNING_PRIVATE_KEY or "
             "UCP_SIGNING_PRIVATE_KEY_PATH."
         )
         raise ValueError(msg)
 
-    if has_ucp_signing_key(app_config):
-        try:
-            signed_request = sign_ucp_request(
-                app_config,
-                method="POST",
-                url=endpoint,
-                body=body,
-            )
-        except UCPConfigurationError as exc:
-            raise ValueError(str(exc)) from exc
-        request_headers = signed_request.headers
-        request_body = signed_request.body
-    else:
-        request_headers = {
-            "Content-Type": "application/json",
-            "UCP-Agent": ucp_agent_header(app_config),
-        }
-        request_body = _json_bytes(body)
-
-    logger.info("Calling Shopify UCP tool %s for %s", tool_name, business_url)
     async with httpx.AsyncClient(timeout=30.0) as client:
+        endpoint = await _resolve_ucp_endpoint(business_url, client=client)
+
+        if has_ucp_signing_key(app_config):
+            try:
+                signed_request = sign_ucp_request(
+                    app_config,
+                    method="POST",
+                    url=endpoint,
+                    body=body,
+                )
+            except UCPConfigurationError as exc:
+                raise ValueError(str(exc)) from exc
+            request_headers = signed_request.headers
+            request_body = signed_request.body
+        else:
+            request_headers = {
+                "Content-Type": "application/json",
+                "UCP-Agent": ucp_agent_header(app_config),
+            }
+            request_body = _json_bytes(body)
+
+        logger.info("Calling UCP tool %s at %s", tool_name, endpoint)
         response = await client.post(
             endpoint, headers=request_headers, content=request_body
         )
@@ -279,13 +300,13 @@ async def _post_shopify_tool_call(
     try:
         response_data = response.json()
     except json.JSONDecodeError as exc:
-        msg = f"Shopify UCP response was not JSON: HTTP {response.status_code}"
+        msg = f"UCP response was not JSON: HTTP {response.status_code}"
         raise ValueError(msg) from exc
 
     if not isinstance(response_data, dict):
-        msg = "Shopify UCP response JSON must be an object."
+        msg = "UCP response JSON must be an object."
         raise ValueError(msg)
-    _raise_for_shopify_failure(response, response_data)
+    _raise_for_ucp_failure(response, response_data)
 
     return {
         "status_code": response.status_code,
@@ -351,11 +372,11 @@ def _cart_from_response(response_data: dict[str, object]) -> dict[str, object]:
     structured = _structured_content(response_data)
     cart = structured.get("cart")
     if not isinstance(cart, dict):
-        msg = "Shopify UCP response did not include a cart."
+        msg = "UCP response did not include a cart."
         raise ValueError(msg)
     failure_text = _cart_failure_text(cart)
     if failure_text is not None or not isinstance(cart.get("id"), str):
-        msg = failure_text or "Shopify cart response did not include a cart ID."
+        msg = failure_text or "UCP cart response did not include a cart ID."
         raise ValueError(msg)
     return cart
 
@@ -467,19 +488,19 @@ def _cart_result_text(cart: dict[str, object]) -> str:
     return "Cart request completed."
 
 
-async def shopify_add_to_cart_tool(
+async def ucp_add_to_cart_tool(
     exec_context: ToolExecutionContext,
     business_url: str,
     line_items: list[dict[str, object]],
     cart_id: str | None = None,
     context: dict[str, object] | None = None,
 ) -> ToolResult:
-    """Create or update a Shopify UCP cart."""
+    """Create or update a UCP merchant cart."""
     app_config = _get_app_config(exec_context)
     normalized_items = _normalize_line_items(line_items)
 
     if cart_id:
-        current = await _post_shopify_tool_call(
+        current = await _post_ucp_tool_call(
             app_config,
             business_url=business_url,
             tool_name="get_cart",
@@ -487,7 +508,7 @@ async def shopify_add_to_cart_tool(
         )
         existing_cart = _cart_from_response(current)
         cart_payload = _cart_update_payload(existing_cart, normalized_items, context)
-        response_data = await _post_shopify_tool_call(
+        response_data = await _post_ucp_tool_call(
             app_config,
             business_url=business_url,
             tool_name="update_cart",
@@ -497,7 +518,7 @@ async def shopify_add_to_cart_tool(
         cart_payload: dict[str, object] = {"line_items": normalized_items}
         if context is not None:
             cart_payload["context"] = context
-        response_data = await _post_shopify_tool_call(
+        response_data = await _post_ucp_tool_call(
             app_config,
             business_url=business_url,
             tool_name="create_cart",
@@ -508,14 +529,14 @@ async def shopify_add_to_cart_tool(
     return ToolResult(text=_cart_result_text(cart), data=response_data)
 
 
-async def shopify_get_cart_tool(
+async def ucp_get_cart_tool(
     exec_context: ToolExecutionContext,
     business_url: str,
     cart_id: str,
 ) -> ToolResult:
-    """Fetch a Shopify UCP cart."""
+    """Fetch a UCP merchant cart."""
     app_config = _get_app_config(exec_context)
-    response_data = await _post_shopify_tool_call(
+    response_data = await _post_ucp_tool_call(
         app_config,
         business_url=business_url,
         tool_name="get_cart",
@@ -525,14 +546,14 @@ async def shopify_get_cart_tool(
     return ToolResult(text=_cart_result_text(cart), data=response_data)
 
 
-async def shopify_transfer_checkout_to_human_tool(
+async def ucp_transfer_checkout_to_human_tool(
     exec_context: ToolExecutionContext,
     business_url: str,
     cart_id: str,
 ) -> ToolResult:
     """Create a checkout session and return the human handoff URL."""
     app_config = _get_app_config(exec_context)
-    response_data = await _post_shopify_tool_call(
+    response_data = await _post_ucp_tool_call(
         app_config,
         business_url=business_url,
         tool_name="create_checkout",
@@ -547,13 +568,13 @@ async def shopify_transfer_checkout_to_human_tool(
     if failure_text is not None:
         raise ValueError(failure_text)
     if not isinstance(checkout_id, str) or not checkout_id:
-        msg = "Shopify checkout response did not include a checkout ID."
+        msg = "UCP checkout response did not include a checkout ID."
         raise ValueError(msg)
     if not isinstance(status, str) or not status:
-        msg = "Shopify checkout response did not include a checkout status."
+        msg = "UCP checkout response did not include a checkout status."
         raise ValueError(msg)
     if not isinstance(continue_url, str) or not continue_url:
-        msg = "Shopify checkout response did not include a continue_url."
+        msg = "UCP checkout response did not include a continue_url."
         raise ValueError(msg)
 
     details = [f"Checkout link: {continue_url}"]
