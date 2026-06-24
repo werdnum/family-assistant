@@ -228,6 +228,73 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'abandons an un-echoed accepted steer when the user stops the turn',
+    async () => {
+      const { ready, turnIdRef } = installOpenStream();
+      let turnsPosts = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          turnIdRef.current = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          const body = (await request.json()) as { conversation_id: string };
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            accepted: true,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/cancel', async ({ request }) => {
+          const body = (await request.json()) as { conversation_id: string };
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            status: 'cancelling',
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      await waitFor(() => {
+        expect(turnsPosts).toBe(1);
+      }, WAIT);
+
+      // Steer (accepted, awaiting echo) then Stop before the echo arrives.
+      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      await user.type(steerInput, 'changed my mind');
+      await user.click(screen.getByTestId('steer-button'));
+      await user.click(await screen.findByTestId('stop-button', undefined, WAIT));
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'cancelled', seq: 1 })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(screen.getByText('Stopped.')).toBeInTheDocument();
+      }, WAIT);
+      // The completion handler ran (Stopped. rendered) and, because the turn was
+      // stopped, scheduled no follow-up — so the abandoned steer is not resent.
+      expect(turnsPosts).toBe(1);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'recovers an accepted steer that the turn never echoes',
     async () => {
       const { ready, turnIdRef } = installOpenStream();

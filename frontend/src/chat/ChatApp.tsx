@@ -806,10 +806,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       lastStreamingErrorRef.current = null;
       fetchConversations();
 
-      // Only recover/queue follow-ups when we actually saw the turn end. On a
-      // local detach (cancelStream during navigation) the server turn keeps
-      // running and may still drain the steer, so resending would duplicate it.
-      if (completed) {
+      // Recover/queue follow-ups only on a clean completion we actually saw end.
+      // - completed === false: a local detach (cancelStream during navigation) —
+      //   the server turn keeps running and may still drain the steer, so
+      //   resending would duplicate it.
+      // - stopped/failed: the user pressed Stop, or the turn errored. Resending
+      //   an abandoned steer would restart the very interaction Stop was meant to
+      //   end, so abandon any queued/awaiting steers instead.
+      const cleanCompletion = completed && !wasStopped && !lastError;
+      if (cleanCompletion) {
         // Accepted steers the turn never echoed (it finished a final text-only
         // iteration without draining them) would otherwise be stranded in the
         // about-to-unmount SteerBar. Recover them as normal follow-ups.
@@ -838,6 +843,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             void handleNewRef.current?.({ content: [{ text: followup }] });
           }, 0);
         }
+      } else if (completed) {
+        // Terminal but not a clean success (stopped or failed): drop any
+        // queued/awaiting steers so Stop/failure doesn't auto-start a new turn.
+        awaitingEchoSteersRef.current = [];
+        pendingFollowupsRef.current = [];
       }
     },
     [conversationId, fetchConversations]
