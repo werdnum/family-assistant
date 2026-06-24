@@ -35,6 +35,13 @@ services to respond or perform actions.
   here: `{{ SERVER_URL }}` (This link will be replaced with the actual URL). The interface
   automatically opens to the chat page for quick access.
 
+  - **Stop or steer a reply while it's working:** While the assistant is generating a response, the
+    Send button in the chat box becomes a **Stop** button — click it to halt the current response
+    immediately (it's marked "Stopped", not an error). A small **Steer** box also appears beside the
+    chat input: type a quick course-correction there (for example, "actually, focus on next week")
+    and the assistant folds it into the work it's already doing without starting over. This is the
+    web equivalent of Telegram's `/interrupt` and mid-response follow-up messages.
+
   ![Landing Page](../../screenshots/desktop/landing-page.png) *The Family Assistant landing page
   provides quick access to all major features*
 

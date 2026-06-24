@@ -455,7 +455,8 @@ class ActiveTurnInfo(BaseModel):
         ..., description="Highest seq published so far for this turn"
     )
     status: str = Field(
-        ..., description="Turn status: 'running', 'complete', or 'failed'"
+        ...,
+        description="Turn status: 'running', 'complete', 'failed', or 'cancelled'",
     )
 
 

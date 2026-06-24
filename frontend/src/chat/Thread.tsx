@@ -267,8 +267,12 @@ const SteerBar: React.FC = () => {
     }
     setSubmitting(true);
     try {
-      await controls.steerStream({ prompt });
-      setText('');
+      const accepted = await controls.steerStream({ prompt });
+      // Keep the text on failure (e.g. the turn just finished) so the user can
+      // resend it through the normal composer instead of losing it.
+      if (accepted) {
+        setText('');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -371,6 +375,7 @@ const ComposerAction: React.FC = () => {
             variant="default"
             side="top"
             className="h-11 w-11 shrink-0 rounded-full"
+            data-testid="stop-button"
           >
             <SquareIcon size={14} />
           </TooltipIconButton>

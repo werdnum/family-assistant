@@ -1021,9 +1021,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             .filter((turn) => turn.status === 'running')
             .map((turn) => turn.turn_id)
         );
+        // Terminal turns whose persisted rows are authoritative (the reply, if
+        // any, is final and won't change). A user-stopped turn ('cancelled') is
+        // finished just like 'complete', so the unconfirmed-reply reconcile must
+        // treat it as terminal too — otherwise stopping a turn that produced no
+        // text could surface a spurious "couldn't confirm the reply" marker.
         const completedTurnIds = new Set(
           (data.active_turns ?? [])
-            .filter((turn) => turn.status === 'complete')
+            .filter((turn) => turn.status === 'complete' || turn.status === 'cancelled')
             .map((turn) => turn.turn_id)
         );
 
