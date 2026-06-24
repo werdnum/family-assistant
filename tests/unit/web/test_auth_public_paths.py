@@ -35,7 +35,6 @@ async def auth_client() -> AsyncGenerator[AsyncClient]:
 @pytest.mark.parametrize(
     "path",
     [
-        "/manifest.json",
         "/manifest.webmanifest",
         "/sw.js",
         "/.well-known/apple-app-site-association",
@@ -57,6 +56,7 @@ def _is_public(path: str) -> bool:
     "path",
     [
         "/notes",
+        "/manifest.json",
         "/manifest.jsonx",
         "/sw.json",
         "/swxjs",
