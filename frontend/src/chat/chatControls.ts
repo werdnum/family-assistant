@@ -7,11 +7,18 @@ import { createContext, useContext } from 'react';
  */
 export interface ChatControls {
   /**
-   * Inject a steering message into the currently-running turn. Resolves true
-   * when accepted; false when there is no steerable turn (caller may fall back
-   * to sending a normal new message).
+   * The current steer-input text. Owned by ChatApp (not the SteerBar) so it
+   * survives the SteerBar unmounting when a turn ends: a steer that was never
+   * echoed (the turn finished before draining it) is preserved, not lost.
    */
-  steerStream: (params: { prompt: string }) => Promise<boolean>;
+  steerText: string;
+  setSteerText: (text: string) => void;
+  /**
+   * Submit the current steer text into the running turn. Does NOT clear the
+   * text — it's cleared only when the matching ``user_input`` echo confirms the
+   * turn actually consumed it (see ChatApp.handleStreamingUserInput).
+   */
+  submitSteer: () => Promise<void>;
 }
 
 export const ChatControlsContext = createContext<ChatControls | null>(null);

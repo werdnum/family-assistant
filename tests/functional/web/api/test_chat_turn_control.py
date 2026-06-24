@@ -18,16 +18,19 @@ LLM-gating pattern from ``test_turn_producer_resilience.py``.
 import asyncio
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import MessageReasoningInfo, UserMessage
+from family_assistant.services.confirmation_service import ConfirmationService
+from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.context import get_db_context
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
@@ -74,6 +77,16 @@ def _drain(handle: "SubscriptionHandle") -> "list[StreamEvent]":
     while not handle.queue.empty():
         events.append(handle.queue.get_nowait())
     return events
+
+
+async def _confirmation_status(db_engine: AsyncEngine, request_id: str) -> str | None:
+    async with get_db_context(engine=db_engine) as db:
+        row = await db.fetch_one(
+            select(confirmation_requests_table.c.status).where(
+                confirmation_requests_table.c.id == request_id
+            )
+        )
+    return row["status"] if row else None
 
 
 async def test_cancel_running_turn_marks_cancelled(
@@ -198,6 +211,96 @@ async def test_cancel_finished_turn_is_idempotent_noop(
     assert body["status"] == "complete"
 
 
+async def test_cancel_rejects_pending_confirmations_for_turn(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stopping a turn rejects the durable confirmations it was waiting on.
+
+    Otherwise the pending-confirmations UI could approve a stopped turn's tool
+    later, running a state-changing tool with no turn to receive the result.
+    Only this turn's confirmations are rejected (matched by source message);
+    an unrelated pending confirmation is left untouched.
+    """
+    user_prompt = "Cancel with a pending confirmation"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("never sent"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_generate = api_mock_llm_client.generate_response
+
+    async def gated_generate(*args: object, **kwargs: object) -> LLMOutput:
+        started.set()
+        await release.wait()
+        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(api_mock_llm_client, "generate_response", gated_generate)
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_cancelconf_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await asyncio.wait_for(started.wait(), timeout=5.0)
+
+    # A confirmation tied to this turn (same source message the producer would
+    # set) plus an unrelated one (no source message) that must survive.
+    service = ConfirmationService(db_context_factory=lambda: get_db_context(db_engine))
+    async with get_db_context(engine=db_engine) as ctx:
+        user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
+    assert user_row is not None
+    expires_at = datetime.now(UTC) + timedelta(minutes=30)
+    turn_conf = await service.create_request(
+        target_user_id="test_user",
+        tool_name="add_or_update_note",
+        tool_args={"title": "x", "content": "y"},
+        tool_call_id="turn-conf",
+        source_message_internal_id=user_row["internal_id"],
+        confirmation_prompt="ok?",
+        expires_at=expires_at,
+    )
+    other_conf = await service.create_request(
+        target_user_id="test_user",
+        tool_name="add_or_update_note",
+        tool_args={"title": "x", "content": "y"},
+        tool_call_id="other-conf",
+        source_message_internal_id=None,
+        confirmation_prompt="ok?",
+        expires_at=expires_at,
+    )
+
+    cancel = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert cancel.status_code == 200, cancel.text
+
+    # Rejection happens synchronously within the cancel request.
+    assert await _confirmation_status(db_engine, turn_conf["id"]) == "rejected"
+    assert await _confirmation_status(db_engine, other_conf["id"]) == "pending"
+
+    # Drain the cancelled producer so the test leaves no pending task.
+    await asyncio.gather(
+        *hub.get_active_producer_tasks(conversation_id), return_exceptions=True
+    )
+    release.set()
+
+
 async def test_cancel_rejects_conversation_owned_by_another_user(
     api_test_client: AsyncClient,
     db_engine: AsyncEngine,
@@ -315,16 +418,24 @@ async def test_steer_running_turn_injects_user_input(
     finally:
         hub.unsubscribe(conversation_id, handle.queue)
 
-    # The injected mid-turn message is persisted (formatted as a steering update).
+    # The injected mid-turn message is persisted as the RAW user text, not the
+    # internal [MID-TURN USER UPDATE] wrapper the model saw, so a later history
+    # reload shows what the user actually typed.
     async with get_db_context(engine=db_engine) as ctx:
         rows = await ctx.message_history.get_recent_with_metadata(
             interface_type="web",
             conversation_id=conversation_id,
             limit=50,
         )
-    assert any(
-        row["role"] == "user" and steer_text in str(row["content"]) for row in rows
-    ), "Expected the steering message to be persisted to message history"
+    steer_rows = [
+        row
+        for row in rows
+        if row["role"] == "user" and steer_text in str(row["content"])
+    ]
+    assert steer_rows, "Expected the steering message to be persisted"
+    assert all(
+        "MID-TURN USER UPDATE" not in str(row["content"]) for row in steer_rows
+    ), "Steering message must persist as raw text, not the internal wrapper"
 
 
 async def test_steer_finished_turn_returns_409(

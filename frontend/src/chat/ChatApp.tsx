@@ -355,6 +355,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // The turn id of the currently-streaming turn, used to tag mid-turn steering
   // user bubbles. Set in handleNew, cleared when the turn completes.
   const activeTurnIdRef = useRef<string | null>(null);
+  // The steer-input draft, owned here so it survives the SteerBar unmounting at
+  // turn end (a steer the turn never echoed is preserved for resend). Cleared
+  // when the conversation changes so it doesn't leak across threads.
+  const [steerDraft, setSteerDraft] = useState('');
+  useEffect(() => {
+    setSteerDraft('');
+  }, [conversationId]);
   // Set when the running turn ended because the user stopped it, so the
   // completion handler can render a "stopped" affordance instead of an empty
   // bubble (and never an error toast).
@@ -794,6 +801,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       next.splice(idx, 0, steeringMessage);
       return next;
     });
+    // The echo confirms the turn consumed this steer, so clear the draft if it
+    // still matches what was sent (don't clobber a newer edit the user typed).
+    setSteerDraft((prev) => (prev.trim() === content.trim() ? '' : prev));
   }, []);
 
   // The running turn ended because the user stopped it. Flag it so the
@@ -1723,8 +1733,25 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     },
   });
 
-  // Mid-run controls handed down to the Thread's composer (steering input).
-  const chatControls = useMemo(() => ({ steerStream }), [steerStream]);
+  // Mid-run controls handed down to the Thread's composer (steering input). The
+  // draft text lives here (not in the SteerBar) so a steer that the turn never
+  // echoed isn't lost when the SteerBar unmounts at turn end.
+  const submitSteer = useCallback(async () => {
+    const prompt = steerDraft.trim();
+    if (!prompt) {
+      return;
+    }
+    // Deliberately do NOT clear on success: the text is cleared only when the
+    // matching user_input echo confirms the turn actually consumed it, so a
+    // steer that lands during a final text-only iteration (never drained) isn't
+    // silently discarded.
+    await steerStream({ prompt });
+  }, [steerDraft, steerStream]);
+
+  const chatControls = useMemo(
+    () => ({ steerText: steerDraft, setSteerText: setSteerDraft, submitSteer }),
+    [steerDraft, submitSteer]
+  );
 
   // Initialize conversation ID from URL or localStorage
   useEffect(() => {

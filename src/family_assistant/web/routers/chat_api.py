@@ -1233,11 +1233,76 @@ async def api_chat_cancel_turn(
     if turn.task is not None and not turn.task.done():
         turn.task.cancel()
 
+    # Reject any tool confirmations this turn was waiting on. Cancelling the
+    # producer task unblocks the in-memory waiter but leaves the durable
+    # confirmation request 'pending' — the pending-confirmations UI could still
+    # approve it later, enqueueing a state-changing tool with no turn left to
+    # receive the result. Best-effort: a stop must still report success.
+    await _reject_pending_confirmations_for_turn(
+        request,
+        turn_id=turn_id,
+        user_id=current_user["user_identifier"],
+    )
+
     return ChatTurnCancelResponse(
         turn_id=turn_id,
         conversation_id=payload.conversation_id,
         status="cancelling",
     )
+
+
+async def _reject_pending_confirmations_for_turn(
+    request: Request,
+    *,
+    turn_id: str,
+    user_id: str,
+) -> None:
+    """Reject the cancelled turn's still-pending durable tool confirmations.
+
+    Every confirmation raised within a turn carries that turn's user message as
+    its ``source_message_internal_id``, so we reject exactly the confirmations
+    for this turn without touching a concurrent turn's. Each step is guarded:
+    rejecting confirmations is cleanup, never a reason to fail the stop.
+    """
+    confirmation_service = _get_confirmation_service(request)
+    try:
+        async with get_db_context(request.app.state.database_engine) as db:
+            user_row = await db.message_history.get_user_row_by_turn_id(turn_id)
+        if user_row is None:
+            return
+        source_internal_id = user_row["internal_id"]
+        pending = await confirmation_service.list_pending_for_user(user_id=user_id)
+    except Exception:
+        logger.warning(
+            "Failed to list pending confirmations for cancelled turn=%s",
+            turn_id,
+            exc_info=True,
+        )
+        return
+
+    for confirmation in pending:
+        if confirmation["source_message_internal_id"] != source_internal_id:
+            continue
+        try:
+            await confirmation_service.reject(
+                request_id=confirmation["id"],
+                rejecting_user_id=user_id,
+                rejecting_interface="web",
+            )
+        except (
+            ConfirmationExpiredError,
+            ConfirmationAlreadyResolvedError,
+            ConfirmationNotFoundError,
+        ):
+            # Already resolved/expired elsewhere — nothing to reject.
+            continue
+        except Exception:
+            logger.warning(
+                "Failed to reject confirmation %s for cancelled turn=%s",
+                confirmation["id"],
+                turn_id,
+                exc_info=True,
+            )
 
 
 @chat_api_router.post("/v1/chat/turns/{turn_id}/steer")

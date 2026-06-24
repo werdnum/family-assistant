@@ -257,22 +257,17 @@ const ThreadWelcomeSuggestions: React.FC = () => {
 // without restarting. Shown only while running (wrapped in ThreadPrimitive.If).
 const SteerBar: React.FC = () => {
   const controls = useChatControls();
-  const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async () => {
-    const prompt = text.trim();
-    if (!prompt || submitting || !controls) {
+    if (submitting || !controls || controls.steerText.trim().length === 0) {
       return;
     }
     setSubmitting(true);
     try {
-      const accepted = await controls.steerStream({ prompt });
-      // Keep the text on failure (e.g. the turn just finished) so the user can
-      // resend it through the normal composer instead of losing it.
-      if (accepted) {
-        setText('');
-      }
+      // submitSteer never clears the draft; it's cleared only when the turn
+      // echoes the steer back (so an un-drained steer isn't lost).
+      await controls.submitSteer();
     } finally {
       setSubmitting(false);
     }
@@ -287,8 +282,8 @@ const SteerBar: React.FC = () => {
       <div className="flex-1 relative">
         <input
           type="text"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          value={controls.steerText}
+          onChange={(e) => controls.setSteerText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -306,7 +301,7 @@ const SteerBar: React.FC = () => {
         size="sm"
         className="h-9 shrink-0 rounded-full"
         onClick={() => void submit()}
-        disabled={submitting || text.trim().length === 0}
+        disabled={submitting || controls.steerText.trim().length === 0}
         data-testid="steer-button"
       >
         Steer

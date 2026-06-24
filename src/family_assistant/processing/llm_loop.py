@@ -787,16 +787,21 @@ class LLMStreamingLoop:
                     await mid_turn_input_provider.drain_pending_mid_turn_inputs()
                 )
                 for user_input in pending_user_inputs:
+                    # The model sees the wrapped steering prompt (re-evaluate the
+                    # plan, etc.) so it adapts mid-turn...
                     mid_turn_message = UserMessage(
                         content=self._format_mid_turn_user_input(user_input)
                     )
                     messages.append(mid_turn_message)
+                    # ...but persist (and stream) only the raw user text, so a
+                    # later history reload shows what the user actually typed,
+                    # not the internal [MID-TURN USER UPDATE] boilerplate.
                     yield (
                         LLMStreamEvent(
                             type="user_input",
                             content=user_input.content,
                         ),
-                        mid_turn_message,
+                        UserMessage(content=user_input.content),
                     )
 
             if (
