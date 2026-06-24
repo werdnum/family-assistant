@@ -978,18 +978,30 @@ async def api_chat_create_turn(
     # idempotent on turn_id, so it reuses this row instead of inserting a
     # duplicate. ``payload.prompt`` matches what the producer would store (the
     # first text part of the trigger content).
-    async with get_db_context(request.app.state.database_engine) as user_msg_db:
-        await user_msg_db.message_history.add_message(
-            UserMessage(content=payload.prompt),
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=f"temp_{payload.turn_id}",
+    try:
+        async with get_db_context(request.app.state.database_engine) as user_msg_db:
+            await user_msg_db.message_history.add_message(
+                UserMessage(content=payload.prompt),
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=f"temp_{payload.turn_id}",
+                turn_id=payload.turn_id,
+                timestamp=datetime.now(UTC),
+                user_id=user_id,
+                attachments=trigger_attachments,
+                processing_profile_id=selected_processing_service.service_config.id,
+            )
+    except Exception:
+        # The turn is registered in the hub but no producer task exists yet (and
+        # thus no done-callback safety net), so without ending it here the
+        # TurnRecord would wedge at 'running'. End it, then propagate.
+        await hub.end_turn(
+            conversation_id,
             turn_id=payload.turn_id,
-            timestamp=datetime.now(UTC),
-            user_id=user_id,
-            attachments=trigger_attachments,
-            processing_profile_id=selected_processing_service.service_config.id,
+            status="failed",
+            error="An internal error occurred.",
         )
+        raise
 
     # If the producer task is cancelled before its coroutine ever runs (a Stop
     # in the window before its first slice), it never persists the stopped

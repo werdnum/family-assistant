@@ -34,6 +34,9 @@ from family_assistant.llm.messages import MessageReasoningInfo, UserMessage
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.context import get_db_context
+from family_assistant.storage.repositories.message_history import (
+    MessageHistoryRepository,
+)
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.turn_producer import persist_stopped_reply
 from family_assistant.web.web_mid_turn_controller import WebMidTurnController
@@ -302,6 +305,42 @@ async def test_completed_web_turn_persists_single_user_row(
     user_rows = [row for row in rows if row["role"] == "user"]
     assert len(user_rows) == 1, f"Expected one user row, got {user_rows}"
     assert user_rows[0]["processing_profile_id"] is not None
+
+
+async def test_user_message_insert_failure_ends_hub_turn(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the pre-producer user-message insert fails, the just-registered hub
+    turn is ended — not left wedged at 'running' with no producer task or
+    safety-net callback to ever end it."""
+
+    async def boom(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("insert exploded")
+
+    monkeypatch.setattr(MessageHistoryRepository, "add_message", boom)
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_insertfail_{uuid.uuid4().hex[:8]}"
+    # The ASGI test transport re-raises unhandled app exceptions; either way the
+    # hub turn must be cleaned up.
+    with contextlib.suppress(RuntimeError):
+        resp = await api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "prompt": "hi",
+                "interface_type": "web",
+            },
+        )
+        assert resp.status_code == 500, resp.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    turn = hub.get_turn(conversation_id, turn_id)
+    assert turn is not None
+    assert turn.status != "running", "Hub turn must be ended, not wedged at running"
 
 
 async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
