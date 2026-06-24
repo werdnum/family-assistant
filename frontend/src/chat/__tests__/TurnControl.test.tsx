@@ -284,4 +284,159 @@ describe('Web turn control (Stop / Steer)', () => {
     },
     { timeout: 30000 }
   );
+
+  it(
+    'retries Stop through the turn-registration race (404 then 200)',
+    async () => {
+      const { ready, turnIdRef } = installOpenStream();
+      let cancelCalls = 0;
+      server.use(
+        http.post('/api/v1/chat/turns/:turnId/cancel', async ({ request }) => {
+          cancelCalls += 1;
+          const body = (await request.json()) as { conversation_id: string };
+          // First click races the kickoff: the turn isn't registered yet (404).
+          if (cancelCalls === 1) {
+            return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+          }
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            status: 'cancelling',
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Do something slow');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      const stopButton = await screen.findByTestId('stop-button', undefined, WAIT);
+      await user.click(stopButton);
+
+      // stopTurn retries the 404 and succeeds on the second attempt.
+      await waitFor(() => {
+        expect(cancelCalls).toBeGreaterThanOrEqual(2);
+      }, WAIT);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'cancelled', seq: 1 })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(screen.getByText('Stopped.')).toBeInTheDocument();
+      }, WAIT);
+      // No stop-failure warning, since the retry secured the stop.
+      expect(screen.queryByText(/could not confirm the turn/i)).not.toBeInTheDocument();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'recovers every accepted steer when the turn never echoes',
+    async () => {
+      const enc2 = new TextEncoder();
+      const turnIdRef = { current: 'mock-turn' };
+      let turnsPosts = 0;
+      let firstOpened = false;
+      let resolveFirst: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+        resolveFirst = r;
+      });
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          turnIdRef.current = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          const body = (await request.json()) as { conversation_id: string };
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            accepted: true,
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          // The first turn is controllable; follow-up (recovery) turns
+          // auto-complete so each queued recovery fires the next sequentially.
+          if (!firstOpened) {
+            firstOpened = true;
+            return new HttpResponse(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    enc2.encode(
+                      `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+                    )
+                  );
+                  resolveFirst(controller);
+                },
+              }),
+              { headers: { 'Content-Type': 'text/event-stream' } }
+            );
+          }
+          return new HttpResponse(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  enc2.encode(
+                    `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+                  )
+                );
+                controller.enqueue(
+                  enc2.encode(
+                    `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, status: 'complete', seq: 1 })}\n\n`
+                  )
+                );
+                controller.close();
+              },
+            }),
+            { headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      await waitFor(() => {
+        expect(turnsPosts).toBe(1);
+      }, WAIT);
+
+      // Two accepted steers during the same turn.
+      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      await user.type(steerInput, 'first steer');
+      await user.click(screen.getByTestId('steer-button'));
+      await user.clear(steerInput);
+      await user.type(steerInput, 'second steer');
+      await user.click(screen.getByTestId('steer-button'));
+
+      // The turn ends without echoing either steer; BOTH are recovered as
+      // follow-ups (sequentially), so two extra kickoffs fire.
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(3);
+      }, WAIT);
+    },
+    { timeout: 30000 }
+  );
 });

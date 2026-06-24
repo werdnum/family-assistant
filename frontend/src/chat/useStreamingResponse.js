@@ -617,7 +617,11 @@ export const useStreamingResponse = ({
         }
       } finally {
         setIsStreaming(false);
-        onComplete({ content: currentMessage, toolCalls });
+        // `completed` distinguishes a turn we saw end (turn_ended observed) from
+        // a local detach (e.g. cancelStream on navigation) where the server turn
+        // keeps running. Steer recovery keys off this so a local abort doesn't
+        // resend a steer the original turn may still drain.
+        onComplete({ content: currentMessage, toolCalls, completed: turnEnded });
         abortControllerRef.current = null;
         activeTurnRef.current = null;
       }
@@ -664,9 +668,14 @@ export const useStreamingResponse = ({
     const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
     const body = JSON.stringify({ conversation_id: active.conversationId });
     // Stop must fully secure the turn (the server also rejects the turn's
-    // pending tool confirmations, returning 503 if it can't). Retry a transient
-    // 5xx/network failure a few times; the server side is idempotent.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // pending tool confirmations, returning 503 if it can't). Retry with a small
+    // backoff on transient 5xx/network failures AND on 404: clicking Stop right
+    // after Send can race the kickoff POST that registers the turn in the hub,
+    // and the turn doesn't exist there for a brief window. The server side is
+    // idempotent.
+    const attempts = 5;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      let retryable = false;
       try {
         const response = await fetch(url, {
           method: 'POST',
@@ -680,13 +689,20 @@ export const useStreamingResponse = ({
         if (response.ok) {
           return true;
         }
-        if (response.status < 500) {
+        // 404: the kickoff may not have registered the turn yet — retry briefly.
+        // Other 4xx are permanent client errors; 5xx are transient.
+        retryable = response.status === 404 || response.status >= 500;
+        if (!retryable) {
           console.warn(`Turn cancel failed: HTTP ${response.status}`);
           return false;
         }
         console.warn(`Turn cancel failed (attempt ${attempt + 1}): HTTP ${response.status}`);
       } catch (e) {
+        retryable = true;
         console.warn(`Turn cancel request failed (attempt ${attempt + 1}):`, e);
+      }
+      if (retryable && attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
       }
     }
     return false;
