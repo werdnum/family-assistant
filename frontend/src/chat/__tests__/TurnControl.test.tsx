@@ -168,4 +168,51 @@ describe('Web turn control (Stop / Steer)', () => {
     },
     { timeout: 30000 }
   );
+
+  it(
+    'steering a finished turn falls back to sending a normal new message',
+    async () => {
+      const { ready, turnIdRef } = installOpenStream();
+      let turnsPosts = 0;
+      server.use(
+        // Count kickoff POSTs; the fallback sends the steer as a new turn.
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          turnIdRef.current = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ detail: 'Turn is not running' }, { status: 409 })
+        )
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      await ready;
+      await waitFor(() => {
+        expect(turnsPosts).toBe(1);
+      });
+
+      const steerInput = await screen.findByTestId('steer-input');
+      await user.type(steerInput, 'do it differently');
+      await user.click(screen.getByTestId('steer-button'));
+
+      // 409 from steer → the text is sent as a normal follow-up (a 2nd kickoff),
+      // not silently lost.
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      });
+    },
+    { timeout: 30000 }
+  );
 });

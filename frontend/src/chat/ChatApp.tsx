@@ -1741,12 +1741,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     if (!prompt) {
       return;
     }
-    // Deliberately do NOT clear on success: the text is cleared only when the
-    // matching user_input echo confirms the turn actually consumed it, so a
+    const accepted = await steerStream({ prompt });
+    if (!accepted) {
+      // The turn finished before it could be steered (409 / no active turn).
+      // Don't lose the text: send it as a normal follow-up message and clear
+      // the draft.
+      setSteerDraft('');
+      await handleNew({ content: [{ text: prompt }] });
+      return;
+    }
+    // On success, deliberately do NOT clear here: the draft is cleared only when
+    // the matching user_input echo confirms the turn actually consumed it, so a
     // steer that lands during a final text-only iteration (never drained) isn't
     // silently discarded.
-    await steerStream({ prompt });
-  }, [steerDraft, steerStream]);
+  }, [steerDraft, steerStream, handleNew]);
 
   const chatControls = useMemo(
     () => ({ steerText: steerDraft, setSteerText: setSteerDraft, submitSteer }),

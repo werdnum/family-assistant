@@ -657,22 +657,33 @@ export const useStreamingResponse = ({
     if (!active) {
       return;
     }
-    try {
-      const response = await fetch(
-        `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`,
-        {
+    const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
+    const body = JSON.stringify({ conversation_id: active.conversationId });
+    // Stop must fully secure the turn (the server also rejects the turn's
+    // pending tool confirmations, returning 503 if it can't). Retry a transient
+    // 5xx/network failure a few times; the server side is idempotent.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation_id: active.conversationId }),
+          body,
+        });
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
         }
-      );
-      if (response.status === 401) {
-        redirectToLogin();
-      } else if (!response.ok) {
-        console.warn(`Turn cancel failed: HTTP ${response.status}`);
+        if (response.ok) {
+          return;
+        }
+        if (response.status < 500) {
+          console.warn(`Turn cancel failed: HTTP ${response.status}`);
+          return;
+        }
+        console.warn(`Turn cancel failed (attempt ${attempt + 1}): HTTP ${response.status}`);
+      } catch (e) {
+        console.warn(`Turn cancel request failed (attempt ${attempt + 1}):`, e);
       }
-    } catch (e) {
-      console.warn('Turn cancel request failed:', e);
     }
   }, []);
 

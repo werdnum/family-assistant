@@ -301,6 +301,89 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
     release.set()
 
 
+async def test_cancel_returns_503_when_confirmation_rejection_fails(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a stopped turn's confirmation can't be rejected, /cancel reports 503.
+
+    Reporting a clean stop while a state-changing confirmation stays approvable
+    would be unsafe, so the failure propagates for the client to retry.
+    """
+    user_prompt = "Cancel where reject fails"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("never sent"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_generate = api_mock_llm_client.generate_response
+
+    async def gated_generate(*args: object, **kwargs: object) -> LLMOutput:
+        started.set()
+        await release.wait()
+        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(api_mock_llm_client, "generate_response", gated_generate)
+
+    # Pin a confirmation service on app state whose reject() always fails, so the
+    # cancel endpoint resolves it via _get_confirmation_service.
+    service = ConfirmationService(db_context_factory=lambda: get_db_context(db_engine))
+
+    async def failing_reject(**_kwargs: object) -> None:
+        raise RuntimeError("reject exploded")
+
+    monkeypatch.setattr(service, "reject", failing_reject)
+    app_fixture.state.confirmation_service = service
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_cancelfail_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await asyncio.wait_for(started.wait(), timeout=5.0)
+
+    async with get_db_context(engine=db_engine) as ctx:
+        user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
+    assert user_row is not None
+    conf = await service.create_request(
+        target_user_id="test_user",
+        tool_name="add_or_update_note",
+        tool_args={"title": "x", "content": "y"},
+        tool_call_id="turn-conf",
+        source_message_internal_id=user_row["internal_id"],
+        confirmation_prompt="ok?",
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    cancel = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert cancel.status_code == 503, cancel.text
+    # The confirmation is still pending (not silently dropped), so a retry can
+    # re-attempt the rejection.
+    assert await _confirmation_status(db_engine, conf["id"]) == "pending"
+
+    await asyncio.gather(
+        *hub.get_active_producer_tasks(conversation_id), return_exceptions=True
+    )
+    release.set()
+
+
 async def test_cancel_rejects_conversation_owned_by_another_user(
     api_test_client: AsyncClient,
     db_engine: AsyncEngine,

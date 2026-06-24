@@ -1217,33 +1217,37 @@ async def api_chat_cancel_turn(
     turn = hub.get_turn(payload.conversation_id, turn_id)
     if turn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if turn.status != "running":
-        return ChatTurnCancelResponse(
-            turn_id=turn_id,
-            conversation_id=payload.conversation_id,
-            status=turn.status,
-            already_complete=True,
-        )
+    running = turn.status == "running"
 
-    # Request a cooperative interrupt first so the producer resolves the turn to
-    # 'cancelled' (not 'failed') when the CancelledError surfaces.
-    controller = turn.mid_turn_controller
-    if isinstance(controller, WebMidTurnController):
-        controller.request_interrupt()
-    if turn.task is not None and not turn.task.done():
-        turn.task.cancel()
+    if running:
+        # Request a cooperative interrupt first so the producer resolves the turn
+        # to 'cancelled' (not 'failed') when the CancelledError surfaces.
+        controller = turn.mid_turn_controller
+        if isinstance(controller, WebMidTurnController):
+            controller.request_interrupt()
+        if turn.task is not None and not turn.task.done():
+            turn.task.cancel()
 
     # Reject any tool confirmations this turn was waiting on. Cancelling the
     # producer task unblocks the in-memory waiter but leaves the durable
     # confirmation request 'pending' — the pending-confirmations UI could still
     # approve it later, enqueueing a state-changing tool with no turn left to
-    # receive the result. Best-effort: a stop must still report success.
+    # receive the result. This runs on the already-finished path too so a retry
+    # after a transient failure re-attempts; a failure to fully secure the turn
+    # propagates (503) rather than reporting a clean stop.
     await _reject_pending_confirmations_for_turn(
         request,
         turn_id=turn_id,
         user_id=current_user["user_identifier"],
     )
 
+    if not running:
+        return ChatTurnCancelResponse(
+            turn_id=turn_id,
+            conversation_id=payload.conversation_id,
+            status=turn.status,
+            already_complete=True,
+        )
     return ChatTurnCancelResponse(
         turn_id=turn_id,
         conversation_id=payload.conversation_id,
@@ -1261,8 +1265,10 @@ async def _reject_pending_confirmations_for_turn(
 
     Every confirmation raised within a turn carries that turn's user message as
     its ``source_message_internal_id``, so we reject exactly the confirmations
-    for this turn without touching a concurrent turn's. Each step is guarded:
-    rejecting confirmations is cleanup, never a reason to fail the stop.
+    for this turn without touching a concurrent turn's. Since Stop's safety
+    relies on this, a confirmation we cannot reject (or a failure to even list
+    them) raises 503 so the caller retries rather than treating the turn as
+    safely stopped. Already-resolved/expired confirmations are not failures.
     """
     confirmation_service = _get_confirmation_service(request)
     try:
@@ -1272,14 +1278,18 @@ async def _reject_pending_confirmations_for_turn(
             return
         source_internal_id = user_row["internal_id"]
         pending = await confirmation_service.list_pending_for_user(user_id=user_id)
-    except Exception:
+    except Exception as exc:
         logger.warning(
             "Failed to list pending confirmations for cancelled turn=%s",
             turn_id,
             exc_info=True,
         )
-        return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not verify the stopped turn's tool confirmations; retry.",
+        ) from exc
 
+    unrejected = 0
     for confirmation in pending:
         if confirmation["source_message_internal_id"] != source_internal_id:
             continue
@@ -1297,12 +1307,22 @@ async def _reject_pending_confirmations_for_turn(
             # Already resolved/expired elsewhere — nothing to reject.
             continue
         except Exception:
+            unrejected += 1
             logger.warning(
                 "Failed to reject confirmation %s for cancelled turn=%s",
                 confirmation["id"],
                 turn_id,
                 exc_info=True,
             )
+
+    if unrejected:
+        # Some state-changing confirmation is still approvable; don't report a
+        # clean stop. The producer is already cancelled, so a retry only re-runs
+        # this rejection (idempotent) until it succeeds.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not reject all of the stopped turn's tool confirmations; retry.",
+        )
 
 
 @chat_api_router.post("/v1/chat/turns/{turn_id}/steer")
