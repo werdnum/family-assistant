@@ -601,11 +601,12 @@ various tasks with dark mode support and mobile optimization.
   (for example browsing, research, visualization, or complex planning), the assistant may delegate
   the work. Fast delegated work is returned inline. If it takes longer, the assistant gives you a
   `delegation_...` reference and keeps the main conversation available. When the delegated profile
-  finishes, the same conversation receives a completion message with the result. You can ask for the
-  status of that delegation reference later. This works the same way for specialized profiles that
-  run on a separate (remote) agent — they may take a while, but the result is still delivered back
-  to this conversation automatically when ready. This is separate from spawned worker tasks, which
-  are isolated coding or computing jobs and use worker task IDs instead.
+  finishes, it wakes the original assistant profile, which reviews the result and posts the
+  follow-up in the same conversation. You can ask for the status of that delegation reference later.
+  This works the same way for specialized profiles that run on a separate (remote) agent — they may
+  take a while, but the result is still delivered back to this conversation automatically when
+  ready. This is separate from spawned worker tasks, which are isolated coding or computing jobs and
+  use worker task IDs instead.
 
 - **Push Notifications:** The assistant can notify you even when the app isn't open.
 

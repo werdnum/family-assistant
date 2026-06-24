@@ -267,6 +267,7 @@ async def export_diagnostics(
     message_rows = await db_context.message_history.get_all_grouped(
         conversation_id=conversation_id,
         date_from=cutoff,
+        include_internal=True,
     )
 
     # Flatten and sort messages

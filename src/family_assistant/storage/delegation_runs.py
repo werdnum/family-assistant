@@ -35,6 +35,7 @@ delegation_runs_table = Table(
     Column("user_id", String(255), nullable=True),
     Column("user_name", String(255), nullable=True),
     Column("source_turn_id", String(100), nullable=True),
+    Column("source_subconversation_id", String(36), nullable=True),
     Column("subconversation_id", String(36), nullable=False),
     Column("request_text", Text, nullable=False),
     Column(

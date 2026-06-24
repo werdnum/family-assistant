@@ -149,6 +149,16 @@ async def test_get_conversations_excludes_delegated_subconversations_from_summar
             processing_profile_id="browser",
             subconversation_id="delegated-subconversation",
         )
+        await db_context.message_history.add_message(
+            UserMessage(content="Internal delegated result data"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="internal-turn",
+            processing_profile_id="default_assistant",
+            user_id="test_user",
+            is_internal=True,
+        )
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)

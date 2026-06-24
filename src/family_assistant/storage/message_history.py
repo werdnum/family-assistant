@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast  # Added Tuple, cast
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     Column,
     DateTime,
     Integer,  # Import Integer
@@ -88,6 +89,9 @@ message_history_table = Table(
     Column(
         "provider_metadata", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # Provider-specific metadata for round-trip (e.g., thought signatures)
+    Column(
+        "is_internal", Boolean, nullable=False, default=False, server_default="false"
+    ),
 )
 
 

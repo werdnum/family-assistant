@@ -180,6 +180,7 @@ class MessageHistoryRow(TypedDict):
     attachments: "list[MessageAttachmentMetadata] | None"
     tool_name: str | None
     provider_metadata: "ProviderMetadataDict | GeminiProviderMetadata | None"
+    is_internal: bool
 
 
 class ConversationSummaryRow(TypedDict):

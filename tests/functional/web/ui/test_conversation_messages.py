@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
-from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.storage.context import get_db_context
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
@@ -142,6 +142,26 @@ async def test_get_conversation_messages_excludes_delegated_subconversations(
             turn_id="delegated-turn",
             processing_profile_id="browser",
             subconversation_id="delegated-subconversation",
+        )
+        await db_context.message_history.add_message(
+            UserMessage(content="Internal delegated result data"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="internal-turn",
+            processing_profile_id="default_assistant",
+            user_id="test_user",
+            is_internal=True,
+        )
+        await db_context.message_history.add_message(
+            SystemMessage(content="Internal delegated wake trigger"),
+            interface_type="web",
+            conversation_id=conv_id,
+            timestamp=timestamp,
+            turn_id="internal-turn",
+            processing_profile_id="default_assistant",
+            user_id="test_user",
+            is_internal=True,
         )
         await db_context.message_history.add_message(
             AssistantMessage(content="Main assistant answer"),
