@@ -226,4 +226,62 @@ describe('Web turn control (Stop / Steer)', () => {
     },
     { timeout: 30000 }
   );
+
+  it(
+    'recovers an accepted steer that the turn never echoes',
+    async () => {
+      const { ready, turnIdRef } = installOpenStream();
+      let turnsPosts = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          turnIdRef.current = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
+            first_seq: 0,
+          });
+        }),
+        // Accept the steer, but the stream below never echoes a user_input for
+        // it (simulating a final text-only iteration that never drains it).
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          const body = (await request.json()) as { conversation_id: string; prompt: string };
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            accepted: true,
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      await waitFor(() => {
+        expect(turnsPosts).toBe(1);
+      }, WAIT);
+
+      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      await user.type(steerInput, 'use the newer plan');
+      await user.click(screen.getByTestId('steer-button'));
+
+      // The turn completes WITHOUT echoing the accepted steer; on completion it
+      // is recovered as a normal follow-up (a 2nd kickoff) rather than lost.
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+    },
+    { timeout: 30000 }
+  );
 });

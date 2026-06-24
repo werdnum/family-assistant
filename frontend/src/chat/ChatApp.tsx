@@ -370,6 +370,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // finished turn). Sent once the current stream's completion handler runs, so
   // it doesn't race the ending stream's shared-ref cleanup.
   const pendingFollowupRef = useRef<string | null>(null);
+  // An accepted steer awaiting its user_input echo. If the turn completes
+  // without echoing it (the model was in a final text-only iteration, so the
+  // loop never drained it), it's recovered as a normal follow-up rather than
+  // left stale in a SteerBar that's about to unmount.
+  const awaitingEchoSteerRef = useRef<string | null>(null);
   // handleNew is defined after the streaming callbacks; the completion handler
   // reaches it via this ref to fire a queued follow-up.
   const handleNewRef = useRef<((message: { content: { text: string }[] }) => Promise<void>) | null>(
@@ -790,14 +795,27 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       lastStreamingErrorRef.current = null;
       fetchConversations();
 
-      // Fire a follow-up that was queued while this stream was still settling
-      // (a steer that hit an already-finished turn). Running it here — after the
-      // refs above are cleared — serializes it after this stream so it can't
-      // clobber the new turn's bubble/active-turn state.
+      // An accepted steer that never echoed (the turn finished a final text-only
+      // iteration without draining it) would otherwise be stranded in the
+      // about-to-unmount SteerBar. Recover it as a normal follow-up.
+      const unEchoed = awaitingEchoSteerRef.current;
+      if (unEchoed) {
+        awaitingEchoSteerRef.current = null;
+        pendingFollowupRef.current = unEchoed;
+        setSteerDraft((prev) => (prev.trim() === unEchoed.trim() ? '' : prev));
+      }
+
+      // Fire a follow-up queued while this stream was still settling (a steer
+      // that hit an already-finished turn, or a recovered un-echoed steer). Defer
+      // it past this hook's own cleanup (which clears abortControllerRef /
+      // activeTurnRef after onComplete returns) so the follow-up turn's refs
+      // aren't clobbered and Stop/Steer target it correctly.
       const followup = pendingFollowupRef.current;
       if (followup) {
         pendingFollowupRef.current = null;
-        void handleNewRef.current?.({ content: [{ text: followup }] });
+        setTimeout(() => {
+          void handleNewRef.current?.({ content: [{ text: followup }] });
+        }, 0);
       }
     },
     [conversationId, fetchConversations]
@@ -825,8 +843,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       return next;
     });
     // The echo confirms the turn consumed this steer, so clear the draft if it
-    // still matches what was sent (don't clobber a newer edit the user typed).
+    // still matches what was sent (don't clobber a newer edit the user typed)
+    // and drop the awaiting-echo recovery for it.
     setSteerDraft((prev) => (prev.trim() === content.trim() ? '' : prev));
+    if (awaitingEchoSteerRef.current?.trim() === content.trim()) {
+      awaitingEchoSteerRef.current = null;
+    }
   }, []);
 
   // The running turn ended because the user stopped it. Flag it so the
@@ -1799,9 +1821,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     const result = await steerStream({ prompt });
     if (result === 'accepted') {
       // Deliberately do NOT clear here: the draft is cleared only when the
-      // matching user_input echo confirms the turn actually consumed it, so a
-      // steer that lands during a final text-only iteration (never drained)
-      // isn't silently discarded.
+      // matching user_input echo confirms the turn actually consumed it. Track
+      // it as awaiting-echo so that if the turn completes without draining it
+      // (a final text-only iteration), the completion handler recovers it as a
+      // normal follow-up instead of losing it.
+      awaitingEchoSteerRef.current = prompt;
       return;
     }
     if (result === 'error') {
