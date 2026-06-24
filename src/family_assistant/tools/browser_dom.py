@@ -21,21 +21,35 @@ the same live tab.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+import httpx
 import toons
 
+from family_assistant.services.ucp import (
+    MerchantUCPProfile,
+    discover_merchant_ucp_profile,
+    merchant_origin,
+)
 from family_assistant.tools.browser_backend import (
     BrowserBackend,
     BrowserBackendError,
     HandoffUnavailableError,
     get_browser_backend,
 )
+from family_assistant.tools.browser_session import get_browser_session
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 from family_assistant.utils.scraping import convert_html_bytes_to_markdown
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
+
+UCP_PROBE_TIMEOUT_SECONDS = 5.0
+# Capability suffixes are merchant-controlled; only well-formed, bounded names
+# are echoed into the assistant-authored hint to prevent instruction injection.
+_SAFE_CAPABILITY_SUFFIX = re.compile(r"[a-z0-9_.-]{1,40}")
+_MAX_HINT_CAPABILITIES = 12
 
 
 class SnapshotNode(TypedDict):
@@ -213,6 +227,109 @@ def _resolve_ref(backend: BrowserBackend, ref: str) -> str:
     return selector
 
 
+def _format_ucp_hint(profile: MerchantUCPProfile) -> str:
+    """Render a one-line hint telling the model this origin supports UCP.
+
+    Capability names come from the (untrusted) merchant profile and are spliced
+    into assistant-authored text, so only well-formed suffixes are kept and the
+    list is bounded — a malicious key containing newlines or instruction text
+    cannot leak into the hint as if it were assistant content.
+    """
+    shopping_capabilities: list[str] = []
+    for name in profile.capability_names:
+        if not name.startswith("dev.ucp.shopping."):
+            continue
+        suffix = name.removeprefix("dev.ucp.shopping.")
+        if _SAFE_CAPABILITY_SUFFIX.fullmatch(suffix):
+            shopping_capabilities.append(suffix)
+        if len(shopping_capabilities) >= _MAX_HINT_CAPABILITIES:
+            break
+    capability_text = (
+        f" Capabilities: {', '.join(shopping_capabilities)}."
+        if shopping_capabilities
+        else ""
+    )
+    return (
+        f"🛒 This site supports UCP shopping at {profile.origin}.{capability_text} "
+        f"Use ucp_add_to_cart / ucp_get_cart / ucp_transfer_checkout_to_human with "
+        f'business_url="{profile.origin}".'
+    )
+
+
+async def _probe_ucp_support(
+    exec_context: ToolExecutionContext, current_url: str | None
+) -> str | None:
+    """Probe the current origin's UCP profile, returning a hint when shoppable.
+
+    Results are cached per browser session keyed by origin so repeated
+    navigation within an origin probes ``/.well-known/ucp`` at most once.
+    Returns ``None`` for non-HTTPS origins or sites without UCP shopping.
+
+    The probe is a read-only GET to a fixed, reserved metadata path
+    (``/.well-known/ucp``) over HTTPS, and the response is never returned to the
+    page — only a sanitized "shoppable" hint reaches the model — so it is not
+    treated as an SSRF risk worth a private-address guard.
+    """
+    origin = merchant_origin(current_url or "")
+    if origin is None:
+        return None
+
+    session = await get_browser_session(exec_context)
+    if origin in session.ucp_profiles:
+        profile = session.ucp_profiles[origin]
+    else:
+        async with httpx.AsyncClient(timeout=UCP_PROBE_TIMEOUT_SECONDS) as client:
+            profile = await discover_merchant_ucp_profile(origin, client=client)
+        session.ucp_profiles[origin] = profile
+
+    # Only hint when there is a same-origin endpoint, matching what the shopping
+    # tools will actually use — a profile advertising only cross-origin bindings
+    # is not usable for this origin, so hinting it would mislead the model.
+    if profile is not None and profile.same_origin_mcp_endpoint is not None:
+        return _format_ucp_hint(profile)
+    return None
+
+
+async def _ucp_hint_on_url_change(
+    exec_context: ToolExecutionContext, current_url: str | None
+) -> str | None:
+    """Return a UCP hint only when the snapshot origin changed since the last.
+
+    Detection is folded into the shared snapshot path and keyed on the current
+    origin, so the hint surfaces once when navigation lands on a new origin
+    rather than repeating on every action against the same page.
+    """
+    session = await get_browser_session(exec_context)
+    origin = merchant_origin(current_url or "")
+    if origin == session.last_probed_origin:
+        return None
+    session.last_probed_origin = origin
+    if origin is None:
+        return None
+    return await _probe_ucp_support(exec_context, current_url)
+
+
+async def _snapshot_result(
+    exec_context: ToolExecutionContext,
+    backend: BrowserBackend,
+    *,
+    query: str | None = None,
+) -> ToolResult:
+    """Take a snapshot and append a UCP hint when navigation reaches a new
+    shopping-capable origin.
+
+    Shared by every snapshot-returning navigation tool so UCP auto-detection
+    fires after click-driven navigation, not just ``browser_open``, and only
+    when the URL's origin changes from one snapshot to the next.
+    """
+    snap = await _take_snapshot(backend, query=query)
+    text = snap["text"]
+    ucp_hint = await _ucp_hint_on_url_change(exec_context, snap["url"])
+    if ucp_hint is not None:
+        text = f"{text}\n\n{ucp_hint}"
+    return ToolResult(text=text, data=dict(snap))
+
+
 # ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
@@ -228,8 +345,7 @@ async def browser_open_tool(
     logger.info("browser_open: %s", url)
     await backend.goto(url)
     await backend.settle()
-    snap = await _take_snapshot(backend, query=query)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
 async def browser_snapshot_tool(
@@ -237,8 +353,7 @@ async def browser_snapshot_tool(
 ) -> ToolResult:
     """Re-capture an accessibility snapshot of the current page."""
     backend = await get_browser_backend(exec_context)
-    snap = await _take_snapshot(backend, query=query)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
 async def browser_click_tool(
@@ -250,8 +365,7 @@ async def browser_click_tool(
     logger.info("browser_click: %s -> %s", ref, selector)
     await backend.click(selector)
     await backend.settle()
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_fill_tool(
@@ -267,8 +381,7 @@ async def browser_fill_tool(
     await backend.fill(selector, text, submit)
     if submit:
         await backend.settle()
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_select_tool(
@@ -284,8 +397,7 @@ async def browser_select_tool(
     selector = _resolve_ref(backend, ref)
     logger.info("browser_select: %s <- %r", ref, value)
     await backend.select(selector, value)
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_wait_tool(
@@ -300,8 +412,7 @@ async def browser_wait_tool(
         "browser_wait: selector=%s state=%s timeout=%s", selector, state, timeout_ms
     )
     await backend.wait(selector, state, timeout_ms)
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_extract_tool(

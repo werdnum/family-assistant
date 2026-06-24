@@ -130,12 +130,12 @@ def test_shipped_profiles_define_effective_tool_policy() -> None:
             )
 
 
-def test_shopify_tools_are_default_on_demand_and_not_confirm_gated() -> None:
+def test_ucp_tools_are_default_on_demand_and_not_confirm_gated() -> None:
     default_settings, profiles = _load_resolved_profiles()
     shopping_tool_names = {
-        "shopify_add_to_cart",
-        "shopify_get_cart",
-        "shopify_transfer_checkout_to_human",
+        "ucp_add_to_cart",
+        "ucp_get_cart",
+        "ucp_transfer_checkout_to_human",
     }
     descriptors = {
         descriptor.name: descriptor

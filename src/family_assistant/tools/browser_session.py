@@ -27,6 +27,7 @@ from family_assistant.utils.stealth_browser import (
 )
 
 if TYPE_CHECKING:
+    from family_assistant.services.ucp import MerchantUCPProfile
     from family_assistant.tools.types import ToolExecutionContext
 
 # Default screen dimensions for coordinate-based Computer Use.
@@ -60,6 +61,15 @@ class BrowserSession:
     # semantic DOM tools can hand back to Playwright. Populated by
     # browser_dom snapshots; cleared on navigation.
     ref_cache: dict[str, str] = field(default_factory=dict)
+    # Caches UCP discovery results keyed by origin (e.g.
+    # ``"https://shop.example.com"``). Values are a ``MerchantUCPProfile`` or
+    # ``None`` (negative cache) so repeated navigation within an origin probes
+    # ``/.well-known/ucp`` at most once per session.
+    ucp_profiles: dict[str, MerchantUCPProfile | None] = field(default_factory=dict)
+    # Origin (or ``None`` for non-HTTPS) of the most recent snapshot. Used to
+    # surface the UCP hint only when navigation changes origin, rather than
+    # repeating it on every action against the same page.
+    last_probed_origin: str | None = None
 
     async def ensure_page(self) -> Page:
         """Ensure a browser page is available, creating one if necessary."""

@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
+import httpx
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
@@ -21,7 +23,11 @@ if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig, UCPConfig
 
 
+logger = logging.getLogger(__name__)
+
 UCP_PROFILE_PATH = "/.well-known/ucp"
+SHOPPING_SERVICE_NAME = "dev.ucp.shopping"
+MCP_TRANSPORT = "mcp"
 STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
@@ -37,6 +43,185 @@ class UCPSignedRequest:
 
 class UCPConfigurationError(ValueError):
     """Raised when UCP configuration is incomplete or invalid."""
+
+
+@dataclass(frozen=True, slots=True)
+class MerchantUCPProfile:
+    """Discovered UCP capabilities advertised by a merchant origin."""
+
+    origin: str
+    mcp_endpoints: tuple[str, ...]
+    service_names: tuple[str, ...]
+    capability_names: tuple[str, ...]
+    version: str | None
+
+    @property
+    def supports_shopping(self) -> bool:
+        """Whether the merchant advertises any shopping MCP endpoint."""
+        return bool(self.mcp_endpoints)
+
+    @property
+    def mcp_endpoint(self) -> str | None:
+        """The first advertised shopping MCP endpoint, if any."""
+        return self.mcp_endpoints[0] if self.mcp_endpoints else None
+
+    @property
+    def same_origin_mcp_endpoint(self) -> str | None:
+        """The first advertised endpoint that is same-origin as this merchant.
+
+        Callers post/sign only to a same-origin endpoint (untrusted metadata
+        must not redirect requests cross-host), so this is the endpoint actually
+        usable for the origin — and what the browser hint should gate on.
+        """
+        for endpoint in self.mcp_endpoints:
+            if same_origin(endpoint, self.origin):
+                return endpoint
+        return None
+
+
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def _origin_key(url: str) -> tuple[str, str, int | None] | None:
+    """Return a normalized ``(scheme, host, port)`` key, or ``None`` if invalid.
+
+    Normalizing lets an explicit default port (``:443``) or a differently-cased
+    host compare equal to its canonical form, so a valid same-origin binding is
+    not mistaken for a cross-origin one.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return None
+    return (scheme, host, port if port is not None else _DEFAULT_PORTS.get(scheme))
+
+
+def same_origin(url_a: str, url_b: str) -> bool:
+    """Whether two URLs share a scheme/host/effective-port origin."""
+    key_a = _origin_key(url_a)
+    return key_a is not None and key_a == _origin_key(url_b)
+
+
+def merchant_origin(url: str) -> str | None:
+    """Return the ``https://host`` origin for ``url``, or ``None`` if not HTTPS.
+
+    Returns ``None`` for malformed URLs (``urlparse`` raising ``ValueError``)
+    rather than propagating, since callers treat a missing origin as "fall back".
+    """
+    try:
+        parsed = urlparse(url)
+        netloc = parsed.netloc
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or not netloc:
+        return None
+    return f"https://{netloc}"
+
+
+def _shopping_mcp_endpoints(
+    origin: str, services: Mapping[str, object]
+) -> tuple[str, ...]:
+    """Return every advertised HTTPS shopping MCP endpoint, in profile order.
+
+    All candidates are returned (not just the first) so callers can apply their
+    own selection policy — e.g. the shopping tools prefer a same-origin binding
+    even when a cross-origin one is listed first. Bindings whose endpoint cannot
+    be parsed (merchant-controlled metadata) are skipped rather than allowed to
+    break discovery.
+    """
+    bindings = services.get(SHOPPING_SERVICE_NAME)
+    if not isinstance(bindings, list):
+        return ()
+    endpoints: list[str] = []
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            continue
+        if binding.get("transport") != MCP_TRANSPORT:
+            continue
+        endpoint = binding.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint:
+            continue
+        try:
+            resolved = (
+                endpoint if urlparse(endpoint).scheme else urljoin(origin, endpoint)
+            )
+            parsed_resolved = urlparse(resolved)
+            netloc = parsed_resolved.netloc
+            scheme = parsed_resolved.scheme
+        except ValueError:
+            continue
+        if scheme == "https" and netloc:
+            endpoints.append(resolved)
+    return tuple(endpoints)
+
+
+def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile | None:
+    if not isinstance(payload, dict):
+        return None
+    ucp = payload.get("ucp")
+    if not isinstance(ucp, dict):
+        return None
+    services = ucp.get("services")
+    services = services if isinstance(services, dict) else {}
+    capabilities = ucp.get("capabilities")
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    version = ucp.get("version")
+    return MerchantUCPProfile(
+        origin=origin,
+        mcp_endpoints=_shopping_mcp_endpoints(origin, services),
+        service_names=tuple(services.keys()),
+        capability_names=tuple(capabilities.keys()),
+        version=version if isinstance(version, str) else None,
+    )
+
+
+async def discover_merchant_ucp_profile(
+    url: str,
+    *,
+    client: httpx.AsyncClient,
+    timeout: float | None = None,
+) -> MerchantUCPProfile | None:
+    """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
+
+    ``url`` may be any URL on the merchant; only its HTTPS origin is used.
+    ``timeout`` bounds just the discovery GET (independent of the caller's
+    client-wide timeout) so a slow/tarpit ``/.well-known/ucp`` cannot stall a
+    subsequent request; when ``None`` the client's default timeout applies.
+    Returns ``None`` when the origin is not HTTPS, the profile is unreachable or
+    not valid JSON, or it advertises no shopping service. Network and decode
+    errors are swallowed so callers can fall back without special handling.
+    """
+    origin = merchant_origin(url)
+    if origin is None:
+        return None
+
+    profile_url = f"{origin}{UCP_PROFILE_PATH}"
+    headers = {"Accept": "application/json"}
+    try:
+        if timeout is not None:
+            response = await client.get(profile_url, headers=headers, timeout=timeout)
+        else:
+            response = await client.get(profile_url, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.debug("UCP discovery request failed for %s: %s", origin, exc)
+        return None
+    if response.is_error:
+        logger.debug(
+            "UCP discovery for %s returned HTTP %s", origin, response.status_code
+        )
+        return None
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        logger.debug("UCP discovery for %s returned an undecodable body", origin)
+        return None
+
+    return _parse_merchant_profile(origin, payload)
 
 
 def _base64_url_no_padding(value: bytes) -> str:
@@ -138,6 +323,19 @@ def has_ucp_signing_key(app_config: AppConfig) -> bool:
         ucp_config.signing_key_id
         and (ucp_config.signing_private_key or ucp_config.signing_private_key_path)
     )
+
+
+def load_ucp_signing_key(
+    app_config: AppConfig,
+) -> ec.EllipticCurvePrivateKey | None:
+    """Load and validate the configured UCP signing private key.
+
+    Returns ``None`` when no key material is configured, and raises
+    ``UCPConfigurationError`` when material is present but malformed, encrypted,
+    or the wrong type. Lets callers fail fast on a misconfigured key before doing
+    network work that cannot succeed without a usable key.
+    """
+    return _load_signing_private_key(app_config.ucp_config)
 
 
 def build_ucp_profile(app_config: AppConfig) -> dict[str, object]:
