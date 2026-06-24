@@ -66,6 +66,10 @@ class BrowserSession:
     # ``None`` (negative cache) so repeated navigation within an origin probes
     # ``/.well-known/ucp`` at most once per session.
     ucp_profiles: dict[str, MerchantUCPProfile | None] = field(default_factory=dict)
+    # Origin (or ``None`` for non-HTTPS) of the most recent snapshot. Used to
+    # surface the UCP hint only when navigation changes origin, rather than
+    # repeating it on every action against the same page.
+    last_probed_origin: str | None = None
 
     async def ensure_page(self) -> Page:
         """Ensure a browser page is available, creating one if necessary."""

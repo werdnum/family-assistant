@@ -109,11 +109,17 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
 
 
 async def discover_merchant_ucp_profile(
-    url: str, *, client: httpx.AsyncClient
+    url: str,
+    *,
+    client: httpx.AsyncClient,
+    timeout: float | None = None,
 ) -> MerchantUCPProfile | None:
     """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
 
     ``url`` may be any URL on the merchant; only its HTTPS origin is used.
+    ``timeout`` bounds just the discovery GET (independent of the caller's
+    client-wide timeout) so a slow/tarpit ``/.well-known/ucp`` cannot stall a
+    subsequent request; when ``None`` the client's default timeout applies.
     Returns ``None`` when the origin is not HTTPS, the profile is unreachable or
     not valid JSON, or it advertises no shopping service. Network and decode
     errors are swallowed so callers can fall back without special handling.
@@ -123,8 +129,12 @@ async def discover_merchant_ucp_profile(
         return None
 
     profile_url = f"{origin}{UCP_PROFILE_PATH}"
+    headers = {"Accept": "application/json"}
     try:
-        response = await client.get(profile_url, headers={"Accept": "application/json"})
+        if timeout is not None:
+            response = await client.get(profile_url, headers=headers, timeout=timeout)
+        else:
+            response = await client.get(profile_url, headers=headers)
     except httpx.HTTPError as exc:
         logger.debug("UCP discovery request failed for %s: %s", origin, exc)
         return None

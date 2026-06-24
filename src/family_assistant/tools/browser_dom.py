@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import re
 import socket
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 from urllib.parse import urlparse
@@ -49,6 +50,10 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 UCP_PROBE_TIMEOUT_SECONDS = 5.0
+# Capability suffixes are merchant-controlled; only well-formed, bounded names
+# are echoed into the assistant-authored hint to prevent instruction injection.
+_SAFE_CAPABILITY_SUFFIX = re.compile(r"[a-z0-9_.-]{1,40}")
+_MAX_HINT_CAPABILITIES = 12
 
 
 class SnapshotNode(TypedDict):
@@ -258,12 +263,22 @@ async def _origin_is_blocked(origin: str) -> bool:
 
 
 def _format_ucp_hint(profile: MerchantUCPProfile) -> str:
-    """Render a one-line hint telling the model this origin supports UCP."""
-    shopping_capabilities = [
-        name.removeprefix("dev.ucp.shopping.")
-        for name in profile.capability_names
-        if name.startswith("dev.ucp.shopping.")
-    ]
+    """Render a one-line hint telling the model this origin supports UCP.
+
+    Capability names come from the (untrusted) merchant profile and are spliced
+    into assistant-authored text, so only well-formed suffixes are kept and the
+    list is bounded — a malicious key containing newlines or instruction text
+    cannot leak into the hint as if it were assistant content.
+    """
+    shopping_capabilities: list[str] = []
+    for name in profile.capability_names:
+        if not name.startswith("dev.ucp.shopping."):
+            continue
+        suffix = name.removeprefix("dev.ucp.shopping.")
+        if _SAFE_CAPABILITY_SUFFIX.fullmatch(suffix):
+            shopping_capabilities.append(suffix)
+        if len(shopping_capabilities) >= _MAX_HINT_CAPABILITIES:
+            break
     capability_text = (
         f" Capabilities: {', '.join(shopping_capabilities)}."
         if shopping_capabilities
@@ -307,20 +322,41 @@ async def _probe_ucp_support(
     return None
 
 
+async def _ucp_hint_on_url_change(
+    exec_context: ToolExecutionContext, current_url: str | None
+) -> str | None:
+    """Return a UCP hint only when the snapshot origin changed since the last.
+
+    Detection is folded into the shared snapshot path and keyed on the current
+    origin, so the hint surfaces once when navigation lands on a new origin
+    rather than repeating on every action against the same page.
+    """
+    session = await get_browser_session(exec_context)
+    origin = merchant_origin(current_url or "")
+    if origin == session.last_probed_origin:
+        return None
+    session.last_probed_origin = origin
+    if origin is None:
+        return None
+    return await _probe_ucp_support(exec_context, current_url)
+
+
 async def _snapshot_result(
     exec_context: ToolExecutionContext,
     backend: BrowserBackend,
     *,
     query: str | None = None,
 ) -> ToolResult:
-    """Take a snapshot and append a UCP hint when the current origin supports it.
+    """Take a snapshot and append a UCP hint when navigation reaches a new
+    shopping-capable origin.
 
     Shared by every snapshot-returning navigation tool so UCP auto-detection
-    fires after click-driven navigation, not just ``browser_open``.
+    fires after click-driven navigation, not just ``browser_open``, and only
+    when the URL's origin changes from one snapshot to the next.
     """
     snap = await _take_snapshot(backend, query=query)
     text = snap["text"]
-    ucp_hint = await _probe_ucp_support(exec_context, snap["url"])
+    ucp_hint = await _ucp_hint_on_url_change(exec_context, snap["url"])
     if ucp_hint is not None:
         text = f"{text}\n\n{ucp_hint}"
     return ToolResult(text=text, data=dict(snap))

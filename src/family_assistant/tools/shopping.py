@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 
 SHOPIFY_FALLBACK_MCP_PATH = "/api/ucp/mcp"
+# Bound the discovery GET so a store without a UCP profile (which may tarpit the
+# well-known path) falls back to the Shopify endpoint promptly instead of paying
+# the full MCP POST timeout before each call.
+UCP_DISCOVERY_TIMEOUT_SECONDS = 5.0
 
 
 SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -162,15 +166,30 @@ async def _resolve_ucp_endpoint(business_url: str, *, client: httpx.AsyncClient)
 
     Discovers the endpoint from the merchant's ``/.well-known/ucp`` profile and
     falls back to the Shopify convention (``/api/ucp/mcp``) when the merchant
-    advertises no shopping MCP binding.
+    advertises no usable shopping MCP binding.
+
+    The discovered endpoint is only accepted when it is same-origin as
+    ``business_url``. The profile is untrusted merchant-controlled metadata, so a
+    cross-origin (or protocol-relative) endpoint could otherwise redirect the
+    signed POST at an arbitrary/internal host — an SSRF vector. Discovery is also
+    given a short timeout so a store that does not publish a profile (and may
+    tarpit the well-known path) falls back promptly instead of stalling the POST.
     """
     origin = merchant_origin(business_url)
     if origin is None:
         msg = "business_url must be an https merchant origin."
         raise ValueError(msg)
-    profile = await discover_merchant_ucp_profile(business_url, client=client)
+    profile = await discover_merchant_ucp_profile(
+        business_url, client=client, timeout=UCP_DISCOVERY_TIMEOUT_SECONDS
+    )
     if profile is not None and profile.mcp_endpoint is not None:
-        return profile.mcp_endpoint
+        if merchant_origin(profile.mcp_endpoint) == origin:
+            return profile.mcp_endpoint
+        logger.warning(
+            "Ignoring cross-origin UCP endpoint %s advertised by %s",
+            profile.mcp_endpoint,
+            origin,
+        )
     return f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}"
 
 

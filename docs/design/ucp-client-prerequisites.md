@@ -75,10 +75,21 @@ A relative `endpoint` is resolved against the origin; a non-HTTPS endpoint is re
 ### Endpoint resolution with Shopify fallback
 
 The UCP tools resolve the merchant MCP endpoint by discovery first, then fall back to the Shopify
-convention (`{origin}/api/ucp/mcp`) when the merchant does not advertise a discoverable shopping MCP
+convention (`{origin}/api/ucp/mcp`) when the merchant does not advertise a usable shopping MCP
 binding. This keeps existing Shopify stores working even if they do not serve a `/.well-known/ucp`
 profile, while letting any compliant UCP merchant be reached at its advertised endpoint. Discovery
 reuses the same `httpx.AsyncClient` that performs the subsequent signed/unsigned tool POST.
+
+Two safeguards apply to the discovered endpoint because the profile is untrusted merchant-controlled
+metadata:
+
+- **Same-origin only.** A discovered endpoint is accepted only when it is same-origin as the
+  `business_url`. A cross-origin (or protocol-relative, post-`urljoin`) endpoint is ignored and the
+  Shopify fallback is used instead, so a malicious profile cannot redirect the signed POST at an
+  arbitrary or internal host (SSRF).
+- **Bounded discovery time.** The discovery GET has its own short timeout (independent of the longer
+  MCP POST timeout), so a store that does not publish a profile — and may tarpit the well-known path
+  — falls back promptly instead of stalling each call.
 
 ### Tool rename
 
@@ -96,15 +107,19 @@ in lockstep.
 
 ### Browser auto-detection
 
-So the assistant knows a site is shoppable while browsing, the snapshot-returning browser tools
-(`browser_open`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_select`,
-`browser_wait`) probe the current origin's `/.well-known/ucp` after the action (HTTPS origins only)
-using the same discovery service. Probing every snapshot-returning action — not just `browser_open`
-— means the common flow of opening a search page and clicking through to a merchant still surfaces
-the hint. When a shopping-capable profile is found, a short hint line is appended to the
-accessibility snapshot the model reads, naming the advertised capabilities and the `business_url` to
-pass to the UCP tools. Probe results (including negative results) are cached per browser session
-keyed by origin, so repeated navigation within the same origin costs at most one extra request.
+So the assistant knows a site is shoppable while browsing, UCP detection is folded into the shared
+snapshot path used by every snapshot-returning browser tool (`browser_open`, `browser_snapshot`,
+`browser_click`, `browser_fill`, `browser_select`, `browser_wait`). After the snapshot, the current
+origin's `/.well-known/ucp` is probed (HTTPS origins only) using the same discovery service — but
+only when the origin **changed** since the previous snapshot, so the common flow of opening a search
+page and clicking through to a merchant surfaces the hint exactly once on arrival rather than
+repeating it on every action against the same page. When a shopping-capable profile is found, a
+short hint line is appended to the accessibility snapshot the model reads, naming the advertised
+capabilities and the `business_url` to pass to the UCP tools. Capability names come from the
+untrusted merchant profile, so only well-formed suffixes are echoed (and the list is bounded) to
+keep merchant-controlled text from injecting instructions into the assistant-authored hint. Probe
+results (including negative results) are cached per browser session keyed by origin, so revisiting
+an origin costs at most one extra request.
 
 Because the probe issues an outbound request from the Family Assistant process (not from the browser
 sandbox), the origin host is resolved first and the probe is skipped for any host that resolves to a

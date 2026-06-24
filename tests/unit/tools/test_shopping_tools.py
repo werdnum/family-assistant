@@ -57,6 +57,7 @@ class _FakeAsyncClient:
         url: str,
         *,
         headers: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> httpx.Response:
         self.profile_requests.append(url)
         if self.profile_responses:
@@ -190,6 +191,42 @@ async def test_ucp_add_to_cart_uses_discovered_merchant_endpoint(
 
     request = _FakeAsyncClient.requests[0]
     assert request.url == "https://shop.example.com/ucp/rpc"
+
+
+async def test_ucp_add_to_cart_rejects_cross_origin_discovered_endpoint(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://internal-host/api/ucp/mcp",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    # A cross-origin endpoint is ignored; the POST stays on the merchant origin.
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop.example.com/api/ucp/mcp"
 
 
 async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
