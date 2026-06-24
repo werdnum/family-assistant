@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
+import httpx
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
@@ -21,7 +23,11 @@ if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig, UCPConfig
 
 
+logger = logging.getLogger(__name__)
+
 UCP_PROFILE_PATH = "/.well-known/ucp"
+SHOPPING_SERVICE_NAME = "dev.ucp.shopping"
+MCP_TRANSPORT = "mcp"
 STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
@@ -37,6 +43,102 @@ class UCPSignedRequest:
 
 class UCPConfigurationError(ValueError):
     """Raised when UCP configuration is incomplete or invalid."""
+
+
+@dataclass(frozen=True, slots=True)
+class MerchantUCPProfile:
+    """Discovered UCP capabilities advertised by a merchant origin."""
+
+    origin: str
+    mcp_endpoint: str | None
+    service_names: tuple[str, ...]
+    capability_names: tuple[str, ...]
+    version: str | None
+
+    @property
+    def supports_shopping(self) -> bool:
+        """Whether the merchant advertises a reachable shopping MCP endpoint."""
+        return self.mcp_endpoint is not None
+
+
+def merchant_origin(url: str) -> str | None:
+    """Return the ``https://host`` origin for ``url``, or ``None`` if not HTTPS."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return None
+    return f"https://{parsed.netloc}"
+
+
+def _shopping_mcp_endpoint(origin: str, services: Mapping[str, object]) -> str | None:
+    bindings = services.get(SHOPPING_SERVICE_NAME)
+    if not isinstance(bindings, list):
+        return None
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            continue
+        if binding.get("transport") != MCP_TRANSPORT:
+            continue
+        endpoint = binding.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint:
+            continue
+        resolved = endpoint if urlparse(endpoint).scheme else urljoin(origin, endpoint)
+        if urlparse(resolved).scheme == "https":
+            return resolved
+    return None
+
+
+def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile | None:
+    if not isinstance(payload, dict):
+        return None
+    ucp = payload.get("ucp")
+    if not isinstance(ucp, dict):
+        return None
+    services = ucp.get("services")
+    services = services if isinstance(services, dict) else {}
+    capabilities = ucp.get("capabilities")
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    version = ucp.get("version")
+    return MerchantUCPProfile(
+        origin=origin,
+        mcp_endpoint=_shopping_mcp_endpoint(origin, services),
+        service_names=tuple(services.keys()),
+        capability_names=tuple(capabilities.keys()),
+        version=version if isinstance(version, str) else None,
+    )
+
+
+async def discover_merchant_ucp_profile(
+    url: str, *, client: httpx.AsyncClient
+) -> MerchantUCPProfile | None:
+    """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
+
+    ``url`` may be any URL on the merchant; only its HTTPS origin is used.
+    Returns ``None`` when the origin is not HTTPS, the profile is unreachable or
+    not valid JSON, or it advertises no shopping service. Network and decode
+    errors are swallowed so callers can fall back without special handling.
+    """
+    origin = merchant_origin(url)
+    if origin is None:
+        return None
+
+    profile_url = f"{origin}{UCP_PROFILE_PATH}"
+    try:
+        response = await client.get(profile_url, headers={"Accept": "application/json"})
+    except httpx.HTTPError as exc:
+        logger.debug("UCP discovery request failed for %s: %s", origin, exc)
+        return None
+    if response.is_error:
+        logger.debug(
+            "UCP discovery for %s returned HTTP %s", origin, response.status_code
+        )
+        return None
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        logger.debug("UCP discovery for %s returned non-JSON body", origin)
+        return None
+
+    return _parse_merchant_profile(origin, payload)
 
 
 def _base64_url_no_padding(value: bytes) -> str:
