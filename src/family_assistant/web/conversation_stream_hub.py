@@ -740,7 +740,7 @@ class ConversationStreamHub:
         # retains the DB context and accumulated strings) as soon as the
         # producer finishes. Without this, completed tasks pile up in
         # ``state.turns`` and leak memory with every turn.
-        def _release(completed: asyncio.Task[None], turn_id: str = turn_id) -> None:
+        def _release(_completed: asyncio.Task[None], turn_id: str = turn_id) -> None:
             record = state.turns.get(turn_id)
             if record is None:
                 return
@@ -748,6 +748,7 @@ class ConversationStreamHub:
             # The controller is only meaningful for a running turn; drop it
             # so a finished turn can't be steered/interrupted and so its
             # queued inputs don't linger.
+            controller = record.mid_turn_controller
             record.mid_turn_controller = None
             orphan_cancel = record.on_orphan_cancel
             record.on_orphan_cancel = None
@@ -758,12 +759,18 @@ class ConversationStreamHub:
             # in the window after attach_producer_task but before run_turn_producer
             # runs — so its try/except never executes. End the turn now.
             if record.status == "running":
+                # Classify like the producer's own cancellation path: a user Stop
+                # set the controller's interrupt flag -> 'cancelled'; any other
+                # cancellation (app shutdown, supervisor teardown) -> 'failed'.
+                user_requested_stop = (
+                    controller is not None and controller.should_interrupt()
+                )
                 end_status: TurnStatus = (
-                    "cancelled" if completed.cancelled() else "failed"
+                    "cancelled" if user_requested_stop else "failed"
                 )
                 # Only persist a stopped marker for a user-cancelled orphan, not
                 # a teardown 'failed'.
-                persist = orphan_cancel if end_status == "cancelled" else None
+                persist = orphan_cancel if user_requested_stop else None
                 cleanup = asyncio.ensure_future(
                     self._end_unfinished_turn(
                         conversation_id, turn_id, end_status, persist

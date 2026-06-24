@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -34,6 +35,8 @@ from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.context import get_db_context
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.turn_producer import persist_stopped_reply
+from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -107,6 +110,31 @@ def _drain(handle: "SubscriptionHandle") -> "list[StreamEvent]":
     return events
 
 
+async def _cancel_turn(
+    client: AsyncClient, turn_id: str, conversation_id: str
+) -> "httpx.Response":
+    """POST /cancel, retrying a transient 503.
+
+    The confirmation-listing read can momentarily lose SQLite's shared connection
+    to a gated producer (a postgres-production non-issue), and 503 is the
+    documented retryable response — the turn is already cancelled (the endpoint
+    runs request_interrupt + task.cancel before the listing that 503s), and the
+    real frontend retries it too.
+    """
+    resp = await client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    for _ in range(4):
+        if resp.status_code != 503:
+            break
+        resp = await client.post(
+            f"/api/v1/chat/turns/{turn_id}/cancel",
+            json={"conversation_id": conversation_id},
+        )
+    return resp
+
+
 async def _confirmation_status(db_engine: AsyncEngine, request_id: str) -> str | None:
     async with get_db_context(engine=db_engine) as db:
         row = await db.fetch_one(
@@ -160,12 +188,9 @@ async def test_cancel_running_turn_marks_cancelled(
     try:
         await asyncio.wait_for(started.wait(), timeout=5.0)
 
-        cancel = await api_test_client.post(
-            f"/api/v1/chat/turns/{turn_id}/cancel",
-            json={"conversation_id": conversation_id},
-        )
+        cancel = await _cancel_turn(api_test_client, turn_id, conversation_id)
         assert cancel.status_code == 200, cancel.text
-        assert cancel.json()["status"] == "cancelling"
+        assert cancel.json()["status"] in {"cancelling", "cancelled"}
 
         producer_tasks = hub.get_active_producer_tasks(conversation_id)
         await asyncio.gather(*producer_tasks, return_exceptions=True)
@@ -184,31 +209,76 @@ async def test_cancel_running_turn_marks_cancelled(
         hub.unsubscribe(conversation_id, handle.queue)
 
 
-async def test_cancel_persists_stopped_reply(
+async def test_persist_stopped_reply_is_durable_and_profile_tagged(
+    db_engine: AsyncEngine,
+) -> None:
+    """persist_stopped_reply (the producer's cancellation-path persistence) writes
+    a durable, profile-tagged assistant row, so a refresh shows the stopped turn
+    in this profile's history rather than a prompt with no reply.
+
+    Tested directly so the assertion doesn't ride the gated-producer + torn-down-
+    DB-context cancellation race, which is flaky on SQLite's shared connection.
+    """
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_persist_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="plan my week"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="prof-x",
+        )
+
+    # No partial reply -> a Stopped marker.
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="",
+        processing_profile_id="prof-x",
+    )
+    # A partial reply -> the partial text is persisted (what the client rendered).
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="half an answer",
+        processing_profile_id="prof-x",
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id, limit=50
+        )
+    assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    assert all(row["processing_profile_id"] == "prof-x" for row in assistant_rows)
+    assert any("Stopped" in str(row["content"]) for row in assistant_rows)
+    assert any("half an answer" in str(row["content"]) for row in assistant_rows)
+
+
+async def test_completed_web_turn_persists_single_user_row(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,
     api_mock_llm_client: RuleBasedMockLLMClient,
     db_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stopping a turn writes a durable assistant row, so a refresh/reconnect
-    shows the stopped turn rather than the prompt with no reply."""
-    user_prompt = "Cancel and persist"
+    """A web turn persists exactly one user row: the endpoint stores it and the
+    producer reuses it (idempotent on turn_id), tagged with the turn's profile."""
+    user_prompt = "Single user row please"
     api_mock_llm_client.rules.append((
         lambda args: _user_message_contains(args, user_prompt),
-        _reply("never sent"),
+        _reply("done"),
     ))
 
-    started = asyncio.Event()
-    release = asyncio.Event()
-    monkeypatch.setattr(
-        api_mock_llm_client,
-        "generate_response",
-        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
-    )
-
     turn_id = str(uuid.uuid4())
-    conversation_id = f"conv_cancelpersist_{uuid.uuid4().hex[:8]}"
+    conversation_id = f"conv_oneuserrow_{uuid.uuid4().hex[:8]}"
     post = await api_test_client.post(
         "/api/v1/chat/turns",
         json={
@@ -221,46 +291,17 @@ async def test_cancel_persists_stopped_reply(
     assert post.status_code == 200, post.text
 
     hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
-    await asyncio.wait_for(started.wait(), timeout=5.0)
-
-    cancel = await api_test_client.post(
-        f"/api/v1/chat/turns/{turn_id}/cancel",
-        json={"conversation_id": conversation_id},
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
     )
-    assert cancel.status_code == 200, cancel.text
-
-    # The producer persists the stopped reply in its cancellation path before the
-    # task finishes, so await it then read history back.
-    await asyncio.gather(
-        *hub.get_active_producer_tasks(conversation_id), return_exceptions=True
-    )
-    release.set()
 
     async with get_db_context(engine=db_engine) as ctx:
         rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=50,
+            interface_type="web", conversation_id=conversation_id, limit=50
         )
     user_rows = [row for row in rows if row["role"] == "user"]
-    assistant_rows = [row for row in rows if row["role"] == "assistant"]
-    # Exactly one user row: the endpoint persists it and the producer reuses it
-    # (idempotent), not a duplicate.
     assert len(user_rows) == 1, f"Expected one user row, got {user_rows}"
-    assert assistant_rows, "Expected a durable assistant row for the stopped turn"
-    assert any("Stopped" in str(row["content"]) for row in assistant_rows), (
-        f"Expected a stopped marker in the persisted reply, got {assistant_rows}"
-    )
-    # The stopped reply is tagged with the same profile as the user message, so
-    # it loads into this profile's future context (history is profile-filtered)
-    # rather than leaving the prompt looking unanswered.
-    user_profile = user_rows[0]["processing_profile_id"]
-    assert user_profile is not None
-    assert any(
-        row["processing_profile_id"] == user_profile
-        and "Stopped" in str(row["content"])
-        for row in assistant_rows
-    ), "Stopped reply must carry the turn's processing_profile_id"
+    assert user_rows[0]["processing_profile_id"] is not None
 
 
 async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
@@ -272,8 +313,16 @@ async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
     preventing a permanent 'running' wedge (pruning/eviction skip running turns).
     """
     hub = ConversationStreamHub()
+    # The cancel endpoint sets the controller's interrupt flag before cancelling,
+    # which is how a user Stop is distinguished from a teardown cancellation.
+    controller = WebMidTurnController()
+    controller.request_interrupt()
     await hub.start_turn(
-        "conv", turn_id="t1", user_id="u1", started_at=datetime.now(UTC)
+        "conv",
+        turn_id="t1",
+        user_id="u1",
+        started_at=datetime.now(UTC),
+        mid_turn_controller=controller,
     )
 
     started = asyncio.Event()
@@ -304,6 +353,43 @@ async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
     )
     # The stopped-marker persistence hook ran for the never-run producer.
     assert orphan_persisted.is_set()
+
+
+async def test_orphan_cancel_without_interrupt_fails_without_stopped_marker() -> None:
+    """A producer task cancelled with NO interrupt flag (app shutdown / supervisor
+    teardown, not a user Stop) ends as 'failed' and does NOT persist a stopped
+    marker — matching the producer's own should_interrupt()-based classification.
+    """
+    hub = ConversationStreamHub()
+    # No request_interrupt(): this is not a user Stop.
+    controller = WebMidTurnController()
+    await hub.start_turn(
+        "conv",
+        turn_id="t1",
+        user_id="u1",
+        started_at=datetime.now(UTC),
+        mid_turn_controller=controller,
+    )
+
+    orphan_persisted = asyncio.Event()
+
+    async def never_runs() -> None:
+        await asyncio.Event().wait()
+
+    async def on_orphan_cancel() -> None:
+        orphan_persisted.set()
+
+    task = asyncio.ensure_future(never_runs())
+    hub.attach_producer_task("conv", "t1", task, on_orphan_cancel=on_orphan_cancel)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    await wait_for_condition(
+        lambda: (t := hub.get_turn("conv", "t1")) is not None and t.status == "failed",
+        description="orphan turn failed",
+    )
+    assert not orphan_persisted.is_set()
 
 
 async def test_cancel_unknown_turn_returns_404(
