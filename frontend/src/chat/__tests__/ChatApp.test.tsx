@@ -375,6 +375,59 @@ describe('ChatApp', () => {
     ).toBeInTheDocument();
   }, 30000);
 
+  it('loads assistant history rows with attachments without passing message attachments to assistant-ui', async () => {
+    const { server } = await import('../../test/setup.js');
+    const { http, HttpResponse } = await import('msw');
+
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        if (params.conversationId !== 'web_conv_assistant_attachment') {
+          return HttpResponse.json({ messages: [] });
+        }
+
+        return HttpResponse.json({
+          messages: [
+            {
+              internal_id: 101,
+              role: 'user',
+              content: 'Make a chart',
+              timestamp: '2026-06-24T12:00:00Z',
+            },
+            {
+              internal_id: 102,
+              role: 'assistant',
+              content: 'Here is the chart.',
+              timestamp: '2026-06-24T12:00:01Z',
+              attachments: [
+                {
+                  attachment_id: 'chart-attachment',
+                  type: 'attachment_reference',
+                },
+              ],
+            },
+          ],
+        });
+      })
+    );
+    mockLocalStorage.getItem.mockImplementation((key: string) =>
+      key === 'lastConversationId' ? 'web_conv_assistant_attachment' : null
+    );
+
+    await renderChatApp({
+      waitForReady: true,
+    });
+
+    expect(await screen.findByText('Here is the chart.')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId('tool-group-trigger'));
+    expect(await screen.findByText('1 attachment ready')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute(
+      'href',
+      '/api/attachments/chart-attachment'
+    );
+    expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
+  });
+
   // Note: Attachment display from assistant message metadata is covered by E2E Playwright tests:
   // - test_tool_attachment_persistence_after_page_reload (tests/functional/web/test_chat_ui_attachment_response.py)
   // - test_attachment_response_flow (tests/functional/web/test_chat_ui_attachment_response.py)
