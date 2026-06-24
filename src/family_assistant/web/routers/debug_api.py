@@ -16,13 +16,14 @@ from family_assistant.config_inspection import (
     is_sensitive_field_name,
     redact_sensitive_config,
 )
+from family_assistant.tool_inventory import ToolInventory, build_tool_inventory
 from family_assistant.web.auth import (
     AUTH_ENABLED,
     OIDC_CLIENT_ID,
     OIDC_DISCOVERY_URL,
     SESSION_SECRET_KEY,
 )
-from family_assistant.web.dependencies import get_current_user
+from family_assistant.web.dependencies import get_current_user, get_diagnostics_reader
 
 logger = logging.getLogger(__name__)
 debug_api_router = APIRouter()
@@ -382,6 +383,139 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
     payload: dict[str, Any] = {
         "default_service_profile_id": config.default_service_profile_id,
         "default_profile_settings": default_settings_dump,
+        "profiles": profiles_info,
+        "profile_count": len(profiles_info),
+        "registered_service_ids": sorted(processing_services_registry.keys()),
+    }
+
+    indent = None if format == "raw" else 2
+    return Response(
+        content=json.dumps(payload, indent=indent, sort_keys=False, default=str),
+        media_type="application/json",
+    )
+
+
+async def _inventory_for_service(
+    profile_id: str,
+    service: object,
+    *,
+    can_confirm: bool,
+) -> ToolInventory | None:
+    """Build the tool inventory for one live processing service, if possible.
+
+    Returns ``None`` when the service has no tools provider wired up (e.g. a
+    delegation-only stub), so the caller can report it explicitly rather than
+    silently dropping the profile.
+    """
+    tools_provider = getattr(service, "tools_provider", None)
+    if tools_provider is None:
+        return None
+    on_demand_view = getattr(service, "on_demand_view", None)
+    return await build_tool_inventory(
+        tools_provider=tools_provider,
+        on_demand_view=on_demand_view,
+        can_confirm=can_confirm,
+        profile_id=profile_id,
+    )
+
+
+@debug_api_router.get("/profiles/tools")
+async def dump_profile_tool_inventory(  # noqa: A002 - FastAPI query param shadows builtin
+    request: Request,
+    _reader: Annotated[dict, Depends(get_diagnostics_reader)],
+    format: Annotated[
+        str,
+        Query(
+            description=(
+                "Output format: 'json' (pretty-printed JSON) or 'raw' (compact JSON)."
+            ),
+            pattern="^(json|raw)$",
+        ),
+    ] = "json",
+    profile_id: Annotated[
+        str | None,
+        Query(description="If set, return only the inventory for this profile."),
+    ] = None,
+    can_confirm: Annotated[
+        bool,
+        Query(
+            description=(
+                "Model the per-turn confirmation capability. When false, "
+                "confirmation-gated tools the policy would drop are excluded, "
+                "matching interactions that cannot prompt for confirmation."
+            ),
+        ),
+    ] = True,
+    include_tools: Annotated[
+        bool,
+        Query(
+            description=(
+                "Include the per-tool size list. Set false for summary-only "
+                "totals (count + token estimate per profile)."
+            ),
+        ),
+    ] = True,
+) -> Response:
+    """Dump the resolved per-profile tool advertisement for bloat analysis.
+
+    For every live processing profile this reports the tools advertised to the
+    LLM, partitioned into:
+
+    - ``eager`` — advertised on **every** turn (the always-present tools plus
+      the ``activate_tools`` meta-tool when on-demand tools exist). This is the
+      headline ``advertised_per_turn_tokens`` figure and the main driver of
+      tool bloat.
+    - ``on_demand`` — hidden behind progressive disclosure until the model
+      calls ``activate_tools`` (``tools_config.on_demand_local_tools`` /
+      ``on_demand_mcp_server_ids``). These cost nothing until activated.
+
+    Each tool carries a serialized size and a heuristic token estimate, and a
+    ``by_source`` breakdown attributes the surface to ``local`` tools vs each
+    ``mcp:<server_id>`` so you can see which MCP server is inflating the prompt.
+
+    Unlike ``/profiles``, this exposes only tool names and sizes — no prompts or
+    policy bodies — so it is gated by :func:`get_diagnostics_reader`, meaning the
+    read-only ``DIAGNOSTICS_READONLY_TOKEN`` unlocks it for external monitors.
+
+    The token figures are a heuristic (serialized JSON characters / 4) for
+    relative comparison, not an exact provider token count.
+    """
+    app = request.app
+    processing_services_registry = getattr(app.state, "processing_services", None) or {}
+
+    matched_ids = sorted(processing_services_registry.keys())
+    if profile_id is not None:
+        if profile_id not in processing_services_registry:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile '{profile_id}' not found in the live service registry",
+            )
+        matched_ids = [profile_id]
+
+    # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized inventory dicts
+    profiles_info: list[dict[str, Any]] = []
+    for pid in matched_ids:
+        service = processing_services_registry[pid]
+        inventory = await _inventory_for_service(pid, service, can_confirm=can_confirm)
+        if inventory is None:
+            profiles_info.append({
+                "profile_id": pid,
+                "error": "No tools provider wired into this profile's service.",
+            })
+            continue
+        inventory_dict = inventory.to_dict()
+        if not include_tools:
+            inventory_dict["eager"].pop("tools", None)
+            inventory_dict["on_demand"].pop("tools", None)
+        profiles_info.append(inventory_dict)
+
+    # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized inventory dicts
+    payload: dict[str, Any] = {
+        "can_confirm": can_confirm,
+        "token_estimate_note": (
+            "estimated_tokens is a heuristic (serialized JSON characters / 4) "
+            "for relative comparison, not an exact provider token count."
+        ),
         "profiles": profiles_info,
         "profile_count": len(profiles_info),
         "registered_service_ids": sorted(processing_services_registry.keys()),

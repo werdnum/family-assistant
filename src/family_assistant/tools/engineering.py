@@ -26,11 +26,13 @@ from family_assistant.config_inspection import (
 )
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.paths import PROJECT_ROOT
+from family_assistant.tool_inventory import build_tool_inventory
 from family_assistant.tools.infrastructure import find_provider_by_type
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
@@ -664,6 +666,117 @@ async def get_profile_config(
     )
 
 
+def _resolve_services_registry(
+    exec_context: ToolExecutionContext,
+) -> Mapping[str, object] | None:
+    """Return the live profile->service registry from the execution context.
+
+    The registry is the shared mapping every profile's service holds a
+    reference to, so any profile (including engineer) can introspect the
+    resolved tool set of its siblings. ``None`` means the context is missing
+    infrastructure and the caller should surface a clear error.
+    """
+    processing_service = exec_context.processing_service
+    if processing_service is None:
+        return None
+    registry = getattr(processing_service, "processing_services_registry", None)
+    if not registry:
+        return None
+    return registry
+
+
+async def get_profile_tool_inventory(
+    exec_context: ToolExecutionContext,
+    profile_id: str | None = None,
+    can_confirm: bool = True,
+) -> ToolResult:
+    """Return the resolved per-profile tool advertisement for bloat analysis.
+
+    Each profile advertises an ``eager`` set of tools to the LLM on every turn
+    plus, when on-demand tools exist, the ``activate_tools`` meta-tool. The
+    ``eager`` token estimate is the per-turn cost (the main driver of tool
+    bloat); ``on_demand`` tools are hidden behind progressive disclosure until
+    activated and cost nothing until then. ``by_source`` attributes the surface
+    to ``local`` tools vs each ``mcp:<server_id>``.
+
+    Without ``profile_id`` this returns a summary across all live profiles
+    (counts and token estimates, no per-tool lists, sorted by per-turn cost).
+    With ``profile_id`` it returns the full per-tool breakdown for that profile.
+
+    ``can_confirm`` models the per-turn confirmation capability; pass ``false``
+    to see the surface for interactions that cannot prompt for confirmation.
+    Token figures are a heuristic (serialized JSON characters / 4) for relative
+    comparison, not an exact provider token count.
+    """
+    logger.info(
+        "get_profile_tool_inventory: profile_id=%s can_confirm=%s",
+        profile_id,
+        can_confirm,
+    )
+
+    registry = _resolve_services_registry(exec_context)
+    if registry is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "No live processing-service registry available. This tool must "
+                    "be invoked from within a live processing flow."
+                )
+            }
+        )
+
+    if profile_id is not None and profile_id not in registry:
+        return ToolResult(
+            data={
+                "error": f"Profile {profile_id!r} not found in the live registry",
+                "profile_ids": sorted(registry.keys()),
+            }
+        )
+
+    target_ids = [profile_id] if profile_id is not None else sorted(registry.keys())
+
+    inventories = []
+    for pid in target_ids:
+        service = registry[pid]
+        tools_provider = getattr(service, "tools_provider", None)
+        if tools_provider is None:
+            inventories.append({
+                "profile_id": pid,
+                "error": "No tools provider wired into this profile's service.",
+            })
+            continue
+        inventory = await build_tool_inventory(
+            tools_provider=tools_provider,
+            on_demand_view=getattr(service, "on_demand_view", None),
+            can_confirm=can_confirm,
+            profile_id=pid,
+        )
+        inventory_dict = inventory.to_dict()
+        if profile_id is None:
+            # Summary mode: drop the per-tool lists to keep the payload compact.
+            inventory_dict["eager"].pop("tools", None)
+            inventory_dict["on_demand"].pop("tools", None)
+        inventories.append(inventory_dict)
+
+    if profile_id is None:
+        inventories.sort(
+            key=lambda entry: entry.get("advertised_per_turn_tokens", 0),
+            reverse=True,
+        )
+
+    return ToolResult(
+        data={
+            "can_confirm": can_confirm,
+            "token_estimate_note": (
+                "estimated_tokens is a heuristic (serialized JSON characters / 4) "
+                "for relative comparison, not an exact provider token count."
+            ),
+            "profiles": inventories,
+            "profile_count": len(inventories),
+        }
+    )
+
+
 async def get_system_info(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
@@ -936,6 +1049,45 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "Service profile id to dump. Omit to list available "
                             "profile ids and view default_profile_settings."
                         ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_profile_tool_inventory",
+            "description": (
+                "Diagnose per-profile tool bloat: the resolved set of tools each "
+                "profile advertises to the LLM, split into 'eager' (sent every "
+                "turn — the main token cost) vs 'on_demand' (hidden behind the "
+                "activate_tools meta-tool until activated). Each tool has a "
+                "serialized size and heuristic token estimate, and by_source "
+                "attributes the surface to 'local' tools vs each 'mcp:<server_id>'. "
+                "Without profile_id returns a summary across all profiles sorted by "
+                "per-turn cost; with profile_id returns the full per-tool breakdown. "
+                "Token figures are a heuristic (JSON chars / 4), not exact."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": (
+                            "Profile id for a full per-tool breakdown. Omit for a "
+                            "summary across all profiles."
+                        ),
+                    },
+                    "can_confirm": {
+                        "type": "boolean",
+                        "description": (
+                            "Model the per-turn confirmation capability. When false, "
+                            "confirmation-gated tools the policy would drop are "
+                            "excluded. Defaults to true."
+                        ),
+                        "default": True,
                     },
                 },
                 "required": [],

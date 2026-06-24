@@ -105,6 +105,7 @@ from family_assistant.tools.engineering import (
     get_llm_request_history,
     get_mcp_server_status,
     get_profile_config,
+    get_profile_tool_inventory,
     get_resolved_config,
     get_system_info,
     query_database,
@@ -437,6 +438,7 @@ __all__ = [
     "reconnect_mcp_server",
     "get_resolved_config",
     "get_profile_config",
+    "get_profile_tool_inventory",
     "get_system_info",
     # On-demand tool activation
     "ACTIVATE_TOOLS_DEFINITION",
@@ -637,6 +639,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "reconnect_mcp_server": reconnect_mcp_server,
     "get_resolved_config": get_resolved_config,
     "get_profile_config": get_profile_config,
+    "get_profile_tool_inventory": get_profile_tool_inventory,
     "get_system_info": get_system_info,
     # MQTT tools
     "mqtt_publish": mqtt_publish_tool,
@@ -1303,6 +1306,11 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_profile_config": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "get_profile_tool_inventory": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,

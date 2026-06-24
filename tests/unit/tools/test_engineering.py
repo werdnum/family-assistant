@@ -402,6 +402,7 @@ _ENGINEERING_TOOL_NAMES: frozenset[str] = frozenset({
     "reconnect_mcp_server",
     "get_resolved_config",
     "get_profile_config",
+    "get_profile_tool_inventory",
     "get_system_info",
 })
 
