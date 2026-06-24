@@ -397,6 +397,33 @@ async def test_ucp_transfer_checkout_to_human_requires_signing_before_discovery(
     assert _FakeAsyncClient.requests == []
 
 
+async def test_ucp_transfer_checkout_to_human_rejects_malformed_signing_key(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = []
+    app_config = AppConfig(
+        server_url="https://assistant.example",
+        ucp_config=UCPConfig(
+            signing_key_id="platform-2026",
+            signing_private_key="-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="private key"):
+        await shopping.ucp_transfer_checkout_to_human_tool(
+            _context(app_config),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/cart_abc123",
+        )
+
+    # A present-but-malformed key fails before contacting the merchant.
+    assert _FakeAsyncClient.profile_requests == []
+    assert _FakeAsyncClient.requests == []
+
+
 async def test_ucp_transfer_checkout_to_human_rejects_cart_error_outcome(
     monkeypatch: MonkeyPatch,
 ) -> None:

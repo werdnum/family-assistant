@@ -19,6 +19,7 @@ from family_assistant.services.ucp import (
     UCPConfigurationError,
     discover_merchant_ucp_profile,
     has_ucp_signing_key,
+    load_ucp_signing_key,
     merchant_origin,
     sign_ucp_request,
     ucp_agent_header,
@@ -288,7 +289,12 @@ def _raise_for_ucp_failure(
 
 
 def _require_signing_config(app_config: AppConfig) -> None:
-    """Raise a clear error when UCP signing key material is not configured."""
+    """Raise a clear error when UCP signing is not usable.
+
+    Validates both presence and that the key material actually loads (not
+    malformed/encrypted/wrong-type), so a misconfigured deployment fails fast
+    before any merchant network work that cannot succeed.
+    """
     if not has_ucp_signing_key(app_config):
         msg = (
             "UCP checkout handoff requires UCP signing configuration. "
@@ -296,6 +302,10 @@ def _require_signing_config(app_config: AppConfig) -> None:
             "UCP_SIGNING_PRIVATE_KEY_PATH."
         )
         raise ValueError(msg)
+    try:
+        load_ucp_signing_key(app_config)
+    except UCPConfigurationError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 async def _post_ucp_tool_call(

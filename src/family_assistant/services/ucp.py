@@ -325,6 +325,19 @@ def has_ucp_signing_key(app_config: AppConfig) -> bool:
     )
 
 
+def load_ucp_signing_key(
+    app_config: AppConfig,
+) -> ec.EllipticCurvePrivateKey | None:
+    """Load and validate the configured UCP signing private key.
+
+    Returns ``None`` when no key material is configured, and raises
+    ``UCPConfigurationError`` when material is present but malformed, encrypted,
+    or the wrong type. Lets callers fail fast on a misconfigured key before doing
+    network work that cannot succeed without a usable key.
+    """
+    return _load_signing_private_key(app_config.ucp_config)
+
+
 def build_ucp_profile(app_config: AppConfig) -> dict[str, object]:
     """Build the public UCP platform profile for this Family Assistant instance."""
     ucp_config = app_config.ucp_config
