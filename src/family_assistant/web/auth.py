@@ -58,6 +58,9 @@ PUBLIC_PATHS = [
     re.compile(r"^/static(/.*)?$"),
     re.compile(r"^/favicon.ico$"),
     re.compile(r"^/\.well-known(/.*)?$"),
+    re.compile(r"^/manifest\.json$"),
+    re.compile(r"^/manifest\.webmanifest$"),
+    re.compile(r"^/sw\.js$"),
 ]
 
 
