@@ -22,7 +22,10 @@ import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from family_assistant.processing.types import MidTurnInputProvider
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +55,7 @@ DEFAULT_MAX_RETAINED_TURNS = 50
 DEFAULT_MAX_CONVERSATIONS = 200
 
 
-TurnStatus = Literal["running", "complete", "failed"]
+TurnStatus = Literal["running", "complete", "failed", "cancelled"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -63,8 +66,8 @@ class StreamEvent:
         seq: Monotonic per-conversation sequence number assigned by the hub.
         type: Discriminator. One of ``turn_started``, ``text``, ``tool_call``,
             ``tool_result``, ``tool_confirmation_request``,
-            ``tool_confirmation_result``, ``attachment``, ``error``,
-            ``turn_ended``, ``heartbeat``, ``stream_dropped``.
+            ``tool_confirmation_result``, ``attachment``, ``user_input``,
+            ``error``, ``turn_ended``, ``heartbeat``, ``stream_dropped``.
         turn_id: Owning turn UUID. ``None`` for connection-level events
             (heartbeat, stream_dropped).
         payload: Type-specific JSON-serializable data. The wire-layer
@@ -92,6 +95,10 @@ class TurnRecord:
     delivered: bool = False  # True once any subscriber has acked turn_ended.seq
     delivered_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None  # producer task (strong-ref)
+    # Cooperative interrupt/steer handle for a running turn. The cancel/steer
+    # endpoints look this up to request a graceful interrupt or inject a
+    # mid-turn user message. Cleared alongside ``task`` when the producer ends.
+    mid_turn_controller: "MidTurnInputProvider | None" = None
 
 
 @dataclass(slots=True)
@@ -270,6 +277,18 @@ class ConversationStreamHub:
             return None
         return state.turns.get(turn_id)
 
+    def get_mid_turn_controller(
+        self, conversation_id: str, turn_id: str
+    ) -> "MidTurnInputProvider | None":
+        """Return the cooperative interrupt/steer controller for a turn.
+
+        ``None`` if the turn is unknown or already finished (the producer's
+        done-callback clears the controller). The cancel/steer endpoints use
+        this to request an interrupt or inject a mid-turn user message.
+        """
+        turn = self.get_turn(conversation_id, turn_id)
+        return turn.mid_turn_controller if turn is not None else None
+
     def active_turns(self, conversation_id: str) -> list[TurnRecord]:
         """Return turns currently in the hub for a conversation (running or
         recently completed). Used by the messages endpoint to surface
@@ -374,6 +393,7 @@ class ConversationStreamHub:
         turn_id: str,
         user_id: str,
         started_at: datetime,
+        mid_turn_controller: "MidTurnInputProvider | None" = None,
     ) -> TurnRecord:
         """Register a new turn and publish ``turn_started`` synchronously.
 
@@ -381,6 +401,10 @@ class ConversationStreamHub:
         Raises ``TurnAlreadyExistsError`` if ``turn_id`` is already known,
         with the existing record attached so the caller can short-circuit
         the idempotent ``POST /turns`` to return the same identity.
+
+        ``mid_turn_controller`` is the cooperative interrupt/steer handle for
+        this turn; it is stored on the record atomically so the cancel/steer
+        endpoints can never observe a running turn without its controller.
         """
         # Check-then-act idempotency: grab the per-conversation lock once we
         # know the conversation exists.
@@ -405,6 +429,7 @@ class ConversationStreamHub:
                 started_at=started_at,
                 first_seq=event.seq,
                 latest_seq=event.seq,
+                mid_turn_controller=mid_turn_controller,
             )
             state.turns[turn_id] = turn
             self._prune_completed_turns(state)
@@ -702,6 +727,10 @@ class ConversationStreamHub:
             record = state.turns.get(turn_id)
             if record is not None:
                 record.task = None
+                # The controller is only meaningful for a running turn; drop it
+                # so a finished turn can't be steered/interrupted and so its
+                # queued inputs don't linger.
+                record.mid_turn_controller = None
 
         task.add_done_callback(_release)
 

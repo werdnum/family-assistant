@@ -25,6 +25,7 @@ from family_assistant.llm.messages import (
     text_content,
 )
 from family_assistant.processing import DelegatableService, ProcessingService
+from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.services.confirmation_service import (
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
@@ -73,6 +74,7 @@ from family_assistant.web.turn_producer import (
     format_sse_event,
     run_turn_producer,
 )
+from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 
 if TYPE_CHECKING:
     from family_assistant.services.attachment_registry import (
@@ -525,6 +527,51 @@ class AckResponse(BaseModel):
     ok: bool = True
 
 
+class ChatTurnCancelRequest(BaseModel):
+    """Body for POST /v1/chat/turns/{turn_id}/cancel."""
+
+    conversation_id: str = Field(
+        ..., description="Conversation the turn belongs to (for ownership checks)"
+    )
+
+
+class ChatTurnCancelResponse(BaseModel):
+    """Response from the cancel endpoint.
+
+    ``status`` is ``"cancelling"`` when a stop was requested for a running turn;
+    the authoritative terminal state (``cancelled``) arrives later via the SSE
+    ``turn_ended`` event. For an already-finished turn it echoes the terminal
+    status and ``already_complete`` is True (idempotent no-op)."""
+
+    turn_id: str = Field(..., description="Turn identifier")
+    conversation_id: str = Field(..., description="Conversation identifier")
+    status: str = Field(..., description="'cancelling' or the terminal turn status")
+    already_complete: bool = Field(
+        default=False, description="True when the turn had already finished"
+    )
+
+
+class ChatTurnSteerRequest(BaseModel):
+    """Body for POST /v1/chat/turns/{turn_id}/steer."""
+
+    conversation_id: str = Field(
+        ..., description="Conversation the turn belongs to (for ownership checks)"
+    )
+    prompt: str = Field(
+        ..., description="Steering message to inject into the running turn"
+    )
+
+
+class ChatTurnSteerResponse(BaseModel):
+    """Response from the steer endpoint."""
+
+    turn_id: str = Field(..., description="Turn identifier")
+    conversation_id: str = Field(..., description="Conversation identifier")
+    accepted: bool = Field(
+        ..., description="True once the steering message was queued for injection"
+    )
+
+
 # ----------------------------------------------------------------------- #
 # Resumable streaming helpers
 # ----------------------------------------------------------------------- #
@@ -894,6 +941,11 @@ async def api_chat_create_turn(
     confirmation_service = _get_confirmation_service(request)
     confirmation_result_waiters = _get_confirmation_result_waiters(request)
 
+    # Cooperative interrupt/steer handle for this turn. Stored on the TurnRecord
+    # (atomically, inside start_turn) and passed to the producer so the
+    # cancel/steer endpoints can reach the running LLM loop.
+    mid_turn_controller = WebMidTurnController()
+
     # Register the turn synchronously and publish turn_started into the hub
     # buffer BEFORE the producer task starts. This closes the start-of-turn
     # race: a follow-up GET /stream?from_seq=0 will always see turn_started.
@@ -903,6 +955,7 @@ async def api_chat_create_turn(
             turn_id=payload.turn_id,
             user_id=user_id,
             started_at=datetime.now(UTC),
+            mid_turn_controller=mid_turn_controller,
         )
     except TurnAlreadyExistsError as exc:
         # Lost a race with another concurrent POST: treat it as idempotent.
@@ -930,6 +983,7 @@ async def api_chat_create_turn(
             interface_type=interface_type,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
+            mid_turn_input_provider=mid_turn_controller,
         ),
         name=f"chat-turn:{conversation_id}:{payload.turn_id}",
     )
@@ -1138,6 +1192,92 @@ async def api_chat_ack(
     hub = _get_hub(request)
     await hub.ack_conversation(payload.conversation_id, payload.ack_seq)
     return AckResponse(ok=True)
+
+
+@chat_api_router.post("/v1/chat/turns/{turn_id}/cancel")
+async def api_chat_cancel_turn(
+    turn_id: str,
+    payload: ChatTurnCancelRequest,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> ChatTurnCancelResponse:
+    """Stop a running turn (the web "Stop generating" button).
+
+    Graceful-then-hard, mirroring Telegram's ``/interrupt``: request a
+    cooperative interrupt (so the loop halts cleanly at its next boundary and
+    the turn is marked ``cancelled``), then cancel the producer task to also
+    interrupt a long in-flight LLM/tool call. Idempotent: cancelling an
+    already-finished turn is a no-op that echoes the terminal status.
+    """
+    await _ensure_user_owns_conversation(
+        request, current_user, payload.conversation_id, allow_new=False
+    )
+    hub = _get_hub(request)
+    turn = hub.get_turn(payload.conversation_id, turn_id)
+    if turn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if turn.status != "running":
+        return ChatTurnCancelResponse(
+            turn_id=turn_id,
+            conversation_id=payload.conversation_id,
+            status=turn.status,
+            already_complete=True,
+        )
+
+    # Request a cooperative interrupt first so the producer resolves the turn to
+    # 'cancelled' (not 'failed') when the CancelledError surfaces.
+    controller = turn.mid_turn_controller
+    if isinstance(controller, WebMidTurnController):
+        controller.request_interrupt()
+    if turn.task is not None and not turn.task.done():
+        turn.task.cancel()
+
+    return ChatTurnCancelResponse(
+        turn_id=turn_id,
+        conversation_id=payload.conversation_id,
+        status="cancelling",
+    )
+
+
+@chat_api_router.post("/v1/chat/turns/{turn_id}/steer")
+async def api_chat_steer_turn(
+    turn_id: str,
+    payload: ChatTurnSteerRequest,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> ChatTurnSteerResponse:
+    """Inject a steering message into a running turn without restarting it.
+
+    The message is queued on the turn's controller; the LLM loop drains it after
+    the next tool round and re-feeds it to the model as ``[MID-TURN USER
+    UPDATE]`` context. Returns 409 if the turn has already finished or is not
+    steerable, so the client can fall back to starting a new turn.
+    """
+    await _ensure_user_owns_conversation(
+        request, current_user, payload.conversation_id, allow_new=False
+    )
+    hub = _get_hub(request)
+    turn = hub.get_turn(payload.conversation_id, turn_id)
+    if turn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    controller = turn.mid_turn_controller
+    if turn.status != "running" or not isinstance(controller, WebMidTurnController):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Turn is not running; start a new turn instead.",
+        )
+
+    await controller.add_input(
+        MidTurnUserInput(
+            content=payload.prompt,
+            user_name=_user_name_for_chat(current_user),
+        )
+    )
+    return ChatTurnSteerResponse(
+        turn_id=turn_id,
+        conversation_id=payload.conversation_id,
+        accepted=True,
+    )
 
 
 ApprovingInterface = Literal["web", "ios", "telegram"]

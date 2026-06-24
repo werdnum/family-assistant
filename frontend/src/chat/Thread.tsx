@@ -29,6 +29,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
 import { MarkdownText } from './MarkdownText';
@@ -250,9 +251,72 @@ const ThreadWelcomeSuggestions: React.FC = () => {
   );
 };
 
+// While a turn is running the composer's Send button is replaced by Stop, so the
+// user can't send a follow-up through it. This thin secondary input lets them
+// steer the running turn: the message is injected mid-turn and the model adapts
+// without restarting. Shown only while running (wrapped in ThreadPrimitive.If).
+const SteerBar: React.FC = () => {
+  const controls = useChatControls();
+  const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    const prompt = text.trim();
+    if (!prompt || submitting || !controls) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await controls.steerStream({ prompt });
+      setText('');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!controls) {
+    return null;
+  }
+
+  return (
+    <div className="flex gap-2 items-end" data-testid="steer-bar">
+      <div className="flex-1 relative">
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+          placeholder="Steer the assistant while it works…"
+          className="w-full min-h-9 pl-4 pr-4 py-2 text-sm border rounded-2xl bg-muted/20 border-dashed border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
+          data-testid="steer-input"
+        />
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-9 shrink-0 rounded-full"
+        onClick={() => void submit()}
+        disabled={submitting || text.trim().length === 0}
+        data-testid="steer-button"
+      >
+        Steer
+      </Button>
+    </div>
+  );
+};
+
 const Composer: React.FC = () => {
   return (
     <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
+      <ThreadPrimitive.If running>
+        <SteerBar />
+      </ThreadPrimitive.If>
       <ComposerAttachments />
       <div className="flex gap-2 items-end">
         <ComposerAddAttachment />

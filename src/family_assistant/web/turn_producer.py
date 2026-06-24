@@ -46,6 +46,7 @@ from family_assistant.utils.text_normalization import StreamingLatexNormalizer
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
     StreamEvent,
+    TurnStatus,
 )
 from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
 
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
+    from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.web.web_chat_interface import WebChatInterface
 
@@ -117,6 +119,7 @@ async def run_turn_producer(
     interface_type: str,
     trigger_content_parts: list[ContentPartDict],
     trigger_attachments: list[MessageAttachmentMetadata] | None,
+    mid_turn_input_provider: "MidTurnInputProvider | None" = None,
     ack_grace_seconds: float = DEFAULT_ACK_GRACE_SECONDS,
 ) -> None:
     """Run a single LLM turn end-to-end, publishing events to the hub.
@@ -217,6 +220,7 @@ async def run_turn_producer(
                 confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=web_confirmation_callback,
                 trigger_attachments=trigger_attachments,
+                mid_turn_input_provider=mid_turn_input_provider,
                 turn_id=turn_id,
             ):
                 reasoning_info = await _publish_llm_event(
@@ -273,16 +277,24 @@ async def run_turn_producer(
                     reply_text="".join(final_reply_parts).strip(),
                 )
     except asyncio.CancelledError:
-        # The producer task was cancelled (loop teardown today; a stop-generation
-        # button or task supervisor tomorrow). Without ending the turn here the
-        # TurnRecord stays status='running' forever — pruning/eviction skip
-        # running turns, so the conversation wedges. Best-effort end_turn, then
-        # re-raise so cancellation still propagates.
+        # The producer task was cancelled. This is the stop-generation path: the
+        # cancel endpoint calls request_interrupt() (so should_interrupt() is
+        # True here) and then task.cancel(). A bare loop teardown (no user stop)
+        # leaves should_interrupt() False. Either way we must end the turn — a
+        # TurnRecord left status='running' wedges the conversation because
+        # pruning/eviction skip running turns. A user-requested stop ends as
+        # 'cancelled' (not an error); a teardown ends as 'failed'. Re-raise so
+        # cancellation still propagates.
+        user_requested_stop = (
+            mid_turn_input_provider is not None
+            and mid_turn_input_provider.should_interrupt()
+        )
         await _fail_turn_best_effort(
             hub,
             conversation_id=conversation_id,
             turn_id=turn_id,
             latex_normalizer=latex_normalizer,
+            status="cancelled" if user_requested_stop else "failed",
             error="cancelled",
         )
         raise
@@ -312,13 +324,15 @@ async def _fail_turn_best_effort(
     turn_id: str,
     latex_normalizer: StreamingLatexNormalizer,
     error: str,
+    status: TurnStatus = "failed",
 ) -> None:
-    """End a turn as failed, flushing any buffered trailing text first.
+    """End a turn as failed/cancelled, flushing any buffered trailing text first.
 
     Used by both the exception and cancellation paths so a wedged turn is
-    always closed out. Every step is guarded so a secondary failure (e.g. the
-    loop tearing down during cancellation) can't mask the original cause or
-    leave the turn ``running``.
+    always closed out. ``status`` is ``"failed"`` for genuine errors and
+    ``"cancelled"`` for a user-requested stop. Every step is guarded so a
+    secondary failure (e.g. the loop tearing down during cancellation) can't
+    mask the original cause or leave the turn ``running``.
     """
     try:
         trailing = latex_normalizer.flush()
@@ -339,12 +353,13 @@ async def _fail_turn_best_effort(
         await hub.end_turn(
             conversation_id,
             turn_id=turn_id,
-            status="failed",
+            status=status,
             error=error,
         )
     except Exception:
         logger.exception(
-            "Failed to publish turn_ended(failed) for conv=%s turn=%s",
+            "Failed to publish turn_ended(%s) for conv=%s turn=%s",
+            status,
             conversation_id,
             turn_id,
         )
@@ -465,6 +480,19 @@ async def _publish_llm_event(
             # hub stays decoupled from the LLM message types and the payload
             # serializes cleanly on the wire.
             return dict(reasoning_info) if reasoning_info is not None else None
+    elif event.type == "user_input":
+        # A mid-turn steering message the user sent while this turn was running.
+        # The loop already injected it into the LLM context and yielded it here;
+        # surfacing it as a hub event lets live viewers (and resume/replay) render
+        # the steering message as a user bubble. Persistence is handled by the
+        # service save path, so this branch is display-only.
+        if event.content:
+            await hub.publish(
+                conversation_id,
+                "user_input",
+                turn_id=turn_id,
+                payload={"type": "user_input", "content": event.content},
+            )
     elif event.type == "error":
         # ast-grep-ignore: no-dict-any - error event payload carries free-form error string plus optional error_id from provider; structured typing belongs to a future error-codes design, not the hub
         error_payload: dict[str, Any] = {"error": event.error or "An error occurred"}

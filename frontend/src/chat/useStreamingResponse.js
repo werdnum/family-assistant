@@ -35,6 +35,8 @@ export const streamResumeTuning = {
  * @param {Function} options.onToolConfirmationResult - Callback when tool confirmation result is received
  * @param {Function} options.onError - Callback when an error occurs (receives Error object)
  * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls })
+ * @param {Function} options.onUserInput - Callback when a mid-turn steering message is injected into the running turn (receives the message content). Lets the UI render the steering message as a user bubble while the turn continues.
+ * @param {Function} options.onCancelled - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
  * @param {Function} options.onReloadHistory - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
  * @param {Function} options.onCheckTurnActive - Async (conversationId, turnId) => boolean: whether the server still reports this turn running. Used so a held-open resume leg held open by a concurrent turn doesn't reset the give-up streak.
  * @returns {Object} { sendStreamingMessage, cancelStream, isStreaming }
@@ -46,6 +48,8 @@ export const useStreamingResponse = ({
   onToolConfirmationResult = () => {},
   onError = () => {},
   onComplete = () => {},
+  onUserInput = () => {},
+  onCancelled = () => {},
   onReloadHistory = () => {},
   // Async (conversationId, turnId) => boolean: does the server still report THIS
   // turn running? Used to decide whether a held-open resume leg that delivered
@@ -56,6 +60,10 @@ export const useStreamingResponse = ({
 } = {}) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef(null);
+  // Identity of the turn currently streaming, so cancelStream/steerStream can
+  // target the live server-side turn. Set once the turn is kicked off and
+  // cleared when the stream settles.
+  const activeTurnRef = useRef(null);
 
   const sendStreamingMessage = useCallback(
     async ({
@@ -151,6 +159,12 @@ export const useStreamingResponse = ({
           already_complete: alreadyComplete,
         } = await startResponse.json();
         const resolvedConversationId = streamConversationId || conversationId;
+        // Record the live turn so cancelStream/steerStream can reach the
+        // server-side producer for this conversation+turn.
+        activeTurnRef.current = {
+          turnId: effectiveTurnId,
+          conversationId: resolvedConversationId,
+        };
 
         // The turn was resolved from the durable record (turn_id found in the
         // DB but not in the in-memory hub: restart / pruned / evicted). It has
@@ -335,7 +349,8 @@ export const useStreamingResponse = ({
               if (
                 eventType === 'turn_ended' ||
                 payload.status === 'complete' ||
-                payload.status === 'failed'
+                payload.status === 'failed' ||
+                payload.status === 'cancelled'
               ) {
                 turnEnded = true;
                 // Explicitly acknowledge receipt so the server suppresses the
@@ -369,16 +384,31 @@ export const useStreamingResponse = ({
                   });
                   onToolCall([...toolCalls]);
                 }
-                // A failed turn carries its error on the terminal event;
-                // surface it before exiting so the UI shows the error rather
-                // than silently clearing the loading state.
-                if (payload.status === 'failed' || payload.error) {
+                // A user-requested stop ends the turn as 'cancelled'. That's not
+                // an error — surface it via onCancelled so the UI marks the
+                // bubble "stopped" without an error toast. A genuine failure
+                // ('failed', or any terminal event carrying an error) still
+                // routes through onError.
+                if (payload.status === 'cancelled') {
+                  onCancelled();
+                } else if (payload.status === 'failed' || payload.error) {
                   onError(new Error(payload.error || 'The assistant stopped unexpectedly.'));
                 }
                 return 'completed';
               }
               // turn_started / heartbeat carry no renderable content.
               if (eventType === 'turn_started' || eventType === 'heartbeat') {
+                continue;
+              }
+
+              // A mid-turn steering message the user sent while this turn was
+              // running. Render it as a user bubble; the turn continues. Handled
+              // before the generic `payload.content` text branch below so it
+              // isn't appended to the assistant's streamed reply.
+              if (eventType === 'user_input' || payload.type === 'user_input') {
+                if (payload.content) {
+                  onUserInput(payload.content);
+                }
                 continue;
               }
 
@@ -579,6 +609,7 @@ export const useStreamingResponse = ({
         setIsStreaming(false);
         onComplete({ content: currentMessage, toolCalls });
         abortControllerRef.current = null;
+        activeTurnRef.current = null;
       }
     },
     [
@@ -588,20 +619,98 @@ export const useStreamingResponse = ({
       onToolConfirmationResult,
       onError,
       onComplete,
+      onUserInput,
+      onCancelled,
       onReloadHistory,
       onCheckTurnActive,
     ]
   );
 
+  // Detach THIS browser from the live stream without touching the server-side
+  // turn. Used when navigating away (switching conversation, new chat): the
+  // producer keeps running and the turn stays resumable. NOT the Stop button —
+  // that is stopTurn below.
   const cancelStream = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
   }, []);
 
+  // Stop the running turn server-side (the "Stop generating" button). The
+  // backend halts the producer (graceful interrupt then hard cancel) and ends
+  // the turn as 'cancelled'. We deliberately do NOT abort the local stream: the
+  // authoritative turn_ended(cancelled) event then arrives over SSE and drives
+  // onCancelled, so the bubble settles from the server's truth rather than a
+  // local race. Best-effort: a failed cancel POST must not throw to the caller.
+  const stopTurn = useCallback(async () => {
+    const active = activeTurnRef.current;
+    if (!active) {
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation_id: active.conversationId }),
+        }
+      );
+      if (response.status === 401) {
+        redirectToLogin();
+      } else if (!response.ok) {
+        console.warn(`Turn cancel failed: HTTP ${response.status}`);
+      }
+    } catch (e) {
+      console.warn('Turn cancel request failed:', e);
+    }
+  }, []);
+
+  // Inject a steering message into the running turn without starting a new one.
+  // Returns true if accepted. On 409 (turn already finished / not steerable) the
+  // caller should fall back to sending a normal new message. Returns false for
+  // "no active turn" so the caller can do the same.
+  const steerStream = useCallback(async ({ prompt }) => {
+    const active = activeTurnRef.current;
+    if (!active) {
+      return false;
+    }
+    try {
+      const response = await fetch(
+        `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: active.conversationId,
+            prompt,
+          }),
+        }
+      );
+      if (response.status === 401) {
+        redirectToLogin();
+        return false;
+      }
+      if (response.status === 409) {
+        // Turn finished between the user typing and submitting; not steerable.
+        return false;
+      }
+      if (!response.ok) {
+        console.warn(`Turn steer failed: HTTP ${response.status}`);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('Turn steer request failed:', e);
+      return false;
+    }
+  }, []);
+
   return {
     sendStreamingMessage,
     cancelStream,
+    stopTurn,
+    steerStream,
     isStreaming,
   };
 };
