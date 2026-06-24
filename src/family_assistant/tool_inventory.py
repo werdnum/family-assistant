@@ -106,12 +106,15 @@ class ToolGroupSummary:
 
 @dataclass(frozen=True)
 class SourceBreakdown:
-    """Per-source contribution, split into per-turn (eager) vs hidden (on-demand).
+    """Per-source contribution, split into per-turn vs hidden (on-demand).
 
-    Keeping the eager and on-demand totals separate prevents a large but hidden
-    on-demand source from being mis-ranked as a per-turn bloat culprit:
-    ``eager_estimated_tokens`` is the every-turn cost, ``on_demand_estimated_tokens``
-    is only paid after activation.
+    Keeping the per-turn and on-demand totals separate prevents a large but
+    hidden on-demand source from being mis-ranked as a per-turn bloat culprit.
+    The per-turn cost of a source is ``eager_estimated_tokens`` (its always-on
+    tool definitions) plus ``catalog_estimated_tokens`` (its share of the
+    on-demand catalog text, rendered every turn before activation);
+    ``on_demand_estimated_tokens`` (the hidden tool definitions) is only paid
+    after activation.
     """
 
     source: str
@@ -119,8 +122,10 @@ class SourceBreakdown:
     on_demand_count: int
     eager_serialized_chars: int
     on_demand_serialized_chars: int
+    catalog_serialized_chars: int
     eager_estimated_tokens: int
     on_demand_estimated_tokens: int
+    catalog_estimated_tokens: int
 
 
 @dataclass(frozen=True)
@@ -251,13 +256,18 @@ def _summarize(entries: list[ToolSizeEntry]) -> ToolGroupSummary:
 
 
 def _source_breakdowns(
-    eager: list[ToolSizeEntry], on_demand: list[ToolSizeEntry]
+    eager: list[ToolSizeEntry],
+    on_demand: list[ToolSizeEntry],
+    catalog_chars_by_source: dict[str, int],
 ) -> list[SourceBreakdown]:
-    sources = sorted({entry.source for entry in (*eager, *on_demand)})
+    sources = sorted(
+        {entry.source for entry in (*eager, *on_demand)} | set(catalog_chars_by_source)
+    )
     breakdowns: list[SourceBreakdown] = []
     for source in sources:
         eager_for_source = [e for e in eager if e.source == source]
         on_demand_for_source = [e for e in on_demand if e.source == source]
+        catalog_chars = catalog_chars_by_source.get(source, 0)
         breakdowns.append(
             SourceBreakdown(
                 source=source,
@@ -269,32 +279,66 @@ def _source_breakdowns(
                 on_demand_serialized_chars=sum(
                     e.serialized_chars for e in on_demand_for_source
                 ),
+                catalog_serialized_chars=catalog_chars,
                 eager_estimated_tokens=sum(
                     e.estimated_tokens for e in eager_for_source
                 ),
                 on_demand_estimated_tokens=sum(
                     e.estimated_tokens for e in on_demand_for_source
                 ),
+                catalog_estimated_tokens=_estimate_tokens(catalog_chars),
             )
         )
-    # Rank by per-turn (eager) cost — that is the bloat that hits every turn.
-    breakdowns.sort(key=lambda b: b.eager_estimated_tokens, reverse=True)
+    # Rank by per-turn cost (eager definitions + catalog text) — the bloat that
+    # hits every turn, before any activation.
+    breakdowns.sort(
+        key=lambda b: b.eager_estimated_tokens + b.catalog_estimated_tokens,
+        reverse=True,
+    )
     return breakdowns
 
 
-async def _catalog_prompt_size(
-    on_demand_view: OnDemandToolsView | None, *, can_confirm: bool
-) -> CatalogPromptSize:
-    """Estimate the per-turn cost of the on-demand catalog system-prompt text."""
+async def _catalog_breakdown(
+    on_demand_view: OnDemandToolsView | None,
+    *,
+    can_confirm: bool,
+    mcp_server_id_by_name: dict[str, str | None],
+    collisions: set[str],
+) -> tuple[CatalogPromptSize, dict[str, int]]:
+    """Return the total on-demand catalog prompt size and its per-source split.
+
+    The catalog is one rendered system-prompt block (a shared header plus one
+    line per hidden tool). To attribute each source's share without duplicating
+    the renderer's line format, we re-render the catalog with that source's
+    entries removed and take the difference, so the per-line cost is measured by
+    the real renderer. The shared header is not attributed to any single source,
+    so the per-source chars sum to slightly less than the total.
+    """
     if on_demand_view is None:
-        return CatalogPromptSize(serialized_chars=0, estimated_tokens=0)
-    addition = await on_demand_view.get_system_prompt_addition(
+        return CatalogPromptSize(serialized_chars=0, estimated_tokens=0), {}
+    catalog = await on_demand_view.get_on_demand_catalog(
         can_confirm=can_confirm, activated=frozenset()
     )
-    chars = len(addition) if addition else 0
-    return CatalogPromptSize(
-        serialized_chars=chars, estimated_tokens=_estimate_tokens(chars)
+    full_render = catalog.render_for_system_prompt()
+    total = CatalogPromptSize(
+        serialized_chars=len(full_render),
+        estimated_tokens=_estimate_tokens(len(full_render)),
     )
+
+    def _entry_source(entry: object) -> str:
+        return _classify_source(
+            getattr(entry, "name", ""), mcp_server_id_by_name, collisions
+        )
+
+    chars_by_source: dict[str, int] = {}
+    for source in {_entry_source(entry) for entry in catalog.entries}:
+        without_source = type(catalog)(
+            entries=[e for e in catalog.entries if _entry_source(e) != source]
+        )
+        chars_by_source[source] = len(full_render) - len(
+            without_source.render_for_system_prompt()
+        )
+    return total, chars_by_source
 
 
 async def build_tool_inventory(
@@ -359,7 +403,21 @@ async def build_tool_inventory(
 
     eager_summary = _summarize(eager_entries)
     on_demand_summary = _summarize(on_demand_entries)
-    catalog_prompt = await _catalog_prompt_size(on_demand_view, can_confirm=can_confirm)
+    catalog_prompt, catalog_chars_by_source = await _catalog_breakdown(
+        on_demand_view,
+        can_confirm=can_confirm,
+        mcp_server_id_by_name=mcp_server_id_by_name,
+        collisions=collisions,
+    )
+
+    # Once every on-demand tool is activated the view stops advertising the
+    # synthetic activate_tools meta-tool, so the fully-activated surface is the
+    # eager definitions minus activate_tools plus the on-demand definitions.
+    activate_tools_tokens = sum(
+        entry.estimated_tokens
+        for entry in eager_entries
+        if entry.name == _ACTIVATE_TOOLS_NAME
+    )
 
     return ToolInventory(
         profile_id=profile_id,
@@ -369,7 +427,9 @@ async def build_tool_inventory(
         on_demand=on_demand_summary,
         on_demand_catalog_prompt=catalog_prompt,
         activate_tools_present=activate_tools_present,
-        by_source=_source_breakdowns(eager_entries, on_demand_entries),
+        by_source=_source_breakdowns(
+            eager_entries, on_demand_entries, catalog_chars_by_source
+        ),
         source_name_collisions=sorted(collisions),
         # Per-turn cost = eager tool definitions + the on-demand catalog text,
         # both of which hit the model every turn before any activation.
@@ -377,7 +437,9 @@ async def build_tool_inventory(
             eager_summary.estimated_tokens + catalog_prompt.estimated_tokens
         ),
         all_if_activated_tokens=(
-            eager_summary.estimated_tokens + on_demand_summary.estimated_tokens
+            eager_summary.estimated_tokens
+            - activate_tools_tokens
+            + on_demand_summary.estimated_tokens
         ),
     )
 

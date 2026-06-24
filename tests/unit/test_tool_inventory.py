@@ -116,10 +116,22 @@ async def test_inventory_partitions_eager_and_on_demand() -> None:
         inventory.eager.estimated_tokens
         + inventory.on_demand_catalog_prompt.estimated_tokens
     )
-    # Worst-case (all activated) accounts for every tool definition; the catalog
-    # disappears as tools activate, so it is not added there.
+    # The hidden tool is local, so its catalog line is attributed to the local
+    # source's per-turn cost.
+    by_source = {b.source: b for b in inventory.by_source}
+    assert by_source["local"].catalog_estimated_tokens > 0
+
+    # Worst-case (all activated): the synthetic activate_tools meta-tool is no
+    # longer advertised once nothing is left to activate, so it drops out of the
+    # eager set; the catalog also disappears as tools activate.
+    meta_tokens = sum(
+        e.estimated_tokens for e in inventory.eager.tools if e.name == "activate_tools"
+    )
+    assert meta_tokens > 0
     assert inventory.all_if_activated_tokens == (
-        inventory.eager.estimated_tokens + inventory.on_demand.estimated_tokens
+        inventory.eager.estimated_tokens
+        - meta_tokens
+        + inventory.on_demand.estimated_tokens
     )
 
 
