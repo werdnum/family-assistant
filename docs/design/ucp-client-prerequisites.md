@@ -124,11 +124,14 @@ results (including negative results) are cached per browser session keyed by ori
 an origin costs at most one extra request.
 
 Because the probe issues an outbound request from the Family Assistant process (not from the browser
-sandbox), the origin host is resolved first and the probe is skipped for any host that resolves to a
-non-globally-routable address (loopback, RFC 1918, link-local, reserved). This is a best-effort SSRF
-guard so a browsed page cannot steer the backend probe at internal infrastructure that the remote
-browser deployment isolates. It does not pin the resolved address against the one `httpx` later
-connects to.
+sandbox), it is deliberately constrained to a read-only `GET` of a fixed, reserved metadata path
+(`/.well-known/ucp`) over HTTPS, and the response is never returned to the page — only a sanitized
+"shoppable" hint reaches the model. Those properties (fixed read-only path, HTTPS-only, no response
+exfiltration) mean a browsed page cannot turn the probe into a meaningful SSRF primitive — it cannot
+reach plaintext metadata services, change state on a conventional well-known path, or read an
+internal response back — so no private-address blocklist is applied to it. The higher-severity
+control lives on the shopping POST path instead, where requests are signed and
+same-origin-restricted (see above).
 
 The probe only *informs* the model. Browsed pages and their `/.well-known/ucp` profiles are
 untrusted external content under the Rule of Two: detection adds no new authority. Checkout remains

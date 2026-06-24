@@ -20,13 +20,9 @@ the same live tab.
 
 from __future__ import annotations
 
-import asyncio
-import ipaddress
 import logging
 import re
-import socket
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
-from urllib.parse import urlparse
 
 import httpx
 import toons
@@ -231,37 +227,6 @@ def _resolve_ref(backend: BrowserBackend, ref: str) -> str:
     return selector
 
 
-def _host_resolves_to_private(host: str) -> bool:
-    """Return True when ``host`` resolves to a non-globally-routable address.
-
-    Blocks the UCP probe from reaching loopback, private (RFC 1918), link-local,
-    and other reserved ranges. Unresolvable hosts are treated as blocked. This
-    is a best-effort SSRF guard: it does not pin the resolved address against
-    the one httpx later connects to, but it prevents the obvious cases of a
-    browsed page steering the backend probe at internal infrastructure.
-    """
-    try:
-        addr_infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return True
-    for info in addr_infos:
-        try:
-            address = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return True
-        if not address.is_global:
-            return True
-    return False
-
-
-async def _origin_is_blocked(origin: str) -> bool:
-    """Whether the UCP probe must not fetch ``origin`` (no host / private host)."""
-    host = urlparse(origin).hostname
-    if not host:
-        return True
-    return await asyncio.to_thread(_host_resolves_to_private, host)
-
-
 def _format_ucp_hint(profile: MerchantUCPProfile) -> str:
     """Render a one-line hint telling the model this origin supports UCP.
 
@@ -298,8 +263,12 @@ async def _probe_ucp_support(
 
     Results are cached per browser session keyed by origin so repeated
     navigation within an origin probes ``/.well-known/ucp`` at most once.
-    Returns ``None`` for non-HTTPS origins, private/internal hosts, or sites
-    without UCP shopping.
+    Returns ``None`` for non-HTTPS origins or sites without UCP shopping.
+
+    The probe is a read-only GET to a fixed, reserved metadata path
+    (``/.well-known/ucp``) over HTTPS, and the response is never returned to the
+    page — only a sanitized "shoppable" hint reaches the model — so it is not
+    treated as an SSRF risk worth a private-address guard.
     """
     origin = merchant_origin(current_url or "")
     if origin is None:
@@ -308,10 +277,6 @@ async def _probe_ucp_support(
     session = await get_browser_session(exec_context)
     if origin in session.ucp_profiles:
         profile = session.ucp_profiles[origin]
-    elif await _origin_is_blocked(origin):
-        logger.debug("Skipping UCP probe for non-public origin %s", origin)
-        session.ucp_profiles[origin] = None
-        profile = None
     else:
         async with httpx.AsyncClient(timeout=UCP_PROBE_TIMEOUT_SECONDS) as client:
             profile = await discover_merchant_ucp_profile(origin, client=client)

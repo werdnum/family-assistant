@@ -8,7 +8,6 @@ implementations are exercised in :mod:`tests.functional.tools.test_browser_dom`.
 
 from __future__ import annotations
 
-import socket
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
@@ -28,7 +27,6 @@ from family_assistant.tools.browser_dom import (
     _collect_refs,  # noqa: PLC2701  # Testing private ref-tree walker
     _format_toon,  # noqa: PLC2701  # Testing private TOON renderer
     _format_ucp_hint,  # noqa: PLC2701  # Testing private UCP hint renderer
-    _host_resolves_to_private,  # noqa: PLC2701  # Testing private SSRF guard
     _probe_ucp_support,  # noqa: PLC2701  # Testing private UCP probe + cache
     _resolve_ref,  # noqa: PLC2701  # Testing private ref-cache lookup
     _ucp_hint_on_url_change,  # noqa: PLC2701  # Testing private URL-change gating
@@ -290,27 +288,6 @@ class TestFormatUcpHint:
         assert "Capabilities: cart." in hint
 
 
-class TestHostResolvesToPrivate:
-    """SSRF guard: only globally-routable hosts may be probed."""
-
-    def test_blocks_loopback_literal(self) -> None:
-        assert _host_resolves_to_private("127.0.0.1") is True
-
-    @pytest.mark.parametrize("host", ["10.0.0.5", "192.168.1.1", "169.254.0.1"])
-    def test_blocks_private_and_link_local_literals(self, host: str) -> None:
-        assert _host_resolves_to_private(host) is True
-
-    def test_allows_public_literal(self) -> None:
-        assert _host_resolves_to_private("8.8.8.8") is False
-
-    def test_blocks_unresolvable_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(*_args: object, **_kwargs: object) -> object:
-            raise socket.gaierror("name or service not known")
-
-        monkeypatch.setattr(browser_dom.socket, "getaddrinfo", boom)
-        assert _host_resolves_to_private("nonexistent.invalid") is True
-
-
 class TestProbeUcpSupport:
     """Per-session caching probe used by snapshot-returning browser tools."""
 
@@ -319,16 +296,9 @@ class TestProbeUcpSupport:
             "ToolExecutionContext", SimpleNamespace(conversation_id=conversation_id)
         )
 
-    def _allow_all_origins(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def allow(_origin: str) -> bool:
-            return False
-
-        monkeypatch.setattr(browser_dom, "_origin_is_blocked", allow)
-
     async def test_returns_hint_and_caches_result(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        self._allow_all_origins(monkeypatch)
         calls: list[str] = []
 
         async def fake_discover(
@@ -363,24 +333,9 @@ class TestProbeUcpSupport:
         )
         assert result is None
 
-    async def test_skips_probe_for_private_origin(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        async def fail_discover(
-            url: str, *, client: object
-        ) -> MerchantUCPProfile | None:  # pragma: no cover - must not be called
-            raise AssertionError("private origin must not be probed")
-
-        monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fail_discover)
-        result = await _probe_ucp_support(
-            self._context("probe-private-test"), "https://10.0.0.5/products/x"
-        )
-        assert result is None
-
     async def test_caches_negative_result(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        self._allow_all_origins(monkeypatch)
         calls: list[str] = []
 
         async def fake_discover(
