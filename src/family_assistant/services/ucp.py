@@ -50,15 +50,20 @@ class MerchantUCPProfile:
     """Discovered UCP capabilities advertised by a merchant origin."""
 
     origin: str
-    mcp_endpoint: str | None
+    mcp_endpoints: tuple[str, ...]
     service_names: tuple[str, ...]
     capability_names: tuple[str, ...]
     version: str | None
 
     @property
     def supports_shopping(self) -> bool:
-        """Whether the merchant advertises a reachable shopping MCP endpoint."""
-        return self.mcp_endpoint is not None
+        """Whether the merchant advertises any shopping MCP endpoint."""
+        return bool(self.mcp_endpoints)
+
+    @property
+    def mcp_endpoint(self) -> str | None:
+        """The first advertised shopping MCP endpoint, if any."""
+        return self.mcp_endpoints[0] if self.mcp_endpoints else None
 
 
 def merchant_origin(url: str) -> str | None:
@@ -69,10 +74,19 @@ def merchant_origin(url: str) -> str | None:
     return f"https://{parsed.netloc}"
 
 
-def _shopping_mcp_endpoint(origin: str, services: Mapping[str, object]) -> str | None:
+def _shopping_mcp_endpoints(
+    origin: str, services: Mapping[str, object]
+) -> tuple[str, ...]:
+    """Return every advertised HTTPS shopping MCP endpoint, in profile order.
+
+    All candidates are returned (not just the first) so callers can apply their
+    own selection policy — e.g. the shopping tools prefer a same-origin binding
+    even when a cross-origin one is listed first.
+    """
     bindings = services.get(SHOPPING_SERVICE_NAME)
     if not isinstance(bindings, list):
-        return None
+        return ()
+    endpoints: list[str] = []
     for binding in bindings:
         if not isinstance(binding, dict):
             continue
@@ -84,8 +98,8 @@ def _shopping_mcp_endpoint(origin: str, services: Mapping[str, object]) -> str |
         resolved = endpoint if urlparse(endpoint).scheme else urljoin(origin, endpoint)
         parsed_resolved = urlparse(resolved)
         if parsed_resolved.scheme == "https" and parsed_resolved.netloc:
-            return resolved
-    return None
+            endpoints.append(resolved)
+    return tuple(endpoints)
 
 
 def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile | None:
@@ -101,7 +115,7 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
     version = ucp.get("version")
     return MerchantUCPProfile(
         origin=origin,
-        mcp_endpoint=_shopping_mcp_endpoint(origin, services),
+        mcp_endpoints=_shopping_mcp_endpoints(origin, services),
         service_names=tuple(services.keys()),
         capability_names=tuple(capabilities.keys()),
         version=version if isinstance(version, str) else None,

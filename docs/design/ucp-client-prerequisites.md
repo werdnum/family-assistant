@@ -83,10 +83,12 @@ reuses the same `httpx.AsyncClient` that performs the subsequent signed/unsigned
 Two safeguards apply to the discovered endpoint because the profile is untrusted merchant-controlled
 metadata:
 
-- **Same-origin only.** A discovered endpoint is accepted only when it is same-origin as the
-  `business_url`. A cross-origin (or protocol-relative, post-`urljoin`) endpoint is ignored and the
-  Shopify fallback is used instead, so a malicious profile cannot redirect the signed POST at an
-  arbitrary or internal host (SSRF).
+- **Same-origin only.** Every advertised binding is considered, and the first one that is
+  same-origin as the `business_url` is selected (origins are compared on normalized
+  scheme/host/effective-port, so an explicit `:443` or differing case still matches). A cross-origin
+  (or protocol-relative, post-`urljoin`) endpoint is ignored and the Shopify fallback is used
+  instead, so a malicious profile cannot redirect the signed POST at an arbitrary or internal host
+  (SSRF), and a usable same-origin binding listed after a cross-origin one is still chosen.
 - **Bounded discovery time.** The discovery GET has its own short timeout (independent of the longer
   MCP POST timeout), so a store that does not publish a profile — and may tarpit the well-known path
   — falls back promptly instead of stalling each call.

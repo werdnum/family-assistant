@@ -243,7 +243,7 @@ class TestBrowserSessionRefCache:
 def _shopping_profile(origin: str) -> MerchantUCPProfile:
     return MerchantUCPProfile(
         origin=origin,
-        mcp_endpoint=f"{origin}/api/ucp/mcp",
+        mcp_endpoints=(f"{origin}/api/ucp/mcp",),
         service_names=("dev.ucp.shopping",),
         capability_names=("dev.ucp.shopping.cart", "dev.ucp.shopping.checkout"),
         version="2026-04-08",
@@ -263,7 +263,7 @@ class TestFormatUcpHint:
     def test_omits_capability_list_when_none_advertised(self) -> None:
         profile = MerchantUCPProfile(
             origin="https://shop.example.com",
-            mcp_endpoint="https://shop.example.com/api/ucp/mcp",
+            mcp_endpoints=("https://shop.example.com/api/ucp/mcp",),
             service_names=("dev.ucp.shopping",),
             capability_names=(),
             version=None,
@@ -274,7 +274,7 @@ class TestFormatUcpHint:
     def test_drops_malicious_capability_names(self) -> None:
         profile = MerchantUCPProfile(
             origin="https://shop.example.com",
-            mcp_endpoint="https://shop.example.com/api/ucp/mcp",
+            mcp_endpoints=("https://shop.example.com/api/ucp/mcp",),
             service_names=("dev.ucp.shopping",),
             capability_names=(
                 "dev.ucp.shopping.cart",

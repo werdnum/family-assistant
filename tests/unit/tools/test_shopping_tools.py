@@ -229,6 +229,124 @@ async def test_ucp_add_to_cart_rejects_cross_origin_discovered_endpoint(
     assert request.url == "https://shop.example.com/api/ucp/mcp"
 
 
+async def test_ucp_add_to_cart_prefers_same_origin_over_cross_origin_binding(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://internal-host/api/ucp/mcp",
+                            },
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://shop.example.com/ucp/rpc",
+                            },
+                        ]
+                    }
+                }
+            },
+        )
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    # The same-origin binding is used even though a cross-origin one is listed
+    # first.
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop.example.com/ucp/rpc"
+
+
+async def test_ucp_add_to_cart_accepts_same_origin_with_default_port(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://shop.example.com:443/ucp/rpc",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    # An explicit :443 is the same origin as the default-port business_url.
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop.example.com:443/ucp/rpc"
+
+
+async def test_ucp_add_to_existing_cart_resolves_endpoint_once(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = []  # 404 -> Shopify fallback
+    _FakeAsyncClient.responses = [
+        httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": "rpc-1",
+                "result": {
+                    "structuredContent": {
+                        "cart": {
+                            "id": "gid://shopify/Cart/cart_abc123",
+                            "line_items": [],
+                            "continue_url": "https://shop.example.com/cart/c/abc",
+                        }
+                    }
+                },
+            },
+        ),
+        httpx.Response(200, json=_cart_response()),
+    ]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com",
+        cart_id="gid://shopify/Cart/cart_abc123",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    # get_cart + update_cart share a single endpoint resolution.
+    assert _FakeAsyncClient.profile_requests == [
+        "https://shop.example.com/.well-known/ucp"
+    ]
+    assert len(_FakeAsyncClient.requests) == 2
+
+
 async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
     monkeypatch: MonkeyPatch,
 ) -> None:

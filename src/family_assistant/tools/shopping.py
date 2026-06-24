@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -38,6 +39,32 @@ SHOPIFY_FALLBACK_MCP_PATH = "/api/ucp/mcp"
 # well-known path) falls back to the Shopify endpoint promptly instead of paying
 # the full MCP POST timeout before each call.
 UCP_DISCOVERY_TIMEOUT_SECONDS = 5.0
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def _origin_key(url: str) -> tuple[str, str, int | None] | None:
+    """Return a normalized ``(scheme, host, port)`` key, or ``None`` if invalid.
+
+    Normalizing lets an explicit default port (``:443``) or a differently-cased
+    host compare equal to its canonical form, so a valid same-origin binding is
+    not mistaken for a cross-origin one.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return None
+    return (scheme, host, port if port is not None else _DEFAULT_PORTS.get(scheme))
+
+
+def _same_origin(url_a: str, url_b: str) -> bool:
+    """Whether two URLs share a scheme/host/effective-port origin."""
+    key_a = _origin_key(url_a)
+    return key_a is not None and key_a == _origin_key(url_b)
 
 
 SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -164,16 +191,18 @@ def _get_app_config(exec_context: ToolExecutionContext) -> AppConfig:
 async def _resolve_ucp_endpoint(business_url: str, *, client: httpx.AsyncClient) -> str:
     """Resolve the merchant's shopping MCP endpoint for ``business_url``.
 
-    Discovers the endpoint from the merchant's ``/.well-known/ucp`` profile and
+    Discovers the endpoints from the merchant's ``/.well-known/ucp`` profile and
     falls back to the Shopify convention (``/api/ucp/mcp``) when the merchant
     advertises no usable shopping MCP binding.
 
-    The discovered endpoint is only accepted when it is same-origin as
-    ``business_url``. The profile is untrusted merchant-controlled metadata, so a
-    cross-origin (or protocol-relative) endpoint could otherwise redirect the
-    signed POST at an arbitrary/internal host — an SSRF vector. Discovery is also
-    given a short timeout so a store that does not publish a profile (and may
-    tarpit the well-known path) falls back promptly instead of stalling the POST.
+    Only a binding that is same-origin as ``business_url`` is accepted, and every
+    advertised binding is considered (not just the first) so a usable same-origin
+    binding is still selected when a cross-origin one is listed ahead of it. The
+    profile is untrusted merchant-controlled metadata, so a cross-origin (or
+    protocol-relative) endpoint could otherwise redirect the signed POST at an
+    arbitrary/internal host — an SSRF vector. Discovery is also given a short
+    timeout so a store that does not publish a profile (and may tarpit the
+    well-known path) falls back promptly instead of stalling the POST.
     """
     origin = merchant_origin(business_url)
     if origin is None:
@@ -182,15 +211,29 @@ async def _resolve_ucp_endpoint(business_url: str, *, client: httpx.AsyncClient)
     profile = await discover_merchant_ucp_profile(
         business_url, client=client, timeout=UCP_DISCOVERY_TIMEOUT_SECONDS
     )
-    if profile is not None and profile.mcp_endpoint is not None:
-        if merchant_origin(profile.mcp_endpoint) == origin:
-            return profile.mcp_endpoint
-        logger.warning(
-            "Ignoring cross-origin UCP endpoint %s advertised by %s",
-            profile.mcp_endpoint,
-            origin,
-        )
+    if profile is not None:
+        for endpoint in profile.mcp_endpoints:
+            if _same_origin(endpoint, business_url):
+                return endpoint
+        if profile.mcp_endpoints:
+            logger.warning(
+                "Ignoring %d cross-origin UCP endpoint(s) advertised by %s",
+                len(profile.mcp_endpoints),
+                origin,
+            )
     return f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}"
+
+
+async def _resolve_endpoint_for(business_url: str) -> str:
+    """Resolve the merchant MCP endpoint once, with a dedicated short client.
+
+    Resolving up front (rather than inside each POST) means a multi-step
+    operation — such as a cart update that reads then writes — uses one
+    consistent endpoint instead of rediscovering per call, where a flaky second
+    discovery could split reads and writes across different endpoints.
+    """
+    async with httpx.AsyncClient(timeout=UCP_DISCOVERY_TIMEOUT_SECONDS) as client:
+        return await _resolve_ucp_endpoint(business_url, client=client)
 
 
 def _normalize_line_items(
@@ -274,7 +317,7 @@ def _raise_for_ucp_failure(
 async def _post_ucp_tool_call(
     app_config: AppConfig,
     *,
-    business_url: str,
+    endpoint: str,
     tool_name: str,
     arguments: dict[str, object],
     require_signed: bool = False,
@@ -289,29 +332,27 @@ async def _post_ucp_tool_call(
         )
         raise ValueError(msg)
 
+    if has_ucp_signing_key(app_config):
+        try:
+            signed_request = sign_ucp_request(
+                app_config,
+                method="POST",
+                url=endpoint,
+                body=body,
+            )
+        except UCPConfigurationError as exc:
+            raise ValueError(str(exc)) from exc
+        request_headers = signed_request.headers
+        request_body = signed_request.body
+    else:
+        request_headers = {
+            "Content-Type": "application/json",
+            "UCP-Agent": ucp_agent_header(app_config),
+        }
+        request_body = _json_bytes(body)
+
+    logger.info("Calling UCP tool %s at %s", tool_name, endpoint)
     async with httpx.AsyncClient(timeout=30.0) as client:
-        endpoint = await _resolve_ucp_endpoint(business_url, client=client)
-
-        if has_ucp_signing_key(app_config):
-            try:
-                signed_request = sign_ucp_request(
-                    app_config,
-                    method="POST",
-                    url=endpoint,
-                    body=body,
-                )
-            except UCPConfigurationError as exc:
-                raise ValueError(str(exc)) from exc
-            request_headers = signed_request.headers
-            request_body = signed_request.body
-        else:
-            request_headers = {
-                "Content-Type": "application/json",
-                "UCP-Agent": ucp_agent_header(app_config),
-            }
-            request_body = _json_bytes(body)
-
-        logger.info("Calling UCP tool %s at %s", tool_name, endpoint)
         response = await client.post(
             endpoint, headers=request_headers, content=request_body
         )
@@ -517,11 +558,12 @@ async def ucp_add_to_cart_tool(
     """Create or update a UCP merchant cart."""
     app_config = _get_app_config(exec_context)
     normalized_items = _normalize_line_items(line_items)
+    endpoint = await _resolve_endpoint_for(business_url)
 
     if cart_id:
         current = await _post_ucp_tool_call(
             app_config,
-            business_url=business_url,
+            endpoint=endpoint,
             tool_name="get_cart",
             arguments={"id": cart_id},
         )
@@ -529,7 +571,7 @@ async def ucp_add_to_cart_tool(
         cart_payload = _cart_update_payload(existing_cart, normalized_items, context)
         response_data = await _post_ucp_tool_call(
             app_config,
-            business_url=business_url,
+            endpoint=endpoint,
             tool_name="update_cart",
             arguments={"id": cart_id, "cart": cart_payload},
         )
@@ -539,7 +581,7 @@ async def ucp_add_to_cart_tool(
             cart_payload["context"] = context
         response_data = await _post_ucp_tool_call(
             app_config,
-            business_url=business_url,
+            endpoint=endpoint,
             tool_name="create_cart",
             arguments={"cart": cart_payload},
         )
@@ -555,9 +597,10 @@ async def ucp_get_cart_tool(
 ) -> ToolResult:
     """Fetch a UCP merchant cart."""
     app_config = _get_app_config(exec_context)
+    endpoint = await _resolve_endpoint_for(business_url)
     response_data = await _post_ucp_tool_call(
         app_config,
-        business_url=business_url,
+        endpoint=endpoint,
         tool_name="get_cart",
         arguments={"id": cart_id},
     )
@@ -572,9 +615,10 @@ async def ucp_transfer_checkout_to_human_tool(
 ) -> ToolResult:
     """Create a checkout session and return the human handoff URL."""
     app_config = _get_app_config(exec_context)
+    endpoint = await _resolve_endpoint_for(business_url)
     response_data = await _post_ucp_tool_call(
         app_config,
-        business_url=business_url,
+        endpoint=endpoint,
         tool_name="create_checkout",
         arguments={"cart_id": cart_id},
         require_signed=True,

@@ -189,6 +189,37 @@ async def test_discover_merchant_ucp_profile_returns_advertised_endpoint() -> No
     assert profile.version == "2026-04-08"
 
 
+async def test_discover_merchant_ucp_profile_collects_all_endpoints() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {"transport": "mcp", "endpoint": "https://a.example/mcp"},
+                            {"transport": "rest", "endpoint": "https://a.example/rest"},
+                            {"transport": "mcp", "endpoint": "https://b.example/mcp"},
+                        ]
+                    }
+                }
+            },
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://a.example", client=client
+        )
+
+    assert profile is not None
+    # Only MCP bindings, in profile order; the first is exposed as mcp_endpoint.
+    assert profile.mcp_endpoints == (
+        "https://a.example/mcp",
+        "https://b.example/mcp",
+    )
+    assert profile.mcp_endpoint == "https://a.example/mcp"
+
+
 async def test_discover_merchant_ucp_profile_resolves_relative_endpoint() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_merchant_profile_payload(endpoint="/ucp/mcp"))
