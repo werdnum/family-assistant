@@ -618,6 +618,8 @@ async def test_post_turn_idempotent_across_hub_restart(
         # replayable from the (fresh) hub, so clients reload history instead of
         # opening /stream.
         "already_complete": True,
+        # The turn produced a reply ("ok"), so it is not incomplete.
+        "incomplete": False,
     }
 
     # No producer was started on the fresh hub, and no duplicate row was

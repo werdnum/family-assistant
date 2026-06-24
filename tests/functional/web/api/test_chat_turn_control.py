@@ -1,0 +1,963 @@
+"""Tests for the web turn-control endpoints: cancel (Stop) and steer.
+
+These cover the cooperative interrupt/steer mechanism wired into the web turn
+producer:
+
+* ``POST /v1/chat/turns/{turn_id}/cancel`` stops a running turn. It requests a
+  graceful interrupt and then hard-cancels the producer task, ending the turn as
+  ``cancelled`` (a distinct, non-error terminal status).
+* ``POST /v1/chat/turns/{turn_id}/steer`` injects a mid-turn user message that
+  the LLM loop drains after the next tool round, surfaces as a ``user_input``
+  SSE event, and persists to message history.
+
+The fixtures reuse the shared ``app_fixture`` / ``api_test_client`` /
+``api_mock_llm_client`` stack from ``tests/functional/web/conftest.py`` and the
+LLM-gating pattern from ``test_turn_producer_resilience.py``.
+"""
+
+import asyncio
+import contextlib
+import uuid
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    MessageReasoningInfo,
+    UserMessage,
+)
+from family_assistant.services.confirmation_service import ConfirmationService
+from family_assistant.storage.confirmation_requests import confirmation_requests_table
+from family_assistant.storage.context import get_db_context
+from family_assistant.storage.repositories.message_history import (
+    MessageHistoryRepository,
+)
+from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.turn_producer import persist_stopped_reply
+from family_assistant.web.web_mid_turn_controller import WebMidTurnController
+from tests.helpers import wait_for_condition
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+if TYPE_CHECKING:
+    from family_assistant.web.conversation_stream_hub import (
+        StreamEvent,
+        SubscriptionHandle,
+    )
+
+
+def _reply(content: str) -> LLMOutput:
+    return LLMOutput(
+        content=content,
+        tool_calls=None,
+        reasoning_info=MessageReasoningInfo(
+            prompt_tokens=10, completion_tokens=10, total_tokens=20
+        ),
+    )
+
+
+def _user_message_contains(args: dict, marker: str) -> bool:
+    return any(
+        msg.role == "user" and marker in str(msg.content or "")
+        for msg in args.get("messages", [])
+    )
+
+
+def _gate_first_llm_call(
+    original_generate: Callable[..., Awaitable[LLMOutput]],
+    started: asyncio.Event,
+    release: asyncio.Event,
+) -> Callable[..., Awaitable[LLMOutput]]:
+    """Wrap ``generate_response`` so its first call parks until ``release`` is set.
+
+    Lets a test catch the producer mid-flight (await ``started``), drive the
+    cancel/steer endpoint, then ``release`` it; later loop iterations pass
+    straight through.
+    """
+    state = {"gated": False}
+
+    async def gated(*args: object, **kwargs: object) -> LLMOutput:
+        if not state["gated"]:
+            state["gated"] = True
+            started.set()
+            await release.wait()
+        # The gate only delays the first call; *args/**kwargs are exactly what
+        # the loop passes to generate_response and are forwarded unchanged, so
+        # at runtime they match its real signature. They are typed ``object``
+        # here only so this wrapper can accept an arbitrary call shape.
+        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
+
+    return gated
+
+
+def _turn_complete(
+    hub: "ConversationStreamHub", conversation_id: str, turn_id: str
+) -> Callable[[], bool]:
+    """Condition for wait_for_condition: the turn has reached 'complete'."""
+
+    def _check() -> bool:
+        turn = hub.get_turn(conversation_id, turn_id)
+        return turn is not None and turn.status == "complete"
+
+    return _check
+
+
+def _drain(handle: "SubscriptionHandle") -> "list[StreamEvent]":
+    events = list(handle.replayed_events)
+    while not handle.queue.empty():
+        events.append(handle.queue.get_nowait())
+    return events
+
+
+async def _cancel_turn(
+    client: AsyncClient, turn_id: str, conversation_id: str
+) -> "httpx.Response":
+    """POST /cancel, retrying a transient 503.
+
+    The confirmation-listing read can momentarily lose SQLite's shared connection
+    to a gated producer (a postgres-production non-issue), and 503 is the
+    documented retryable response — the turn is already cancelled (the endpoint
+    runs request_interrupt + task.cancel before the listing that 503s), and the
+    real frontend retries it too.
+    """
+    resp = await client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    for _ in range(4):
+        if resp.status_code != 503:
+            break
+        resp = await client.post(
+            f"/api/v1/chat/turns/{turn_id}/cancel",
+            json={"conversation_id": conversation_id},
+        )
+    return resp
+
+
+async def _confirmation_status(db_engine: AsyncEngine, request_id: str) -> str | None:
+    async with get_db_context(engine=db_engine) as db:
+        row = await db.fetch_one(
+            select(confirmation_requests_table.c.status).where(
+                confirmation_requests_table.c.id == request_id
+            )
+        )
+    return row["status"] if row else None
+
+
+async def test_cancel_running_turn_marks_cancelled(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling a running turn ends it as ``cancelled`` (not ``failed``).
+
+    The endpoint requests a graceful interrupt before hard-cancelling, so the
+    producer resolves the CancelledError to a user-initiated stop.
+    """
+    user_prompt = "Cancel me mid-turn"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("never sent"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_cancel_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    handle = await hub.subscribe(conversation_id, from_seq=0)
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        cancel = await _cancel_turn(api_test_client, turn_id, conversation_id)
+        # task.cancel() runs before the confirmation-listing read, so the turn is
+        # cancelled regardless of whether that read momentarily 503s on SQLite's
+        # shared connection (a postgres-production non-issue). Accept either; the
+        # turn-status assertion below is the real check.
+        assert cancel.status_code in {200, 503}, cancel.text
+        if cancel.status_code == 200:
+            assert cancel.json()["status"] in {"cancelling", "cancelled"}
+
+        producer_tasks = hub.get_active_producer_tasks(conversation_id)
+        await asyncio.gather(*producer_tasks, return_exceptions=True)
+        release.set()
+
+        turn = hub.get_turn(conversation_id, turn_id)
+        assert turn is not None
+        assert turn.status == "cancelled"
+
+        events = _drain(handle)
+        assert any(
+            e.type == "turn_ended" and e.payload.get("status") == "cancelled"
+            for e in events
+        ), f"Expected turn_ended(cancelled), got {events}"
+    finally:
+        hub.unsubscribe(conversation_id, handle.queue)
+
+
+async def test_persist_stopped_reply_is_durable_and_profile_tagged(
+    db_engine: AsyncEngine,
+) -> None:
+    """persist_stopped_reply (the producer's cancellation-path persistence) writes
+    a durable, profile-tagged assistant row, so a refresh shows the stopped turn
+    in this profile's history rather than a prompt with no reply.
+
+    Tested directly so the assertion doesn't ride the gated-producer + torn-down-
+    DB-context cancellation race, which is flaky on SQLite's shared connection.
+    """
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_persist_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="plan my week"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="prof-x",
+        )
+
+    # No partial reply -> a Stopped marker.
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="",
+        processing_profile_id="prof-x",
+    )
+    # A partial reply -> the partial text is persisted (what the client rendered).
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="half an answer",
+        processing_profile_id="prof-x",
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id, limit=50
+        )
+    assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    assert all(row["processing_profile_id"] == "prof-x" for row in assistant_rows)
+    assert any("Stopped" in str(row["content"]) for row in assistant_rows)
+    assert any("half an answer" in str(row["content"]) for row in assistant_rows)
+
+
+async def test_completed_web_turn_persists_single_user_row(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A web turn persists exactly one user row: the endpoint stores it and the
+    producer reuses it (idempotent on turn_id), tagged with the turn's profile."""
+    user_prompt = "Single user row please"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_oneuserrow_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id, limit=50
+        )
+    user_rows = [row for row in rows if row["role"] == "user"]
+    assert len(user_rows) == 1, f"Expected one user row, got {user_rows}"
+    assert user_rows[0]["processing_profile_id"] is not None
+
+
+async def _seed_user_row(
+    db_engine: AsyncEngine, conversation_id: str, turn_id: str
+) -> None:
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="hi"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="default_assistant",
+        )
+
+
+async def test_retry_of_interrupted_turn_reports_incomplete(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A retry whose durable record has only the user prompt (no assistant reply,
+    e.g. a crash/restart mid-turn) is reported incomplete, so the client can show
+    a recovery path instead of silently reloading the prompt alone."""
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_incomplete_{uuid.uuid4().hex[:8]}"
+    await _seed_user_row(db_engine, conversation_id, turn_id)
+
+    resp = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": "hi",
+            "interface_type": "web",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["already_complete"] is True
+    assert body["incomplete"] is True
+
+
+async def test_retry_of_finished_turn_not_incomplete(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A retry whose durable record has an assistant reply is NOT incomplete:
+    the client reloads history and shows the reply."""
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_finished_{uuid.uuid4().hex[:8]}"
+    await _seed_user_row(db_engine, conversation_id, turn_id)
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            AssistantMessage(content="here is your reply"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="default_assistant",
+        )
+
+    resp = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": "hi",
+            "interface_type": "web",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["already_complete"] is True
+    assert body["incomplete"] is False
+
+
+async def test_retry_with_only_intermediate_tool_row_is_incomplete(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn that crashed after an intermediate tool-calling assistant row (which
+    carries tool_calls) but before its final reply is still incomplete — that row
+    isn't a terminal result."""
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_intermediate_{uuid.uuid4().hex[:8]}"
+    await _seed_user_row(db_engine, conversation_id, turn_id)
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            AssistantMessage(
+                content="let me check",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_1",
+                        type="function",
+                        function=ToolCallFunction(name="list_notes", arguments="{}"),
+                    )
+                ],
+            ),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="default_assistant",
+        )
+
+    resp = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": "hi",
+            "interface_type": "web",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["already_complete"] is True
+    assert body["incomplete"] is True
+
+
+async def test_user_message_insert_failure_ends_hub_turn(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the pre-producer user-message insert fails, the just-registered hub
+    turn is ended — not left wedged at 'running' with no producer task or
+    safety-net callback to ever end it."""
+
+    async def boom(*_args: object, **_kwargs: object) -> int:
+        raise RuntimeError("insert exploded")
+
+    monkeypatch.setattr(MessageHistoryRepository, "add_message", boom)
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_insertfail_{uuid.uuid4().hex[:8]}"
+    # The ASGI test transport re-raises unhandled app exceptions; either way the
+    # hub turn must be cleaned up.
+    with contextlib.suppress(RuntimeError):
+        resp = await api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "prompt": "hi",
+                "interface_type": "web",
+            },
+        )
+        assert resp.status_code == 500, resp.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    turn = hub.get_turn(conversation_id, turn_id)
+    assert turn is not None
+    assert turn.status != "running", "Hub turn must be ended, not wedged at running"
+
+
+async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
+    """A producer task cancelled before its coroutine runs must still end the turn.
+
+    Stop immediately after Send can call task.cancel() after attach_producer_task
+    but before run_turn_producer's first slice, so its try/except never runs and
+    never ends the turn. The hub's done-callback safety net ends it instead,
+    preventing a permanent 'running' wedge (pruning/eviction skip running turns).
+    """
+    hub = ConversationStreamHub()
+    # The cancel endpoint sets the controller's interrupt flag before cancelling,
+    # which is how a user Stop is distinguished from a teardown cancellation.
+    controller = WebMidTurnController()
+    controller.request_interrupt()
+    await hub.start_turn(
+        "conv",
+        turn_id="t1",
+        user_id="u1",
+        started_at=datetime.now(UTC),
+        mid_turn_controller=controller,
+    )
+
+    started = asyncio.Event()
+    orphan_persisted = asyncio.Event()
+
+    async def never_runs() -> None:
+        started.set()
+        await asyncio.Event().wait()  # parks forever (never reached: cancelled first)
+
+    async def on_orphan_cancel() -> None:
+        orphan_persisted.set()
+
+    task = asyncio.ensure_future(never_runs())
+    hub.attach_producer_task("conv", "t1", task, on_orphan_cancel=on_orphan_cancel)
+
+    # Cancel before the task gets a scheduling slice: its coroutine never runs.
+    task.cancel()
+    assert not started.is_set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    # The done-callback schedules end_turn(cancelled); wait for it to land.
+    await wait_for_condition(
+        lambda: (
+            (t := hub.get_turn("conv", "t1")) is not None and t.status == "cancelled"
+        ),
+        description="wedged turn ended",
+    )
+    # The stopped-marker persistence hook ran for the never-run producer.
+    assert orphan_persisted.is_set()
+
+
+async def test_orphan_cancel_without_interrupt_fails_without_stopped_marker() -> None:
+    """A producer task cancelled with NO interrupt flag (app shutdown / supervisor
+    teardown, not a user Stop) ends as 'failed' and does NOT persist a stopped
+    marker — matching the producer's own should_interrupt()-based classification.
+    """
+    hub = ConversationStreamHub()
+    # No request_interrupt(): this is not a user Stop.
+    controller = WebMidTurnController()
+    await hub.start_turn(
+        "conv",
+        turn_id="t1",
+        user_id="u1",
+        started_at=datetime.now(UTC),
+        mid_turn_controller=controller,
+    )
+
+    orphan_persisted = asyncio.Event()
+
+    async def never_runs() -> None:
+        await asyncio.Event().wait()
+
+    async def on_orphan_cancel() -> None:
+        orphan_persisted.set()
+
+    task = asyncio.ensure_future(never_runs())
+    hub.attach_producer_task("conv", "t1", task, on_orphan_cancel=on_orphan_cancel)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    await wait_for_condition(
+        lambda: (t := hub.get_turn("conv", "t1")) is not None and t.status == "failed",
+        description="orphan turn failed",
+    )
+    assert not orphan_persisted.is_set()
+
+
+async def test_cancel_unknown_turn_returns_404(
+    api_test_client: AsyncClient,
+) -> None:
+    """Cancelling a turn the hub has never seen is a 404."""
+    conversation_id = f"conv_unknown_{uuid.uuid4().hex[:8]}"
+    response = await api_test_client.post(
+        f"/api/v1/chat/turns/{uuid.uuid4()}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert response.status_code == 404, response.text
+
+
+async def test_cancel_finished_turn_is_idempotent_noop(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    """Cancelling an already-finished turn returns 200 with its terminal status."""
+    user_prompt = "Finish then cancel"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("all done"),
+    ))
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_done_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    cancel = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert cancel.status_code == 200, cancel.text
+    body = cancel.json()
+    assert body["already_complete"] is True
+    assert body["status"] == "complete"
+
+
+async def test_cancel_rejects_pending_confirmations_for_turn(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Stopping a turn rejects the durable confirmations it was waiting on.
+
+    Otherwise the pending-confirmations UI could approve a stopped turn's tool
+    later, running a state-changing tool with no turn to receive the result.
+    Only this turn's confirmations are rejected (matched by source message);
+    an unrelated pending confirmation is left untouched.
+    """
+    # Use a turn that runs to completion: cancel rejects confirmations on the
+    # already-finished path too, and this avoids a gated producer holding the
+    # (shared, single-connection) SQLite session open while we create/read
+    # confirmations, which otherwise causes lock contention under CI.
+    user_prompt = "Cancel with a pending confirmation"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("all done"),
+    ))
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_cancelconf_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    # A confirmation tied to this turn (same source message the producer would
+    # set) plus an unrelated one (no source message) that must survive.
+    service = ConfirmationService(db_context_factory=lambda: get_db_context(db_engine))
+    async with get_db_context(engine=db_engine) as ctx:
+        user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
+    assert user_row is not None
+    expires_at = datetime.now(UTC) + timedelta(minutes=30)
+    turn_conf = await service.create_request(
+        target_user_id="test_user",
+        tool_name="add_or_update_note",
+        tool_args={"title": "x", "content": "y"},
+        tool_call_id="turn-conf",
+        source_message_internal_id=user_row["internal_id"],
+        confirmation_prompt="ok?",
+        expires_at=expires_at,
+    )
+    other_conf = await service.create_request(
+        target_user_id="test_user",
+        tool_name="add_or_update_note",
+        tool_args={"title": "x", "content": "y"},
+        tool_call_id="other-conf",
+        source_message_internal_id=None,
+        confirmation_prompt="ok?",
+        expires_at=expires_at,
+    )
+
+    cancel = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert cancel.status_code == 200, cancel.text
+
+    # Rejection happens synchronously within the cancel request.
+    assert await _confirmation_status(db_engine, turn_conf["id"]) == "rejected"
+    assert await _confirmation_status(db_engine, other_conf["id"]) == "pending"
+
+
+async def test_cancel_returns_503_when_confirmation_rejection_fails(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a stopped turn's confirmation can't be rejected, /cancel reports 503.
+
+    Reporting a clean stop while a state-changing confirmation stays approvable
+    would be unsafe, so the failure propagates for the client to retry.
+    """
+    # A completed turn: cancel still rejects this turn's confirmations on the
+    # already-finished path, and there's no gated producer holding the shared
+    # SQLite session (which would otherwise cause CI lock contention).
+    user_prompt = "Cancel where reject fails"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("all done"),
+    ))
+
+    # Pin a confirmation service on app state whose reject() always fails, so the
+    # cancel endpoint resolves it via _get_confirmation_service.
+    service = ConfirmationService(db_context_factory=lambda: get_db_context(db_engine))
+
+    async def failing_reject(**_kwargs: object) -> None:
+        raise RuntimeError("reject exploded")
+
+    monkeypatch.setattr(service, "reject", failing_reject)
+    app_fixture.state.confirmation_service = service
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_cancelfail_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
+    assert user_row is not None
+    conf = await service.create_request(
+        target_user_id="test_user",
+        tool_name="add_or_update_note",
+        tool_args={"title": "x", "content": "y"},
+        tool_call_id="turn-conf",
+        source_message_internal_id=user_row["internal_id"],
+        confirmation_prompt="ok?",
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+
+    cancel = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert cancel.status_code == 503, cancel.text
+    # The confirmation is still pending (not silently dropped), so a retry can
+    # re-attempt the rejection.
+    assert await _confirmation_status(db_engine, conf["id"]) == "pending"
+
+
+async def test_cancel_rejects_conversation_owned_by_another_user(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Cancel enforces ownership before touching turn state (404, not 403)."""
+    conversation_id = f"conv_owned_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="victim's private message"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+            user_id="someone_else",
+        )
+
+    response = await api_test_client.post(
+        f"/api/v1/chat/turns/{uuid.uuid4()}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert response.status_code == 404, response.text
+
+
+async def test_steer_running_turn_injects_user_input(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A steering message injected mid-turn surfaces as a user_input event and
+    is persisted, and the model sees it on the next iteration.
+
+    The turn makes one tool call (so the loop reaches the mid-turn drain after
+    the tool round); the gate parks the first LLM call so the steer is queued
+    before the drain runs.
+    """
+    user_prompt = "Steer me mid-turn"
+    steer_text = "actually, focus on tomorrow"
+
+    # Iteration 2: once the injected [MID-TURN USER UPDATE] is in the messages,
+    # reply with final text. Listed first so it wins over the tool-call rule.
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        _reply("Okay, focusing on tomorrow."),
+    ))
+    # Iteration 1: the initial prompt triggers a (side-effect-free) tool call.
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        LLMOutput(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_steer_1",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steer_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    handle = await hub.subscribe(conversation_id, from_seq=0)
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        steer = await api_test_client.post(
+            f"/api/v1/chat/turns/{turn_id}/steer",
+            json={"conversation_id": conversation_id, "prompt": steer_text},
+        )
+        assert steer.status_code == 200, steer.text
+        assert steer.json()["accepted"] is True
+
+        release.set()
+        await wait_for_condition(
+            _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+        )
+
+        events = _drain(handle)
+        assert any(
+            e.type == "user_input" and e.payload.get("content") == steer_text
+            for e in events
+        ), f"Expected a user_input event carrying the steer text, got {events}"
+    finally:
+        hub.unsubscribe(conversation_id, handle.queue)
+
+    # The injected mid-turn message is persisted as the RAW user text, not the
+    # internal [MID-TURN USER UPDATE] wrapper the model saw, so a later history
+    # reload shows what the user actually typed.
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web",
+            conversation_id=conversation_id,
+            limit=50,
+        )
+    steer_rows = [
+        row
+        for row in rows
+        if row["role"] == "user" and steer_text in str(row["content"])
+    ]
+    assert steer_rows, "Expected the steering message to be persisted"
+    assert all(
+        "MID-TURN USER UPDATE" not in str(row["content"]) for row in steer_rows
+    ), "Steering message must persist as raw text, not the internal wrapper"
+
+
+async def test_steer_finished_turn_returns_409(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    """Steering a turn that has already finished is a 409 (start a new turn)."""
+    user_prompt = "Finish then steer"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("all done"),
+    ))
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerdone_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    steer = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/steer",
+        json={"conversation_id": conversation_id, "prompt": "too late"},
+    )
+    assert steer.status_code == 409, steer.text
+
+
+async def test_steer_unknown_turn_returns_404(
+    api_test_client: AsyncClient,
+) -> None:
+    """Steering a turn the hub has never seen is a 404."""
+    conversation_id = f"conv_steerunknown_{uuid.uuid4().hex[:8]}"
+    response = await api_test_client.post(
+        f"/api/v1/chat/turns/{uuid.uuid4()}/steer",
+        json={"conversation_id": conversation_id, "prompt": "hello?"},
+    )
+    assert response.status_code == 404, response.text
+
+
+async def test_steer_rejects_conversation_owned_by_another_user(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Steer enforces ownership before touching turn state (404, not 403)."""
+    conversation_id = f"conv_steerowned_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="victim's private message"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+            user_id="someone_else",
+        )
+
+    response = await api_test_client.post(
+        f"/api/v1/chat/turns/{uuid.uuid4()}/steer",
+        json={"conversation_id": conversation_id, "prompt": "let me steer"},
+    )
+    assert response.status_code == 404, response.text

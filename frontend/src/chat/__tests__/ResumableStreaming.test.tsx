@@ -1648,6 +1648,58 @@ describe('Resumable streaming client', () => {
   );
 
   it(
+    'surfaces a recovery error when a retried turn is durably incomplete',
+    async () => {
+      // already_complete + incomplete: the durable record has the prompt but no
+      // reply (the turn was interrupted by a crash/restart). The client must
+      // surface the "couldn't confirm the reply" marker, not silently show the
+      // prompt alone.
+      let ourTurnId = '';
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          ourTurnId = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_incomplete',
+            first_seq: 0,
+            already_complete: true,
+            incomplete: true,
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+          HttpResponse.json({
+            messages: [
+              {
+                internal_id: 'u1',
+                role: 'user',
+                turn_id: ourTurnId,
+                content: 'Interrupted prompt',
+                timestamp: '2026-06-09T10:00:00Z',
+              },
+            ],
+            active_turns: [],
+          })
+        )
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+      const input = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(input, 'Interrupted prompt');
+      await user.keyboard('{Enter}');
+
+      await waitFor(
+        () => {
+          expect(screen.getByText(/couldn't confirm the reply/i)).toBeInTheDocument();
+        },
+        { timeout: 10000 }
+      );
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'retries the subscribe after a transient 500 and renders the reply',
     async () => {
       // The turn keeps running server-side even if the subscribe GET fails,

@@ -22,7 +22,12 @@ import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from family_assistant.processing.types import MidTurnInputProvider
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +57,7 @@ DEFAULT_MAX_RETAINED_TURNS = 50
 DEFAULT_MAX_CONVERSATIONS = 200
 
 
-TurnStatus = Literal["running", "complete", "failed"]
+TurnStatus = Literal["running", "complete", "failed", "cancelled"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -63,8 +68,8 @@ class StreamEvent:
         seq: Monotonic per-conversation sequence number assigned by the hub.
         type: Discriminator. One of ``turn_started``, ``text``, ``tool_call``,
             ``tool_result``, ``tool_confirmation_request``,
-            ``tool_confirmation_result``, ``attachment``, ``error``,
-            ``turn_ended``, ``heartbeat``, ``stream_dropped``.
+            ``tool_confirmation_result``, ``attachment``, ``user_input``,
+            ``error``, ``turn_ended``, ``heartbeat``, ``stream_dropped``.
         turn_id: Owning turn UUID. ``None`` for connection-level events
             (heartbeat, stream_dropped).
         payload: Type-specific JSON-serializable data. The wire-layer
@@ -92,6 +97,15 @@ class TurnRecord:
     delivered: bool = False  # True once any subscriber has acked turn_ended.seq
     delivered_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None  # producer task (strong-ref)
+    # Cooperative interrupt/steer handle for a running turn. The cancel/steer
+    # endpoints look this up to request a graceful interrupt or inject a
+    # mid-turn user message. Cleared alongside ``task`` when the producer ends.
+    mid_turn_controller: "MidTurnInputProvider | None" = None
+    # Invoked by the done-callback safety net if the producer task finished while
+    # the turn was still 'running' AND it was cancelled (a Stop before the
+    # producer's first slice). Lets the web layer persist a durable stopped
+    # marker the never-run producer couldn't. Cleared with ``task``.
+    on_orphan_cancel: "Callable[[], Awaitable[None]] | None" = None
 
 
 @dataclass(slots=True)
@@ -186,6 +200,10 @@ class ConversationStreamHub:
         self._subscriber_queue_max = subscriber_queue_max
         self._max_retained_turns = max_retained_turns
         self._max_conversations = max_conversations
+        # Strong refs to fire-and-forget tasks that end a wedged turn from a
+        # producer-task done-callback (see attach_producer_task), so they aren't
+        # garbage-collected before they run.
+        self._safety_net_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------ #
     # Registry / lookups
@@ -269,6 +287,18 @@ class ConversationStreamHub:
         if state is None:
             return None
         return state.turns.get(turn_id)
+
+    def get_mid_turn_controller(
+        self, conversation_id: str, turn_id: str
+    ) -> "MidTurnInputProvider | None":
+        """Return the cooperative interrupt/steer controller for a turn.
+
+        ``None`` if the turn is unknown or already finished (the producer's
+        done-callback clears the controller). The cancel/steer endpoints use
+        this to request an interrupt or inject a mid-turn user message.
+        """
+        turn = self.get_turn(conversation_id, turn_id)
+        return turn.mid_turn_controller if turn is not None else None
 
     def active_turns(self, conversation_id: str) -> list[TurnRecord]:
         """Return turns currently in the hub for a conversation (running or
@@ -374,6 +404,7 @@ class ConversationStreamHub:
         turn_id: str,
         user_id: str,
         started_at: datetime,
+        mid_turn_controller: "MidTurnInputProvider | None" = None,
     ) -> TurnRecord:
         """Register a new turn and publish ``turn_started`` synchronously.
 
@@ -381,6 +412,10 @@ class ConversationStreamHub:
         Raises ``TurnAlreadyExistsError`` if ``turn_id`` is already known,
         with the existing record attached so the caller can short-circuit
         the idempotent ``POST /turns`` to return the same identity.
+
+        ``mid_turn_controller`` is the cooperative interrupt/steer handle for
+        this turn; it is stored on the record atomically so the cancel/steer
+        endpoints can never observe a running turn without its controller.
         """
         # Check-then-act idempotency: grab the per-conversation lock once we
         # know the conversation exists.
@@ -405,6 +440,7 @@ class ConversationStreamHub:
                 started_at=started_at,
                 first_seq=event.seq,
                 latest_seq=event.seq,
+                mid_turn_controller=mid_turn_controller,
             )
             state.turns[turn_id] = turn
             self._prune_completed_turns(state)
@@ -672,11 +708,16 @@ class ConversationStreamHub:
         conversation_id: str,
         turn_id: str,
         task: asyncio.Task[None],
+        on_orphan_cancel: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         """Store a strong reference to the producer task on the TurnRecord so
         the asyncio loop won't garbage-collect it after the originating HTTP
         request closes. The hub releases the reference when the task is
-        evicted along with the turn record."""
+        evicted along with the turn record.
+
+        ``on_orphan_cancel`` is invoked by the safety net if the task is
+        cancelled before its coroutine runs (so the producer never persisted a
+        stopped marker)."""
         state = self._get_state(conversation_id)
         if state is None:
             logger.error(
@@ -693,6 +734,7 @@ class ConversationStreamHub:
             )
             return
         turn.task = task
+        turn.on_orphan_cancel = on_orphan_cancel
 
         # Release the strong reference (and the task's coroutine frame, which
         # retains the DB context and accumulated strings) as soon as the
@@ -700,10 +742,81 @@ class ConversationStreamHub:
         # ``state.turns`` and leak memory with every turn.
         def _release(_completed: asyncio.Task[None], turn_id: str = turn_id) -> None:
             record = state.turns.get(turn_id)
-            if record is not None:
-                record.task = None
+            if record is None:
+                return
+            record.task = None
+            # The controller is only meaningful for a running turn; drop it
+            # so a finished turn can't be steered/interrupted and so its
+            # queued inputs don't linger.
+            controller = record.mid_turn_controller
+            record.mid_turn_controller = None
+            orphan_cancel = record.on_orphan_cancel
+            record.on_orphan_cancel = None
+            # Safety net: if the producer task finished without the turn ever
+            # reaching a terminal status, the TurnRecord would wedge at 'running'
+            # (pruning/eviction skip running turns). This happens when the task
+            # is cancelled before its coroutine's first slice — e.g. Stop arrives
+            # in the window after attach_producer_task but before run_turn_producer
+            # runs — so its try/except never executes. End the turn now.
+            if record.status == "running":
+                # Classify like the producer's own cancellation path: a user Stop
+                # set the controller's interrupt flag -> 'cancelled'; any other
+                # cancellation (app shutdown, supervisor teardown) -> 'failed'.
+                user_requested_stop = (
+                    controller is not None and controller.should_interrupt()
+                )
+                end_status: TurnStatus = (
+                    "cancelled" if user_requested_stop else "failed"
+                )
+                # Only persist a stopped marker for a user-cancelled orphan, not
+                # a teardown 'failed'.
+                persist = orphan_cancel if user_requested_stop else None
+                cleanup = asyncio.ensure_future(
+                    self._end_unfinished_turn(
+                        conversation_id, turn_id, end_status, persist
+                    )
+                )
+                self._safety_net_tasks.add(cleanup)
+                cleanup.add_done_callback(self._safety_net_tasks.discard)
 
         task.add_done_callback(_release)
+
+    async def _end_unfinished_turn(
+        self,
+        conversation_id: str,
+        turn_id: str,
+        status: TurnStatus,
+        on_orphan_cancel: "Callable[[], Awaitable[None]] | None" = None,
+    ) -> None:
+        """End a turn whose producer task finished without ending it.
+
+        Persists a durable stopped marker first (via ``on_orphan_cancel``) so a
+        refresh sees the stopped turn, then ends it. ``end_turn`` is idempotent,
+        so if the producer did end the turn in a race this is a no-op.
+        """
+        if on_orphan_cancel is not None:
+            try:
+                await on_orphan_cancel()
+            except Exception:
+                logger.exception(
+                    "Failed to persist stopped marker for orphaned turn "
+                    "conv=%s turn=%s",
+                    conversation_id,
+                    turn_id,
+                )
+        try:
+            await self.end_turn(
+                conversation_id,
+                turn_id=turn_id,
+                status=status,
+                error="cancelled",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to end unfinished turn conv=%s turn=%s",
+                conversation_id,
+                turn_id,
+            )
 
     def get_active_producer_tasks(
         self, conversation_id: str | None = None

@@ -29,6 +29,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
 import { MarkdownText } from './MarkdownText';
@@ -250,9 +251,78 @@ const ThreadWelcomeSuggestions: React.FC = () => {
   );
 };
 
+// While a turn is running the composer's Send button is replaced by Stop, so the
+// user can't send a follow-up through it. This thin secondary input lets them
+// steer the running turn: the message is injected mid-turn and the model adapts
+// without restarting. Shown only while running (wrapped in ThreadPrimitive.If).
+const SteerBar: React.FC = () => {
+  const controls = useChatControls();
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (submitting || !controls || controls.steerText.trim().length === 0) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      // submitSteer never clears the draft; it's cleared only when the turn
+      // echoes the steer back (so an un-drained steer isn't lost).
+      await controls.submitSteer();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!controls) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-col gap-1" data-testid="steer-bar">
+      <div className="flex gap-2 items-end">
+        <div className="flex-1 relative">
+          <input
+            type="text"
+            value={controls.steerText}
+            onChange={(e) => controls.setSteerText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder="Steer the assistant while it works…"
+            className="w-full min-h-9 pl-4 pr-4 py-2 text-sm border rounded-2xl bg-muted/20 border-dashed border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
+            data-testid="steer-input"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 shrink-0 rounded-full"
+          onClick={() => void submit()}
+          disabled={submitting || controls.steerText.trim().length === 0}
+          data-testid="steer-button"
+        >
+          Steer
+        </Button>
+      </div>
+      {controls.steerError && (
+        <p className="px-2 text-xs text-destructive" data-testid="steer-error">
+          {controls.steerError}
+        </p>
+      )}
+    </div>
+  );
+};
+
 const Composer: React.FC = () => {
   return (
     <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
+      <ThreadPrimitive.If running>
+        <SteerBar />
+      </ThreadPrimitive.If>
       <ComposerAttachments />
       <div className="flex gap-2 items-end">
         <ComposerAddAttachment />
@@ -307,6 +377,7 @@ const ComposerAction: React.FC = () => {
             variant="default"
             side="top"
             className="h-11 w-11 shrink-0 rounded-full"
+            data-testid="stop-button"
           >
             <SquareIcon size={14} />
           </TooltipIconButton>

@@ -16,6 +16,7 @@ import { NotificationSettings } from './NotificationSettings';
 import { PendingConfirmationsTray } from './PendingConfirmationsTray';
 import ProfileSelector from './ProfileSelector';
 import { PushNotificationButton } from './PushNotificationButton';
+import { ChatControlsContext } from './chatControls';
 import { Thread } from './Thread';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import type { PendingToolConfirmation } from './ToolConfirmationContext';
@@ -371,6 +372,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // Always-current mirror of conversationId, so a deferred follow-up timer can
+  // synchronously check whether the conversation changed before it fires.
+  const conversationIdRef = useRef<string | null>(null);
+  conversationIdRef.current = conversationId;
   // Set to a conversation id while it has a turn that gave up but is still running
   // server-side, to drive the fallback reconcile poll. Cleared once the turn
   // resolves (reply lands or it finishes with none).
@@ -393,6 +398,43 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const activeStreamConversationIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
   const lastStreamingErrorRef = useRef<string | null>(null);
+  // The turn id of the currently-streaming turn, used to tag mid-turn steering
+  // user bubbles. Set in handleNew, cleared when the turn completes.
+  const activeTurnIdRef = useRef<string | null>(null);
+  // The steer-input draft, owned here so it survives the SteerBar unmounting at
+  // turn end (a steer the turn never echoed is preserved for resend). Cleared
+  // when the conversation changes so it doesn't leak across threads.
+  const [steerDraft, setSteerDraft] = useState('');
+  // Last steer error (e.g. a transient 5xx), shown in the SteerBar; the draft is
+  // kept so the user can retry.
+  const [steerError, setSteerError] = useState<string | null>(null);
+  // Follow-up messages queued while a stream was still settling (a steer that
+  // hit a finished turn, or recovered un-echoed steers). Fired one at a time
+  // from the completion handler — after the ending stream's shared-ref cleanup —
+  // so they don't race it or start concurrent turns.
+  const pendingFollowupsRef = useRef<string[]>([]);
+  // Accepted steers awaiting their user_input echo. If the turn completes
+  // without echoing them (the model was in a final text-only iteration, so the
+  // loop never drained them), they're recovered as normal follow-ups rather than
+  // left stale in a SteerBar that's about to unmount. A list, since the user can
+  // submit several steers during one long turn.
+  const awaitingEchoSteersRef = useRef<string[]>([]);
+  useEffect(() => {
+    setSteerDraft('');
+    setSteerError(null);
+    // Drop any queued/awaiting steers so they can't fire into the new conversation.
+    awaitingEchoSteersRef.current = [];
+    pendingFollowupsRef.current = [];
+  }, [conversationId]);
+  // handleNew is defined after the streaming callbacks; the completion handler
+  // reaches it via this ref to fire a queued follow-up.
+  const handleNewRef = useRef<((message: { content: { text: string }[] }) => Promise<void>) | null>(
+    null
+  );
+  // Set when the running turn ended because the user stopped it, so the
+  // completion handler can render a "stopped" affordance instead of an empty
+  // bubble (and never an error toast).
+  const turnStoppedRef = useRef(false);
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
@@ -650,14 +692,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     ({
       content,
       toolCalls: _toolCalls,
+      completed = true,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
+      completed?: boolean;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
       const toolCallMessageId = toolCallMessageIdRef.current;
       const lastError = lastStreamingErrorRef.current;
+      const wasStopped = turnStoppedRef.current;
+      turnStoppedRef.current = false;
 
       if (messageId) {
         const hasContent = Boolean(content);
@@ -749,6 +795,21 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                 : msg
             )
           );
+        } else if (wasStopped) {
+          // The user stopped the turn before any text or tool calls: show a
+          // "stopped" marker rather than an empty bubble.
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === messageId
+                ? {
+                    ...msg,
+                    content: [{ type: 'text', text: '_Stopped._' }],
+                    status: { type: 'complete' as const },
+                    isLoading: false,
+                  }
+                : msg
+            )
+          );
         } else {
           // No text, no tool calls, no error: just clear loading state
           setMessages((prev) =>
@@ -779,15 +840,97 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (streamingMessageIdRef.current === messageId) {
         streamingMessageIdRef.current = null;
         activeStreamConversationIdRef.current = null;
+        activeTurnIdRef.current = null;
       }
       if (toolCallMessageIdRef.current === toolCallMessageId) {
         toolCallMessageIdRef.current = null;
       }
       lastStreamingErrorRef.current = null;
       fetchConversations();
+
+      // Recover/queue follow-ups only on a clean completion we actually saw end.
+      // - completed === false: a local detach (cancelStream during navigation) —
+      //   the server turn keeps running and may still drain the steer, so
+      //   resending would duplicate it.
+      // - stopped/failed: the user pressed Stop, or the turn errored. Resending
+      //   an abandoned steer would restart the very interaction Stop was meant to
+      //   end, so abandon any queued/awaiting steers instead.
+      const cleanCompletion = completed && !wasStopped && !lastError;
+      if (cleanCompletion) {
+        // Accepted steers the turn never echoed (it finished a final text-only
+        // iteration without draining them) would otherwise be stranded in the
+        // about-to-unmount SteerBar. Recover them as normal follow-ups.
+        const unEchoed = awaitingEchoSteersRef.current;
+        if (unEchoed.length > 0) {
+          awaitingEchoSteersRef.current = [];
+          pendingFollowupsRef.current.push(...unEchoed);
+          setSteerDraft((prev) => (unEchoed.some((s) => s.trim() === prev.trim()) ? '' : prev));
+        }
+
+        // Fire the next queued follow-up (a steer that hit an already-finished
+        // turn, or a recovered un-echoed steer). One at a time: each turn's own
+        // completion handler fires the next, so they don't start concurrent
+        // turns. Defer past this hook's cleanup (which clears abortControllerRef
+        // / activeTurnRef after onComplete returns) so the follow-up turn's refs
+        // aren't clobbered and Stop/Steer target it correctly.
+        const followup = pendingFollowupsRef.current.shift();
+        if (followup) {
+          const convAtSchedule = conversationIdRef.current;
+          setTimeout(() => {
+            // Drop it if the user switched conversations before it fired, so a
+            // previous thread's steer can't be sent into the newly selected one.
+            if (conversationIdRef.current !== convAtSchedule) {
+              return;
+            }
+            void handleNewRef.current?.({ content: [{ text: followup }] });
+          }, 0);
+        }
+      } else if (completed) {
+        // Terminal but not a clean success (stopped or failed): drop any
+        // queued/awaiting steers so Stop/failure doesn't auto-start a new turn.
+        awaitingEchoSteersRef.current = [];
+        pendingFollowupsRef.current = [];
+      }
     },
     [conversationId, fetchConversations]
   );
+
+  // A mid-turn steering message the user sent while the turn was running. Render
+  // it as a user bubble just before the in-progress assistant bubble so the
+  // conversation reads in order; the turn continues streaming after it.
+  const handleStreamingUserInput = useCallback((content: string) => {
+    const assistantId = streamingMessageIdRef.current;
+    const steeringMessage: Message = {
+      id: `msg_${Date.now()}_steer_${Math.random().toString(36).slice(2)}`,
+      role: 'user',
+      turnId: activeTurnIdRef.current ?? undefined,
+      content: [{ type: 'text', text: content }],
+      createdAt: new Date(),
+    };
+    setMessages((prev) => {
+      const idx = assistantId ? prev.findIndex((m) => m.id === assistantId) : -1;
+      if (idx === -1) {
+        return [...prev, steeringMessage];
+      }
+      const next = [...prev];
+      next.splice(idx, 0, steeringMessage);
+      return next;
+    });
+    // The echo confirms the turn consumed this steer, so clear the draft if it
+    // still matches what was sent (don't clobber a newer edit the user typed)
+    // and drop one matching awaiting-echo entry so it isn't recovered later.
+    setSteerDraft((prev) => (prev.trim() === content.trim() ? '' : prev));
+    const idx = awaitingEchoSteersRef.current.findIndex((s) => s.trim() === content.trim());
+    if (idx !== -1) {
+      awaitingEchoSteersRef.current.splice(idx, 1);
+    }
+  }, []);
+
+  // The running turn ended because the user stopped it. Flag it so the
+  // completion handler renders a "stopped" affordance (and never an error).
+  const handleStreamingCancelled = useCallback(() => {
+    turnStoppedRef.current = true;
+  }, []);
 
   // Handle tool calls during streaming
   const handleStreamingToolCall = useCallback((toolCalls: Array<Record<string, unknown>>) => {
@@ -945,27 +1088,32 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   );
 
   // Initialize streaming hook
-  const { sendStreamingMessage, cancelStream, isStreaming } = useStreamingResponse({
-    onMessage: handleStreamingMessage,
-    onError: handleStreamingError,
-    onReloadHistory: handleReloadHistory,
-    onComplete: handleStreamingComplete,
-    onToolCall: handleStreamingToolCall,
-    onToolConfirmationRequest: handleConfirmationRequest,
-    onToolConfirmationResult: handleConfirmationResult,
-    onCheckTurnActive: handleCheckTurnActive,
-  }) as {
-    sendStreamingMessage: (params: {
-      prompt: string;
-      conversationId: string;
-      profileId: string;
-      interfaceType: string;
-      attachments?: Array<{ id: string; type: string; name: string; content: string }>;
-      turnId?: string;
-    }) => Promise<void>;
-    cancelStream: () => void;
-    isStreaming: boolean;
-  };
+  const { sendStreamingMessage, cancelStream, stopTurn, steerStream, isStreaming } =
+    useStreamingResponse({
+      onMessage: handleStreamingMessage,
+      onError: handleStreamingError,
+      onReloadHistory: handleReloadHistory,
+      onComplete: handleStreamingComplete,
+      onToolCall: handleStreamingToolCall,
+      onToolConfirmationRequest: handleConfirmationRequest,
+      onToolConfirmationResult: handleConfirmationResult,
+      onUserInput: handleStreamingUserInput,
+      onCancelled: handleStreamingCancelled,
+      onCheckTurnActive: handleCheckTurnActive,
+    }) as {
+      sendStreamingMessage: (params: {
+        prompt: string;
+        conversationId: string;
+        profileId: string;
+        interfaceType: string;
+        attachments?: Array<{ id: string; type: string; name: string; content: string }>;
+        turnId?: string;
+      }) => Promise<void>;
+      cancelStream: () => void;
+      stopTurn: () => Promise<boolean>;
+      steerStream: (params: { prompt: string }) => Promise<'accepted' | 'finished' | 'error'>;
+      isStreaming: boolean;
+    };
 
   // Load messages for a conversation
   const loadConversationMessages = useCallback(async (convId: string, background = false) => {
@@ -1003,9 +1151,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             .filter((turn) => turn.status === 'running')
             .map((turn) => turn.turn_id)
         );
+        // Terminal turns whose persisted rows are authoritative (the reply, if
+        // any, is final and won't change). A user-stopped turn ('cancelled') is
+        // finished just like 'complete', so the unconfirmed-reply reconcile must
+        // treat it as terminal too — otherwise stopping a turn that produced no
+        // text could surface a spurious "couldn't confirm the reply" marker.
         const completedTurnIds = new Set(
           (data.active_turns ?? [])
-            .filter((turn) => turn.status === 'complete')
+            .filter((turn) => turn.status === 'complete' || turn.status === 'cancelled')
             .map((turn) => turn.turn_id)
         );
 
@@ -1642,6 +1795,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
       streamingMessageIdRef.current = assistantMessageId;
       activeStreamConversationIdRef.current = targetConversationId;
+      activeTurnIdRef.current = turnId;
+      turnStoppedRef.current = false;
       lastStreamingErrorRef.current = null;
       selfTurnIdsRef.current.add(turnId);
 
@@ -1656,6 +1811,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     },
     [conversationId, sendStreamingMessage, currentProfileId]
   );
+
+  // Expose handleNew to the earlier-defined completion handler so it can fire a
+  // queued steer follow-up after the current stream settles.
+  useEffect(() => {
+    handleNewRef.current = handleNew;
+  }, [handleNew]);
 
   const convertMessage = useCallback((message: Message) => {
     // Ensure content is always an array for assistant-ui compatibility
@@ -1699,11 +1860,40 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     return convertedMessage;
   }, []);
 
+  // The composer Stop button (onCancel) handler. Stop the turn server-side; if
+  // it could not be secured (the server also rejects the turn's pending tool
+  // confirmations), surface a warning so a still-approvable confirmation isn't
+  // silently left behind.
+  const handleStop = useCallback(async () => {
+    const ok = await stopTurn();
+    if (!ok) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg_stopfail_${Date.now()}`,
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: '⚠️ I could not confirm the turn was fully stopped. It may still be running, and if a pending tool approval remains it could still execute — please retry, or reject any leftover approval in the pending approvals panel.',
+            },
+          ],
+          createdAt: new Date(),
+        },
+      ]);
+    }
+  }, [stopTurn]);
+
   const runtime = useExternalStoreRuntime({
     messages,
     isRunning: isLoading || isStreaming,
     // @ts-expect-error - assistant-ui type mismatch with onNew handler signature
     onNew: handleNew,
+    // The composer's Stop button (ComposerPrimitive.Cancel) triggers this. Stop
+    // the running turn server-side; the bubble settles from the turn_ended
+    // (cancelled) SSE event. handleStop surfaces a warning if the stop couldn't
+    // be fully secured.
+    onCancel: handleStop,
     // @ts-expect-error - assistant-ui type mismatch with convertMessage return type
     convertMessage,
     adapters: {
@@ -1711,6 +1901,56 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       attachments: defaultAttachmentAdapter,
     },
   });
+
+  // Mid-run controls handed down to the Thread's composer (steering input). The
+  // draft text lives here (not in the SteerBar) so a steer that the turn never
+  // echoed isn't lost when the SteerBar unmounts at turn end.
+  const submitSteer = useCallback(async () => {
+    const prompt = steerDraft.trim();
+    if (!prompt) {
+      return;
+    }
+    setSteerError(null);
+    const result = await steerStream({ prompt });
+    if (result === 'accepted') {
+      // Deliberately do NOT clear here: the draft is cleared only when the
+      // matching user_input echo confirms the turn actually consumed it. Track
+      // it as awaiting-echo so that if the turn completes without draining it
+      // (a final text-only iteration), the completion handler recovers it as a
+      // normal follow-up instead of losing it.
+      awaitingEchoSteersRef.current.push(prompt);
+      return;
+    }
+    if (result === 'error') {
+      // The turn may still be running and the steer may even have been accepted
+      // before the response failed, so DON'T auto-resend. Surface it and keep
+      // the draft for a manual retry.
+      setSteerError('Could not steer the assistant. Please try again.');
+      return;
+    }
+    // 'finished': the steer targeted an already-finished turn. Don't lose the
+    // text — send it as a normal follow-up. If a stream is still settling, defer
+    // until its completion handler runs so we don't race its shared-ref cleanup.
+    setSteerDraft('');
+    if (streamingMessageIdRef.current) {
+      pendingFollowupsRef.current.push(prompt);
+    } else {
+      await handleNew({ content: [{ text: prompt }] });
+    }
+  }, [steerDraft, steerStream, handleNew]);
+
+  const chatControls = useMemo(
+    () => ({
+      steerText: steerDraft,
+      setSteerText: (text: string) => {
+        setSteerError(null);
+        setSteerDraft(text);
+      },
+      submitSteer,
+      steerError,
+    }),
+    [steerDraft, steerError, submitSteer]
+  );
 
   // Initialize conversation ID from URL or localStorage
   useEffect(() => {
@@ -1865,9 +2105,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               <main className="flex flex-1 flex-col min-h-0">
                 <AssistantRuntimeProvider runtime={runtime}>
                   <ThreadErrorBoundary>
-                    <ToolConfirmationProvider value={{ pendingConfirmations, handleConfirmation }}>
-                      <Thread />
-                    </ToolConfirmationProvider>
+                    <ChatControlsContext.Provider value={chatControls}>
+                      <ToolConfirmationProvider
+                        value={{ pendingConfirmations, handleConfirmation }}
+                      >
+                        <Thread />
+                      </ToolConfirmationProvider>
+                    </ChatControlsContext.Provider>
                   </ThreadErrorBoundary>
                 </AssistantRuntimeProvider>
               </main>
@@ -1942,11 +2186,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
                 <main className="flex flex-1 flex-col min-h-0">
                   <AssistantRuntimeProvider runtime={runtime}>
                     <ThreadErrorBoundary>
-                      <ToolConfirmationProvider
-                        value={{ pendingConfirmations, handleConfirmation }}
-                      >
-                        <Thread />
-                      </ToolConfirmationProvider>
+                      <ChatControlsContext.Provider value={chatControls}>
+                        <ToolConfirmationProvider
+                          value={{ pendingConfirmations, handleConfirmation }}
+                        >
+                          <Thread />
+                        </ToolConfirmationProvider>
+                      </ChatControlsContext.Provider>
                     </ThreadErrorBoundary>
                   </AssistantRuntimeProvider>
                 </main>

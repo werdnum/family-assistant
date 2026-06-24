@@ -562,6 +562,7 @@ class ProcessingService:
         pinned_history_message_ids: list[int] | None = None,
         save_history_with_isolated_context: bool = True,
         trigger_role: Literal["user", "system"] = "user",
+        reuse_existing_user_row: bool = False,
     ) -> tuple[int | None, list[LLMMessage]]:
         """Build the full pre-LLM turn state shared by sync and streaming flows."""
         thread_root_id_for_turn = thread_root_id
@@ -581,21 +582,35 @@ class ProcessingService:
             trigger_message = SystemMessage(content=user_content_for_history)
         else:
             trigger_message = UserMessage(content=user_content_for_history)
-        saved_user_msg_record = await self._save_history_message(
-            db_context,
-            message=trigger_message,
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=actual_interface_message_id,
-            turn_id=turn_id,
-            thread_root_id=thread_root_id_for_turn,
-            timestamp=self.clock.now(),
-            attachments=trigger_attachments,
-            subconversation_id=subconversation_id,
-            user_id=user_id,
-            is_internal=trigger_is_internal,
-            save_with_isolated_context=save_history_with_isolated_context,
+        # When the caller already persisted this turn's user message, reuse it
+        # instead of inserting a duplicate. The web endpoint does this before
+        # launching the (cancellable) producer task, so a Stop that cancels the
+        # producer before it runs still leaves the prompt durable. Only the web
+        # path sets this; other callers insert here as usual, so we avoid an extra
+        # read on their (often single-connection SQLite) db_context.
+        existing_user_row = (
+            await db_context.message_history.get_user_row_by_turn_id(turn_id)
+            if reuse_existing_user_row and trigger_role == "user"
+            else None
         )
+        if existing_user_row is not None:
+            saved_user_msg_record = existing_user_row["internal_id"]
+        else:
+            saved_user_msg_record = await self._save_history_message(
+                db_context,
+                message=trigger_message,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=actual_interface_message_id,
+                turn_id=turn_id,
+                thread_root_id=thread_root_id_for_turn,
+                timestamp=self.clock.now(),
+                attachments=trigger_attachments,
+                subconversation_id=subconversation_id,
+                user_id=user_id,
+                is_internal=trigger_is_internal,
+                save_with_isolated_context=save_history_with_isolated_context,
+            )
         if saved_user_msg_record is not None and thread_root_id_for_turn is None:
             thread_root_id_for_turn = saved_user_msg_record
             logger.info("Established new thread_root_id: %s", thread_root_id_for_turn)
@@ -965,6 +980,7 @@ class ProcessingService:
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         turn_id: str | None = None,
+        reuse_existing_user_row: bool = False,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1021,6 +1037,7 @@ class ProcessingService:
                         replied_to_interface_id=replied_to_interface_id,
                         trigger_attachments=trigger_attachments,
                         subconversation_id=subconversation_id,
+                        reuse_existing_user_row=reuse_existing_user_row,
                     )
 
                     # --- 3. Stream LLM Processing ---

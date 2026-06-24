@@ -25,6 +25,7 @@ from family_assistant.llm.messages import (
     text_content,
 )
 from family_assistant.processing import DelegatableService, ProcessingService
+from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.services.confirmation_service import (
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
@@ -71,8 +72,10 @@ from family_assistant.web.models import (
 )
 from family_assistant.web.turn_producer import (
     format_sse_event,
+    persist_stopped_reply,
     run_turn_producer,
 )
+from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 
 if TYPE_CHECKING:
     from family_assistant.services.attachment_registry import (
@@ -453,7 +456,8 @@ class ActiveTurnInfo(BaseModel):
         ..., description="Highest seq published so far for this turn"
     )
     status: str = Field(
-        ..., description="Turn status: 'running', 'complete', or 'failed'"
+        ...,
+        description="Turn status: 'running', 'complete', 'failed', or 'cancelled'",
     )
 
 
@@ -510,6 +514,16 @@ class ChatTurnResponse(BaseModel):
             "hub, so clients must reload history instead of opening /stream."
         ),
     )
+    incomplete: bool = Field(
+        default=False,
+        description=(
+            "Only meaningful with already_complete=True. True when the durable "
+            "record has the user prompt but NO assistant reply — the turn was "
+            "interrupted (crash/restart) before producing a result. The client "
+            "should surface a recovery path rather than silently showing the "
+            "prompt alone."
+        ),
+    )
 
 
 class AckRequest(BaseModel):
@@ -523,6 +537,51 @@ class AckRequest(BaseModel):
 
 class AckResponse(BaseModel):
     ok: bool = True
+
+
+class ChatTurnCancelRequest(BaseModel):
+    """Body for POST /v1/chat/turns/{turn_id}/cancel."""
+
+    conversation_id: str = Field(
+        ..., description="Conversation the turn belongs to (for ownership checks)"
+    )
+
+
+class ChatTurnCancelResponse(BaseModel):
+    """Response from the cancel endpoint.
+
+    ``status`` is ``"cancelling"`` when a stop was requested for a running turn;
+    the authoritative terminal state (``cancelled``) arrives later via the SSE
+    ``turn_ended`` event. For an already-finished turn it echoes the terminal
+    status and ``already_complete`` is True (idempotent no-op)."""
+
+    turn_id: str = Field(..., description="Turn identifier")
+    conversation_id: str = Field(..., description="Conversation identifier")
+    status: str = Field(..., description="'cancelling' or the terminal turn status")
+    already_complete: bool = Field(
+        default=False, description="True when the turn had already finished"
+    )
+
+
+class ChatTurnSteerRequest(BaseModel):
+    """Body for POST /v1/chat/turns/{turn_id}/steer."""
+
+    conversation_id: str = Field(
+        ..., description="Conversation the turn belongs to (for ownership checks)"
+    )
+    prompt: str = Field(
+        ..., description="Steering message to inject into the running turn"
+    )
+
+
+class ChatTurnSteerResponse(BaseModel):
+    """Response from the steer endpoint."""
+
+    turn_id: str = Field(..., description="Turn identifier")
+    conversation_id: str = Field(..., description="Conversation identifier")
+    accepted: bool = Field(
+        ..., description="True once the steering message was queued for injection"
+    )
 
 
 # ----------------------------------------------------------------------- #
@@ -831,6 +890,19 @@ async def api_chat_create_turn(
         existing_user_row = await idem_db.message_history.get_user_row_by_turn_id(
             payload.turn_id
         )
+        # The user row is now written before the producer runs (so a pre-start
+        # Stop keeps the prompt durable), so its mere existence no longer implies
+        # the turn produced a reply. Check for a TERMINAL assistant row to tell a
+        # finished turn (reload shows the reply) from one interrupted by a
+        # crash/restart mid-turn — including one that crashed after an
+        # intermediate tool-calling row but before its final reply (those rows
+        # carry tool_calls and are not terminal). The client surfaces a recovery
+        # path for an interrupted turn instead of silently showing the prompt.
+        turn_has_terminal_reply = (
+            await idem_db.message_history.has_terminal_reply_for_turn(payload.turn_id)
+            if existing_user_row is not None
+            else False
+        )
     if existing_user_row is not None:
         if (
             existing_user_row.get("conversation_id") != conversation_id
@@ -842,6 +914,7 @@ async def api_chat_create_turn(
             conversation_id=conversation_id,
             first_seq=0,
             already_complete=True,
+            incomplete=not turn_has_terminal_reply,
         )
 
     # Resolve processing service profile.
@@ -894,6 +967,11 @@ async def api_chat_create_turn(
     confirmation_service = _get_confirmation_service(request)
     confirmation_result_waiters = _get_confirmation_result_waiters(request)
 
+    # Cooperative interrupt/steer handle for this turn. Stored on the TurnRecord
+    # (atomically, inside start_turn) and passed to the producer so the
+    # cancel/steer endpoints can reach the running LLM loop.
+    mid_turn_controller = WebMidTurnController()
+
     # Register the turn synchronously and publish turn_started into the hub
     # buffer BEFORE the producer task starts. This closes the start-of-turn
     # race: a follow-up GET /stream?from_seq=0 will always see turn_started.
@@ -903,15 +981,65 @@ async def api_chat_create_turn(
             turn_id=payload.turn_id,
             user_id=user_id,
             started_at=datetime.now(UTC),
+            mid_turn_controller=mid_turn_controller,
         )
     except TurnAlreadyExistsError as exc:
-        # Lost a race with another concurrent POST: treat it as idempotent.
+        # Lost a race with another concurrent POST: treat it as idempotent. The
+        # loser returns here WITHOUT inserting the user message (the winner does
+        # that below), so concurrent retries can't double-insert the prompt.
         if exc.turn.user_id != user_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
         return ChatTurnResponse(
             turn_id=exc.turn.turn_id,
             conversation_id=conversation_id,
             first_seq=exc.turn.first_seq,
+        )
+
+    # Persist the user message durably now — serialized by start_turn (only the
+    # winner reaches here) and BEFORE the cancellable producer task is launched,
+    # so a Stop that cancels the producer before its coroutine runs still leaves
+    # the prompt durable. The producer's _prepare_turn_messages_for_llm is
+    # idempotent on turn_id, so it reuses this row instead of inserting a
+    # duplicate. ``payload.prompt`` matches what the producer would store (the
+    # first text part of the trigger content).
+    try:
+        async with get_db_context(request.app.state.database_engine) as user_msg_db:
+            await user_msg_db.message_history.add_message(
+                UserMessage(content=payload.prompt),
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                interface_message_id=f"temp_{payload.turn_id}",
+                turn_id=payload.turn_id,
+                timestamp=datetime.now(UTC),
+                user_id=user_id,
+                attachments=trigger_attachments,
+                processing_profile_id=selected_processing_service.service_config.id,
+            )
+    except Exception:
+        # The turn is registered in the hub but no producer task exists yet (and
+        # thus no done-callback safety net), so without ending it here the
+        # TurnRecord would wedge at 'running'. End it, then propagate.
+        await hub.end_turn(
+            conversation_id,
+            turn_id=payload.turn_id,
+            status="failed",
+            error="An internal error occurred.",
+        )
+        raise
+
+    # If the producer task is cancelled before its coroutine ever runs (a Stop
+    # in the window before its first slice), it never persists the stopped
+    # assistant marker. The hub's safety net invokes this so a refresh still
+    # shows the stopped turn rather than a prompt with no reply.
+    async def _persist_orphan_stopped_reply() -> None:
+        await persist_stopped_reply(
+            request.app.state.database_engine,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            turn_id=payload.turn_id,
+            user_id=user_id,
+            reply_text="",
+            processing_profile_id=selected_processing_service.service_config.id,
         )
 
     producer_task = asyncio.create_task(
@@ -930,10 +1058,16 @@ async def api_chat_create_turn(
             interface_type=interface_type,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
+            mid_turn_input_provider=mid_turn_controller,
         ),
         name=f"chat-turn:{conversation_id}:{payload.turn_id}",
     )
-    hub.attach_producer_task(conversation_id, payload.turn_id, producer_task)
+    hub.attach_producer_task(
+        conversation_id,
+        payload.turn_id,
+        producer_task,
+        on_orphan_cancel=_persist_orphan_stopped_reply,
+    )
 
     return ChatTurnResponse(
         turn_id=payload.turn_id,
@@ -1138,6 +1272,181 @@ async def api_chat_ack(
     hub = _get_hub(request)
     await hub.ack_conversation(payload.conversation_id, payload.ack_seq)
     return AckResponse(ok=True)
+
+
+@chat_api_router.post("/v1/chat/turns/{turn_id}/cancel")
+async def api_chat_cancel_turn(
+    turn_id: str,
+    payload: ChatTurnCancelRequest,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> ChatTurnCancelResponse:
+    """Stop a running turn (the web "Stop generating" button).
+
+    Graceful-then-hard, mirroring Telegram's ``/interrupt``: request a
+    cooperative interrupt (so the loop halts cleanly at its next boundary and
+    the turn is marked ``cancelled``), then cancel the producer task to also
+    interrupt a long in-flight LLM/tool call. Idempotent: cancelling an
+    already-finished turn is a no-op that echoes the terminal status.
+    """
+    await _ensure_user_owns_conversation(
+        request, current_user, payload.conversation_id, allow_new=False
+    )
+    hub = _get_hub(request)
+    turn = hub.get_turn(payload.conversation_id, turn_id)
+    if turn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    running = turn.status == "running"
+
+    if running:
+        # Request a cooperative interrupt first so the producer resolves the turn
+        # to 'cancelled' (not 'failed') when the CancelledError surfaces.
+        controller = turn.mid_turn_controller
+        if isinstance(controller, WebMidTurnController):
+            controller.request_interrupt()
+        if turn.task is not None and not turn.task.done():
+            turn.task.cancel()
+
+    # Reject any tool confirmations this turn was waiting on. Cancelling the
+    # producer task unblocks the in-memory waiter but leaves the durable
+    # confirmation request 'pending' — the pending-confirmations UI could still
+    # approve it later, enqueueing a state-changing tool with no turn left to
+    # receive the result. This runs on the already-finished path too so a retry
+    # after a transient failure re-attempts; a failure to fully secure the turn
+    # propagates (503) rather than reporting a clean stop.
+    # Reject under the turn's OWNER (turn.user_id), not the caller's raw
+    # identifier: confirmations were targeted at whoever started the turn, and
+    # the same canonical user may be cancelling through a different raw identity
+    # (the ownership check above already authorized them).
+    await _reject_pending_confirmations_for_turn(
+        request,
+        turn_id=turn_id,
+        user_id=turn.user_id,
+    )
+
+    if not running:
+        return ChatTurnCancelResponse(
+            turn_id=turn_id,
+            conversation_id=payload.conversation_id,
+            status=turn.status,
+            already_complete=True,
+        )
+    return ChatTurnCancelResponse(
+        turn_id=turn_id,
+        conversation_id=payload.conversation_id,
+        status="cancelling",
+    )
+
+
+async def _reject_pending_confirmations_for_turn(
+    request: Request,
+    *,
+    turn_id: str,
+    user_id: str,
+) -> None:
+    """Reject the cancelled turn's still-pending durable tool confirmations.
+
+    Every confirmation raised within a turn carries that turn's user message as
+    its ``source_message_internal_id``, so we reject exactly the confirmations
+    for this turn without touching a concurrent turn's. Since Stop's safety
+    relies on this, a confirmation we cannot reject (or a failure to even list
+    them) raises 503 so the caller retries rather than treating the turn as
+    safely stopped. Already-resolved/expired confirmations are not failures.
+    """
+    confirmation_service = _get_confirmation_service(request)
+    try:
+        async with get_db_context(request.app.state.database_engine) as db:
+            user_row = await db.message_history.get_user_row_by_turn_id(turn_id)
+        if user_row is None:
+            return
+        source_internal_id = user_row["internal_id"]
+        pending = await confirmation_service.list_pending_for_user(user_id=user_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to list pending confirmations for cancelled turn=%s",
+            turn_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not verify the stopped turn's tool confirmations; retry.",
+        ) from exc
+
+    unrejected = 0
+    for confirmation in pending:
+        if confirmation["source_message_internal_id"] != source_internal_id:
+            continue
+        try:
+            await confirmation_service.reject(
+                request_id=confirmation["id"],
+                rejecting_user_id=user_id,
+                rejecting_interface="web",
+            )
+        except (
+            ConfirmationExpiredError,
+            ConfirmationAlreadyResolvedError,
+            ConfirmationNotFoundError,
+        ):
+            # Already resolved/expired elsewhere — nothing to reject.
+            continue
+        except Exception:
+            unrejected += 1
+            logger.warning(
+                "Failed to reject confirmation %s for cancelled turn=%s",
+                confirmation["id"],
+                turn_id,
+                exc_info=True,
+            )
+
+    if unrejected:
+        # Some state-changing confirmation is still approvable; don't report a
+        # clean stop. The producer is already cancelled, so a retry only re-runs
+        # this rejection (idempotent) until it succeeds.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not reject all of the stopped turn's tool confirmations; retry.",
+        )
+
+
+@chat_api_router.post("/v1/chat/turns/{turn_id}/steer")
+async def api_chat_steer_turn(
+    turn_id: str,
+    payload: ChatTurnSteerRequest,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> ChatTurnSteerResponse:
+    """Inject a steering message into a running turn without restarting it.
+
+    The message is queued on the turn's controller; the LLM loop drains it after
+    the next tool round and re-feeds it to the model as ``[MID-TURN USER
+    UPDATE]`` context. Returns 409 if the turn has already finished or is not
+    steerable, so the client can fall back to starting a new turn.
+    """
+    await _ensure_user_owns_conversation(
+        request, current_user, payload.conversation_id, allow_new=False
+    )
+    hub = _get_hub(request)
+    turn = hub.get_turn(payload.conversation_id, turn_id)
+    if turn is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    controller = turn.mid_turn_controller
+    if turn.status != "running" or not isinstance(controller, WebMidTurnController):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Turn is not running; start a new turn instead.",
+        )
+
+    await controller.add_input(
+        MidTurnUserInput(
+            content=payload.prompt,
+            user_name=_user_name_for_chat(current_user),
+        )
+    )
+    return ChatTurnSteerResponse(
+        turn_id=turn_id,
+        conversation_id=payload.conversation_id,
+        accepted=True,
+    )
 
 
 ApprovingInterface = Literal["web", "ios", "telegram"]
