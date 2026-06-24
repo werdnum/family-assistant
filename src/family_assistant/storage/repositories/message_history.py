@@ -1448,20 +1448,26 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return cast("MessageHistoryRow", dict(row)) if row else None
 
-    async def has_assistant_row_for_turn(self, turn_id: str) -> bool:
-        """Whether the turn has any assistant-role row (a reply, stopped marker,
-        or error) — i.e. the producer got far enough to persist a result, vs.
-        only the user prompt (an interrupted/never-run turn)."""
-        stmt = (
-            select(message_history_table.c.internal_id)
-            .where(
-                message_history_table.c.turn_id == turn_id,
-                message_history_table.c.role == "assistant",
-            )
-            .limit(1)
+    async def has_terminal_reply_for_turn(self, turn_id: str) -> bool:
+        """Whether the turn has a TERMINAL assistant row — a final reply, stopped
+        marker, or error message.
+
+        A terminal assistant row carries no tool_calls; an intermediate
+        tool-calling iteration (preamble text + tool_calls) is NOT terminal, so a
+        turn that crashed after such a row but before the final reply is still
+        considered incomplete. Distinguishes a finished turn (reload shows the
+        result) from one interrupted by a crash/restart mid-turn (no result).
+
+        The tool_calls JSON column stores a None value as JSON ``null`` rather
+        than SQL NULL, so a ``tool_calls IS NULL`` predicate wouldn't match it
+        across engines; check the deserialized value in Python instead.
+        """
+        stmt = select(message_history_table.c.tool_calls).where(
+            message_history_table.c.turn_id == turn_id,
+            message_history_table.c.role == "assistant",
         )
-        row = await self._db.fetch_one(stmt)
-        return row is not None
+        rows = await self._db.fetch_all(stmt)
+        return any(not row["tool_calls"] for row in rows)
 
     async def get_interface_type_for_conversation(
         self, conversation_id: str

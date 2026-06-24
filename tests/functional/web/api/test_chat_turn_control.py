@@ -392,6 +392,51 @@ async def test_retry_of_finished_turn_not_incomplete(
     assert body["incomplete"] is False
 
 
+async def test_retry_with_only_intermediate_tool_row_is_incomplete(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn that crashed after an intermediate tool-calling assistant row (which
+    carries tool_calls) but before its final reply is still incomplete — that row
+    isn't a terminal result."""
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_intermediate_{uuid.uuid4().hex[:8]}"
+    await _seed_user_row(db_engine, conversation_id, turn_id)
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            AssistantMessage(
+                content="let me check",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_1",
+                        type="function",
+                        function=ToolCallFunction(name="list_notes", arguments="{}"),
+                    )
+                ],
+            ),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="default_assistant",
+        )
+
+    resp = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": "hi",
+            "interface_type": "web",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["already_complete"] is True
+    assert body["incomplete"] is True
+
+
 async def test_user_message_insert_failure_ends_hub_turn(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,

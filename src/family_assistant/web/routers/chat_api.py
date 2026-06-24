@@ -892,12 +892,14 @@ async def api_chat_create_turn(
         )
         # The user row is now written before the producer runs (so a pre-start
         # Stop keeps the prompt durable), so its mere existence no longer implies
-        # the turn produced a reply. Check for an assistant row to tell a finished
-        # turn (reload shows the reply) from one interrupted by a crash/restart
-        # mid-turn (no reply) — the client surfaces a recovery path for the latter
-        # instead of silently showing the prompt alone.
-        turn_has_reply = (
-            await idem_db.message_history.has_assistant_row_for_turn(payload.turn_id)
+        # the turn produced a reply. Check for a TERMINAL assistant row to tell a
+        # finished turn (reload shows the reply) from one interrupted by a
+        # crash/restart mid-turn — including one that crashed after an
+        # intermediate tool-calling row but before its final reply (those rows
+        # carry tool_calls and are not terminal). The client surfaces a recovery
+        # path for an interrupted turn instead of silently showing the prompt.
+        turn_has_terminal_reply = (
+            await idem_db.message_history.has_terminal_reply_for_turn(payload.turn_id)
             if existing_user_row is not None
             else False
         )
@@ -912,7 +914,7 @@ async def api_chat_create_turn(
             conversation_id=conversation_id,
             first_seq=0,
             already_complete=True,
-            incomplete=not turn_has_reply,
+            incomplete=not turn_has_terminal_reply,
         )
 
     # Resolve processing service profile.
