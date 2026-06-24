@@ -224,6 +224,9 @@ async def run_turn_producer(
                 trigger_attachments=trigger_attachments,
                 mid_turn_input_provider=mid_turn_input_provider,
                 turn_id=turn_id,
+                # The chat endpoint persisted the user message before launching
+                # this producer, so reuse that row instead of inserting again.
+                reuse_existing_user_row=True,
             ):
                 reasoning_info = await _publish_llm_event(
                     hub=hub,
