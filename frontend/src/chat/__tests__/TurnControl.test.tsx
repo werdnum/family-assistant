@@ -337,6 +337,71 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'retries a steer through the turn-registration race (404 then accepted)',
+    async () => {
+      const { ready, turnIdRef } = installOpenStream();
+      let steerCalls = 0;
+      let turnsPosts = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          turnIdRef.current = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          steerCalls += 1;
+          const body = (await request.json()) as { conversation_id: string };
+          if (steerCalls === 1) {
+            return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+          }
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            accepted: true,
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      await user.type(steerInput, 'focus on tomorrow');
+      await user.click(screen.getByTestId('steer-button'));
+
+      // The first steer 404s (registration race); steerStream retries and the
+      // turn accepts it — no fallback new turn.
+      await waitFor(() => {
+        expect(steerCalls).toBeGreaterThanOrEqual(2);
+      }, WAIT);
+
+      controller.enqueue(
+        sse('user_input', { turn_id: turnIdRef.current, content: 'focus on tomorrow', seq: 1 })
+      );
+      await waitFor(() => {
+        expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
+      }, WAIT);
+      expect(turnsPosts).toBe(1);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'recovers every accepted steer when the turn never echoes',
     async () => {
       const enc2 = new TextEncoder();

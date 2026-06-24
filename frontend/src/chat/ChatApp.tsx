@@ -330,6 +330,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  // Always-current mirror of conversationId, so a deferred follow-up timer can
+  // synchronously check whether the conversation changed before it fires.
+  const conversationIdRef = useRef<string | null>(null);
+  conversationIdRef.current = conversationId;
   // Set to a conversation id while it has a turn that gave up but is still running
   // server-side, to drive the fallback reconcile poll. Cleared once the turn
   // resolves (reply lands or it finishes with none).
@@ -824,7 +828,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // aren't clobbered and Stop/Steer target it correctly.
         const followup = pendingFollowupsRef.current.shift();
         if (followup) {
+          const convAtSchedule = conversationIdRef.current;
           setTimeout(() => {
+            // Drop it if the user switched conversations before it fired, so a
+            // previous thread's steer can't be sent into the newly selected one.
+            if (conversationIdRef.current !== convAtSchedule) {
+              return;
+            }
             void handleNewRef.current?.({ content: [{ text: followup }] });
           }, 0);
         }

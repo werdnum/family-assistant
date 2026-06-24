@@ -720,35 +720,51 @@ export const useStreamingResponse = ({
     if (!active) {
       return 'finished';
     }
-    try {
-      const response = await fetch(
-        `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`,
-        {
+    const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
+    const body = JSON.stringify({ conversation_id: active.conversationId, prompt });
+    // Retry 404 (the kickoff POST may not have registered the turn yet — same
+    // race as Stop) and transient 5xx/network with a small backoff. A 404 that
+    // persists means the turn really finished → 'finished' (resend as a normal
+    // message); a persistent 5xx/network is 'error' (don't auto-resend).
+    const attempts = 5;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      let lastWas404 = false;
+      try {
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            conversation_id: active.conversationId,
-            prompt,
-          }),
+          body,
+        });
+        if (response.status === 401) {
+          redirectToLogin();
+          return 'error';
         }
-      );
-      if (response.status === 401) {
-        redirectToLogin();
-        return 'error';
+        if (response.ok) {
+          return 'accepted';
+        }
+        if (response.status === 409) {
+          // Turn finished between typing and submitting; not steerable.
+          return 'finished';
+        }
+        if (response.status === 404) {
+          lastWas404 = true;
+        } else if (response.status < 500) {
+          console.warn(`Turn steer failed: HTTP ${response.status}`);
+          return 'error';
+        } else {
+          console.warn(`Turn steer failed (attempt ${attempt + 1}): HTTP ${response.status}`);
+        }
+      } catch (e) {
+        console.warn(`Turn steer request failed (attempt ${attempt + 1}):`, e);
       }
-      if (response.status === 409) {
-        // Turn finished between the user typing and submitting; not steerable.
+      if (attempt < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      } else if (lastWas404) {
+        // The turn never registered before we gave up: treat as finished.
         return 'finished';
       }
-      if (!response.ok) {
-        console.warn(`Turn steer failed: HTTP ${response.status}`);
-        return 'error';
-      }
-      return 'accepted';
-    } catch (e) {
-      console.warn('Turn steer request failed:', e);
-      return 'error';
     }
+    return 'error';
   }, []);
 
   return {
