@@ -26,7 +26,10 @@ from family_assistant.config_inspection import (
 )
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.paths import PROJECT_ROOT
-from family_assistant.tool_inventory import build_tool_inventory
+from family_assistant.tool_inventory import (
+    TOKEN_ESTIMATE_NOTE,
+    inventory_dict_for_service,
+)
 from family_assistant.tools.infrastructure import find_provider_by_type
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolDefinition, ToolResult
@@ -735,28 +738,15 @@ async def get_profile_tool_inventory(
 
     target_ids = [profile_id] if profile_id is not None else sorted(registry.keys())
 
-    inventories = []
-    for pid in target_ids:
-        service = registry[pid]
-        tools_provider = getattr(service, "tools_provider", None)
-        if tools_provider is None:
-            inventories.append({
-                "profile_id": pid,
-                "error": "No tools provider wired into this profile's service.",
-            })
-            continue
-        inventory = await build_tool_inventory(
-            tools_provider=tools_provider,
-            on_demand_view=getattr(service, "on_demand_view", None),
-            can_confirm=can_confirm,
-            profile_id=pid,
+    # Summary mode (all profiles) drops per-tool lists for a compact payload;
+    # a single requested profile gets the full per-tool breakdown.
+    include_tools = profile_id is not None
+    inventories = [
+        await inventory_dict_for_service(
+            pid, registry[pid], can_confirm=can_confirm, include_tools=include_tools
         )
-        inventory_dict = inventory.to_dict()
-        if profile_id is None:
-            # Summary mode: drop the per-tool lists to keep the payload compact.
-            inventory_dict["eager"].pop("tools", None)
-            inventory_dict["on_demand"].pop("tools", None)
-        inventories.append(inventory_dict)
+        for pid in target_ids
+    ]
 
     if profile_id is None:
         inventories.sort(
@@ -767,10 +757,7 @@ async def get_profile_tool_inventory(
     return ToolResult(
         data={
             "can_confirm": can_confirm,
-            "token_estimate_note": (
-                "estimated_tokens is a heuristic (serialized JSON characters / 4) "
-                "for relative comparison, not an exact provider token count."
-            ),
+            "token_estimate_note": TOKEN_ESTIMATE_NOTE,
             "profiles": inventories,
             "profile_count": len(inventories),
         }

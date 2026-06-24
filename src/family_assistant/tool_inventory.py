@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 # attributed to the ``meta`` source rather than ``local``.
 _ACTIVATE_TOOLS_NAME = "activate_tools"
 
+# Shared disclaimer surfaced alongside every inventory payload so consumers know
+# the token figures are a heuristic, not an exact provider count.
+TOKEN_ESTIMATE_NOTE = (
+    "estimated_tokens is a heuristic (serialized JSON characters / 4) "
+    "for relative comparison, not an exact provider token count."
+)
+
 _META_SOURCE = "meta"
 _LOCAL_SOURCE = "local"
 
@@ -111,9 +118,17 @@ class ToolInventory:
     all_if_activated_tokens: int
 
     # ast-grep-ignore: no-dict-any - Serializes a typed dataclass to a JSON-ready mapping
-    def to_dict(self) -> dict[str, Any]:
-        """Return a plain JSON-serializable dict of this inventory."""
-        return asdict(self)
+    def to_dict(self, *, include_tools: bool = True) -> dict[str, Any]:
+        """Return a plain JSON-serializable dict of this inventory.
+
+        With ``include_tools=False`` the per-tool lists are dropped, leaving the
+        summary-only counts and token estimates for a compact payload.
+        """
+        data = asdict(self)
+        if not include_tools:
+            data["eager"].pop("tools", None)
+            data["on_demand"].pop("tools", None)
+        return data
 
 
 def _classify_source(name: str, mcp_server_id_by_name: dict[str, str | None]) -> str:
@@ -202,9 +217,20 @@ async def build_tool_inventory(
     engine may drop confirmation-gated tools, so the inventory reflects the
     interaction kind. The default ``True`` represents the common case.
     """
+    # The full policy-allowed set (on-demand tools NOT hidden). The second call
+    # below re-filters the same memoized provider output rather than re-fetching
+    # (PolicyEnforcingToolsProvider caches per can_confirm), so the double call
+    # is cheap.
     all_definitions = await tools_provider.get_tool_definitions(can_confirm=can_confirm)
 
     if on_demand_view is not None:
+        # Ask the view for the authoritative eager set (what the LLM actually
+        # sees at turn start), then derive on-demand as the policy-allowed
+        # remainder. The view wraps this same provider and forwards the same
+        # can_confirm, so eager_definitions is a subset of all_definitions and
+        # the remainder is exactly the progressively-disclosed tools. Deriving
+        # by subtraction (rather than the view's name-only catalog) keeps the
+        # full definition for each hidden tool so it can be sized.
         eager_definitions = await on_demand_view.get_tool_definitions(
             can_confirm=can_confirm, activated=frozenset()
         )
@@ -248,3 +274,36 @@ async def build_tool_inventory(
             eager_summary.estimated_tokens + on_demand_summary.estimated_tokens
         ),
     )
+
+
+async def inventory_dict_for_service(
+    profile_id: str,
+    service: object,
+    *,
+    can_confirm: bool = True,
+    include_tools: bool = True,
+    # ast-grep-ignore: no-dict-any - Returns a serialized ToolInventory or error marker
+) -> dict[str, Any]:
+    """Build one live profile's inventory dict, or an error dict.
+
+    Reads ``tools_provider`` / ``on_demand_view`` off a live processing service
+    (duck-typed, so delegation-only stubs are handled gracefully) and returns
+    either the serialized :class:`ToolInventory` or, when no tools provider is
+    wired up, an explicit ``{"profile_id", "error"}`` marker so the caller can
+    report it rather than silently dropping the profile. Shared by the
+    ``/api/debug/profiles/tools`` endpoint and the ``get_profile_tool_inventory``
+    engineer tool so the service-introspection contract lives in one place.
+    """
+    tools_provider = getattr(service, "tools_provider", None)
+    if tools_provider is None:
+        return {
+            "profile_id": profile_id,
+            "error": "No tools provider wired into this profile's service.",
+        }
+    inventory = await build_tool_inventory(
+        tools_provider=tools_provider,
+        on_demand_view=getattr(service, "on_demand_view", None),
+        can_confirm=can_confirm,
+        profile_id=profile_id,
+    )
+    return inventory.to_dict(include_tools=include_tools)

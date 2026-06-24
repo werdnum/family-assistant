@@ -16,7 +16,10 @@ from family_assistant.config_inspection import (
     is_sensitive_field_name,
     redact_sensitive_config,
 )
-from family_assistant.tool_inventory import ToolInventory, build_tool_inventory
+from family_assistant.tool_inventory import (
+    TOKEN_ESTIMATE_NOTE,
+    inventory_dict_for_service,
+)
 from family_assistant.web.auth import (
     AUTH_ENABLED,
     OIDC_CLIENT_ID,
@@ -395,30 +398,6 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
     )
 
 
-async def _inventory_for_service(
-    profile_id: str,
-    service: object,
-    *,
-    can_confirm: bool,
-) -> ToolInventory | None:
-    """Build the tool inventory for one live processing service, if possible.
-
-    Returns ``None`` when the service has no tools provider wired up (e.g. a
-    delegation-only stub), so the caller can report it explicitly rather than
-    silently dropping the profile.
-    """
-    tools_provider = getattr(service, "tools_provider", None)
-    if tools_provider is None:
-        return None
-    on_demand_view = getattr(service, "on_demand_view", None)
-    return await build_tool_inventory(
-        tools_provider=tools_provider,
-        on_demand_view=on_demand_view,
-        can_confirm=can_confirm,
-        profile_id=profile_id,
-    )
-
-
 @debug_api_router.get("/profiles/tools")
 async def dump_profile_tool_inventory(  # noqa: A002 - FastAPI query param shadows builtin
     request: Request,
@@ -493,29 +472,20 @@ async def dump_profile_tool_inventory(  # noqa: A002 - FastAPI query param shado
         matched_ids = [profile_id]
 
     # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized inventory dicts
-    profiles_info: list[dict[str, Any]] = []
-    for pid in matched_ids:
-        service = processing_services_registry[pid]
-        inventory = await _inventory_for_service(pid, service, can_confirm=can_confirm)
-        if inventory is None:
-            profiles_info.append({
-                "profile_id": pid,
-                "error": "No tools provider wired into this profile's service.",
-            })
-            continue
-        inventory_dict = inventory.to_dict()
-        if not include_tools:
-            inventory_dict["eager"].pop("tools", None)
-            inventory_dict["on_demand"].pop("tools", None)
-        profiles_info.append(inventory_dict)
+    profiles_info: list[dict[str, Any]] = [
+        await inventory_dict_for_service(
+            pid,
+            processing_services_registry[pid],
+            can_confirm=can_confirm,
+            include_tools=include_tools,
+        )
+        for pid in matched_ids
+    ]
 
     # ast-grep-ignore: no-dict-any - Debug endpoint returns serialized inventory dicts
     payload: dict[str, Any] = {
         "can_confirm": can_confirm,
-        "token_estimate_note": (
-            "estimated_tokens is a heuristic (serialized JSON characters / 4) "
-            "for relative comparison, not an exact provider token count."
-        ),
+        "token_estimate_note": TOKEN_ESTIMATE_NOTE,
         "profiles": profiles_info,
         "profile_count": len(profiles_info),
         "registered_service_ids": sorted(processing_services_registry.keys()),
