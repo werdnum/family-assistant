@@ -20,10 +20,12 @@ and authentication. The producer:
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.messages import (
+    AssistantMessage,
     ContentPartDict,
     MessageAttachmentMetadata,
 )
@@ -297,6 +299,18 @@ async def run_turn_producer(
             status="cancelled" if user_requested_stop else "failed",
             error="cancelled",
         )
+        if user_requested_stop:
+            # The hub turn_ended(cancelled) is in-memory only; persist a durable
+            # assistant row so a refresh/reconnect (or hub eviction/restart) shows
+            # the stopped turn instead of the user prompt with no reply.
+            await _persist_stopped_reply(
+                app_state.database_engine,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                user_id=user_id,
+                reply_text="".join(final_reply_parts),
+            )
         raise
     except Exception as exc:
         logger.error(
@@ -362,6 +376,42 @@ async def _fail_turn_best_effort(
             status,
             conversation_id,
             turn_id,
+        )
+
+
+async def _persist_stopped_reply(
+    database_engine: "AsyncEngine",
+    *,
+    interface_type: str,
+    conversation_id: str,
+    turn_id: str,
+    user_id: str,
+    reply_text: str,
+) -> None:
+    """Persist a durable assistant row for a user-stopped turn.
+
+    Mirrors the optimistic 'stopped' bubble: the partial reply if any (what the
+    live client already rendered), else a Stopped marker. Uses its own short DB
+    context because the streaming transaction is being torn down by the
+    cancellation. Best-effort — failing to persist must not mask the stop.
+    """
+    content = reply_text.strip() or "_Stopped._"
+    try:
+        async with get_db_context(database_engine) as db_context:
+            await db_context.message_history.add_message(
+                AssistantMessage(content=content),
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                timestamp=datetime.now(UTC),
+                turn_id=turn_id,
+                user_id=user_id,
+            )
+    except Exception:
+        logger.warning(
+            "Failed to persist stopped reply for conv=%s turn=%s",
+            conversation_id,
+            turn_id,
+            exc_info=True,
         )
 
 

@@ -183,6 +183,71 @@ async def test_cancel_running_turn_marks_cancelled(
         hub.unsubscribe(conversation_id, handle.queue)
 
 
+async def test_cancel_persists_stopped_reply(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stopping a turn writes a durable assistant row, so a refresh/reconnect
+    shows the stopped turn rather than the prompt with no reply."""
+    user_prompt = "Cancel and persist"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("never sent"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_cancelpersist_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await asyncio.wait_for(started.wait(), timeout=5.0)
+
+    cancel = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/cancel",
+        json={"conversation_id": conversation_id},
+    )
+    assert cancel.status_code == 200, cancel.text
+
+    # The producer persists the stopped reply in its cancellation path before the
+    # task finishes, so await it then read history back.
+    await asyncio.gather(
+        *hub.get_active_producer_tasks(conversation_id), return_exceptions=True
+    )
+    release.set()
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web",
+            conversation_id=conversation_id,
+            limit=50,
+        )
+    assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    assert assistant_rows, "Expected a durable assistant row for the stopped turn"
+    assert any("Stopped" in str(row["content"]) for row in assistant_rows), (
+        f"Expected a stopped marker in the persisted reply, got {assistant_rows}"
+    )
+
+
 async def test_cancel_unknown_turn_returns_404(
     api_test_client: AsyncClient,
 ) -> None:
