@@ -291,18 +291,13 @@ async def run_turn_producer(
             mid_turn_input_provider is not None
             and mid_turn_input_provider.should_interrupt()
         )
-        await _fail_turn_best_effort(
-            hub,
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            latex_normalizer=latex_normalizer,
-            status="cancelled" if user_requested_stop else "failed",
-            error="cancelled",
-        )
         if user_requested_stop:
             # The hub turn_ended(cancelled) is in-memory only; persist a durable
             # assistant row so a refresh/reconnect (or hub eviction/restart) shows
-            # the stopped turn instead of the user prompt with no reply.
+            # the stopped turn instead of the user prompt with no reply. Commit it
+            # BEFORE end_turn publishes turn_ended — follow streams reload history
+            # on that signal, so the row must already be visible (matching the
+            # success path's commit-before-turn_ended contract).
             await _persist_stopped_reply(
                 app_state.database_engine,
                 interface_type=interface_type,
@@ -311,6 +306,14 @@ async def run_turn_producer(
                 user_id=user_id,
                 reply_text="".join(final_reply_parts),
             )
+        await _fail_turn_best_effort(
+            hub,
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            latex_normalizer=latex_normalizer,
+            status="cancelled" if user_requested_stop else "failed",
+            error="cancelled",
+        )
         raise
     except Exception as exc:
         logger.error(
