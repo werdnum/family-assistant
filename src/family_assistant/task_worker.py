@@ -33,10 +33,12 @@ from family_assistant.llm.messages import (
     AssistantMessage,
     MessageAttachmentMetadata,
     SystemMessage,
+    UserMessage,
 )
 from family_assistant.processing import (
     PENDING,
     PollableDelegationService,
+    ProcessingService,
     RemoteSubmission,
 )
 from family_assistant.scripting import (
@@ -78,7 +80,6 @@ if TYPE_CHECKING:
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
-from family_assistant.processing import ProcessingService
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.deferred_tool_confirmation import (
     create_deferred_tool_confirmation,
@@ -573,6 +574,7 @@ async def handle_llm_callback(
             .where(message_history_table.c.interface_type == interface_type)
             .where(message_history_table.c.conversation_id == conversation_id)
             .where(message_history_table.c.role == "user")
+            .where(message_history_table.c.is_internal.is_(False))
             .where(message_history_table.c.timestamp > scheduling_timestamp_dt)
             .limit(1)
         )
@@ -1799,6 +1801,25 @@ class TaskWorker:
             return
 
         clock = exec_context.clock or self.clock
+        source_service = self._source_service_for_delegation(exec_context, run)
+        if source_service is not None:
+            try:
+                await self._wake_source_profile_for_delegation(
+                    exec_context,
+                    run,
+                    source_service,
+                    clock,
+                )
+                return
+            except Exception:
+                logger.error(
+                    "Failed to wake source profile '%s' for completed delegation %s; "
+                    "falling back to direct completion notification.",
+                    run["source_profile_id"],
+                    run["delegation_id"],
+                    exc_info=True,
+                )
+
         message_text = self._delegation_notification_text(run)
         attachments = self._delegation_notification_attachments(run)
         async with exec_context.db_context.create_isolated_context() as isolated_db:
@@ -1857,6 +1878,286 @@ class TaskWorker:
                 notified_at=clock.now(),
             )
 
+    def _source_service_for_delegation(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+    ) -> ProcessingService | None:
+        """Return the local profile that initiated a delegated run, if available."""
+        processing_service = exec_context.processing_service
+        if processing_service is None:
+            return None
+        if processing_service.service_config.id == run["source_profile_id"]:
+            return processing_service
+        registry = processing_service.processing_services_registry
+        if registry is None:
+            return None
+        source_service = registry.get(run["source_profile_id"])
+        return source_service if isinstance(source_service, ProcessingService) else None
+
+    async def _wake_source_profile_for_delegation(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        source_service: ProcessingService,
+        clock: Clock,
+    ) -> int | None:
+        """Wake the delegating profile with a terminal delegation result."""
+        chat_interface = self._chat_interface_for_interface(
+            exec_context,
+            run["interface_type"],
+        )
+        trigger_text = self._delegation_wakeup_text(run)
+        source_subconversation_id = run["source_subconversation_id"]
+        async with exec_context.db_context.create_isolated_context() as wake_db:
+            wake_turn_id = str(uuid.uuid4())
+            data_message_internal_id = await wake_db.message_history.add_message(
+                UserMessage(content=self._delegation_wakeup_data_text(run)),
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                turn_id=wake_turn_id,
+                timestamp=clock.now(),
+                processing_profile_id=source_service.service_config.id,
+                user_id=run["user_id"],
+                attachments=self._delegation_notification_attachments(run),
+                subconversation_id=source_subconversation_id,
+                is_internal=True,
+            )
+            if data_message_internal_id is None:
+                raise DelegationNotificationError(
+                    f"Failed to persist wakeup data for delegation "
+                    f"{run['delegation_id']}."
+                )
+            result = await source_service.handle_chat_interaction(
+                db_context=wake_db,
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                trigger_content_parts=[{"type": "text", "text": trigger_text}],
+                trigger_interface_message_id=None,
+                user_name=run["user_name"] or exec_context.user_name,
+                user_id=run["user_id"],
+                replied_to_interface_id=None,
+                chat_interface=chat_interface,
+                chat_interfaces=exec_context.chat_interfaces,
+                confirmation_ui_managers=exec_context.confirmation_ui_managers,
+                request_confirmation_callback=None,
+                trigger_attachments=self._delegation_notification_attachments(run),
+                subconversation_id=source_subconversation_id,
+                thread_root_id=data_message_internal_id,
+                trigger_is_internal=True,
+                pinned_history_message_ids=[data_message_internal_id],
+                trigger_role="system",
+                save_history_with_isolated_context=False,
+                turn_id=wake_turn_id,
+            )
+            message_internal_id = (
+                await self._deliver_source_profile_delegation_response(
+                    wake_db,
+                    run,
+                    result,
+                    chat_interface,
+                    clock,
+                    wake_turn_id,
+                    data_message_internal_id,
+                )
+            )
+            await wake_db.delegation_runs.mark_notified(
+                delegation_id=run["delegation_id"],
+                result_message_internal_id=message_internal_id,
+                notified_at=clock.now(),
+            )
+            return message_internal_id
+
+    async def _deliver_source_profile_delegation_response(
+        self,
+        db_context: DatabaseContext,
+        run: DelegationRunDict,
+        result: ChatInteractionResult,
+        chat_interface: ChatInterface | None,
+        clock: Clock,
+        wake_turn_id: str,
+        thread_root_id: int,
+    ) -> int | None:
+        """Deliver the source profile's response to a terminal delegation wakeup."""
+        if result.has_error:
+            raise DelegationNotificationError(
+                f"Source profile '{run['source_profile_id']}' failed while handling "
+                f"delegation {run['delegation_id']} wakeup."
+            )
+
+        delivery_attachment_ids = self._source_delivery_attachment_ids(run, result)
+        has_response = bool(result.text_reply) or bool(delivery_attachment_ids)
+        if not has_response:
+            raise DelegationNotificationError(
+                f"Source profile '{run['source_profile_id']}' produced no response "
+                f"for delegation {run['delegation_id']}."
+            )
+
+        delivery_attachments = self._delegation_attachment_metadata(
+            delivery_attachment_ids
+        )
+        message_internal_id = result.assistant_message_internal_id
+        delivery_text = result.text_reply or "Delegated task finished."
+        visible_message_internal_id = message_internal_id
+
+        if message_internal_id is None:
+            message_internal_id = await db_context.message_history.add_message(
+                AssistantMessage(content=delivery_text),
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                timestamp=clock.now(),
+                turn_id=wake_turn_id,
+                thread_root_id=thread_root_id,
+                processing_profile_id=run["source_profile_id"],
+                user_id=run["user_id"],
+                attachments=delivery_attachments,
+                subconversation_id=run["source_subconversation_id"],
+            )
+            if message_internal_id is None:
+                raise DelegationNotificationError(
+                    f"Failed to persist source profile response for delegation "
+                    f"{run['delegation_id']}."
+                )
+            visible_message_internal_id = message_internal_id
+        elif message_internal_id is not None and delivery_attachments is not None:
+            await db_context.message_history.update_attachments(
+                internal_id=message_internal_id,
+                attachments=delivery_attachments,
+            )
+
+        if run["source_subconversation_id"] is not None:
+            visible_message_internal_id = await db_context.message_history.add_message(
+                AssistantMessage(content=delivery_text),
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                timestamp=clock.now(),
+                turn_id=wake_turn_id,
+                processing_profile_id=run["source_profile_id"],
+                user_id=run["user_id"],
+                attachments=delivery_attachments,
+                subconversation_id=None,
+            )
+            if visible_message_internal_id is None:
+                raise DelegationNotificationError(
+                    f"Failed to persist visible source profile response for "
+                    f"delegation {run['delegation_id']}."
+                )
+
+        if visible_message_internal_id is None:
+            raise DelegationNotificationError(
+                f"Failed to identify source profile response row for delegation "
+                f"{run['delegation_id']}."
+            )
+
+        if run["interface_type"] in _HISTORY_NOTIFICATION_INTERFACES:
+            await self._push_notify_delegation_completion(
+                db_context,
+                run,
+                delivery_text,
+            )
+            self._tickle_stream_hub_on_commit(
+                db_context,
+                run["conversation_id"],
+            )
+            return visible_message_internal_id
+
+        if chat_interface is None:
+            raise RuntimeError(
+                f"No chat interface available for {run['interface_type']}"
+            )
+        sent_message_id = await chat_interface.send_message(
+            conversation_id=run["conversation_id"],
+            text=delivery_text,
+            parse_mode=None,
+            attachment_ids=delivery_attachment_ids,
+        )
+        if sent_message_id is None:
+            raise DelegationNotificationError(
+                f"Failed to deliver source profile response for delegation "
+                f"{run['delegation_id']} via {run['interface_type']}."
+            )
+        await db_context.message_history.update_interface_id(
+            internal_id=visible_message_internal_id,
+            interface_message_id=sent_message_id,
+        )
+        return visible_message_internal_id
+
+    @staticmethod
+    def _source_delivery_attachment_ids(
+        run: DelegationRunDict,
+        result: ChatInteractionResult,
+    ) -> list[str] | None:
+        """Return source-response plus delegated-result attachment IDs."""
+        attachment_ids: list[str] = []
+        for attachment_id in [
+            *(result.attachment_ids or []),
+            *(run["result_attachment_ids_json"] or []),
+        ]:
+            if attachment_id not in attachment_ids:
+                attachment_ids.append(attachment_id)
+        return attachment_ids or None
+
+    @staticmethod
+    def _delegation_attachment_metadata(
+        attachment_ids: list[str] | None,
+    ) -> list[MessageAttachmentMetadata] | None:
+        """Build history metadata for attachment references."""
+        if not attachment_ids:
+            return None
+        return [
+            {
+                "type": "attachment_reference",
+                "attachment_id": attachment_id,
+            }
+            for attachment_id in attachment_ids
+        ]
+
+    def _delegation_wakeup_text(self, run: DelegationRunDict) -> str:
+        """Build the internal system trigger for a completed delegation."""
+        if run["status"] == "completed":
+            return (
+                "System: Delegated profile task completed.\n\n"
+                f"Delegation reference: {run['delegation_id']}\n"
+                "The delegated result is provided as lower-priority data in the "
+                "message history for this turn. Use it to respond to the user. Do not mention the internal "
+                "delegation reference unless it is useful for troubleshooting."
+            )
+        return (
+            "System: Delegated profile task failed.\n\n"
+            f"Delegation reference: {run['delegation_id']}\n"
+            "The failure detail is provided as lower-priority data in this turn's "
+            "message history. Tell the user that the delegated work failed and summarize "
+            "the useful details. Do not expose tracebacks unless the user is debugging."
+        )
+
+    def _delegation_wakeup_data_text(self, run: DelegationRunDict) -> str:
+        """Build lower-priority data for a completed delegation wakeup."""
+        if run["status"] == "completed":
+            result_text = (
+                run["result_text"]
+                or "The delegated profile completed without a textual response."
+            )
+            return (
+                "Delegated profile task completed data.\n\n"
+                f"Delegation reference: {run['delegation_id']}\n"
+                f"Target profile: {run['target_service_id']}\n"
+                f"Original request: {run['request_text']}\n\n"
+                "Delegated result:\n"
+                f"{result_text}"
+            )
+        error_summary = (
+            short_error_summary(run["error"])
+            or "The delegated profile failed during processing."
+        )
+        return (
+            "Delegated profile task failed data.\n\n"
+            f"Delegation reference: {run['delegation_id']}\n"
+            f"Target profile: {run['target_service_id']}\n"
+            f"Original request: {run['request_text']}\n\n"
+            "Failure detail:\n"
+            f"{error_summary}"
+        )
+
     def _delegation_notification_text(self, run: DelegationRunDict) -> str:
         """Build concise terminal notification text for a delegation run."""
         if run["status"] == "completed":
@@ -1882,16 +2183,7 @@ class TaskWorker:
         run: DelegationRunDict,
     ) -> list[MessageAttachmentMetadata] | None:
         """Return message attachment references for a completed delegation result."""
-        attachment_ids = run["result_attachment_ids_json"] or []
-        if not attachment_ids:
-            return None
-        return [
-            {
-                "type": "attachment_reference",
-                "attachment_id": attachment_id,
-            }
-            for attachment_id in attachment_ids
-        ]
+        return self._delegation_attachment_metadata(run["result_attachment_ids_json"])
 
     async def _push_notify_delegation_completion(
         self,

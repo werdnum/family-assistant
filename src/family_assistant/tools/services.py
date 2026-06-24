@@ -397,11 +397,12 @@ def _delegation_reference_text(
         f"Reference: {delegation_id}\n"
         f"Target profile: {target_service_id}\n"
         f"Status: {status}\n"
-        "The result will be delivered to this conversation automatically when it "
-        "finishes — you do NOT need to check on it. Let the user know the work is "
-        "in progress, then end your turn. Do not call get_delegation_status in a "
-        "loop to wait for it; only look it up if the user later asks for an update "
-        "or you need the full error detail for a failed delegation."
+        "The result will wake this profile automatically when it finishes, and "
+        "your follow-up response will be delivered to the conversation. You do "
+        "NOT need to check on it. Let the user know the work is in progress, "
+        "then end your turn. Do not call get_delegation_status in a loop to wait "
+        "for it; only look it up if the user later asks for an update or you need "
+        "the full error detail for a failed delegation."
     )
 
 
@@ -443,7 +444,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "If confirmation required but unavailable, returns 'Error: Confirmation required to delegate to [id], but no confirmation mechanism is available.'. "
                 "If user cancels confirmation, returns 'OK. Delegation to service [id] cancelled by user.'. "
                 "If confirmation times out, returns 'Error: Confirmation timed out for delegating to [id].'. "
-                "If the delegated profile is still running after the handoff deadline, returns an async reference ID; the result is then delivered to this conversation automatically when it finishes, so end your turn rather than polling get_delegation_status in a loop. "
+                "If the delegated profile is still running after the handoff deadline, returns an async reference ID; the result then wakes the delegating profile automatically when it finishes, and that profile's follow-up response is delivered to the conversation, so end your turn rather than polling get_delegation_status in a loop. "
                 "On delegation error, returns 'Error: Failed to delegate task to service [id]. Details: [error]' or 'Error from [id] service: [detail]' along with a reference ID you can pass to get_delegation_status for the full error."
             ),
             "parameters": {
@@ -744,6 +745,7 @@ async def delegate_to_service_tool(
                 "user_id": exec_context.user_id,
                 "user_name": exec_context.user_name,
                 "source_turn_id": exec_context.turn_id,
+                "source_subconversation_id": exec_context.subconversation_id,
                 "subconversation_id": subconversation_id,
                 "request_text": user_request,
                 "content_parts_json": content_parts,

@@ -46,6 +46,36 @@ _MAX_CONTEXT_MESSAGES_PER_SIDE = 10
 MessageHistoryScope = Literal["current_conversation", "same_user", "all_accessible"]
 MessageHistorySearchMode = Literal["structured", "semantic", "hybrid"]
 
+_DELEGATION_WAKE_SYSTEM_PREFIXES = (
+    "System: Delegated profile task completed.",
+    "System: Delegated profile task failed.",
+)
+
+
+def _is_delegation_wake_system_message(content: str) -> bool:
+    """Return whether a system message is a one-shot delegation wake trigger."""
+    return content.startswith(_DELEGATION_WAKE_SYSTEM_PREFIXES)
+
+
+def _historical_delegation_wake_content(content: str) -> str:
+    """Convert a one-shot delegation wake trigger into replay-safe history."""
+    historical_lines = [
+        line
+        for line in content.splitlines()
+        if not line.startswith((
+            "Respond to the user with the result.",
+            "Tell the user that the delegated work failed",
+            "The delegated result is provided as lower-priority data",
+            "The failure detail is provided as lower-priority data",
+        ))
+    ]
+    historical_content = "\n".join(historical_lines).strip()
+    return (
+        "Historical delegation completion event from a previous turn. "
+        "This is not a current instruction.\n\n"
+        f"{historical_content}"
+    )
+
 
 def _subconversation_filter(
     subconversation_id: str | None,
@@ -60,6 +90,11 @@ def _subconversation_filter(
     if subconversation_id is None:
         return message_history_table.c.subconversation_id.is_(None)
     return message_history_table.c.subconversation_id == subconversation_id
+
+
+def _visible_message_condition() -> ColumnElement[bool]:
+    """Return the predicate for rows shown through user-facing history APIs."""
+    return message_history_table.c.is_internal.is_(False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +118,7 @@ class MessageHistoryQuery:
     interface_type: str | None = None
     current_conversation_id: str | None = None
     current_user_id: str | None = None
+    include_internal: bool = False
 
 
 class MessageHistoryAccessDeniedError(ValueError):
@@ -195,6 +231,8 @@ class MessageHistoryRepository(BaseRepository):
             message_history_table.c.interface_type == row["interface_type"],
             message_history_table.c.conversation_id == row["conversation_id"],
         ]
+        if access_query is None or not access_query.include_internal:
+            base_conditions.append(_visible_message_condition())
         processing_profile_id = row.get("processing_profile_id")
         if processing_profile_id is None:
             base_conditions.append(
@@ -311,6 +349,7 @@ class MessageHistoryRepository(BaseRepository):
                 current_conversation_id=access_query.current_conversation_id,
                 current_user_id=access_query.current_user_id,
                 limit=access_query.limit,
+                include_internal=access_query.include_internal,
             ),
             include_text_query=False,
         )
@@ -412,6 +451,7 @@ class MessageHistoryRepository(BaseRepository):
         """Return turn-level groups to project into the document index."""
         bounded_limit = min(max(limit, 1), 200)
         seed_conditions: list[ColumnElement[bool]] = []
+        seed_conditions.append(_visible_message_condition())
         if turn_id is not None:
             seed_conditions.append(message_history_table.c.turn_id == turn_id)
         if internal_id is not None:
@@ -445,7 +485,10 @@ class MessageHistoryRepository(BaseRepository):
             if seed_row.get("turn_id"):
                 group_stmt = (
                     select(message_history_table)
-                    .where(message_history_table.c.turn_id == seed_row["turn_id"])
+                    .where(
+                        message_history_table.c.turn_id == seed_row["turn_id"],
+                        _visible_message_condition(),
+                    )
                     .order_by(
                         message_history_table.c.timestamp.asc(),
                         message_history_table.c.internal_id.asc(),
@@ -479,6 +522,8 @@ class MessageHistoryRepository(BaseRepository):
     ) -> list[ColumnElement[bool]]:
         """Build SQLAlchemy filter conditions for structured message-history queries."""
         conditions: list[ColumnElement[bool]] = []
+        if not query.include_internal:
+            conditions.append(_visible_message_condition())
         if query.scope == "all_accessible":
             raise MessageHistoryAccessDeniedError(
                 "The all_accessible scope is not enabled for message history."
@@ -689,6 +734,7 @@ class MessageHistoryRepository(BaseRepository):
         user_id: str | None = None,
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
+        is_internal: bool = False,
     ) -> int | None:
         """
         Stores a typed LLMMessage in the history table.
@@ -709,6 +755,8 @@ class MessageHistoryRepository(BaseRepository):
             subconversation_id: Subconversation ID for delegation
             user_id: User identifier
             reasoning_info: LLM reasoning/usage info
+            is_internal: Hide this row from user-facing history while keeping it
+                available to LLM context.
 
         Returns:
             The stored message data including generated internal_id, or None on error
@@ -766,6 +814,7 @@ class MessageHistoryRepository(BaseRepository):
             subconversation_id=subconversation_id,
             user_id=user_id,
             attachments=attachments,
+            is_internal=is_internal,
             tool_name=tool_name,
             provider_metadata=provider_metadata,
         )
@@ -788,6 +837,7 @@ class MessageHistoryRepository(BaseRepository):
         subconversation_id: str | None = None,
         user_id: str | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
+        is_internal: bool = False,
         tool_name: str | None = None,
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None,
     ) -> int | None:
@@ -836,6 +886,7 @@ class MessageHistoryRepository(BaseRepository):
             "processing_profile_id": processing_profile_id,
             "subconversation_id": subconversation_id,
             "attachments": attachments,
+            "is_internal": is_internal,
             "tool_name": tool_name,
             "provider_metadata": serialized_provider_metadata,
             "user_id": user_id,
@@ -859,6 +910,7 @@ class MessageHistoryRepository(BaseRepository):
                 "processing_profile_id",
                 "subconversation_id",
                 "attachments",
+                "is_internal",
                 "tool_name",
                 "provider_metadata",
                 "user_id",
@@ -1459,6 +1511,26 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
 
+    async def get_by_internal_ids(
+        self,
+        internal_ids: tuple[int, ...],
+    ) -> list[LLMMessage]:
+        """Retrieve typed messages by internal IDs in chronological order."""
+        if not internal_ids:
+            return []
+
+        stmt = (
+            select(message_history_table)
+            .where(message_history_table.c.internal_id.in_(internal_ids))
+            .order_by(
+                message_history_table.c.timestamp.asc(),
+                message_history_table.c.internal_id.asc(),
+            )
+        )
+
+        rows = await self._db.fetch_all(stmt)
+        return [self._process_message_row(row) for row in rows]
+
     async def get_by_thread_id(
         self,
         thread_root_id: int,
@@ -1531,6 +1603,30 @@ class MessageHistoryRepository(BaseRepository):
                 f"No message found with internal_id {internal_id} to update interface ID"
             )
 
+    async def update_attachments(
+        self,
+        internal_id: int,
+        attachments: list[MessageAttachmentMetadata] | None,
+    ) -> None:
+        """
+        Updates the stored attachments for a message.
+
+        Args:
+            internal_id: Internal database ID
+            attachments: Attachment metadata to store
+        """
+        stmt = (
+            update(message_history_table)
+            .where(message_history_table.c.internal_id == internal_id)
+            .values(attachments=attachments)
+        )
+
+        result = await self._db.execute_with_retry(stmt)
+        if result.rowcount == 0:  # type: ignore[attr-defined]  # SQLAlchemy runtime API.
+            self._logger.warning(
+                f"No message found with internal_id {internal_id} to update attachments"
+            )
+
     async def update_error_traceback(
         self, internal_id: int, error_traceback: str
     ) -> None:
@@ -1574,7 +1670,10 @@ class MessageHistoryRepository(BaseRepository):
         Returns:
             Tuple of (messages, has_more_before, has_more_after)
         """
-        conditions = [message_history_table.c.conversation_id == conversation_id]
+        conditions = [
+            message_history_table.c.conversation_id == conversation_id,
+            _visible_message_condition(),
+        ]
         if not include_subconversations:
             conditions.append(message_history_table.c.subconversation_id.is_(None))
 
@@ -1623,6 +1722,7 @@ class MessageHistoryRepository(BaseRepository):
             before_conditions = [
                 message_history_table.c.conversation_id == conversation_id,
                 message_history_table.c.timestamp < after,
+                _visible_message_condition(),
             ]
             if not include_subconversations:
                 before_conditions.append(
@@ -1656,7 +1756,10 @@ class MessageHistoryRepository(BaseRepository):
         Returns:
             Total number of messages in the conversation
         """
-        conditions = [message_history_table.c.conversation_id == conversation_id]
+        conditions = [
+            message_history_table.c.conversation_id == conversation_id,
+            _visible_message_condition(),
+        ]
         if not include_subconversations:
             conditions.append(message_history_table.c.subconversation_id.is_(None))
 
@@ -1694,6 +1797,7 @@ class MessageHistoryRepository(BaseRepository):
         conditions = [
             message_history_table.c.conversation_id == conversation_id,
             message_history_table.c.timestamp > after,
+            _visible_message_condition(),
         ]
 
         if interface_type:
@@ -1742,6 +1846,7 @@ class MessageHistoryRepository(BaseRepository):
         conditions = [
             message_history_table.c.conversation_id == conversation_id,
             message_history_table.c.timestamp > after,
+            _visible_message_condition(),
         ]
 
         if interface_type:
@@ -2046,8 +2151,11 @@ class MessageHistoryRepository(BaseRepository):
                 error_traceback=msg.get("error_traceback"),
             )
         elif role == "system":
+            content = msg.get("content") or ""
+            if _is_delegation_wake_system_message(content):
+                return UserMessage(content=_historical_delegation_wake_content(content))
             return SystemMessage(
-                content=msg.get("content") or "",
+                content=content,
             )
         elif role == "error":
             return ErrorMessage(
@@ -2064,6 +2172,7 @@ class MessageHistoryRepository(BaseRepository):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         include_subconversations: bool = True,
+        include_internal: bool = False,
     ) -> dict[tuple[str, str], list[MessageHistoryRow]]:
         """
         Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp.
@@ -2074,12 +2183,15 @@ class MessageHistoryRepository(BaseRepository):
             date_from: Filter messages after this date (inclusive)
             date_to: Filter messages before this date (inclusive)
             include_subconversations: Include delegated subconversation rows
+            include_internal: Include rows hidden from user-facing history
 
         Returns:
             Dictionary mapping (interface_type, conversation_id) tuples to lists of messages
         """
         # Build query conditions
         conditions = []
+        if not include_internal:
+            conditions.append(_visible_message_condition())
         if interface_type:
             conditions.append(message_history_table.c.interface_type == interface_type)
         if conversation_id:
@@ -2145,6 +2257,7 @@ class MessageHistoryRepository(BaseRepository):
         """
         # Build base conditions
         base_conditions = []
+        base_conditions.append(_visible_message_condition())
         base_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
         base_conditions.append(message_history_table.c.content.isnot(None))
 
@@ -2202,6 +2315,7 @@ class MessageHistoryRepository(BaseRepository):
 
         # Get message counts per conversation (without content filter)
         count_conditions = []
+        count_conditions.append(_visible_message_condition())
         count_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
 
         if interface_type:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import traceback
@@ -260,6 +261,45 @@ class ProcessingService:
 
         return initial_messages_for_llm, thread_attachments_context
 
+    async def _append_missing_pinned_history_messages(
+        self,
+        db_context: DatabaseContext,
+        messages_for_llm: list[LLMMessage],
+        pinned_history_message_ids: list[int] | None,
+    ) -> None:
+        """Append required rows that history limits may have excluded."""
+        if not pinned_history_message_ids:
+            return
+
+        pinned_messages = await db_context.message_history.get_by_internal_ids(
+            tuple(pinned_history_message_ids)
+        )
+        pinned_messages_for_llm = await self.context_preparer.format_history(
+            pinned_messages
+        )
+        existing_keys = {
+            (message.role, self._message_content_key(message))
+            for message in messages_for_llm
+        }
+        for pinned_message in pinned_messages_for_llm:
+            pinned_key = (
+                pinned_message.role,
+                self._message_content_key(pinned_message),
+            )
+            if pinned_key not in existing_keys:
+                messages_for_llm.append(pinned_message)
+                existing_keys.add(pinned_key)
+
+    @staticmethod
+    def _message_content_key(message: LLMMessage) -> str:
+        """Return a stable content key for duplicate detection."""
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if content is None:
+            return ""
+        return json.dumps(content, default=str, sort_keys=True)
+
     @staticmethod
     def _prune_leading_invalid_messages(messages_for_llm: list[LLMMessage]) -> int:
         """Remove leading tool messages/tool-calling assistant messages."""
@@ -363,7 +403,7 @@ class ProcessingService:
         messages_for_llm: list[LLMMessage],
         trigger_attachments: list[MessageAttachmentMetadata] | None,
     ) -> None:
-        """Inject trigger-attachment metadata into the latest user message."""
+        """Inject trigger-attachment metadata into the latest trigger message."""
         if not trigger_attachments:
             return
 
@@ -376,6 +416,46 @@ class ProcessingService:
             if isinstance(msg, UserMessage):
                 inject_metadata_into_user_message(msg, metadata_text)
                 return
+            if isinstance(msg, SystemMessage):
+                msg.content = f"{msg.content}\n\n{metadata_text}"
+                return
+
+    @staticmethod
+    def _is_delegation_wake_trigger_content(content: str) -> bool:
+        """Return whether content is a one-shot delegation wake trigger."""
+        return content.startswith((
+            "System: Delegated profile task completed.",
+            "System: Delegated profile task failed.",
+        ))
+
+    @staticmethod
+    def _replace_historical_delegation_wake_with_active_system_trigger(
+        messages_for_llm: list[LLMMessage],
+        trigger_content: str,
+    ) -> None:
+        """Make the current wake a system trigger without replaying old wakes as system."""
+        delegation_reference_line = next(
+            (
+                line
+                for line in trigger_content.splitlines()
+                if line.startswith("Delegation reference:")
+            ),
+            None,
+        )
+        for index in range(len(messages_for_llm) - 1, -1, -1):
+            msg = messages_for_llm[index]
+            if (
+                delegation_reference_line is not None
+                and isinstance(msg, UserMessage)
+                and isinstance(msg.content, str)
+                and msg.content.startswith(
+                    "Historical delegation completion event from a previous turn."
+                )
+                and delegation_reference_line in msg.content
+            ):
+                messages_for_llm.pop(index)
+                break
+        messages_for_llm.append(SystemMessage(content=trigger_content))
 
     async def _save_history_message(
         self,
@@ -392,6 +472,7 @@ class ProcessingService:
         user_id: str | None = None,
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
+        is_internal: bool = False,
         save_with_isolated_context: bool = False,
     ) -> int | None:
         """Persist a history message using either the active context or a fresh one."""
@@ -411,6 +492,7 @@ class ProcessingService:
                 user_id=user_id,
                 reasoning_info=reasoning_info,
                 attachments=attachments,
+                is_internal=is_internal,
             )
 
         # On SQLite, avoid nested contexts with StaticPool because they may share
@@ -433,8 +515,14 @@ class ProcessingService:
         thread_root_id: int | None,
         subconversation_id: str | None,
         user_id: str | None,
+        save_with_isolated_context: bool | None = None,
     ) -> int | None:
         """Persist a processing error message with the standard write strategy."""
+        use_isolated_context = (
+            self._USE_ISOLATED_HISTORY_WRITES
+            if save_with_isolated_context is None
+            else save_with_isolated_context
+        )
         try:
             return await self._save_history_message(
                 db_context,
@@ -449,7 +537,7 @@ class ProcessingService:
                 thread_root_id=thread_root_id,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
-                save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
+                save_with_isolated_context=use_isolated_context,
             )
         except Exception:
             logger.error("Failed to save error message to history", exc_info=True)
@@ -469,21 +557,33 @@ class ProcessingService:
         replied_to_interface_id: str | None,
         trigger_attachments: list[MessageAttachmentMetadata] | None,
         subconversation_id: str | None,
+        thread_root_id: int | None = None,
+        trigger_is_internal: bool = False,
+        pinned_history_message_ids: list[int] | None = None,
+        save_history_with_isolated_context: bool = True,
+        trigger_role: Literal["user", "system"] = "user",
     ) -> tuple[int | None, list[LLMMessage]]:
         """Build the full pre-LLM turn state shared by sync and streaming flows."""
-        thread_root_id_for_turn = await self._resolve_thread_root_id(
-            db_context=db_context,
-            interface_type=interface_type,
-            replied_to_interface_id=replied_to_interface_id,
-        )
+        thread_root_id_for_turn = thread_root_id
+        if thread_root_id_for_turn is None:
+            thread_root_id_for_turn = await self._resolve_thread_root_id(
+                db_context=db_context,
+                interface_type=interface_type,
+                replied_to_interface_id=replied_to_interface_id,
+            )
         user_content_for_history = self._extract_user_content_for_history(
             trigger_content_parts
         )
         actual_interface_message_id = trigger_interface_message_id or f"temp_{turn_id}"
 
+        trigger_message: LLMMessage
+        if trigger_role == "system":
+            trigger_message = SystemMessage(content=user_content_for_history)
+        else:
+            trigger_message = UserMessage(content=user_content_for_history)
         saved_user_msg_record = await self._save_history_message(
             db_context,
-            message=UserMessage(content=user_content_for_history),
+            message=trigger_message,
             interface_type=interface_type,
             conversation_id=conversation_id,
             interface_message_id=actual_interface_message_id,
@@ -493,7 +593,8 @@ class ProcessingService:
             attachments=trigger_attachments,
             subconversation_id=subconversation_id,
             user_id=user_id,
-            save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
+            is_internal=trigger_is_internal,
+            save_with_isolated_context=save_history_with_isolated_context,
         )
         if saved_user_msg_record is not None and thread_root_id_for_turn is None:
             thread_root_id_for_turn = saved_user_msg_record
@@ -509,6 +610,18 @@ class ProcessingService:
             replied_to_interface_id=replied_to_interface_id,
             thread_root_id_for_turn=thread_root_id_for_turn,
             subconversation_id=subconversation_id,
+        )
+        if trigger_role == "system" and self._is_delegation_wake_trigger_content(
+            user_content_for_history
+        ):
+            self._replace_historical_delegation_wake_with_active_system_trigger(
+                messages_for_llm,
+                user_content_for_history,
+            )
+        await self._append_missing_pinned_history_messages(
+            db_context,
+            messages_for_llm,
+            pinned_history_message_ids,
         )
         pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
         if pruned_count > 0:
@@ -654,6 +767,11 @@ class ProcessingService:
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         turn_id: str | None = None,
+        thread_root_id: int | None = None,
+        trigger_is_internal: bool = False,
+        pinned_history_message_ids: list[int] | None = None,
+        trigger_role: Literal["user", "system"] = "user",
+        save_history_with_isolated_context: bool | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -679,6 +797,10 @@ class ProcessingService:
             request_confirmation_callback: Callback for tool confirmations
             trigger_attachments: Attachments from the user
             subconversation_id: Subconversation identifier
+            thread_root_id: Existing message-history row to use as this turn's thread root
+            trigger_is_internal: Hide the trigger row from user-facing history.
+            pinned_history_message_ids: Message rows that must be present even if
+                normal history limits would exclude them.
 
         Returns:
             ChatInteractionResult containing:
@@ -691,6 +813,11 @@ class ProcessingService:
 
         if turn_id is None:
             turn_id = str(uuid.uuid4())
+        use_isolated_history_writes = (
+            self._USE_ISOLATED_HISTORY_WRITES
+            if save_history_with_isolated_context is None
+            else save_history_with_isolated_context
+        )
         logger.info(
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
@@ -713,6 +840,11 @@ class ProcessingService:
                 replied_to_interface_id=replied_to_interface_id,
                 trigger_attachments=trigger_attachments,
                 subconversation_id=subconversation_id,
+                thread_root_id=thread_root_id,
+                trigger_is_internal=trigger_is_internal,
+                pinned_history_message_ids=pinned_history_message_ids,
+                save_history_with_isolated_context=use_isolated_history_writes,
+                trigger_role=trigger_role,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
@@ -769,7 +901,7 @@ class ProcessingService:
                         subconversation_id=subconversation_id,
                         user_id=user_id,
                         reasoning_info=reasoning_info_for_msg,
-                        save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
+                        save_with_isolated_context=use_isolated_history_writes,
                     )
 
                     if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
@@ -806,6 +938,7 @@ class ProcessingService:
                 thread_root_id=thread_root_id_for_turn,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
+                save_with_isolated_context=use_isolated_history_writes,
             )
 
             return ChatInteractionResult.error(

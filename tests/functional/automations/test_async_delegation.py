@@ -18,7 +18,7 @@ from family_assistant.a2a.client import (
 )
 from family_assistant.config_models import ToolsConfig
 from family_assistant.interfaces import ChatInterface
-from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.processing import PENDING, RemoteSubmission
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.processing import ProcessingService
+    from family_assistant.processing.service import ProcessingService
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
 TEST_INTERFACE_TYPE = "test_interface"
@@ -150,7 +150,7 @@ class FakeDelegatableService:
         self.attachment_registry = attachment_registry
         self.calls: list[FakeDelegationCall] = []
 
-    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401
+    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.calls.append(cast("FakeDelegationCall", kwargs))
         if self.request_confirmation:
             delegated_turn_id = "delegated_tool_turn"
@@ -214,6 +214,100 @@ class FakeDelegatableService:
         )
 
 
+class FakeWakeCapableSourceService:
+    """Source processing service fake that can handle delegation wakeups."""
+
+    def __init__(
+        self,
+        target_service: FakeDelegatableService,
+        *,
+        wake_result_status: str = "success",
+        response_text: str = "source relayed delegated result",
+        response_attachment_ids: list[str] | None = None,
+        persist_assistant_message: bool = True,
+        async_delegation_enabled: bool = True,
+    ) -> None:
+        self.service_config = SimpleNamespace(
+            id="source_profile",
+            tools_config=ToolsConfig(
+                async_delegation_enabled=async_delegation_enabled,
+                delegate_handoff_after_seconds=15.0,
+                delegate_status_poll_seconds=0.05,
+            ),
+            visibility_grants=None,
+            default_note_visibility_labels=None,
+        )
+        self.processing_services_registry = {"target_profile": target_service}
+        self.home_assistant_client = None
+        self.attachment_registry = None
+        self.wake_result_status = wake_result_status
+        self.response_text = response_text
+        self.response_attachment_ids = response_attachment_ids
+        self.persist_assistant_message = persist_assistant_message
+        self.wake_call_count = 0
+        self.wake_assistant_message_ids: list[int] = []
+
+    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
+        self.wake_call_count += 1
+        db_context = cast("DatabaseContext", kwargs["db_context"])
+        turn_id = cast("str", kwargs["turn_id"])
+        thread_root_id = cast("int | None", kwargs["thread_root_id"])
+        subconversation_id = cast("str | None", kwargs["subconversation_id"])
+        await db_context.message_history.add_message(
+            SystemMessage(content="source wake persisted"),
+            interface_type=kwargs["interface_type"],
+            conversation_id=kwargs["conversation_id"],
+            timestamp=SystemClock().now(),
+            turn_id=turn_id,
+            thread_root_id=thread_root_id,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            user_id="async-delegation-user",
+        )
+        if self.wake_result_status == "error":
+            error_message_id = await db_context.message_history.add_message(
+                AssistantMessage(content="source wake error"),
+                interface_type=kwargs["interface_type"],
+                conversation_id=kwargs["conversation_id"],
+                timestamp=SystemClock().now(),
+                turn_id=turn_id,
+                thread_root_id=thread_root_id,
+                processing_profile_id=self.service_config.id,
+                subconversation_id=subconversation_id,
+                user_id="async-delegation-user",
+            )
+            return ChatInteractionResult.error(
+                text_reply="source profile failed",
+                error_traceback="source profile traceback",
+                assistant_message_internal_id=error_message_id,
+            )
+
+        if not self.persist_assistant_message:
+            return ChatInteractionResult.success(
+                text_reply=self.response_text,
+                attachment_ids=self.response_attachment_ids,
+            )
+
+        assistant_message_id = await db_context.message_history.add_message(
+            AssistantMessage(content=self.response_text),
+            interface_type=kwargs["interface_type"],
+            conversation_id=kwargs["conversation_id"],
+            timestamp=SystemClock().now(),
+            turn_id=turn_id,
+            thread_root_id=thread_root_id,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            user_id="async-delegation-user",
+        )
+        assert assistant_message_id is not None
+        self.wake_assistant_message_ids.append(assistant_message_id)
+        return ChatInteractionResult.success(
+            text_reply=self.response_text,
+            assistant_message_internal_id=assistant_message_id,
+            attachment_ids=self.response_attachment_ids,
+        )
+
+
 class AttachmentVisibilityChatInterface:
     """Chat interface that verifies attachment rows are visible while notifying."""
 
@@ -225,6 +319,7 @@ class AttachmentVisibilityChatInterface:
         self.db_engine = db_engine
         self.attachment_registry = attachment_registry
         self.sent_attachment_ids: list[str] | None = None
+        self.sent_text: str | None = None
         self.visible_attachment_ids: list[str] = []
 
     async def send_message(
@@ -236,6 +331,7 @@ class AttachmentVisibilityChatInterface:
         attachment_ids: list[str] | None = None,
     ) -> str | None:
         _ = (conversation_id, text, parse_mode, reply_to_interface_id)
+        self.sent_text = text
         self.sent_attachment_ids = attachment_ids
         if attachment_ids:
             async with DatabaseContext(engine=self.db_engine) as db_context:
@@ -438,6 +534,7 @@ async def _create_run(
     *,
     delegation_id: str,
     interface_type: str = TEST_INTERFACE_TYPE,
+    source_subconversation_id: str | None = None,
 ) -> str:
     """Create a queued delegation run and return its delegation_id."""
     await db_context.delegation_runs.create_run({
@@ -451,6 +548,7 @@ async def _create_run(
         "user_name": TEST_USER_NAME,
         "source_turn_id": "turn_async_delegation",
         "subconversation_id": f"sub_{delegation_id}",
+        "source_subconversation_id": source_subconversation_id,
         "request_text": "do the thing",
         "content_parts_json": [],
     })
@@ -607,6 +705,146 @@ async def test_failed_delivery_is_not_recorded_as_notified(
 
 
 @pytest.mark.asyncio
+async def test_source_wake_history_rolls_back_when_delivery_fails_then_falls_back(
+    db_engine: AsyncEngine,
+) -> None:
+    """Undelivered source wake rows are rolled back before direct fallback."""
+    target_service = FakeDelegatableService()
+    processing_service = FakeWakeCapableSourceService(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = [None, "fallback_external_message_id"]
+
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_source_send_fails")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_source_send_fails", clock.now()
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_source_send_fails",
+            result_text="done after source delivery failure",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        chat_interface,
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                chat_interface,
+            ),
+            _payload("delegation_source_send_fails"),
+        )
+
+    assert processing_service.wake_call_count == 1
+    assert chat_interface.send_message.await_count == 2
+    fallback_kwargs = chat_interface.send_message.await_args_list[1].kwargs
+    assert "Delegated task delegation_source_send_fails" in fallback_kwargs["text"]
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_source_send_fails"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+        rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .order_by(message_history_table.c.internal_id)
+        )
+
+    assert [
+        row["content"]
+        for row in rows
+        if row["content"]
+        in {"source wake persisted", "source relayed delegated result"}
+    ] == []
+    assert any(
+        row["role"] == "assistant"
+        and row["content"]
+        and row["content"].startswith("Delegated task delegation_source_send_fails")
+        for row in rows
+    )
+
+
+@pytest.mark.asyncio
+async def test_source_wake_error_result_falls_back_to_direct_notification(
+    db_engine: AsyncEngine,
+) -> None:
+    """An error result from the source profile does not suppress fallback delivery."""
+    target_service = FakeDelegatableService()
+    processing_service = FakeWakeCapableSourceService(
+        target_service,
+        wake_result_status="error",
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "fallback_external_message_id"
+
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_source_errors")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_source_errors", clock.now()
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_source_errors",
+            result_text="successful delegated result",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        chat_interface,
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                chat_interface,
+            ),
+            _payload("delegation_source_errors"),
+        )
+
+    assert processing_service.wake_call_count == 1
+    chat_interface.send_message.assert_awaited_once()
+    sent_kwargs = chat_interface.send_message.await_args.kwargs
+    assert "successful delegated result" in sent_kwargs["text"]
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_source_errors"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+        rows = await db_context.fetch_all(
+            select(message_history_table).where(
+                message_history_table.c.conversation_id == TEST_CONVERSATION_ID
+            )
+        )
+
+    assert [
+        row["content"]
+        for row in rows
+        if row["content"] in {"source wake persisted", "source wake error"}
+    ] == []
+    assert any(
+        row["role"] == "assistant"
+        and row["content"]
+        and row["content"].startswith("Delegated task delegation_source_errors")
+        for row in rows
+    )
+
+
+@pytest.mark.asyncio
 async def test_worker_commits_delegated_attachments_before_notification(
     db_engine: AsyncEngine,
     tmp_path: Path,
@@ -658,6 +896,391 @@ async def test_worker_commits_delegated_attachments_before_notification(
         assert run is not None
         assert run["notified_at"] is not None
         assert run["result_attachment_ids_json"] == chat_interface.sent_attachment_ids
+
+
+@pytest.mark.asyncio
+async def test_source_wake_preserves_delegated_attachments(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Source wake delivery includes attachments produced by the delegated profile."""
+    attachment_storage = tmp_path / "attachments"
+    attachment_storage.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(attachment_storage),
+        db_engine=db_engine,
+        config=None,
+    )
+    target_service = FakeDelegatableService(attachment_registry=attachment_registry)
+    processing_service = FakeWakeCapableSourceService(
+        target_service,
+        response_text="source summarized attachment result",
+    )
+    chat_interface = AttachmentVisibilityChatInterface(
+        db_engine,
+        attachment_registry,
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_source_attachment")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_source_attachment",
+            SystemClock().now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        cast("ChatInterface", chat_interface),
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                cast("ChatInterface", chat_interface),
+            ),
+            _payload("delegation_source_attachment"),
+        )
+
+    assert chat_interface.sent_attachment_ids is not None
+    assert chat_interface.visible_attachment_ids == chat_interface.sent_attachment_ids
+    assert len(processing_service.wake_assistant_message_ids) == 1
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_source_attachment"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+        assert run["result_attachment_ids_json"] == chat_interface.sent_attachment_ids
+        source_response_row = await db_context.message_history.get_row_by_internal_id(
+            processing_service.wake_assistant_message_ids[0]
+        )
+
+    assert source_response_row is not None
+    assert source_response_row["interface_message_id"] == "external_message_id"
+    assert source_response_row["attachments"] == [
+        {
+            "type": "attachment_reference",
+            "attachment_id": chat_interface.sent_attachment_ids[0],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_source_wake_creates_history_row_for_attachment_only_web_response(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """History-backed source wake delivery persists attachment-only responses."""
+    attachment_storage = tmp_path / "attachments"
+    attachment_storage.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(attachment_storage),
+        db_engine=db_engine,
+        config=None,
+    )
+    target_service = FakeDelegatableService(attachment_registry=attachment_registry)
+    processing_service = FakeWakeCapableSourceService(
+        target_service,
+        response_text="",
+        persist_assistant_message=False,
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(
+            db_context,
+            delegation_id="delegation_web_attachment_only",
+            interface_type="web",
+            source_subconversation_id="parent_subconversation",
+        )
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_web_attachment_only",
+            SystemClock().now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        chat_interface,
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                chat_interface,
+                attachment_registry=attachment_registry,
+            ),
+            _payload("delegation_web_attachment_only"),
+        )
+
+    chat_interface.send_message.assert_not_awaited()
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_web_attachment_only"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+        attachment_ids = run["result_attachment_ids_json"]
+        assert attachment_ids
+        rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .where(message_history_table.c.interface_type == "web")
+            .where(message_history_table.c.role == "assistant")
+            .order_by(message_history_table.c.internal_id)
+        )
+
+    assert len(rows) == 2
+    source_row, visible_row = rows
+    assert source_row["content"] == "Delegated task finished."
+    assert source_row["processing_profile_id"] == "source_profile"
+    assert source_row["turn_id"] is not None
+    assert source_row["thread_root_id"] is not None
+    assert source_row["subconversation_id"] == "parent_subconversation"
+    assert visible_row["content"] == "Delegated task finished."
+    assert visible_row["processing_profile_id"] == "source_profile"
+    assert visible_row["turn_id"] == source_row["turn_id"]
+    assert visible_row["subconversation_id"] is None
+    assert run["result_message_internal_id"] == visible_row["internal_id"]
+    assert source_row["attachments"] == [
+        {
+            "type": "attachment_reference",
+            "attachment_id": attachment_ids[0],
+        }
+    ]
+    assert visible_row["attachments"] == [
+        {
+            "type": "attachment_reference",
+            "attachment_id": attachment_ids[0],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_source_wake_publishes_history_backed_nested_response_to_main_history(
+    db_engine: AsyncEngine,
+) -> None:
+    """A web wake from a source subconversation keeps context and publishes visibly."""
+    target_service = FakeDelegatableService()
+    processing_service = FakeWakeCapableSourceService(
+        target_service,
+        response_text="source summarized nested result",
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(
+            db_context,
+            delegation_id="delegation_web_nested_visible",
+            interface_type="web",
+            source_subconversation_id="parent_subconversation",
+        )
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_web_nested_visible",
+            SystemClock().now(),
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_web_nested_visible",
+            result_text="nested work done",
+            result_attachment_ids=[],
+            completed_at=SystemClock().now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        chat_interface,
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                chat_interface,
+            ),
+            _payload("delegation_web_nested_visible"),
+        )
+
+    chat_interface.send_message.assert_not_awaited()
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_web_nested_visible"
+        )
+        rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .where(message_history_table.c.interface_type == "web")
+            .where(message_history_table.c.role == "assistant")
+            .where(message_history_table.c.content == "source summarized nested result")
+            .order_by(message_history_table.c.internal_id)
+        )
+
+    assert run is not None
+    assert len(rows) == 2
+    source_row, visible_row = rows
+    assert source_row["subconversation_id"] == "parent_subconversation"
+    assert visible_row["subconversation_id"] is None
+    assert run["result_message_internal_id"] == visible_row["internal_id"]
+
+
+@pytest.mark.asyncio
+async def test_source_wake_publishes_non_history_nested_response_to_main_thread(
+    db_engine: AsyncEngine,
+) -> None:
+    """A nested Telegram-style wake stores an externally addressable main row."""
+    target_service = FakeDelegatableService()
+    processing_service = FakeWakeCapableSourceService(
+        target_service,
+        response_text="source summarized nested external result",
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(
+            db_context,
+            delegation_id="delegation_nested_ext_visible",
+            source_subconversation_id="parent_subconversation",
+        )
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_nested_ext_visible",
+            SystemClock().now(),
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_nested_ext_visible",
+            result_text="nested work done",
+            result_attachment_ids=[],
+            completed_at=SystemClock().now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        chat_interface,
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                chat_interface,
+            ),
+            _payload("delegation_nested_ext_visible"),
+        )
+
+    chat_interface.send_message.assert_awaited_once()
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_nested_ext_visible"
+        )
+        rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .where(message_history_table.c.interface_type == TEST_INTERFACE_TYPE)
+            .where(message_history_table.c.role == "assistant")
+            .where(
+                message_history_table.c.content
+                == "source summarized nested external result"
+            )
+            .order_by(message_history_table.c.internal_id)
+        )
+
+    assert run is not None
+    assert len(rows) == 2
+    source_row, visible_row = rows
+    assert source_row["subconversation_id"] == "parent_subconversation"
+    assert source_row["interface_message_id"] is None
+    assert visible_row["subconversation_id"] is None
+    assert visible_row["interface_message_id"] == "external_message_id"
+    assert run["result_message_internal_id"] == visible_row["internal_id"]
+
+
+@pytest.mark.asyncio
+async def test_source_wake_sends_text_for_attachment_only_non_history_response(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Non-history source wake delivery never sends an empty attachment message."""
+    attachment_storage = tmp_path / "attachments"
+    attachment_storage.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(attachment_storage),
+        db_engine=db_engine,
+        config=None,
+    )
+    target_service = FakeDelegatableService(attachment_registry=attachment_registry)
+    processing_service = FakeWakeCapableSourceService(
+        target_service,
+        response_text="",
+        persist_assistant_message=False,
+    )
+    chat_interface = AttachmentVisibilityChatInterface(
+        db_engine,
+        attachment_registry,
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_attachment_only_send")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_attachment_only_send",
+            SystemClock().now(),
+        )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        cast("ChatInterface", chat_interface),
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                cast("ChatInterface", chat_interface),
+                attachment_registry=attachment_registry,
+            ),
+            _payload("delegation_attachment_only_send"),
+        )
+
+    assert chat_interface.sent_text == "Delegated task finished."
+    assert chat_interface.sent_attachment_ids is not None
+    assert chat_interface.visible_attachment_ids == chat_interface.sent_attachment_ids
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_attachment_only_send"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+        attachment_ids = run["result_attachment_ids_json"]
+        assert attachment_ids
+        rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .where(message_history_table.c.interface_type == TEST_INTERFACE_TYPE)
+            .where(message_history_table.c.role == "assistant")
+            .where(message_history_table.c.content == "Delegated task finished.")
+            .order_by(message_history_table.c.internal_id)
+        )
+
+    assert len(rows) == 1
+    persisted_row = rows[0]
+    assert persisted_row["subconversation_id"] is None
+    assert persisted_row["interface_message_id"] == "external_message_id"
+    assert persisted_row["attachments"] == [
+        {
+            "type": "attachment_reference",
+            "attachment_id": attachment_ids[0],
+        }
+    ]
+    assert run["result_message_internal_id"] == persisted_row["internal_id"]
 
 
 @pytest.mark.asyncio

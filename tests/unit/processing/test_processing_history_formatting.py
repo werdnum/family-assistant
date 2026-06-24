@@ -14,6 +14,8 @@ import pytest
 from PIL import Image
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
     from family_assistant.tools.types import ToolDefinition
 
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -22,11 +24,14 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
+    SystemMessage,
     ToolMessage,
     UserMessage,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage import message_history_table
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolExecutionContext
 from tests.factories.messages import (
     create_assistant_message,
@@ -35,7 +40,7 @@ from tests.factories.messages import (
     create_tool_message,
     create_user_message,
 )
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
 
 class MockToolsProvider:
@@ -104,6 +109,115 @@ async def test_format_simple_history(processing_service: ProcessingService) -> N
         history_messages
     )
     assert actual_output == expected_output
+
+
+async def test_handle_chat_interaction_persists_system_trigger(
+    db_engine: "AsyncEngine",
+) -> None:
+    """System-triggered turns are durable history, not hidden model-only context."""
+    seen_messages: list[LLMMessage] = []
+
+    def response_generator(args: MatcherArgs) -> LLMOutput:
+        seen_messages.extend(args["messages"])
+        return LLMOutput(content="Relayed delegated result.", tool_calls=None)
+
+    service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[(lambda _args: True, response_generator)]
+        ),
+        tools_provider=MockToolsProvider(),
+        service_config=ProcessingServiceConfig(
+            prompts={},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=10,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="system_trigger_profile",
+        ),
+        context_providers=[],
+        server_url="http://test.com",
+        app_config=AppConfig(),
+    )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        result = await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="web",
+            conversation_id="system-trigger-conversation",
+            trigger_content_parts=[
+                {
+                    "type": "text",
+                    "text": "System: Delegated profile task completed.",
+                }
+            ],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+            trigger_role="system",
+            trigger_attachments=[
+                {
+                    "type": "attachment_reference",
+                    "attachment_id": "delegated-attachment-1",
+                    "filename": "delegated-output.txt",
+                }
+            ],
+        )
+
+        rows = await db_context.fetch_all(
+            message_history_table
+            .select()
+            .where(
+                message_history_table.c.conversation_id == "system-trigger-conversation"
+            )
+            .order_by(message_history_table.c.internal_id)
+        )
+        future_history = await db_context.message_history.get_recent(
+            interface_type="web",
+            conversation_id="system-trigger-conversation",
+            limit=10,
+            processing_profile_id="system_trigger_profile",
+            current_time=service.clock.now(),
+        )
+
+    assert result.text_reply == "Relayed delegated result."
+    assert len(rows) == 2
+    assert rows[0]["role"] == "system"
+    assert rows[0]["content"] == "System: Delegated profile task completed."
+    assert rows[0]["attachments"] == [
+        {
+            "type": "attachment_reference",
+            "attachment_id": "delegated-attachment-1",
+            "filename": "delegated-output.txt",
+        }
+    ]
+    assert rows[0]["processing_profile_id"] == "system_trigger_profile"
+    assert rows[1]["role"] == "assistant"
+    assert any(
+        isinstance(message, SystemMessage)
+        and "System: Delegated profile task completed." in message.content
+        and "delegated-attachment-1" in message.content
+        and "<attachment_metadata>" in message.content
+        for message in seen_messages
+    )
+    assert not any(
+        isinstance(message, SystemMessage)
+        and "System: Delegated profile task completed." in message.content
+        for message in future_history
+    )
+    assert any(
+        isinstance(message, UserMessage)
+        and isinstance(message.content, str)
+        and "Historical delegation completion event from a previous turn."
+        in message.content
+        and "System: Delegated profile task completed." in message.content
+        for message in future_history
+    )
+    assert not any(
+        isinstance(message, UserMessage)
+        and isinstance(message.content, str)
+        and "Respond to the user with the result." in message.content
+        for message in future_history
+    )
 
 
 async def test_format_history_with_tool_call(

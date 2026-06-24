@@ -207,6 +207,93 @@ async def test_message_history_query_searches_tool_call_text(
 
 
 @pytest.mark.asyncio
+async def test_message_history_query_excludes_internal_rows_by_default(
+    db_engine: AsyncEngine,
+) -> None:
+    """Hidden wake rows are not returned or included as neighboring context."""
+    async with DatabaseContext(engine=db_engine) as db:
+        now = datetime.now(UTC)
+        await db.message_history.add_message(
+            UserMessage(content="Hidden delegated result data"),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=now,
+            user_id="user-a",
+            processing_profile_id="default",
+            is_internal=True,
+        )
+        await db.message_history.add_message(
+            UserMessage(content="Visible passport note"),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=now + timedelta(seconds=1),
+            user_id="user-a",
+            processing_profile_id="default",
+        )
+        await db.message_history.add_message(
+            SystemMessage(content="Hidden delegated wake instruction"),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=now + timedelta(seconds=2),
+            user_id="user-a",
+            processing_profile_id="default",
+            is_internal=True,
+        )
+
+        hidden_rows = await db.message_history.query_history(
+            MessageHistoryQuery(
+                query="delegated",
+                scope="current_conversation",
+                current_conversation_id="current",
+                interface_type="test",
+                processing_profile_id="default",
+                limit=10,
+            )
+        )
+        opted_in_rows = await db.message_history.query_history(
+            MessageHistoryQuery(
+                query="delegated",
+                scope="current_conversation",
+                current_conversation_id="current",
+                interface_type="test",
+                processing_profile_id="default",
+                include_internal=True,
+                limit=10,
+            )
+        )
+        visible_rows = await db.message_history.query_history(
+            MessageHistoryQuery(
+                query="passport",
+                scope="current_conversation",
+                current_conversation_id="current",
+                interface_type="test",
+                processing_profile_id="default",
+                limit=10,
+            )
+        )
+        hydrated = await db.message_history.hydrate_history_results(
+            visible_rows,
+            include_context=1,
+            access_query=MessageHistoryQuery(
+                scope="current_conversation",
+                current_conversation_id="current",
+                interface_type="test",
+                processing_profile_id="default",
+            ),
+        )
+
+    assert hidden_rows == []
+    assert {row["content"] for row in opted_in_rows} == {
+        "Hidden delegated result data",
+        "Hidden delegated wake instruction",
+    }
+    assert len(hydrated) == 1
+    context = hydrated[0].get("context")
+    assert context is not None
+    assert [row["content"] for row in context] == ["Visible passport note"]
+
+
+@pytest.mark.asyncio
 async def test_same_user_scope_keeps_user_filter_when_conversation_id_is_supplied(
     db_engine: AsyncEngine,
 ) -> None:
@@ -500,6 +587,32 @@ async def test_get_message_history_tool_returns_invalid_request_for_bad_datetime
 
 
 @pytest.mark.asyncio
+async def test_get_message_history_tool_excludes_internal_rows(
+    db_engine: AsyncEngine,
+) -> None:
+    """The model-facing history tool does not expose hidden wake rows."""
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.message_history.add_message(
+            UserMessage(content="Hidden delegated completion payload"),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=datetime.now(UTC),
+            user_id="user-a",
+            processing_profile_id="default",
+            is_internal=True,
+        )
+        result = await get_message_history_tool(
+            exec_context=_build_exec_context(db),
+            query="delegated",
+        )
+
+    data = cast("dict[str, Any]", result.data)
+    assert "error" not in data, data
+    assert data["result_count"] == 0
+    assert data["results"] == []
+
+
+@pytest.mark.asyncio
 async def test_search_documents_excludes_message_history_source(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
@@ -779,6 +892,54 @@ async def test_message_history_indexer_projects_turn_into_document_index(
     assert embedding is not None
     assert embedding["embedding_type"] == "message_turn"
     assert "school forms" in embedding["content"]
+
+
+@pytest.mark.asyncio
+async def test_message_history_indexer_excludes_internal_rows(
+    db_engine: AsyncEngine,
+) -> None:
+    """Hidden rows do not contribute text to the message-history search index."""
+    async with DatabaseContext(engine=db_engine) as db:
+        timestamp = datetime.now(UTC)
+        await db.message_history.add_message(
+            UserMessage(content="Hidden delegated wake payload"),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=timestamp,
+            turn_id="turn-visible-only",
+            user_id="user-a",
+            processing_profile_id="default",
+            is_internal=True,
+        )
+        await db.message_history.add_message(
+            AssistantMessage(content="Visible source response"),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=timestamp + timedelta(seconds=1),
+            turn_id="turn-visible-only",
+            user_id="user-a",
+            processing_profile_id="default",
+        )
+
+        context = _build_exec_context(
+            db,
+            embedding_generator=MockEmbeddingGenerator(dimensions=3),
+        )
+        await handle_index_message_history_batch(
+            context,
+            {"turn_id": "turn-visible-only"},
+        )
+
+        embedding = await db.fetch_one(
+            select(DocumentEmbeddingRecord.content).join(
+                DocumentRecord,
+                DocumentEmbeddingRecord.document_id == DocumentRecord.id,
+            )
+        )
+
+    assert embedding is not None
+    assert "Visible source response" in embedding["content"]
+    assert "Hidden delegated wake payload" not in embedding["content"]
 
 
 async def _store_user_message(

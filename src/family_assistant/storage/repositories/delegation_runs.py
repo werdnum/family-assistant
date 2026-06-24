@@ -45,6 +45,7 @@ class DelegationRunCreate(TypedDict, total=False):
     user_id: str | None
     user_name: str | None
     source_turn_id: str | None
+    source_subconversation_id: str | None
 
 
 class DelegationRunDict(TypedDict):
@@ -61,6 +62,7 @@ class DelegationRunDict(TypedDict):
     user_id: str | None
     user_name: str | None
     source_turn_id: str | None
+    source_subconversation_id: str | None
     subconversation_id: str
     request_text: str
     content_parts_json: list[ContentPartDict]
@@ -476,6 +478,7 @@ class DelegationRunsRepository(BaseRepository):
             user_id=row.get("user_id"),
             user_name=row.get("user_name"),
             source_turn_id=row.get("source_turn_id"),
+            source_subconversation_id=row.get("source_subconversation_id"),
             subconversation_id=row["subconversation_id"],
             request_text=row["request_text"],
             content_parts_json=self._json_list(row["content_parts_json"]),
