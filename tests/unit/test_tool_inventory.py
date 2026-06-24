@@ -109,8 +109,15 @@ async def test_inventory_partitions_eager_and_on_demand() -> None:
     assert "meta" in meta_sources
     assert "local" in meta_sources
 
-    # Worst-case (all activated) is strictly larger than per-turn for a hidden tool.
-    assert inventory.all_if_activated_tokens > inventory.advertised_per_turn_tokens
+    # The on-demand catalog is rendered into the system prompt every turn, so the
+    # per-turn total includes it on top of the eager tool definitions.
+    assert inventory.on_demand_catalog_prompt.estimated_tokens > 0
+    assert inventory.advertised_per_turn_tokens == (
+        inventory.eager.estimated_tokens
+        + inventory.on_demand_catalog_prompt.estimated_tokens
+    )
+    # Worst-case (all activated) accounts for every tool definition; the catalog
+    # disappears as tools activate, so it is not added there.
     assert inventory.all_if_activated_tokens == (
         inventory.eager.estimated_tokens + inventory.on_demand.estimated_tokens
     )
@@ -166,7 +173,7 @@ class _FakeMcpProvider:
 @pytest.mark.anyio
 async def test_inventory_attributes_mcp_source() -> None:
     inventory = await build_tool_inventory(
-        tools_provider=_FakeMcpProvider(),  # type: ignore[arg-type]
+        tools_provider=_FakeMcpProvider(),
         on_demand_view=None,
         profile_id="mixed",
     )
@@ -178,3 +185,52 @@ async def test_inventory_attributes_mcp_source() -> None:
     by_source = {b.source: b for b in inventory.by_source}
     assert by_source["mcp:playwright"].eager_count == 1
     assert by_source["local"].eager_count == 1
+    assert inventory.source_name_collisions == []
+
+
+class _CollidingProvider:
+    """Provider where a local and an MCP tool share the name ``dup``."""
+
+    def __init__(self) -> None:
+        self._definitions: list[ToolDefinition] = [
+            {
+                "type": "function",
+                "function": {"name": "dup", "description": "x", "parameters": {}},
+            },
+        ]
+
+    async def get_tool_definitions(
+        self, *, can_confirm: bool = True
+    ) -> list[ToolDefinition]:
+        _ = can_confirm
+        return self._definitions
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        return [
+            ToolDescriptor(
+                name="dup",
+                definition=self._definitions[0],
+                tags=frozenset(),
+                origin="local",
+            ),
+            ToolDescriptor(
+                name="dup",
+                definition=self._definitions[0],
+                tags=frozenset(),
+                origin="mcp",
+                mcp_server_id="playwright",
+            ),
+        ]
+
+
+@pytest.mark.anyio
+async def test_inventory_flags_source_name_collision() -> None:
+    inventory = await build_tool_inventory(
+        tools_provider=_CollidingProvider(),
+        on_demand_view=None,
+        profile_id="dup",
+    )
+
+    assert inventory.source_name_collisions == ["dup"]
+    sources = {entry.name: entry.source for entry in inventory.eager.tools}
+    assert sources["dup"] == "ambiguous"

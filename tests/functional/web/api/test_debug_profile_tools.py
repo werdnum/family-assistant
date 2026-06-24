@@ -124,7 +124,13 @@ async def test_tool_inventory_partitions_eager_and_on_demand(
     assert "activate_tools" in eager_names
     assert hidden not in eager_names
 
-    assert profile["advertised_per_turn_tokens"] == profile["eager"]["estimated_tokens"]
+    # Per-turn cost includes the on-demand catalog prompt (rendered every turn),
+    # not just the eager tool definitions.
+    assert profile["advertised_per_turn_tokens"] == (
+        profile["eager"]["estimated_tokens"]
+        + profile["on_demand_catalog_prompt"]["estimated_tokens"]
+    )
+    assert profile["on_demand_catalog_prompt"]["estimated_tokens"] > 0
     sources = {b["source"] for b in profile["by_source"]}
     assert {"local", "meta"} <= sources
 

@@ -21,12 +21,28 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from family_assistant.tools.infrastructure import PolicyEnforcingToolsProvider
+    from family_assistant.tools.metadata import ToolDescriptor
     from family_assistant.tools.on_demand import OnDemandToolsView
     from family_assistant.tools.types import ToolDefinition
+
+
+class _ToolDefinitionSource(Protocol):
+    """Structural type for the provider ``build_tool_inventory`` introspects.
+
+    Matched by ``PolicyEnforcingToolsProvider`` (the real per-profile provider)
+    and by test fakes, so neither the helper nor its tests need to import the
+    concrete class or bypass the type checker.
+    """
+
+    async def get_tool_definitions(
+        self, *, can_confirm: bool = ...
+    ) -> list[ToolDefinition]: ...
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]: ...
+
 
 # Name of the synthetic meta-tool injected by ``OnDemandToolsView`` to let the
 # model unlock on-demand tools. It is not a real registered tool, so it is
@@ -42,6 +58,11 @@ TOKEN_ESTIMATE_NOTE = (
 
 _META_SOURCE = "meta"
 _LOCAL_SOURCE = "local"
+# Attributed when one tool name resolves to more than one source (e.g. a local
+# and an MCP tool sharing a name). Such a collision is an upstream
+# misconfiguration — the LLM function-calling API requires unique names — but we
+# surface it instead of silently picking one source.
+_AMBIGUOUS_SOURCE = "ambiguous"
 
 
 def _estimate_tokens(serialized_chars: int) -> int:
@@ -85,11 +106,33 @@ class ToolGroupSummary:
 
 @dataclass(frozen=True)
 class SourceBreakdown:
-    """Per-source contribution to the advertised tool surface."""
+    """Per-source contribution, split into per-turn (eager) vs hidden (on-demand).
+
+    Keeping the eager and on-demand totals separate prevents a large but hidden
+    on-demand source from being mis-ranked as a per-turn bloat culprit:
+    ``eager_estimated_tokens`` is the every-turn cost, ``on_demand_estimated_tokens``
+    is only paid after activation.
+    """
 
     source: str
     eager_count: int
     on_demand_count: int
+    eager_serialized_chars: int
+    on_demand_serialized_chars: int
+    eager_estimated_tokens: int
+    on_demand_estimated_tokens: int
+
+
+@dataclass(frozen=True)
+class CatalogPromptSize:
+    """Size of the on-demand catalog rendered into the system prompt per turn.
+
+    When a profile has on-demand tools, their names and summaries are injected
+    into the system prompt every turn (before activation) so the model knows
+    what it can unlock. That text costs prompt tokens on every turn even though
+    the tool *definitions* are hidden, so it is part of the per-turn surface.
+    """
+
     serialized_chars: int
     estimated_tokens: int
 
@@ -98,13 +141,17 @@ class SourceBreakdown:
 class ToolInventory:
     """Resolved per-profile tool advertisement, partitioned for bloat analysis.
 
-    ``eager`` is what the profile advertises to the LLM on every turn (the
-    always-present tools plus the ``activate_tools`` meta-tool when present).
-    ``on_demand`` is the set hidden behind progressive disclosure until the
-    model activates it. ``advertised_per_turn_tokens`` equals
-    ``eager.estimated_tokens`` and is the headline bloat number;
-    ``all_if_activated_tokens`` is the worst case if every on-demand tool were
-    activated in a single turn.
+    ``eager`` is the set of tool definitions the profile advertises to the LLM on
+    every turn (the always-present tools plus the ``activate_tools`` meta-tool
+    when present). ``on_demand`` is the set hidden behind progressive disclosure
+    until the model activates it. ``on_demand_catalog_prompt`` is the system-prompt
+    text listing the hidden tools, which is also paid every turn.
+
+    ``advertised_per_turn_tokens`` — the headline bloat number — sums the eager
+    tool definitions AND the on-demand catalog prompt, since both hit the model
+    on every turn. ``all_if_activated_tokens`` is the worst case if every
+    on-demand tool were activated at once (the catalog shrinks to nothing as
+    tools activate, so it is not added there).
     """
 
     profile_id: str | None
@@ -112,8 +159,10 @@ class ToolInventory:
     has_on_demand_view: bool
     eager: ToolGroupSummary
     on_demand: ToolGroupSummary
+    on_demand_catalog_prompt: CatalogPromptSize
     activate_tools_present: bool
     by_source: list[SourceBreakdown]
+    source_name_collisions: list[str]
     advertised_per_turn_tokens: int
     all_if_activated_tokens: int
 
@@ -131,9 +180,37 @@ class ToolInventory:
         return data
 
 
-def _classify_source(name: str, mcp_server_id_by_name: dict[str, str | None]) -> str:
+def _build_source_map(
+    descriptors: list[ToolDescriptor],
+) -> tuple[dict[str, str | None], set[str]]:
+    """Map each tool name to its MCP server id, flagging name collisions.
+
+    Returns ``(mcp_server_id_by_name, collisions)`` where ``collisions`` holds
+    any name that resolves to two different sources (so it is not silently
+    attributed to whichever descriptor happened to come last).
+    """
+    mcp_server_id_by_name: dict[str, str | None] = {}
+    collisions: set[str] = set()
+    for descriptor in descriptors:
+        existing = mcp_server_id_by_name.get(descriptor.name)
+        if (
+            descriptor.name in mcp_server_id_by_name
+            and existing != descriptor.mcp_server_id
+        ):
+            collisions.add(descriptor.name)
+        mcp_server_id_by_name[descriptor.name] = descriptor.mcp_server_id
+    return mcp_server_id_by_name, collisions
+
+
+def _classify_source(
+    name: str,
+    mcp_server_id_by_name: dict[str, str | None],
+    collisions: set[str],
+) -> str:
     if name == _ACTIVATE_TOOLS_NAME:
         return _META_SOURCE
+    if name in collisions:
+        return _AMBIGUOUS_SOURCE
     server_id = mcp_server_id_by_name.get(name)
     if server_id:
         return f"mcp:{server_id}"
@@ -143,6 +220,7 @@ def _classify_source(name: str, mcp_server_id_by_name: dict[str, str | None]) ->
 def _build_entries(
     definitions: list[ToolDefinition],
     mcp_server_id_by_name: dict[str, str | None],
+    collisions: set[str],
 ) -> list[ToolSizeEntry]:
     entries: list[ToolSizeEntry] = []
     for definition in definitions:
@@ -153,7 +231,7 @@ def _build_entries(
         entries.append(
             ToolSizeEntry(
                 name=name,
-                source=_classify_source(name, mcp_server_id_by_name),
+                source=_classify_source(name, mcp_server_id_by_name, collisions),
                 serialized_chars=serialized_chars,
                 estimated_tokens=_estimate_tokens(serialized_chars),
             )
@@ -180,28 +258,48 @@ def _source_breakdowns(
     for source in sources:
         eager_for_source = [e for e in eager if e.source == source]
         on_demand_for_source = [e for e in on_demand if e.source == source]
-        serialized_chars = sum(
-            e.serialized_chars for e in (*eager_for_source, *on_demand_for_source)
-        )
-        estimated_tokens = sum(
-            e.estimated_tokens for e in (*eager_for_source, *on_demand_for_source)
-        )
         breakdowns.append(
             SourceBreakdown(
                 source=source,
                 eager_count=len(eager_for_source),
                 on_demand_count=len(on_demand_for_source),
-                serialized_chars=serialized_chars,
-                estimated_tokens=estimated_tokens,
+                eager_serialized_chars=sum(
+                    e.serialized_chars for e in eager_for_source
+                ),
+                on_demand_serialized_chars=sum(
+                    e.serialized_chars for e in on_demand_for_source
+                ),
+                eager_estimated_tokens=sum(
+                    e.estimated_tokens for e in eager_for_source
+                ),
+                on_demand_estimated_tokens=sum(
+                    e.estimated_tokens for e in on_demand_for_source
+                ),
             )
         )
-    breakdowns.sort(key=lambda b: b.estimated_tokens, reverse=True)
+    # Rank by per-turn (eager) cost — that is the bloat that hits every turn.
+    breakdowns.sort(key=lambda b: b.eager_estimated_tokens, reverse=True)
     return breakdowns
+
+
+async def _catalog_prompt_size(
+    on_demand_view: OnDemandToolsView | None, *, can_confirm: bool
+) -> CatalogPromptSize:
+    """Estimate the per-turn cost of the on-demand catalog system-prompt text."""
+    if on_demand_view is None:
+        return CatalogPromptSize(serialized_chars=0, estimated_tokens=0)
+    addition = await on_demand_view.get_system_prompt_addition(
+        can_confirm=can_confirm, activated=frozenset()
+    )
+    chars = len(addition) if addition else 0
+    return CatalogPromptSize(
+        serialized_chars=chars, estimated_tokens=_estimate_tokens(chars)
+    )
 
 
 async def build_tool_inventory(
     *,
-    tools_provider: PolicyEnforcingToolsProvider,
+    tools_provider: _ToolDefinitionSource,
     on_demand_view: OnDemandToolsView | None,
     can_confirm: bool = True,
     profile_id: str | None = None,
@@ -250,16 +348,18 @@ async def build_tool_inventory(
         if _definition_name(definition) not in eager_names
     ]
 
-    mcp_server_id_by_name: dict[str, str | None] = {
-        descriptor.name: descriptor.mcp_server_id
-        for descriptor in await tools_provider.get_tool_descriptors()
-    }
+    mcp_server_id_by_name, collisions = _build_source_map(
+        await tools_provider.get_tool_descriptors()
+    )
 
-    eager_entries = _build_entries(eager_definitions, mcp_server_id_by_name)
-    on_demand_entries = _build_entries(on_demand_definitions, mcp_server_id_by_name)
+    eager_entries = _build_entries(eager_definitions, mcp_server_id_by_name, collisions)
+    on_demand_entries = _build_entries(
+        on_demand_definitions, mcp_server_id_by_name, collisions
+    )
 
     eager_summary = _summarize(eager_entries)
     on_demand_summary = _summarize(on_demand_entries)
+    catalog_prompt = await _catalog_prompt_size(on_demand_view, can_confirm=can_confirm)
 
     return ToolInventory(
         profile_id=profile_id,
@@ -267,9 +367,15 @@ async def build_tool_inventory(
         has_on_demand_view=on_demand_view is not None,
         eager=eager_summary,
         on_demand=on_demand_summary,
+        on_demand_catalog_prompt=catalog_prompt,
         activate_tools_present=activate_tools_present,
         by_source=_source_breakdowns(eager_entries, on_demand_entries),
-        advertised_per_turn_tokens=eager_summary.estimated_tokens,
+        source_name_collisions=sorted(collisions),
+        # Per-turn cost = eager tool definitions + the on-demand catalog text,
+        # both of which hit the model every turn before any activation.
+        advertised_per_turn_tokens=(
+            eager_summary.estimated_tokens + catalog_prompt.estimated_tokens
+        ),
         all_if_activated_tokens=(
             eager_summary.estimated_tokens + on_demand_summary.estimated_tokens
         ),
