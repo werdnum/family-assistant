@@ -13,14 +13,29 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from family_assistant.tools import (
+    LOCAL_TOOL_REGISTRATIONS,
+    LocalToolsProvider,
+    OnDemandToolsView,
+    PolicyEnforcingToolsProvider,
+)
 from family_assistant.tools.engineering import (
     get_mcp_server_status,
     get_profile_config,
+    get_profile_tool_inventory,
     get_resolved_config,
     get_system_info,
     reconnect_mcp_server,
 )
 from family_assistant.tools.mcp import MCPToolsProvider
+from family_assistant.tools.metadata import ToolTag
+from family_assistant.tools.policy import (
+    PolicyEngine,
+    PolicyRule,
+    ToolMatcher,
+    ToolPolicyConfig,
+    ToolPolicyDecision,
+)
 from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -328,3 +343,112 @@ async def test_get_profile_config_unknown_id_returns_error() -> None:
     assert isinstance(data, dict)
     assert "error" in data
     assert data["profile_ids"] == ["default_assistant"]
+
+
+# --- get_profile_tool_inventory ---
+
+
+def _notes_policy_provider() -> PolicyEnforcingToolsProvider:
+    return PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(tags_any=[ToolTag.NOTES]),
+                        decision=ToolPolicyDecision.ALLOW,
+                        priority=10,
+                    ),
+                ],
+            )
+        ),
+    )
+
+
+def _ctx_with_registry(registry: object) -> ToolExecutionContext:
+    processing_service = Mock()
+    processing_service.processing_services_registry = registry
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="c",
+        user_name="u",
+        turn_id=None,
+        db_context=Mock(),
+        processing_service=processing_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+    )
+
+
+@pytest.mark.anyio
+async def test_get_profile_tool_inventory_summary_across_profiles() -> None:
+    provider = _notes_policy_provider()
+    all_names = [
+        defn["function"]["name"]
+        for defn in await provider.get_tool_definitions(can_confirm=True)
+    ]
+    hidden = all_names[0]
+    on_demand_view = OnDemandToolsView(
+        wrapped_provider=provider, on_demand_tool_names={hidden}
+    )
+    service = Mock()
+    service.tools_provider = provider
+    service.on_demand_view = on_demand_view
+    ctx = _ctx_with_registry({"notes_profile": service})
+
+    result = await get_profile_tool_inventory(ctx)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["profile_count"] == 1
+    profile = data["profiles"][0]
+    assert profile["profile_id"] == "notes_profile"
+    # Summary mode omits the per-tool lists.
+    assert "tools" not in profile["eager"]
+    assert profile["activate_tools_present"] is True
+    assert profile["on_demand"]["count"] == 1
+
+
+@pytest.mark.anyio
+async def test_get_profile_tool_inventory_specific_profile_has_tool_lists() -> None:
+    provider = _notes_policy_provider()
+    service = Mock()
+    service.tools_provider = provider
+    service.on_demand_view = None
+    ctx = _ctx_with_registry({"notes_profile": service})
+
+    result = await get_profile_tool_inventory(ctx, profile_id="notes_profile")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    profile = data["profiles"][0]
+    assert isinstance(profile["eager"]["tools"], list)
+    assert profile["eager"]["tools"]
+    assert profile["on_demand"]["count"] == 0
+
+
+@pytest.mark.anyio
+async def test_get_profile_tool_inventory_unknown_profile_returns_error() -> None:
+    service = Mock()
+    service.tools_provider = _notes_policy_provider()
+    service.on_demand_view = None
+    ctx = _ctx_with_registry({"notes_profile": service})
+
+    result = await get_profile_tool_inventory(ctx, profile_id="missing")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert data["profile_ids"] == ["notes_profile"]
+
+
+@pytest.mark.anyio
+async def test_get_profile_tool_inventory_without_registry_returns_error(
+    exec_context_with_db: ToolExecutionContext,
+) -> None:
+    result = await get_profile_tool_inventory(exec_context_with_db)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data

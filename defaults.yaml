@@ -1492,6 +1492,7 @@ service_profiles:
           4. Query the database to check application state
           5. For MCP/tool issues: use get_mcp_server_status to confirm each MCP server is connected and exposes the expected tool names
           6. For config issues: use get_resolved_config and get_profile_config to inspect the live runtime config
+          6a. For tool-bloat / prompt-size issues: use get_profile_tool_inventory to see how many tools each profile advertises per turn (eager vs on-demand) and which source (local vs each MCP server) dominates the token cost
           7. Summarize findings and recommend fixes
           8. If appropriate, create a GitHub issue with your findings
     tools_policy:
@@ -1509,6 +1510,7 @@ service_profiles:
               - "reconnect_mcp_server"
               - "get_resolved_config"
               - "get_profile_config"
+              - "get_profile_tool_inventory"
               - "get_system_info"
               - "get_message_history"
               - "list_notes"
