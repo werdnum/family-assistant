@@ -514,6 +514,16 @@ class ChatTurnResponse(BaseModel):
             "hub, so clients must reload history instead of opening /stream."
         ),
     )
+    incomplete: bool = Field(
+        default=False,
+        description=(
+            "Only meaningful with already_complete=True. True when the durable "
+            "record has the user prompt but NO assistant reply — the turn was "
+            "interrupted (crash/restart) before producing a result. The client "
+            "should surface a recovery path rather than silently showing the "
+            "prompt alone."
+        ),
+    )
 
 
 class AckRequest(BaseModel):
@@ -880,6 +890,17 @@ async def api_chat_create_turn(
         existing_user_row = await idem_db.message_history.get_user_row_by_turn_id(
             payload.turn_id
         )
+        # The user row is now written before the producer runs (so a pre-start
+        # Stop keeps the prompt durable), so its mere existence no longer implies
+        # the turn produced a reply. Check for an assistant row to tell a finished
+        # turn (reload shows the reply) from one interrupted by a crash/restart
+        # mid-turn (no reply) — the client surfaces a recovery path for the latter
+        # instead of silently showing the prompt alone.
+        turn_has_reply = (
+            await idem_db.message_history.has_assistant_row_for_turn(payload.turn_id)
+            if existing_user_row is not None
+            else False
+        )
     if existing_user_row is not None:
         if (
             existing_user_row.get("conversation_id") != conversation_id
@@ -891,6 +912,7 @@ async def api_chat_create_turn(
             conversation_id=conversation_id,
             first_seq=0,
             already_complete=True,
+            incomplete=not turn_has_reply,
         )
 
     # Resolve processing service profile.

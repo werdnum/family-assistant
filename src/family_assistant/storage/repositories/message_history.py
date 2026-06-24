@@ -1448,6 +1448,21 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return cast("MessageHistoryRow", dict(row)) if row else None
 
+    async def has_assistant_row_for_turn(self, turn_id: str) -> bool:
+        """Whether the turn has any assistant-role row (a reply, stopped marker,
+        or error) — i.e. the producer got far enough to persist a result, vs.
+        only the user prompt (an interrupted/never-run turn)."""
+        stmt = (
+            select(message_history_table.c.internal_id)
+            .where(
+                message_history_table.c.turn_id == turn_id,
+                message_history_table.c.role == "assistant",
+            )
+            .limit(1)
+        )
+        row = await self._db.fetch_one(stmt)
+        return row is not None
+
     async def get_interface_type_for_conversation(
         self, conversation_id: str
     ) -> str | None:

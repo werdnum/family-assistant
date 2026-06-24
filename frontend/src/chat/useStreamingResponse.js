@@ -167,6 +167,7 @@ export const useStreamingResponse = ({
           conversation_id: streamConversationId,
           first_seq: firstSeq,
           already_complete: alreadyComplete,
+          incomplete: durableIncomplete,
         } = await startResponse.json();
         const resolvedConversationId = streamConversationId || conversationId;
         // Refine the live-turn record now that the server has resolved the
@@ -177,11 +178,21 @@ export const useStreamingResponse = ({
         };
 
         // The turn was resolved from the durable record (turn_id found in the
-        // DB but not in the in-memory hub: restart / pruned / evicted). It has
-        // already finished and is NOT replayable from the hub, so don't open
-        // /stream — reload persisted history to surface the reply.
+        // DB but not in the in-memory hub: restart / pruned / evicted). It is
+        // NOT replayable from the hub, so don't open /stream — reload persisted
+        // history. If the durable record has no reply (incomplete: the turn was
+        // interrupted by a crash/restart mid-turn), surface a recovery error
+        // instead of silently showing the prompt alone.
         if (alreadyComplete) {
-          onReloadHistory(resolvedConversationId);
+          if (durableIncomplete) {
+            onReloadHistory(resolvedConversationId, {
+              errorIfNoReply: true,
+              turnId: effectiveTurnId,
+              errorOnFailedReload: true,
+            });
+          } else {
+            onReloadHistory(resolvedConversationId);
+          }
           return;
         }
 
