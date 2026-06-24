@@ -19,6 +19,8 @@ export interface ChatControls {
    * turn actually consumed it (see ChatApp.handleStreamingUserInput).
    */
   submitSteer: () => Promise<void>;
+  /** Last steer failure message (transient error), shown in the SteerBar. */
+  steerError: string | null;
 }
 
 export const ChatControlsContext = createContext<ChatControls | null>(null);

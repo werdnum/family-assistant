@@ -17,7 +17,7 @@ LLM-gating pattern from ``test_turn_producer_resilience.py``.
 
 import asyncio
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -58,6 +58,33 @@ def _user_message_contains(args: dict, marker: str) -> bool:
         msg.role == "user" and marker in str(msg.content or "")
         for msg in args.get("messages", [])
     )
+
+
+def _gate_first_llm_call(
+    original_generate: Callable[..., Awaitable[LLMOutput]],
+    started: asyncio.Event,
+    release: asyncio.Event,
+) -> Callable[..., Awaitable[LLMOutput]]:
+    """Wrap ``generate_response`` so its first call parks until ``release`` is set.
+
+    Lets a test catch the producer mid-flight (await ``started``), drive the
+    cancel/steer endpoint, then ``release`` it; later loop iterations pass
+    straight through.
+    """
+    state = {"gated": False}
+
+    async def gated(*args: object, **kwargs: object) -> LLMOutput:
+        if not state["gated"]:
+            state["gated"] = True
+            started.set()
+            await release.wait()
+        # The gate only delays the first call; *args/**kwargs are exactly what
+        # the loop passes to generate_response and are forwarded unchanged, so
+        # at runtime they match its real signature. They are typed ``object``
+        # here only so this wrapper can accept an arbitrary call shape.
+        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
+
+    return gated
 
 
 def _turn_complete(
@@ -108,14 +135,11 @@ async def test_cancel_running_turn_marks_cancelled(
 
     started = asyncio.Event()
     release = asyncio.Event()
-    original_generate = api_mock_llm_client.generate_response
-
-    async def gated_generate(*args: object, **kwargs: object) -> LLMOutput:
-        started.set()
-        await release.wait()
-        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(api_mock_llm_client, "generate_response", gated_generate)
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
 
     turn_id = str(uuid.uuid4())
     conversation_id = f"conv_cancel_{uuid.uuid4().hex[:8]}"
@@ -233,14 +257,11 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
 
     started = asyncio.Event()
     release = asyncio.Event()
-    original_generate = api_mock_llm_client.generate_response
-
-    async def gated_generate(*args: object, **kwargs: object) -> LLMOutput:
-        started.set()
-        await release.wait()
-        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(api_mock_llm_client, "generate_response", gated_generate)
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
 
     turn_id = str(uuid.uuid4())
     conversation_id = f"conv_cancelconf_{uuid.uuid4().hex[:8]}"
@@ -321,14 +342,11 @@ async def test_cancel_returns_503_when_confirmation_rejection_fails(
 
     started = asyncio.Event()
     release = asyncio.Event()
-    original_generate = api_mock_llm_client.generate_response
-
-    async def gated_generate(*args: object, **kwargs: object) -> LLMOutput:
-        started.set()
-        await release.wait()
-        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(api_mock_llm_client, "generate_response", gated_generate)
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
 
     # Pin a confirmation service on app state whose reject() always fails, so the
     # cancel endpoint resolves it via _get_confirmation_service.
@@ -449,19 +467,11 @@ async def test_steer_running_turn_injects_user_input(
 
     started = asyncio.Event()
     release = asyncio.Event()
-    original_generate = api_mock_llm_client.generate_response
-    first_call = {"done": False}
-
-    async def gated_generate(*args: object, **kwargs: object) -> LLMOutput:
-        # Park only the first LLM call so the steer is queued before the
-        # post-tool-round drain; later iterations run unimpeded.
-        if not first_call["done"]:
-            first_call["done"] = True
-            started.set()
-            await release.wait()
-        return await original_generate(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(api_mock_llm_client, "generate_response", gated_generate)
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
 
     turn_id = str(uuid.uuid4())
     conversation_id = f"conv_steer_{uuid.uuid4().hex[:8]}"

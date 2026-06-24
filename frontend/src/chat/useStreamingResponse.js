@@ -652,10 +652,14 @@ export const useStreamingResponse = ({
   // authoritative turn_ended(cancelled) event then arrives over SSE and drives
   // onCancelled, so the bubble settles from the server's truth rather than a
   // local race. Best-effort: a failed cancel POST must not throw to the caller.
+  // Resolves true if the server acknowledged the stop (so the turn — and any
+  // pending tool confirmations — is secured), false if it could not be secured
+  // after retries. The caller should surface a false so the user knows a pending
+  // approval may still be live.
   const stopTurn = useCallback(async () => {
     const active = activeTurnRef.current;
     if (!active) {
-      return;
+      return true;
     }
     const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
     const body = JSON.stringify({ conversation_id: active.conversationId });
@@ -671,30 +675,34 @@ export const useStreamingResponse = ({
         });
         if (response.status === 401) {
           redirectToLogin();
-          return;
+          return false;
         }
         if (response.ok) {
-          return;
+          return true;
         }
         if (response.status < 500) {
           console.warn(`Turn cancel failed: HTTP ${response.status}`);
-          return;
+          return false;
         }
         console.warn(`Turn cancel failed (attempt ${attempt + 1}): HTTP ${response.status}`);
       } catch (e) {
         console.warn(`Turn cancel request failed (attempt ${attempt + 1}):`, e);
       }
     }
+    return false;
   }, []);
 
-  // Inject a steering message into the running turn without starting a new one.
-  // Returns true if accepted. On 409 (turn already finished / not steerable) the
-  // caller should fall back to sending a normal new message. Returns false for
-  // "no active turn" so the caller can do the same.
+  // Inject a steering message into the running turn. Returns a status:
+  //  - 'accepted'  : queued (200); the caller keeps the draft until echoed.
+  //  - 'finished'  : 409 / no active turn — steer the wrong target; the caller
+  //                  may safely resend it as a normal follow-up.
+  //  - 'error'     : transient failure (5xx/network). The turn may still be
+  //                  running and the steer may even have been accepted, so the
+  //                  caller must NOT auto-resend; surface it and keep the draft.
   const steerStream = useCallback(async ({ prompt }) => {
     const active = activeTurnRef.current;
     if (!active) {
-      return false;
+      return 'finished';
     }
     try {
       const response = await fetch(
@@ -710,20 +718,20 @@ export const useStreamingResponse = ({
       );
       if (response.status === 401) {
         redirectToLogin();
-        return false;
+        return 'error';
       }
       if (response.status === 409) {
         // Turn finished between the user typing and submitting; not steerable.
-        return false;
+        return 'finished';
       }
       if (!response.ok) {
         console.warn(`Turn steer failed: HTTP ${response.status}`);
-        return false;
+        return 'error';
       }
-      return true;
+      return 'accepted';
     } catch (e) {
       console.warn('Turn steer request failed:', e);
-      return false;
+      return 'error';
     }
   }, []);
 

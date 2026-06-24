@@ -202,7 +202,7 @@ describe('Web turn control (Stop / Steer)', () => {
       await user.type(messageInput, 'Plan my week');
       await user.keyboard('{Enter}');
 
-      await ready;
+      const controller = await ready;
       await waitFor(() => {
         expect(turnsPosts).toBe(1);
       }, WAIT);
@@ -210,6 +210,13 @@ describe('Web turn control (Stop / Steer)', () => {
       const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
       await user.type(steerInput, 'do it differently');
       await user.click(screen.getByTestId('steer-button'));
+
+      // The 409 fallback is serialized after the current stream settles, so let
+      // the first turn finish; the queued follow-up then fires.
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+      );
+      controller.close();
 
       // 409 from steer → the text is sent as a normal follow-up (a 2nd kickoff),
       // not silently lost.

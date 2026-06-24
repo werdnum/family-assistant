@@ -278,34 +278,41 @@ const SteerBar: React.FC = () => {
   }
 
   return (
-    <div className="flex gap-2 items-end" data-testid="steer-bar">
-      <div className="flex-1 relative">
-        <input
-          type="text"
-          value={controls.steerText}
-          onChange={(e) => controls.setSteerText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-          placeholder="Steer the assistant while it works…"
-          className="w-full min-h-9 pl-4 pr-4 py-2 text-sm border rounded-2xl bg-muted/20 border-dashed border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
-          data-testid="steer-input"
-        />
+    <div className="flex flex-col gap-1" data-testid="steer-bar">
+      <div className="flex gap-2 items-end">
+        <div className="flex-1 relative">
+          <input
+            type="text"
+            value={controls.steerText}
+            onChange={(e) => controls.setSteerText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder="Steer the assistant while it works…"
+            className="w-full min-h-9 pl-4 pr-4 py-2 text-sm border rounded-2xl bg-muted/20 border-dashed border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
+            data-testid="steer-input"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-9 shrink-0 rounded-full"
+          onClick={() => void submit()}
+          disabled={submitting || controls.steerText.trim().length === 0}
+          data-testid="steer-button"
+        >
+          Steer
+        </Button>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-9 shrink-0 rounded-full"
-        onClick={() => void submit()}
-        disabled={submitting || controls.steerText.trim().length === 0}
-        data-testid="steer-button"
-      >
-        Steer
-      </Button>
+      {controls.steerError && (
+        <p className="px-2 text-xs text-destructive" data-testid="steer-error">
+          {controls.steerError}
+        </p>
+      )}
     </div>
   );
 };

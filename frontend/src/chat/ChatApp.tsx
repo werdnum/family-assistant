@@ -359,9 +359,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // turn end (a steer the turn never echoed is preserved for resend). Cleared
   // when the conversation changes so it doesn't leak across threads.
   const [steerDraft, setSteerDraft] = useState('');
+  // Last steer error (e.g. a transient 5xx), shown in the SteerBar; the draft is
+  // kept so the user can retry.
+  const [steerError, setSteerError] = useState<string | null>(null);
   useEffect(() => {
     setSteerDraft('');
+    setSteerError(null);
   }, [conversationId]);
+  // A follow-up message queued while a stream was still settling (steer hit a
+  // finished turn). Sent once the current stream's completion handler runs, so
+  // it doesn't race the ending stream's shared-ref cleanup.
+  const pendingFollowupRef = useRef<string | null>(null);
+  // handleNew is defined after the streaming callbacks; the completion handler
+  // reaches it via this ref to fire a queued follow-up.
+  const handleNewRef = useRef<((message: { content: { text: string }[] }) => Promise<void>) | null>(
+    null
+  );
   // Set when the running turn ended because the user stopped it, so the
   // completion handler can render a "stopped" affordance instead of an empty
   // bubble (and never an error toast).
@@ -776,6 +789,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       }
       lastStreamingErrorRef.current = null;
       fetchConversations();
+
+      // Fire a follow-up that was queued while this stream was still settling
+      // (a steer that hit an already-finished turn). Running it here — after the
+      // refs above are cleared — serializes it after this stream so it can't
+      // clobber the new turn's bubble/active-turn state.
+      const followup = pendingFollowupRef.current;
+      if (followup) {
+        pendingFollowupRef.current = null;
+        void handleNewRef.current?.({ content: [{ text: followup }] });
+      }
     },
     [conversationId, fetchConversations]
   );
@@ -990,8 +1013,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         turnId?: string;
       }) => Promise<void>;
       cancelStream: () => void;
-      stopTurn: () => Promise<void>;
-      steerStream: (params: { prompt: string }) => Promise<boolean>;
+      stopTurn: () => Promise<boolean>;
+      steerStream: (params: { prompt: string }) => Promise<'accepted' | 'finished' | 'error'>;
       isStreaming: boolean;
     };
 
@@ -1678,6 +1701,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     [conversationId, sendStreamingMessage, currentProfileId]
   );
 
+  // Expose handleNew to the earlier-defined completion handler so it can fire a
+  // queued steer follow-up after the current stream settles.
+  useEffect(() => {
+    handleNewRef.current = handleNew;
+  }, [handleNew]);
+
   const convertMessage = useCallback((message: Message) => {
     // Ensure content is always an array for assistant-ui compatibility
     let content = Array.isArray(message.content)
@@ -1716,6 +1745,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     };
   }, []);
 
+  // The composer Stop button (onCancel) handler. Stop the turn server-side; if
+  // it could not be secured (the server also rejects the turn's pending tool
+  // confirmations), surface a warning so a still-approvable confirmation isn't
+  // silently left behind.
+  const handleStop = useCallback(async () => {
+    const ok = await stopTurn();
+    if (!ok) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg_stopfail_${Date.now()}`,
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: '⚠️ I stopped, but could not fully cancel a pending tool approval for this turn. If a confirmation is still listed in the pending approvals, please reject it there.',
+            },
+          ],
+          createdAt: new Date(),
+        },
+      ]);
+    }
+  }, [stopTurn]);
+
   const runtime = useExternalStoreRuntime({
     messages,
     isRunning: isLoading || isStreaming,
@@ -1723,8 +1776,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onNew: handleNew,
     // The composer's Stop button (ComposerPrimitive.Cancel) triggers this. Stop
     // the running turn server-side; the bubble settles from the turn_ended
-    // (cancelled) SSE event.
-    onCancel: stopTurn,
+    // (cancelled) SSE event. handleStop surfaces a warning if the stop couldn't
+    // be fully secured.
+    onCancel: handleStop,
     // @ts-expect-error - assistant-ui type mismatch with convertMessage return type
     convertMessage,
     adapters: {
@@ -1741,24 +1795,44 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     if (!prompt) {
       return;
     }
-    const accepted = await steerStream({ prompt });
-    if (!accepted) {
-      // The turn finished before it could be steered (409 / no active turn).
-      // Don't lose the text: send it as a normal follow-up message and clear
-      // the draft.
-      setSteerDraft('');
-      await handleNew({ content: [{ text: prompt }] });
+    setSteerError(null);
+    const result = await steerStream({ prompt });
+    if (result === 'accepted') {
+      // Deliberately do NOT clear here: the draft is cleared only when the
+      // matching user_input echo confirms the turn actually consumed it, so a
+      // steer that lands during a final text-only iteration (never drained)
+      // isn't silently discarded.
       return;
     }
-    // On success, deliberately do NOT clear here: the draft is cleared only when
-    // the matching user_input echo confirms the turn actually consumed it, so a
-    // steer that lands during a final text-only iteration (never drained) isn't
-    // silently discarded.
+    if (result === 'error') {
+      // The turn may still be running and the steer may even have been accepted
+      // before the response failed, so DON'T auto-resend. Surface it and keep
+      // the draft for a manual retry.
+      setSteerError('Could not steer the assistant. Please try again.');
+      return;
+    }
+    // 'finished': the steer targeted an already-finished turn. Don't lose the
+    // text — send it as a normal follow-up. If a stream is still settling, defer
+    // until its completion handler runs so we don't race its shared-ref cleanup.
+    setSteerDraft('');
+    if (streamingMessageIdRef.current) {
+      pendingFollowupRef.current = prompt;
+    } else {
+      await handleNew({ content: [{ text: prompt }] });
+    }
   }, [steerDraft, steerStream, handleNew]);
 
   const chatControls = useMemo(
-    () => ({ steerText: steerDraft, setSteerText: setSteerDraft, submitSteer }),
-    [steerDraft, submitSteer]
+    () => ({
+      steerText: steerDraft,
+      setSteerText: (text: string) => {
+        setSteerError(null);
+        setSteerDraft(text);
+      },
+      submitSteer,
+      steerError,
+    }),
+    [steerDraft, steerError, submitSteer]
   );
 
   // Initialize conversation ID from URL or localStorage
