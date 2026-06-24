@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from family_assistant.config_models import AppConfig, UCPConfig
 from family_assistant.services.ucp import (
+    MerchantUCPProfile,
     UCPConfigurationError,
     build_ucp_profile,
     discover_merchant_ucp_profile,
@@ -253,6 +254,51 @@ async def test_discover_merchant_ucp_profile_skips_malformed_endpoint() -> None:
     # The malformed binding is skipped, not allowed to break discovery.
     assert profile is not None
     assert profile.mcp_endpoints == ("https://shop.example.com/mcp",)
+
+
+async def test_discover_merchant_ucp_profile_returns_none_on_undecodable_body() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"\xff\xfe\xfa",
+            headers={"Content-Type": "application/json"},
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert profile is None
+
+
+def test_same_origin_mcp_endpoint_prefers_same_origin_binding() -> None:
+    profile = MerchantUCPProfile(
+        origin="https://shop.example.com",
+        mcp_endpoints=(
+            "https://other.example.com/mcp",
+            "https://shop.example.com:443/ucp/rpc",
+        ),
+        service_names=("dev.ucp.shopping",),
+        capability_names=(),
+        version=None,
+    )
+
+    # Skips the cross-origin binding; matches the default-port same-origin one.
+    assert profile.same_origin_mcp_endpoint == "https://shop.example.com:443/ucp/rpc"
+
+
+def test_same_origin_mcp_endpoint_none_when_only_cross_origin() -> None:
+    profile = MerchantUCPProfile(
+        origin="https://shop.example.com",
+        mcp_endpoints=("https://other.example.com/mcp",),
+        service_names=("dev.ucp.shopping",),
+        capability_names=(),
+        version=None,
+    )
+
+    assert profile.same_origin_mcp_endpoint is None
+    assert profile.supports_shopping is True
 
 
 async def test_discover_merchant_ucp_profile_resolves_relative_endpoint() -> None:

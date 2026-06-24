@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -39,32 +38,6 @@ SHOPIFY_FALLBACK_MCP_PATH = "/api/ucp/mcp"
 # well-known path) falls back to the Shopify endpoint promptly instead of paying
 # the full MCP POST timeout before each call.
 UCP_DISCOVERY_TIMEOUT_SECONDS = 5.0
-_DEFAULT_PORTS = {"https": 443, "http": 80}
-
-
-def _origin_key(url: str) -> tuple[str, str, int | None] | None:
-    """Return a normalized ``(scheme, host, port)`` key, or ``None`` if invalid.
-
-    Normalizing lets an explicit default port (``:443``) or a differently-cased
-    host compare equal to its canonical form, so a valid same-origin binding is
-    not mistaken for a cross-origin one.
-    """
-    try:
-        parsed = urlparse(url)
-        port = parsed.port
-    except ValueError:
-        return None
-    scheme = parsed.scheme.lower()
-    host = (parsed.hostname or "").lower()
-    if not scheme or not host:
-        return None
-    return (scheme, host, port if port is not None else _DEFAULT_PORTS.get(scheme))
-
-
-def _same_origin(url_a: str, url_b: str) -> bool:
-    """Whether two URLs share a scheme/host/effective-port origin."""
-    key_a = _origin_key(url_a)
-    return key_a is not None and key_a == _origin_key(url_b)
 
 
 SHOPPING_TOOLS_DEFINITION: list[ToolDefinition] = [
@@ -212,9 +185,9 @@ async def _resolve_ucp_endpoint(business_url: str, *, client: httpx.AsyncClient)
         business_url, client=client, timeout=UCP_DISCOVERY_TIMEOUT_SECONDS
     )
     if profile is not None:
-        for endpoint in profile.mcp_endpoints:
-            if _same_origin(endpoint, business_url):
-                return endpoint
+        same_origin_endpoint = profile.same_origin_mcp_endpoint
+        if same_origin_endpoint is not None:
+            return same_origin_endpoint
         if profile.mcp_endpoints:
             logger.warning(
                 "Ignoring %d cross-origin UCP endpoint(s) advertised by %s",

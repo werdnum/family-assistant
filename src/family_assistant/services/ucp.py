@@ -65,6 +65,47 @@ class MerchantUCPProfile:
         """The first advertised shopping MCP endpoint, if any."""
         return self.mcp_endpoints[0] if self.mcp_endpoints else None
 
+    @property
+    def same_origin_mcp_endpoint(self) -> str | None:
+        """The first advertised endpoint that is same-origin as this merchant.
+
+        Callers post/sign only to a same-origin endpoint (untrusted metadata
+        must not redirect requests cross-host), so this is the endpoint actually
+        usable for the origin — and what the browser hint should gate on.
+        """
+        for endpoint in self.mcp_endpoints:
+            if same_origin(endpoint, self.origin):
+                return endpoint
+        return None
+
+
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+
+def _origin_key(url: str) -> tuple[str, str, int | None] | None:
+    """Return a normalized ``(scheme, host, port)`` key, or ``None`` if invalid.
+
+    Normalizing lets an explicit default port (``:443``) or a differently-cased
+    host compare equal to its canonical form, so a valid same-origin binding is
+    not mistaken for a cross-origin one.
+    """
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return None
+    return (scheme, host, port if port is not None else _DEFAULT_PORTS.get(scheme))
+
+
+def same_origin(url_a: str, url_b: str) -> bool:
+    """Whether two URLs share a scheme/host/effective-port origin."""
+    key_a = _origin_key(url_a)
+    return key_a is not None and key_a == _origin_key(url_b)
+
 
 def merchant_origin(url: str) -> str | None:
     """Return the ``https://host`` origin for ``url``, or ``None`` if not HTTPS.
@@ -176,8 +217,8 @@ async def discover_merchant_ucp_profile(
         return None
     try:
         payload = response.json()
-    except json.JSONDecodeError:
-        logger.debug("UCP discovery for %s returned non-JSON body", origin)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        logger.debug("UCP discovery for %s returned an undecodable body", origin)
         return None
 
     return _parse_merchant_profile(origin, payload)

@@ -333,6 +333,28 @@ class TestProbeUcpSupport:
         )
         assert result is None
 
+    async def test_no_hint_when_only_cross_origin_endpoints(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fake_discover(
+            url: str, *, client: object
+        ) -> MerchantUCPProfile | None:
+            return MerchantUCPProfile(
+                origin="https://shop.example.com",
+                mcp_endpoints=("https://other.example.com/mcp",),
+                service_names=("dev.ucp.shopping",),
+                capability_names=("dev.ucp.shopping.cart",),
+                version=None,
+            )
+
+        monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
+        # supports_shopping is True, but no same-origin endpoint exists, so the
+        # model must not be told this origin is shoppable.
+        result = await _probe_ucp_support(
+            self._context("probe-cross-origin-test"), "https://shop.example.com/"
+        )
+        assert result is None
+
     async def test_caches_negative_result(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

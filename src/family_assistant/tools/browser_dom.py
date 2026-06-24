@@ -282,7 +282,10 @@ async def _probe_ucp_support(
             profile = await discover_merchant_ucp_profile(origin, client=client)
         session.ucp_profiles[origin] = profile
 
-    if profile is not None and profile.supports_shopping:
+    # Only hint when there is a same-origin endpoint, matching what the shopping
+    # tools will actually use — a profile advertising only cross-origin bindings
+    # is not usable for this origin, so hinting it would mislead the model.
+    if profile is not None and profile.same_origin_mcp_endpoint is not None:
         return _format_ucp_hint(profile)
     return None
 
