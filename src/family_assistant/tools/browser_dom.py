@@ -23,19 +23,28 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+import httpx
 import toons
 
+from family_assistant.services.ucp import (
+    MerchantUCPProfile,
+    discover_merchant_ucp_profile,
+    merchant_origin,
+)
 from family_assistant.tools.browser_backend import (
     BrowserBackend,
     BrowserBackendError,
     HandoffUnavailableError,
     get_browser_backend,
 )
+from family_assistant.tools.browser_session import get_browser_session
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 from family_assistant.utils.scraping import convert_html_bytes_to_markdown
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
+
+UCP_PROBE_TIMEOUT_SECONDS = 5.0
 
 
 class SnapshotNode(TypedDict):
@@ -213,6 +222,51 @@ def _resolve_ref(backend: BrowserBackend, ref: str) -> str:
     return selector
 
 
+def _format_ucp_hint(profile: MerchantUCPProfile) -> str:
+    """Render a one-line hint telling the model this origin supports UCP."""
+    shopping_capabilities = [
+        name.removeprefix("dev.ucp.shopping.")
+        for name in profile.capability_names
+        if name.startswith("dev.ucp.shopping.")
+    ]
+    capability_text = (
+        f" Capabilities: {', '.join(shopping_capabilities)}."
+        if shopping_capabilities
+        else ""
+    )
+    return (
+        f"🛒 This site supports UCP shopping at {profile.origin}.{capability_text} "
+        f"Use ucp_add_to_cart / ucp_get_cart / ucp_transfer_checkout_to_human with "
+        f'business_url="{profile.origin}".'
+    )
+
+
+async def _probe_ucp_support(
+    exec_context: ToolExecutionContext, current_url: str | None
+) -> str | None:
+    """Probe the current origin's UCP profile, returning a hint when shoppable.
+
+    Results are cached per browser session keyed by origin so repeated
+    navigation within an origin probes ``/.well-known/ucp`` at most once.
+    Returns ``None`` for non-HTTPS origins or sites without UCP shopping.
+    """
+    origin = merchant_origin(current_url or "")
+    if origin is None:
+        return None
+
+    session = await get_browser_session(exec_context)
+    if origin in session.ucp_profiles:
+        profile = session.ucp_profiles[origin]
+    else:
+        async with httpx.AsyncClient(timeout=UCP_PROBE_TIMEOUT_SECONDS) as client:
+            profile = await discover_merchant_ucp_profile(origin, client=client)
+        session.ucp_profiles[origin] = profile
+
+    if profile is not None and profile.supports_shopping:
+        return _format_ucp_hint(profile)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
@@ -229,7 +283,11 @@ async def browser_open_tool(
     await backend.goto(url)
     await backend.settle()
     snap = await _take_snapshot(backend, query=query)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    text = snap["text"]
+    ucp_hint = await _probe_ucp_support(exec_context, snap["url"])
+    if ucp_hint is not None:
+        text = f"{text}\n\n{ucp_hint}"
+    return ToolResult(text=text, data=dict(snap))
 
 
 async def browser_snapshot_tool(

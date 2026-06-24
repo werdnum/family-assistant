@@ -8,9 +8,14 @@ implementations are exercised in :mod:`tests.functional.tools.test_browser_dom`.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
+
 import pytest
 import toons
 
+from family_assistant.services.ucp import MerchantUCPProfile
+from family_assistant.tools import browser_dom
 from family_assistant.tools.browser_backend import (
     LocalPlaywrightBackend,
     _coerce_load_state,  # noqa: PLC2701  # Testing private load-state narrowing helper
@@ -21,9 +26,14 @@ from family_assistant.tools.browser_dom import (
     _any_match,  # noqa: PLC2701  # Testing private query matcher used by renderer
     _collect_refs,  # noqa: PLC2701  # Testing private ref-tree walker
     _format_toon,  # noqa: PLC2701  # Testing private TOON renderer
+    _format_ucp_hint,  # noqa: PLC2701  # Testing private UCP hint renderer
+    _probe_ucp_support,  # noqa: PLC2701  # Testing private UCP probe + cache
     _resolve_ref,  # noqa: PLC2701  # Testing private ref-cache lookup
 )
 from family_assistant.tools.browser_session import BrowserSession
+
+if TYPE_CHECKING:
+    from family_assistant.tools.types import ToolExecutionContext
 
 
 def _link_node(ref: str, name: str, href: str) -> SnapshotNode:
@@ -225,3 +235,102 @@ class TestBrowserSessionRefCache:
         session.clear_refs()
         session.clear_refs()
         assert session.ref_cache == {}
+
+
+def _shopping_profile(origin: str) -> MerchantUCPProfile:
+    return MerchantUCPProfile(
+        origin=origin,
+        mcp_endpoint=f"{origin}/api/ucp/mcp",
+        service_names=("dev.ucp.shopping",),
+        capability_names=("dev.ucp.shopping.cart", "dev.ucp.shopping.checkout"),
+        version="2026-04-08",
+    )
+
+
+class TestFormatUcpHint:
+    """The hint line appended to a snapshot when the site supports UCP."""
+
+    def test_includes_origin_business_url_and_capabilities(self) -> None:
+        hint = _format_ucp_hint(_shopping_profile("https://shop.example.com"))
+        assert "https://shop.example.com" in hint
+        assert 'business_url="https://shop.example.com"' in hint
+        assert "cart, checkout" in hint
+        assert "ucp_add_to_cart" in hint
+
+    def test_omits_capability_list_when_none_advertised(self) -> None:
+        profile = MerchantUCPProfile(
+            origin="https://shop.example.com",
+            mcp_endpoint="https://shop.example.com/api/ucp/mcp",
+            service_names=("dev.ucp.shopping",),
+            capability_names=(),
+            version=None,
+        )
+        hint = _format_ucp_hint(profile)
+        assert "Capabilities:" not in hint
+
+
+class TestProbeUcpSupport:
+    """Per-session caching probe used by ``browser_open``."""
+
+    def _context(self, conversation_id: str) -> ToolExecutionContext:
+        return cast(
+            "ToolExecutionContext", SimpleNamespace(conversation_id=conversation_id)
+        )
+
+    async def test_returns_hint_and_caches_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+
+        async def fake_discover(
+            url: str, *, client: object
+        ) -> MerchantUCPProfile | None:
+            calls.append(url)
+            return _shopping_profile("https://shop.example.com")
+
+        monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
+        context = self._context("probe-cache-test")
+
+        first = await _probe_ucp_support(context, "https://shop.example.com/products/x")
+        second = await _probe_ucp_support(context, "https://shop.example.com/cart")
+
+        assert first is not None
+        assert "ucp_add_to_cart" in first
+        assert second == first
+        # Discovery runs once per origin; the second navigation hits the cache.
+        assert len(calls) == 1
+
+    async def test_returns_none_for_non_https_origin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def fail_discover(
+            url: str, *, client: object
+        ) -> MerchantUCPProfile | None:  # pragma: no cover - must not be called
+            raise AssertionError("non-HTTPS origin must not be probed")
+
+        monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fail_discover)
+        result = await _probe_ucp_support(
+            self._context("probe-http-test"), "http://shop.example.com"
+        )
+        assert result is None
+
+    async def test_caches_negative_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+
+        async def fake_discover(
+            url: str, *, client: object
+        ) -> MerchantUCPProfile | None:
+            calls.append(url)
+            return None
+
+        monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
+        context = self._context("probe-negative-test")
+
+        first = await _probe_ucp_support(context, "https://plain.example.com/")
+        second = await _probe_ucp_support(context, "https://plain.example.com/page")
+
+        assert first is None
+        assert second is None
+        assert len(calls) == 1
