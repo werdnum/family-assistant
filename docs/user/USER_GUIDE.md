@@ -190,12 +190,15 @@ You can ask the assistant a wide variety of things:
     `visibility_labels` in the frontmatter to restrict which profiles can see a skill.
 
 - **Shopping and UCP:** For requests like "find me an X online and send me a checkout link," the
-  assistant can load the Shopping skill, use browser/search tools for discovery, build a Shopify/UCP
-  cart, and return the merchant checkout URL for you to complete payment yourself. The server
-  publishes its public UCP platform profile at `/.well-known/ucp`. Checkout handoff requires signed
-  UCP requests; configure `UCP_SIGNING_KEY_ID` and either `UCP_SIGNING_PRIVATE_KEY` or
-  `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key. The assistant does not
-  complete checkout or collect payment credentials in chat.
+  assistant can load the Shopping skill, use browser/search tools for discovery, build a cart, and
+  return the merchant checkout URL for you to complete payment yourself. It works with any merchant
+  that supports the Universal Commerce Protocol (UCP) — Shopify stores and other UCP merchants
+  alike. The assistant discovers each merchant's commerce endpoint from the merchant's own
+  `/.well-known/ucp` profile, and while browsing it automatically notices when a site supports UCP
+  shopping. The server also publishes its own public UCP platform profile at `/.well-known/ucp`.
+  Checkout handoff requires signed UCP requests; configure `UCP_SIGNING_KEY_ID` and either
+  `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key.
+  The assistant does not complete checkout or collect payment credentials in chat.
 
 - **Ingest Documents (Files and URLs):**
 
