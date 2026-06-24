@@ -96,12 +96,22 @@ in lockstep.
 
 ### Browser auto-detection
 
-So the assistant knows a site is shoppable while browsing, `browser_open_tool` probes the current
-origin's `/.well-known/ucp` after navigation (HTTPS origins only) using the same discovery service.
-When a shopping-capable profile is found, a short hint line is appended to the accessibility
-snapshot the model reads, naming the advertised capabilities and the `business_url` to pass to the
-UCP tools. Probe results (including negative results) are cached per browser session keyed by
-origin, so repeated navigation within the same origin costs at most one extra request.
+So the assistant knows a site is shoppable while browsing, the snapshot-returning browser tools
+(`browser_open`, `browser_snapshot`, `browser_click`, `browser_fill`, `browser_select`,
+`browser_wait`) probe the current origin's `/.well-known/ucp` after the action (HTTPS origins only)
+using the same discovery service. Probing every snapshot-returning action — not just `browser_open`
+— means the common flow of opening a search page and clicking through to a merchant still surfaces
+the hint. When a shopping-capable profile is found, a short hint line is appended to the
+accessibility snapshot the model reads, naming the advertised capabilities and the `business_url` to
+pass to the UCP tools. Probe results (including negative results) are cached per browser session
+keyed by origin, so repeated navigation within the same origin costs at most one extra request.
+
+Because the probe issues an outbound request from the Family Assistant process (not from the browser
+sandbox), the origin host is resolved first and the probe is skipped for any host that resolves to a
+non-globally-routable address (loopback, RFC 1918, link-local, reserved). This is a best-effort SSRF
+guard so a browsed page cannot steer the backend probe at internal infrastructure that the remote
+browser deployment isolates. It does not pin the resolved address against the one `httpx` later
+connects to.
 
 The probe only *informs* the model. Browsed pages and their `/.well-known/ucp` profiles are
 untrusted external content under the Rule of Two: detection adds no new authority. Checkout remains

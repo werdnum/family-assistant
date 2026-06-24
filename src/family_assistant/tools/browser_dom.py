@@ -20,8 +20,12 @@ the same live tab.
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import logging
+import socket
 from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
+from urllib.parse import urlparse
 
 import httpx
 import toons
@@ -222,6 +226,37 @@ def _resolve_ref(backend: BrowserBackend, ref: str) -> str:
     return selector
 
 
+def _host_resolves_to_private(host: str) -> bool:
+    """Return True when ``host`` resolves to a non-globally-routable address.
+
+    Blocks the UCP probe from reaching loopback, private (RFC 1918), link-local,
+    and other reserved ranges. Unresolvable hosts are treated as blocked. This
+    is a best-effort SSRF guard: it does not pin the resolved address against
+    the one httpx later connects to, but it prevents the obvious cases of a
+    browsed page steering the backend probe at internal infrastructure.
+    """
+    try:
+        addr_infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return True
+    for info in addr_infos:
+        try:
+            address = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return True
+        if not address.is_global:
+            return True
+    return False
+
+
+async def _origin_is_blocked(origin: str) -> bool:
+    """Whether the UCP probe must not fetch ``origin`` (no host / private host)."""
+    host = urlparse(origin).hostname
+    if not host:
+        return True
+    return await asyncio.to_thread(_host_resolves_to_private, host)
+
+
 def _format_ucp_hint(profile: MerchantUCPProfile) -> str:
     """Render a one-line hint telling the model this origin supports UCP."""
     shopping_capabilities = [
@@ -248,7 +283,8 @@ async def _probe_ucp_support(
 
     Results are cached per browser session keyed by origin so repeated
     navigation within an origin probes ``/.well-known/ucp`` at most once.
-    Returns ``None`` for non-HTTPS origins or sites without UCP shopping.
+    Returns ``None`` for non-HTTPS origins, private/internal hosts, or sites
+    without UCP shopping.
     """
     origin = merchant_origin(current_url or "")
     if origin is None:
@@ -257,6 +293,10 @@ async def _probe_ucp_support(
     session = await get_browser_session(exec_context)
     if origin in session.ucp_profiles:
         profile = session.ucp_profiles[origin]
+    elif await _origin_is_blocked(origin):
+        logger.debug("Skipping UCP probe for non-public origin %s", origin)
+        session.ucp_profiles[origin] = None
+        profile = None
     else:
         async with httpx.AsyncClient(timeout=UCP_PROBE_TIMEOUT_SECONDS) as client:
             profile = await discover_merchant_ucp_profile(origin, client=client)
@@ -265,6 +305,25 @@ async def _probe_ucp_support(
     if profile is not None and profile.supports_shopping:
         return _format_ucp_hint(profile)
     return None
+
+
+async def _snapshot_result(
+    exec_context: ToolExecutionContext,
+    backend: BrowserBackend,
+    *,
+    query: str | None = None,
+) -> ToolResult:
+    """Take a snapshot and append a UCP hint when the current origin supports it.
+
+    Shared by every snapshot-returning navigation tool so UCP auto-detection
+    fires after click-driven navigation, not just ``browser_open``.
+    """
+    snap = await _take_snapshot(backend, query=query)
+    text = snap["text"]
+    ucp_hint = await _probe_ucp_support(exec_context, snap["url"])
+    if ucp_hint is not None:
+        text = f"{text}\n\n{ucp_hint}"
+    return ToolResult(text=text, data=dict(snap))
 
 
 # ---------------------------------------------------------------------------
@@ -282,12 +341,7 @@ async def browser_open_tool(
     logger.info("browser_open: %s", url)
     await backend.goto(url)
     await backend.settle()
-    snap = await _take_snapshot(backend, query=query)
-    text = snap["text"]
-    ucp_hint = await _probe_ucp_support(exec_context, snap["url"])
-    if ucp_hint is not None:
-        text = f"{text}\n\n{ucp_hint}"
-    return ToolResult(text=text, data=dict(snap))
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
 async def browser_snapshot_tool(
@@ -295,8 +349,7 @@ async def browser_snapshot_tool(
 ) -> ToolResult:
     """Re-capture an accessibility snapshot of the current page."""
     backend = await get_browser_backend(exec_context)
-    snap = await _take_snapshot(backend, query=query)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
 async def browser_click_tool(
@@ -308,8 +361,7 @@ async def browser_click_tool(
     logger.info("browser_click: %s -> %s", ref, selector)
     await backend.click(selector)
     await backend.settle()
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_fill_tool(
@@ -325,8 +377,7 @@ async def browser_fill_tool(
     await backend.fill(selector, text, submit)
     if submit:
         await backend.settle()
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_select_tool(
@@ -342,8 +393,7 @@ async def browser_select_tool(
     selector = _resolve_ref(backend, ref)
     logger.info("browser_select: %s <- %r", ref, value)
     await backend.select(selector, value)
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_wait_tool(
@@ -358,8 +408,7 @@ async def browser_wait_tool(
         "browser_wait: selector=%s state=%s timeout=%s", selector, state, timeout_ms
     )
     await backend.wait(selector, state, timeout_ms)
-    snap = await _take_snapshot(backend, query=None)
-    return ToolResult(text=snap["text"], data=dict(snap))
+    return await _snapshot_result(exec_context, backend)
 
 
 async def browser_extract_tool(
