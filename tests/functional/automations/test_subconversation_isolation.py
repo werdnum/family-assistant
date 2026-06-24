@@ -41,7 +41,7 @@ from family_assistant.tools import (
     ToolPolicyDecision,
     ToolsProvider,
 )
-from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import (
     LLMOutput as MockLLMOutput,
 )
@@ -520,10 +520,10 @@ async def test_async_delegation_completion_wakes_source_profile_with_history(
         == "I handed this off and will follow up when it finishes."
     )
 
-    await wait_for_tasks_to_complete(
-        db_engine,
-        task_types={"delegated_profile_run"},
-        poll_interval_seconds=0.05,
+    await wait_for_condition(
+        lambda: chat_interface.messages,
+        interval=0.05,
+        description="source profile delegation wakeup response",
     )
 
     assert chat_interface.messages == [
@@ -553,76 +553,115 @@ async def test_async_delegation_completion_wakes_source_profile_with_history(
         for message in wakeup_messages
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == conversation_id)
-            .order_by(message_history_table.c.internal_id)
-        )
-        main_rows = [row for row in rows if row["subconversation_id"] is None]
-        sub_rows = [row for row in rows if row["subconversation_id"] is not None]
+    async def load_committed_wakeup_state() -> (
+        tuple[list[Any], list[Any], list[Any]] | None
+    ):
+        async with DatabaseContext(engine=db_engine) as db_context:
+            rows = await db_context.fetch_all(
+                select(message_history_table)
+                .where(message_history_table.c.conversation_id == conversation_id)
+                .order_by(message_history_table.c.internal_id)
+            )
+            main_rows = [row for row in rows if row["subconversation_id"] is None]
+            sub_rows = [row for row in rows if row["subconversation_id"] is not None]
+            system_rows = [
+                row
+                for row in main_rows
+                if row["role"] == "system"
+                and "System: Delegated profile task completed." in row["content"]
+            ]
+            data_rows = [
+                row
+                for row in main_rows
+                if row["role"] == "user"
+                and "Delegated task completed successfully." in row["content"]
+            ]
+            final_rows = [
+                row
+                for row in main_rows
+                if row["role"] == "assistant"
+                and row["content"]
+                == "Source profile reviewed the delegated result for the user."
+            ]
+            if (
+                len(system_rows) != 1
+                or len(data_rows) != 1
+                or len(final_rows) != 1
+                or final_rows[0]["interface_message_id"] != "recorded-message-1"
+                or not sub_rows
+            ):
+                return None
+            next_turn_history = await db_context.message_history.get_recent(
+                interface_type=TEST_INTERFACE_TYPE,
+                conversation_id=conversation_id,
+                limit=20,
+                processing_profile_id=PRIMARY_PROFILE_ID,
+                subconversation_id=None,
+                current_time=primary_service.clock.now(),
+            )
+            reply_thread_history = await db_context.message_history.get_by_thread_id(
+                thread_root_id=data_rows[0]["internal_id"],
+                processing_profile_id=PRIMARY_PROFILE_ID,
+                subconversation_id=None,
+            )
+            return rows, next_turn_history, reply_thread_history
 
-        system_rows = [
-            row
-            for row in main_rows
-            if row["role"] == "system"
-            and "System: Delegated profile task completed." in row["content"]
-        ]
-        assert len(system_rows) == 1
-        assert system_rows[0]["processing_profile_id"] == PRIMARY_PROFILE_ID
-        assert "Delegated task completed successfully." not in system_rows[0]["content"]
-        assert system_rows[0]["is_internal"] is True
+    rows, next_turn_history, reply_thread_history = cast(
+        "tuple[list[Any], list[Any], list[Any]]",
+        await wait_for_condition(
+            load_committed_wakeup_state,
+            interval=0.05,
+            description="persisted source profile delegation wakeup rows",
+        ),
+    )
+    main_rows = [row for row in rows if row["subconversation_id"] is None]
+    sub_rows = [row for row in rows if row["subconversation_id"] is not None]
 
-        data_rows = [
-            row
-            for row in main_rows
-            if row["role"] == "user"
-            and "Delegated task completed successfully." in row["content"]
-        ]
-        assert len(data_rows) == 1
-        assert data_rows[0]["processing_profile_id"] == PRIMARY_PROFILE_ID
-        assert data_rows[0]["is_internal"] is True
-        assert system_rows[0]["thread_root_id"] == data_rows[0]["internal_id"]
+    system_rows = [
+        row
+        for row in main_rows
+        if row["role"] == "system"
+        and "System: Delegated profile task completed." in row["content"]
+    ]
+    assert len(system_rows) == 1
+    assert system_rows[0]["processing_profile_id"] == PRIMARY_PROFILE_ID
+    assert "Delegated task completed successfully." not in system_rows[0]["content"]
+    assert system_rows[0]["is_internal"] is True
 
-        raw_completion_rows = [
-            row
-            for row in main_rows
-            if row["role"] == "assistant"
-            and row["content"]
-            and row["content"].startswith("Delegated task delegation_")
-        ]
-        assert raw_completion_rows == []
+    data_rows = [
+        row
+        for row in main_rows
+        if row["role"] == "user"
+        and "Delegated task completed successfully." in row["content"]
+    ]
+    assert len(data_rows) == 1
+    assert data_rows[0]["processing_profile_id"] == PRIMARY_PROFILE_ID
+    assert data_rows[0]["is_internal"] is True
+    assert system_rows[0]["thread_root_id"] == data_rows[0]["internal_id"]
 
-        final_rows = [
-            row
-            for row in main_rows
-            if row["role"] == "assistant"
-            and row["content"]
-            == "Source profile reviewed the delegated result for the user."
-        ]
-        assert len(final_rows) == 1
-        assert final_rows[0]["interface_message_id"] == "recorded-message-1"
-        assert final_rows[0]["is_internal"] is False
-        assert final_rows[0]["thread_root_id"] == data_rows[0]["internal_id"]
+    raw_completion_rows = [
+        row
+        for row in main_rows
+        if row["role"] == "assistant"
+        and row["content"]
+        and row["content"].startswith("Delegated task delegation_")
+    ]
+    assert raw_completion_rows == []
 
-        assert sub_rows
-        assert {row["processing_profile_id"] for row in sub_rows} == {
-            DELEGATED_PROFILE_ID
-        }
+    final_rows = [
+        row
+        for row in main_rows
+        if row["role"] == "assistant"
+        and row["content"]
+        == "Source profile reviewed the delegated result for the user."
+    ]
+    assert len(final_rows) == 1
+    assert final_rows[0]["interface_message_id"] == "recorded-message-1"
+    assert final_rows[0]["is_internal"] is False
+    assert final_rows[0]["thread_root_id"] == data_rows[0]["internal_id"]
 
-        next_turn_history = await db_context.message_history.get_recent(
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=conversation_id,
-            limit=20,
-            processing_profile_id=PRIMARY_PROFILE_ID,
-            subconversation_id=None,
-            current_time=primary_service.clock.now(),
-        )
-        reply_thread_history = await db_context.message_history.get_by_thread_id(
-            thread_root_id=data_rows[0]["internal_id"],
-            processing_profile_id=PRIMARY_PROFILE_ID,
-            subconversation_id=None,
-        )
+    assert sub_rows
+    assert {row["processing_profile_id"] for row in sub_rows} == {DELEGATED_PROFILE_ID}
 
     assert not any(
         isinstance(message, SystemMessage)
