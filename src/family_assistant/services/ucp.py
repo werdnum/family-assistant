@@ -67,11 +67,19 @@ class MerchantUCPProfile:
 
 
 def merchant_origin(url: str) -> str | None:
-    """Return the ``https://host`` origin for ``url``, or ``None`` if not HTTPS."""
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc:
+    """Return the ``https://host`` origin for ``url``, or ``None`` if not HTTPS.
+
+    Returns ``None`` for malformed URLs (``urlparse`` raising ``ValueError``)
+    rather than propagating, since callers treat a missing origin as "fall back".
+    """
+    try:
+        parsed = urlparse(url)
+        netloc = parsed.netloc
+    except ValueError:
         return None
-    return f"https://{parsed.netloc}"
+    if parsed.scheme != "https" or not netloc:
+        return None
+    return f"https://{netloc}"
 
 
 def _shopping_mcp_endpoints(
@@ -81,7 +89,9 @@ def _shopping_mcp_endpoints(
 
     All candidates are returned (not just the first) so callers can apply their
     own selection policy — e.g. the shopping tools prefer a same-origin binding
-    even when a cross-origin one is listed first.
+    even when a cross-origin one is listed first. Bindings whose endpoint cannot
+    be parsed (merchant-controlled metadata) are skipped rather than allowed to
+    break discovery.
     """
     bindings = services.get(SHOPPING_SERVICE_NAME)
     if not isinstance(bindings, list):
@@ -95,9 +105,16 @@ def _shopping_mcp_endpoints(
         endpoint = binding.get("endpoint")
         if not isinstance(endpoint, str) or not endpoint:
             continue
-        resolved = endpoint if urlparse(endpoint).scheme else urljoin(origin, endpoint)
-        parsed_resolved = urlparse(resolved)
-        if parsed_resolved.scheme == "https" and parsed_resolved.netloc:
+        try:
+            resolved = (
+                endpoint if urlparse(endpoint).scheme else urljoin(origin, endpoint)
+            )
+            parsed_resolved = urlparse(resolved)
+            netloc = parsed_resolved.netloc
+            scheme = parsed_resolved.scheme
+        except ValueError:
+            continue
+        if scheme == "https" and netloc:
             endpoints.append(resolved)
     return tuple(endpoints)
 

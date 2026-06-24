@@ -377,6 +377,26 @@ async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
     assert arguments["cart_id"] == "gid://shopify/Cart/cart_abc123"
 
 
+async def test_ucp_transfer_checkout_to_human_requires_signing_before_discovery(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = []
+
+    with pytest.raises(ValueError, match="signing configuration"):
+        await shopping.ucp_transfer_checkout_to_human_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/cart_abc123",
+        )
+
+    # Fails fast on local config: no merchant discovery or POST is attempted.
+    assert _FakeAsyncClient.profile_requests == []
+    assert _FakeAsyncClient.requests == []
+
+
 async def test_ucp_transfer_checkout_to_human_rejects_cart_error_outcome(
     monkeypatch: MonkeyPatch,
 ) -> None:

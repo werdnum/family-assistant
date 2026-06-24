@@ -14,6 +14,7 @@ from family_assistant.services.ucp import (
     UCPConfigurationError,
     build_ucp_profile,
     discover_merchant_ucp_profile,
+    merchant_origin,
     sign_ucp_request,
 )
 
@@ -218,6 +219,40 @@ async def test_discover_merchant_ucp_profile_collects_all_endpoints() -> None:
         "https://b.example/mcp",
     )
     assert profile.mcp_endpoint == "https://a.example/mcp"
+
+
+def test_merchant_origin_returns_none_for_malformed_url() -> None:
+    # urlparse raises ValueError on this host; merchant_origin must swallow it.
+    assert merchant_origin("https://[zzz]/mcp") is None
+
+
+async def test_discover_merchant_ucp_profile_skips_malformed_endpoint() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {"transport": "mcp", "endpoint": "https://[zzz]/mcp"},
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://shop.example.com/mcp",
+                            },
+                        ]
+                    }
+                }
+            },
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    # The malformed binding is skipped, not allowed to break discovery.
+    assert profile is not None
+    assert profile.mcp_endpoints == ("https://shop.example.com/mcp",)
 
 
 async def test_discover_merchant_ucp_profile_resolves_relative_endpoint() -> None:

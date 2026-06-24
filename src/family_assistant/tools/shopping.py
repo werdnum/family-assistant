@@ -314,6 +314,17 @@ def _raise_for_ucp_failure(
         raise ValueError(msg)
 
 
+def _require_signing_config(app_config: AppConfig) -> None:
+    """Raise a clear error when UCP signing key material is not configured."""
+    if not has_ucp_signing_key(app_config):
+        msg = (
+            "UCP checkout handoff requires UCP signing configuration. "
+            "Set UCP_SIGNING_KEY_ID and UCP_SIGNING_PRIVATE_KEY or "
+            "UCP_SIGNING_PRIVATE_KEY_PATH."
+        )
+        raise ValueError(msg)
+
+
 async def _post_ucp_tool_call(
     app_config: AppConfig,
     *,
@@ -324,13 +335,8 @@ async def _post_ucp_tool_call(
 ) -> dict[str, object]:
     body = _json_rpc_body(tool_name, _with_ucp_meta(app_config, arguments))
 
-    if require_signed and not has_ucp_signing_key(app_config):
-        msg = (
-            "UCP checkout handoff requires UCP signing configuration. "
-            "Set UCP_SIGNING_KEY_ID and UCP_SIGNING_PRIVATE_KEY or "
-            "UCP_SIGNING_PRIVATE_KEY_PATH."
-        )
-        raise ValueError(msg)
+    if require_signed:
+        _require_signing_config(app_config)
 
     if has_ucp_signing_key(app_config):
         try:
@@ -615,6 +621,10 @@ async def ucp_transfer_checkout_to_human_tool(
 ) -> ToolResult:
     """Create a checkout session and return the human handoff URL."""
     app_config = _get_app_config(exec_context)
+    # Validate signing config before contacting the merchant: in an unsigned
+    # deployment checkout cannot succeed, so fail fast instead of paying a
+    # discovery round-trip first.
+    _require_signing_config(app_config)
     endpoint = await _resolve_endpoint_for(business_url)
     response_data = await _post_ucp_tool_call(
         app_config,
