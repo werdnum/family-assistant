@@ -25,6 +25,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from family_assistant.processing.types import MidTurnInputProvider
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,11 @@ class TurnRecord:
     # endpoints look this up to request a graceful interrupt or inject a
     # mid-turn user message. Cleared alongside ``task`` when the producer ends.
     mid_turn_controller: "MidTurnInputProvider | None" = None
+    # Invoked by the done-callback safety net if the producer task finished while
+    # the turn was still 'running' AND it was cancelled (a Stop before the
+    # producer's first slice). Lets the web layer persist a durable stopped
+    # marker the never-run producer couldn't. Cleared with ``task``.
+    on_orphan_cancel: "Callable[[], Awaitable[None]] | None" = None
 
 
 @dataclass(slots=True)
@@ -701,11 +708,16 @@ class ConversationStreamHub:
         conversation_id: str,
         turn_id: str,
         task: asyncio.Task[None],
+        on_orphan_cancel: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         """Store a strong reference to the producer task on the TurnRecord so
         the asyncio loop won't garbage-collect it after the originating HTTP
         request closes. The hub releases the reference when the task is
-        evicted along with the turn record."""
+        evicted along with the turn record.
+
+        ``on_orphan_cancel`` is invoked by the safety net if the task is
+        cancelled before its coroutine runs (so the producer never persisted a
+        stopped marker)."""
         state = self._get_state(conversation_id)
         if state is None:
             logger.error(
@@ -722,6 +734,7 @@ class ConversationStreamHub:
             )
             return
         turn.task = task
+        turn.on_orphan_cancel = on_orphan_cancel
 
         # Release the strong reference (and the task's coroutine frame, which
         # retains the DB context and accumulated strings) as soon as the
@@ -736,6 +749,8 @@ class ConversationStreamHub:
             # so a finished turn can't be steered/interrupted and so its
             # queued inputs don't linger.
             record.mid_turn_controller = None
+            orphan_cancel = record.on_orphan_cancel
+            record.on_orphan_cancel = None
             # Safety net: if the producer task finished without the turn ever
             # reaching a terminal status, the TurnRecord would wedge at 'running'
             # (pruning/eviction skip running turns). This happens when the task
@@ -746,8 +761,13 @@ class ConversationStreamHub:
                 end_status: TurnStatus = (
                     "cancelled" if completed.cancelled() else "failed"
                 )
+                # Only persist a stopped marker for a user-cancelled orphan, not
+                # a teardown 'failed'.
+                persist = orphan_cancel if end_status == "cancelled" else None
                 cleanup = asyncio.ensure_future(
-                    self._end_unfinished_turn(conversation_id, turn_id, end_status)
+                    self._end_unfinished_turn(
+                        conversation_id, turn_id, end_status, persist
+                    )
                 )
                 self._safety_net_tasks.add(cleanup)
                 cleanup.add_done_callback(self._safety_net_tasks.discard)
@@ -755,13 +775,28 @@ class ConversationStreamHub:
         task.add_done_callback(_release)
 
     async def _end_unfinished_turn(
-        self, conversation_id: str, turn_id: str, status: TurnStatus
+        self,
+        conversation_id: str,
+        turn_id: str,
+        status: TurnStatus,
+        on_orphan_cancel: "Callable[[], Awaitable[None]] | None" = None,
     ) -> None:
         """End a turn whose producer task finished without ending it.
 
-        ``end_turn`` is idempotent, so if the producer did end the turn in a
-        race this is a no-op.
+        Persists a durable stopped marker first (via ``on_orphan_cancel``) so a
+        refresh sees the stopped turn, then ends it. ``end_turn`` is idempotent,
+        so if the producer did end the turn in a race this is a no-op.
         """
+        if on_orphan_cancel is not None:
+            try:
+                await on_orphan_cancel()
+            except Exception:
+                logger.exception(
+                    "Failed to persist stopped marker for orphaned turn "
+                    "conv=%s turn=%s",
+                    conversation_id,
+                    turn_id,
+                )
         try:
             await self.end_turn(
                 conversation_id,

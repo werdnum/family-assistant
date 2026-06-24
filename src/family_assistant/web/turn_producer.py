@@ -298,7 +298,7 @@ async def run_turn_producer(
             # BEFORE end_turn publishes turn_ended — follow streams reload history
             # on that signal, so the row must already be visible (matching the
             # success path's commit-before-turn_ended contract).
-            await _persist_stopped_reply(
+            await persist_stopped_reply(
                 app_state.database_engine,
                 interface_type=interface_type,
                 conversation_id=conversation_id,
@@ -383,7 +383,7 @@ async def _fail_turn_best_effort(
         )
 
 
-async def _persist_stopped_reply(
+async def persist_stopped_reply(
     database_engine: "AsyncEngine",
     *,
     interface_type: str,

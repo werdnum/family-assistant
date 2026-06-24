@@ -72,6 +72,7 @@ from family_assistant.web.models import (
 )
 from family_assistant.web.turn_producer import (
     format_sse_event,
+    persist_stopped_reply,
     run_turn_producer,
 )
 from family_assistant.web.web_mid_turn_controller import WebMidTurnController
@@ -935,26 +936,6 @@ async def api_chat_create_turn(
                 user_id,
             )
 
-    # Persist the user message durably BEFORE launching the producer task. The
-    # producer normally persists it, but a Stop that cancels the producer task
-    # before its coroutine runs would otherwise lose the prompt entirely (the
-    # frontend can target Stop before this POST returns). The producer's
-    # _prepare_turn_messages_for_llm is idempotent on turn_id, so it reuses this
-    # row instead of inserting a duplicate. ``payload.prompt`` matches what the
-    # producer would store (the first text part of the trigger content).
-    async with get_db_context(request.app.state.database_engine) as user_msg_db:
-        await user_msg_db.message_history.add_message(
-            UserMessage(content=payload.prompt),
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=f"temp_{payload.turn_id}",
-            turn_id=payload.turn_id,
-            timestamp=datetime.now(UTC),
-            user_id=user_id,
-            attachments=trigger_attachments,
-            processing_profile_id=selected_processing_service.service_config.id,
-        )
-
     # Fetch the attachment registry without raising: the producer only needs
     # it to resolve attachment metadata for attach_to_response tool calls, so
     # a turn with no such tool calls works fine without one.
@@ -979,13 +960,50 @@ async def api_chat_create_turn(
             mid_turn_controller=mid_turn_controller,
         )
     except TurnAlreadyExistsError as exc:
-        # Lost a race with another concurrent POST: treat it as idempotent.
+        # Lost a race with another concurrent POST: treat it as idempotent. The
+        # loser returns here WITHOUT inserting the user message (the winner does
+        # that below), so concurrent retries can't double-insert the prompt.
         if exc.turn.user_id != user_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
         return ChatTurnResponse(
             turn_id=exc.turn.turn_id,
             conversation_id=conversation_id,
             first_seq=exc.turn.first_seq,
+        )
+
+    # Persist the user message durably now — serialized by start_turn (only the
+    # winner reaches here) and BEFORE the cancellable producer task is launched,
+    # so a Stop that cancels the producer before its coroutine runs still leaves
+    # the prompt durable. The producer's _prepare_turn_messages_for_llm is
+    # idempotent on turn_id, so it reuses this row instead of inserting a
+    # duplicate. ``payload.prompt`` matches what the producer would store (the
+    # first text part of the trigger content).
+    async with get_db_context(request.app.state.database_engine) as user_msg_db:
+        await user_msg_db.message_history.add_message(
+            UserMessage(content=payload.prompt),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=f"temp_{payload.turn_id}",
+            turn_id=payload.turn_id,
+            timestamp=datetime.now(UTC),
+            user_id=user_id,
+            attachments=trigger_attachments,
+            processing_profile_id=selected_processing_service.service_config.id,
+        )
+
+    # If the producer task is cancelled before its coroutine ever runs (a Stop
+    # in the window before its first slice), it never persists the stopped
+    # assistant marker. The hub's safety net invokes this so a refresh still
+    # shows the stopped turn rather than a prompt with no reply.
+    async def _persist_orphan_stopped_reply() -> None:
+        await persist_stopped_reply(
+            request.app.state.database_engine,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            turn_id=payload.turn_id,
+            user_id=user_id,
+            reply_text="",
+            processing_profile_id=selected_processing_service.service_config.id,
         )
 
     producer_task = asyncio.create_task(
@@ -1008,7 +1026,12 @@ async def api_chat_create_turn(
         ),
         name=f"chat-turn:{conversation_id}:{payload.turn_id}",
     )
-    hub.attach_producer_task(conversation_id, payload.turn_id, producer_task)
+    hub.attach_producer_task(
+        conversation_id,
+        payload.turn_id,
+        producer_task,
+        on_orphan_cancel=_persist_orphan_stopped_reply,
+    )
 
     return ChatTurnResponse(
         turn_id=payload.turn_id,

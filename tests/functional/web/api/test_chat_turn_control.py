@@ -277,13 +277,17 @@ async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
     )
 
     started = asyncio.Event()
+    orphan_persisted = asyncio.Event()
 
     async def never_runs() -> None:
         started.set()
         await asyncio.Event().wait()  # parks forever (never reached: cancelled first)
 
+    async def on_orphan_cancel() -> None:
+        orphan_persisted.set()
+
     task = asyncio.ensure_future(never_runs())
-    hub.attach_producer_task("conv", "t1", task)
+    hub.attach_producer_task("conv", "t1", task, on_orphan_cancel=on_orphan_cancel)
 
     # Cancel before the task gets a scheduling slice: its coroutine never runs.
     task.cancel()
@@ -298,6 +302,8 @@ async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
         ),
         description="wedged turn ended",
     )
+    # The stopped-marker persistence hook ran for the never-run producer.
+    assert orphan_persisted.is_set()
 
 
 async def test_cancel_unknown_turn_returns_404(
