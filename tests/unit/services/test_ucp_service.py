@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
@@ -16,6 +16,9 @@ from family_assistant.services.ucp import (
     discover_merchant_ucp_profile,
     sign_ucp_request,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _merchant_profile_payload(
@@ -36,7 +39,9 @@ def _merchant_profile_payload(
     }
 
 
-def _client_returning(handler: Any) -> httpx.AsyncClient:  # noqa: ANN401
+def _client_returning(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
@@ -197,6 +202,21 @@ async def test_discover_merchant_ucp_profile_resolves_relative_endpoint() -> Non
     assert profile.mcp_endpoint == "https://shop.example.com/ucp/mcp"
 
 
+async def test_discover_merchant_ucp_profile_ignores_endpoint_without_host() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=_merchant_profile_payload(endpoint="https:/ucp/mcp")
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert profile is not None
+    assert profile.mcp_endpoint is None
+
+
 async def test_discover_merchant_ucp_profile_without_shopping_binding() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"ucp": {"services": {}}})
@@ -224,8 +244,13 @@ async def test_discover_merchant_ucp_profile_returns_none_on_http_error() -> Non
 
 
 async def test_discover_merchant_ucp_profile_rejects_non_https_origin() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover
-        raise AssertionError("non-HTTPS origin must not be fetched")
+    def handler(_request: httpx.Request) -> httpx.Response:
+        # Excluded from coverage: discovery returns before issuing any HTTP
+        # request for a non-HTTPS origin, so this guard must never run. If it
+        # does, the assertion below fails the test rather than silently passing.
+        raise AssertionError(  # pragma: no cover
+            "non-HTTPS origin must not be fetched"
+        )
 
     async with _client_returning(handler) as client:
         profile = await discover_merchant_ucp_profile(

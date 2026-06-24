@@ -82,7 +82,8 @@ def _shopping_mcp_endpoint(origin: str, services: Mapping[str, object]) -> str |
         if not isinstance(endpoint, str) or not endpoint:
             continue
         resolved = endpoint if urlparse(endpoint).scheme else urljoin(origin, endpoint)
-        if urlparse(resolved).scheme == "https":
+        parsed_resolved = urlparse(resolved)
+        if parsed_resolved.scheme == "https" and parsed_resolved.netloc:
             return resolved
     return None
 
