@@ -1235,10 +1235,14 @@ async def api_chat_cancel_turn(
     # receive the result. This runs on the already-finished path too so a retry
     # after a transient failure re-attempts; a failure to fully secure the turn
     # propagates (503) rather than reporting a clean stop.
+    # Reject under the turn's OWNER (turn.user_id), not the caller's raw
+    # identifier: confirmations were targeted at whoever started the turn, and
+    # the same canonical user may be cancelling through a different raw identity
+    # (the ownership check above already authorized them).
     await _reject_pending_confirmations_for_turn(
         request,
         turn_id=turn_id,
-        user_id=current_user["user_identifier"],
+        user_id=turn.user_id,
     )
 
     if not running:

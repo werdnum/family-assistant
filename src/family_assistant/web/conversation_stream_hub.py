@@ -193,6 +193,10 @@ class ConversationStreamHub:
         self._subscriber_queue_max = subscriber_queue_max
         self._max_retained_turns = max_retained_turns
         self._max_conversations = max_conversations
+        # Strong refs to fire-and-forget tasks that end a wedged turn from a
+        # producer-task done-callback (see attach_producer_task), so they aren't
+        # garbage-collected before they run.
+        self._safety_net_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------ #
     # Registry / lookups
@@ -723,16 +727,54 @@ class ConversationStreamHub:
         # retains the DB context and accumulated strings) as soon as the
         # producer finishes. Without this, completed tasks pile up in
         # ``state.turns`` and leak memory with every turn.
-        def _release(_completed: asyncio.Task[None], turn_id: str = turn_id) -> None:
+        def _release(completed: asyncio.Task[None], turn_id: str = turn_id) -> None:
             record = state.turns.get(turn_id)
-            if record is not None:
-                record.task = None
-                # The controller is only meaningful for a running turn; drop it
-                # so a finished turn can't be steered/interrupted and so its
-                # queued inputs don't linger.
-                record.mid_turn_controller = None
+            if record is None:
+                return
+            record.task = None
+            # The controller is only meaningful for a running turn; drop it
+            # so a finished turn can't be steered/interrupted and so its
+            # queued inputs don't linger.
+            record.mid_turn_controller = None
+            # Safety net: if the producer task finished without the turn ever
+            # reaching a terminal status, the TurnRecord would wedge at 'running'
+            # (pruning/eviction skip running turns). This happens when the task
+            # is cancelled before its coroutine's first slice — e.g. Stop arrives
+            # in the window after attach_producer_task but before run_turn_producer
+            # runs — so its try/except never executes. End the turn now.
+            if record.status == "running":
+                end_status: TurnStatus = (
+                    "cancelled" if completed.cancelled() else "failed"
+                )
+                cleanup = asyncio.ensure_future(
+                    self._end_unfinished_turn(conversation_id, turn_id, end_status)
+                )
+                self._safety_net_tasks.add(cleanup)
+                cleanup.add_done_callback(self._safety_net_tasks.discard)
 
         task.add_done_callback(_release)
+
+    async def _end_unfinished_turn(
+        self, conversation_id: str, turn_id: str, status: TurnStatus
+    ) -> None:
+        """End a turn whose producer task finished without ending it.
+
+        ``end_turn`` is idempotent, so if the producer did end the turn in a
+        race this is a no-op.
+        """
+        try:
+            await self.end_turn(
+                conversation_id,
+                turn_id=turn_id,
+                status=status,
+                error="cancelled",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to end unfinished turn conv=%s turn=%s",
+                conversation_id,
+                turn_id,
+            )
 
     def get_active_producer_tasks(
         self, conversation_id: str | None = None

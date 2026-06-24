@@ -16,6 +16,7 @@ LLM-gating pattern from ``test_turn_producer_resilience.py``.
 """
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -32,12 +33,12 @@ from family_assistant.llm.messages import MessageReasoningInfo, UserMessage
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.context import get_db_context
+from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
     from family_assistant.web.conversation_stream_hub import (
-        ConversationStreamHub,
         StreamEvent,
         SubscriptionHandle,
     )
@@ -245,6 +246,43 @@ async def test_cancel_persists_stopped_reply(
     assert assistant_rows, "Expected a durable assistant row for the stopped turn"
     assert any("Stopped" in str(row["content"]) for row in assistant_rows), (
         f"Expected a stopped marker in the persisted reply, got {assistant_rows}"
+    )
+
+
+async def test_cancel_before_producer_runs_does_not_wedge_turn() -> None:
+    """A producer task cancelled before its coroutine runs must still end the turn.
+
+    Stop immediately after Send can call task.cancel() after attach_producer_task
+    but before run_turn_producer's first slice, so its try/except never runs and
+    never ends the turn. The hub's done-callback safety net ends it instead,
+    preventing a permanent 'running' wedge (pruning/eviction skip running turns).
+    """
+    hub = ConversationStreamHub()
+    await hub.start_turn(
+        "conv", turn_id="t1", user_id="u1", started_at=datetime.now(UTC)
+    )
+
+    started = asyncio.Event()
+
+    async def never_runs() -> None:
+        started.set()
+        await asyncio.Event().wait()  # parks forever (never reached: cancelled first)
+
+    task = asyncio.ensure_future(never_runs())
+    hub.attach_producer_task("conv", "t1", task)
+
+    # Cancel before the task gets a scheduling slice: its coroutine never runs.
+    task.cancel()
+    assert not started.is_set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    # The done-callback schedules end_turn(cancelled); wait for it to land.
+    await wait_for_condition(
+        lambda: (
+            (t := hub.get_turn("conv", "t1")) is not None and t.status == "cancelled"
+        ),
+        description="wedged turn ended",
     )
 
 
