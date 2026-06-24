@@ -102,6 +102,16 @@ export const useStreamingResponse = ({
           ? crypto.randomUUID()
           : `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`);
 
+      // Record the live turn up front (the turn id and conversation id are
+      // already known) so a Stop/Steer click during the kickoff POST — the
+      // composer shows Stop as soon as isStreaming flips true — targets this
+      // turn instead of no-op'ing. Refined below if the server resolves a
+      // different conversation id (only when conversationId was omitted).
+      activeTurnRef.current = {
+        turnId: effectiveTurnId,
+        conversationId,
+      };
+
       // Acknowledge a processed turn so the server can suppress the disconnect
       // push. Best-effort: a failed ack must not break stream completion.
       const ackTurn = async (ackConversationId, ackSeq) => {
@@ -159,8 +169,8 @@ export const useStreamingResponse = ({
           already_complete: alreadyComplete,
         } = await startResponse.json();
         const resolvedConversationId = streamConversationId || conversationId;
-        // Record the live turn so cancelStream/steerStream can reach the
-        // server-side producer for this conversation+turn.
+        // Refine the live-turn record now that the server has resolved the
+        // conversation id (it generates one when the client omits it).
         activeTurnRef.current = {
           turnId: effectiveTurnId,
           conversationId: resolvedConversationId,
