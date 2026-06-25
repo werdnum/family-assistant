@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,7 +19,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from family_assistant.config_models import AppConfig, UCPConfig
 
@@ -180,18 +181,83 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
     )
 
 
+MAX_DISCOVERY_REDIRECTS = 5
+
+
+async def _get_following_same_origin_redirects(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str],
+    timeout: float | None,
+    now: Callable[[], float] = time.monotonic,
+) -> httpx.Response | None:
+    """GET ``url``, following 301/302/etc only while they stay same-origin.
+
+    Live merchants frequently serve ``/.well-known/ucp`` behind a redirect
+    (commonly a trailing-slash or path canonicalization), and httpx does not
+    follow redirects by default — so the 3xx would otherwise be treated as an
+    empty body and discovery would silently fail. Redirects are followed
+    manually rather than with ``follow_redirects=True`` because the profile URL
+    is merchant-controlled: an off-origin ``Location`` could otherwise point the
+    discovery GET at an arbitrary internal host (SSRF). Each hop is required to
+    share the original origin, and the chain is bounded. Returns ``None`` when a
+    redirect leaves the origin (or the bound is exceeded), so the caller treats
+    it as a discovery miss.
+
+    ``timeout`` bounds the *whole* redirect chain, not each hop: each GET is
+    given only the remaining budget, so a slow same-origin redirect chain cannot
+    stall a shopping request for ``(MAX_DISCOVERY_REDIRECTS + 1) * timeout``.
+    ``now`` is injectable for deterministic tests.
+    """
+    deadline = None if timeout is None else now() + timeout
+    current_url = url
+    for _ in range(MAX_DISCOVERY_REDIRECTS + 1):
+        if deadline is not None:
+            remaining = deadline - now()
+            if remaining <= 0:
+                logger.debug("UCP discovery exceeded its time budget for %s", url)
+                return None
+            response = await client.get(current_url, headers=headers, timeout=remaining)
+        else:
+            response = await client.get(current_url, headers=headers)
+        if not response.is_redirect:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        # The Location is merchant-controlled; a malformed value (e.g. a bad
+        # IPv6 host) makes urljoin raise, so treat that as a discovery miss
+        # rather than letting it crash endpoint resolution / the browser probe.
+        try:
+            next_url = urljoin(current_url, location)
+        except ValueError:
+            logger.debug(
+                "UCP discovery got a malformed redirect Location: %r", location
+            )
+            return None
+        if not same_origin(next_url, url):
+            return None
+        current_url = next_url
+    return None
+
+
 async def discover_merchant_ucp_profile(
     url: str,
     *,
     client: httpx.AsyncClient,
     timeout: float | None = None,
+    now: Callable[[], float] = time.monotonic,
 ) -> MerchantUCPProfile | None:
     """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
 
     ``url`` may be any URL on the merchant; only its HTTPS origin is used.
-    ``timeout`` bounds just the discovery GET (independent of the caller's
-    client-wide timeout) so a slow/tarpit ``/.well-known/ucp`` cannot stall a
-    subsequent request; when ``None`` the client's default timeout applies.
+    ``timeout`` bounds the whole discovery GET — including any same-origin
+    redirect chain (each hop gets only the remaining budget) — independent of
+    the caller's client-wide timeout, so a slow/tarpit ``/.well-known/ucp``
+    cannot stall a subsequent request; when ``None`` the client's default
+    timeout applies. ``now`` is the monotonic clock used for that budget,
+    injectable so tests can drive the deadline deterministically.
     Returns ``None`` when the origin is not HTTPS, the profile is unreachable or
     not valid JSON, or it advertises no shopping service. Network and decode
     errors are swallowed so callers can fall back without special handling.
@@ -203,12 +269,14 @@ async def discover_merchant_ucp_profile(
     profile_url = f"{origin}{UCP_PROFILE_PATH}"
     headers = {"Accept": "application/json"}
     try:
-        if timeout is not None:
-            response = await client.get(profile_url, headers=headers, timeout=timeout)
-        else:
-            response = await client.get(profile_url, headers=headers)
+        response = await _get_following_same_origin_redirects(
+            client, profile_url, headers=headers, timeout=timeout, now=now
+        )
     except httpx.HTTPError as exc:
         logger.debug("UCP discovery request failed for %s: %s", origin, exc)
+        return None
+    if response is None:
+        logger.debug("UCP discovery for %s redirected off-origin; not followed", origin)
         return None
     if response.is_error:
         logger.debug(

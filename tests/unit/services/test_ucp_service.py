@@ -191,6 +191,112 @@ async def test_discover_merchant_ucp_profile_returns_advertised_endpoint() -> No
     assert profile.version == "2026-04-08"
 
 
+async def test_discover_merchant_ucp_profile_follows_redirect() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(
+                301,
+                headers={"Location": "https://shop.example.com/ucp-config"},
+            )
+        return httpx.Response(200, json=_merchant_profile_payload())
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com/products/sweater", client=client
+        )
+
+    # The 301 is followed to the canonical config URL instead of being treated
+    # as an empty/undecodable body.
+    assert requested == [
+        "https://shop.example.com/.well-known/ucp",
+        "https://shop.example.com/ucp-config",
+    ]
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
+async def test_discovery_redirect_chain_shares_one_timeout_budget() -> None:
+    timeouts: list[float | None] = []
+    clock = {"t": 0.0}
+
+    def now() -> float:
+        return clock["t"]
+
+    class _SlowRedirectClient:
+        async def get(
+            self,
+            _url: str,
+            *,
+            headers: dict[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            timeouts.append(timeout)
+            clock["t"] += 2.0  # each hop "takes" 2s of the budget
+            return httpx.Response(
+                301, headers={"Location": "https://shop.example.com/next"}
+            )
+
+    # Driven through the public API with an injected clock (the `now` seam) so we
+    # never reach into the private redirect helper.
+    profile = await discover_merchant_ucp_profile(
+        "https://shop.example.com",
+        client=cast("httpx.AsyncClient", _SlowRedirectClient()),
+        timeout=5.0,
+        now=now,
+    )
+
+    # The 5s budget is shared across hops (5 → 3 → 1), not reapplied per hop, so
+    # the chain gives up once the budget is spent instead of running all six
+    # allowed redirects at 5s each.
+    assert profile is None
+    assert timeouts == [5.0, 3.0, 1.0]
+
+
+async def test_discover_merchant_ucp_profile_handles_malformed_redirect() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        # A merchant-controlled Location that urljoin cannot parse must not crash
+        # discovery; it is treated as a miss.
+        return httpx.Response(302, headers={"Location": "https://[zzz]/ucp"})
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert profile is None
+
+
+async def test_discover_merchant_ucp_profile_ignores_cross_origin_redirect() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "shop.example.com":
+            # An off-origin redirect must not be followed (SSRF guard).
+            return httpx.Response(
+                302,
+                headers={"Location": "https://attacker.example/.well-known/ucp"},
+            )
+        # Excluded from coverage: the off-origin redirect above must never be
+        # followed, so this branch is unreachable; if discovery ever fetched the
+        # cross-origin target, the assertion fails the test rather than silently
+        # passing.
+        raise AssertionError(  # pragma: no cover
+            "cross-origin redirect target must not be fetched"
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert requested == ["https://shop.example.com/.well-known/ucp"]
+    assert profile is None
+
+
 async def test_discover_merchant_ucp_profile_collects_all_endpoints() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

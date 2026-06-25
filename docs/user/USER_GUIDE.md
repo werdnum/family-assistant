@@ -201,11 +201,14 @@ You can ask the assistant a wide variety of things:
   return the merchant checkout URL for you to complete payment yourself. It works with any merchant
   that supports the Universal Commerce Protocol (UCP) — Shopify stores and other UCP merchants
   alike. The assistant discovers each merchant's commerce endpoint from the merchant's own
-  `/.well-known/ucp` profile, and while browsing it automatically notices when a site supports UCP
-  shopping. The server also publishes its own public UCP platform profile at `/.well-known/ucp`.
-  Checkout handoff requires signed UCP requests; configure `UCP_SIGNING_KEY_ID` and either
-  `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key.
-  The assistant does not complete checkout or collect payment credentials in chat.
+  `/.well-known/ucp` profile (following any redirect the merchant serves there), and while browsing
+  it automatically notices when a site supports UCP shopping. Some merchants are checkout-only (they
+  support checkout but not a cart); for these the assistant opens a checkout session directly from
+  the selected items instead of building a cart first. The server also publishes its own public UCP
+  platform profile at `/.well-known/ucp`. Checkout handoff requires signed UCP requests; configure
+  `UCP_SIGNING_KEY_ID` and either `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with
+  an EC P-256 or P-384 private key. The assistant does not complete checkout or collect payment
+  credentials in chat.
 
 - **Ingest Documents (Files and URLs):**
 
