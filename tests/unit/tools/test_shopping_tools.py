@@ -139,6 +139,29 @@ def _cart_and_checkout_profile() -> dict[str, object]:
     }
 
 
+def _cart_with_items_response() -> dict[str, object]:
+    # A get_cart result with line items, used by the checkout handoff which now
+    # reads the cart and builds the checkout from its contents.
+    return {
+        "jsonrpc": "2.0",
+        "id": "rpc-1",
+        "result": {
+            "structuredContent": {
+                "cart": {
+                    "id": "gid://shopify/Cart/cart_abc123",
+                    "line_items": [
+                        {
+                            "quantity": 1,
+                            "item": {"id": "gid://shopify/ProductVariant/12345678901"},
+                        }
+                    ],
+                    "continue_url": "https://shop.example.com/cart/c/cart_abc123",
+                }
+            }
+        },
+    }
+
+
 def _checkout_response() -> dict[str, object]:
     return {
         "jsonrpc": "2.0",
@@ -389,7 +412,10 @@ async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
-    _FakeAsyncClient.responses = [httpx.Response(200, json=_checkout_response())]
+    _FakeAsyncClient.responses = [
+        httpx.Response(200, json=_cart_with_items_response()),
+        httpx.Response(200, json=_checkout_response()),
+    ]
     app_config = AppConfig(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
@@ -406,12 +432,21 @@ async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
 
     assert "https://shop.example.com/checkouts/c/checkout_abc123" in result.get_text()
     assert "buyer must complete payment" in result.get_text()
-    request = _FakeAsyncClient.requests[0]
+    # The handoff reads the cart, then creates a checkout from its line items.
+    get_cart_request = _FakeAsyncClient.requests[0]
+    assert cast("dict[str, object]", get_cart_request.body["params"])["name"] == (
+        "get_cart"
+    )
+    request = _FakeAsyncClient.requests[1]
     assert "Signature" in request.headers
     params = cast("dict[str, object]", request.body["params"])
     assert params["name"] == "create_checkout"
     arguments = cast("dict[str, object]", params["arguments"])
-    assert arguments["cart_id"] == "gid://shopify/Cart/cart_abc123"
+    assert "cart_id" not in arguments
+    checkout_payload = cast("dict[str, object]", arguments["checkout"])
+    assert checkout_payload["line_items"] == [
+        {"quantity": 1, "item": {"id": "gid://shopify/ProductVariant/12345678901"}}
+    ]
 
 
 async def test_ucp_transfer_checkout_to_human_requires_signing_before_discovery(
@@ -467,6 +502,7 @@ async def test_ucp_transfer_checkout_to_human_rejects_cart_error_outcome(
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
     _FakeAsyncClient.responses = [
+        httpx.Response(200, json=_cart_with_items_response()),
         httpx.Response(
             200,
             json={
@@ -485,7 +521,7 @@ async def test_ucp_transfer_checkout_to_human_rejects_cart_error_outcome(
                     }
                 },
             },
-        )
+        ),
     ]
     app_config = AppConfig(
         server_url="https://assistant.example",
@@ -509,6 +545,7 @@ async def test_ucp_transfer_checkout_to_human_requires_checkout_id(
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
     _FakeAsyncClient.responses = [
+        httpx.Response(200, json=_cart_with_items_response()),
         httpx.Response(
             200,
             json={
@@ -521,7 +558,7 @@ async def test_ucp_transfer_checkout_to_human_requires_checkout_id(
                     }
                 },
             },
-        )
+        ),
     ]
     app_config = AppConfig(
         server_url="https://assistant.example",

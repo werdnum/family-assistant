@@ -590,7 +590,8 @@ async def _create_checkout_session(
     """Post a signed ``create_checkout`` call and render the handoff result.
 
     Shared by the cart-based checkout handoff and the checkout-only add-to-cart
-    path; ``arguments`` carries either a ``cart_id`` or a ``line_items`` list.
+    path; ``arguments`` carries the ``meta``/``checkout`` params the UCP
+    create_checkout binding expects (the ``checkout`` object holding line items).
     """
     response_data = await _post_ucp_tool_call(
         app_config,
@@ -655,6 +656,26 @@ async def _add_to_cart_checkout_only(
     return await _create_checkout_session(
         app_config, endpoint=endpoint, arguments={"checkout": checkout_payload}
     )
+
+
+def _checkout_input_from_cart(cart: dict[str, object]) -> dict[str, object]:
+    """Build a create_checkout ``checkout`` object from a fetched cart.
+
+    The UCP create_checkout binding has no ``cart_id`` parameter — it takes a
+    ``checkout`` object whose line items are required — so a cart handoff
+    re-emits the cart's items in request shape and carries over the buyer,
+    context, and signals it already holds.
+    """
+    line_items = _merge_cart_line_items(cart, [])
+    if not line_items:
+        msg = "Cart has no line items to check out."
+        raise ValueError(msg)
+    checkout_input: dict[str, object] = {"line_items": line_items}
+    for field in ("buyer", "context", "signals"):
+        value = cart.get(field)
+        if isinstance(value, dict):
+            checkout_input[field] = value
+    return checkout_input
 
 
 async def ucp_add_to_cart_tool(
@@ -743,6 +764,18 @@ async def ucp_transfer_checkout_to_human_tool(
     # discovery round-trip first.
     _require_signing_config(app_config)
     resolved = await _resolve_endpoint_for(business_url)
+    # create_checkout takes a `checkout` object with the line items, so read the
+    # cart first and build the checkout from its contents rather than sending a
+    # (non-spec) cart_id.
+    cart_response = await _post_ucp_tool_call(
+        app_config,
+        endpoint=resolved.endpoint,
+        tool_name="get_cart",
+        arguments={"id": cart_id},
+    )
+    cart = _cart_from_response(cart_response)
     return await _create_checkout_session(
-        app_config, endpoint=resolved.endpoint, arguments={"cart_id": cart_id}
+        app_config,
+        endpoint=resolved.endpoint,
+        arguments={"checkout": _checkout_input_from_cart(cart)},
     )
