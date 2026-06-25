@@ -681,8 +681,13 @@ async def test_ucp_add_to_cart_checkout_only_merchant_skips_cart(
     params = cast("dict[str, object]", request.body["params"])
     assert params["name"] == "create_checkout"
     arguments = cast("dict[str, object]", params["arguments"])
-    assert arguments["line_items"] == [{"quantity": 2, "item": {"id": "variant-1"}}]
-    assert arguments["context"] == {"address_country": "AU"}
+    # Line items are nested under a top-level `checkout` object per the UCP
+    # create_checkout binding, not placed at the arguments root.
+    checkout_payload = cast("dict[str, object]", arguments["checkout"])
+    assert checkout_payload["line_items"] == [
+        {"quantity": 2, "item": {"id": "variant-1"}}
+    ]
+    assert checkout_payload["context"] == {"address_country": "AU"}
 
 
 async def test_ucp_add_to_cart_checkout_only_rejects_cart_id(

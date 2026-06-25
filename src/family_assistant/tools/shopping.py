@@ -646,11 +646,14 @@ async def _add_to_cart_checkout_only(
             "the line items."
         )
         raise ValueError(msg)
-    checkout_arguments: dict[str, object] = {"line_items": normalized_items}
+    # The UCP create_checkout binding takes a top-level `checkout` object with
+    # line items (and any supported checkout fields) nested inside it, mirroring
+    # how create_cart nests its payload under `cart`.
+    checkout_payload: dict[str, object] = {"line_items": normalized_items}
     if context is not None:
-        checkout_arguments["context"] = context
+        checkout_payload["context"] = context
     return await _create_checkout_session(
-        app_config, endpoint=endpoint, arguments=checkout_arguments
+        app_config, endpoint=endpoint, arguments={"checkout": checkout_payload}
     )
 
 
