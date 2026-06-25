@@ -279,7 +279,13 @@ async def _probe_ucp_support(
         profile = session.ucp_profiles[origin]
     else:
         async with httpx.AsyncClient(timeout=UCP_PROBE_TIMEOUT_SECONDS) as client:
-            profile = await discover_merchant_ucp_profile(origin, client=client)
+            # Pass the timeout explicitly so it bounds the whole redirect chain,
+            # not just each hop: relying on the client-level timeout alone would
+            # let a same-origin redirect chain stall the probe for up to
+            # (MAX_DISCOVERY_REDIRECTS + 1) * UCP_PROBE_TIMEOUT_SECONDS.
+            profile = await discover_merchant_ucp_profile(
+                origin, client=client, timeout=UCP_PROBE_TIMEOUT_SECONDS
+            )
         session.ucp_profiles[origin] = profile
 
     # Only hint when there is a same-origin endpoint, matching what the shopping
