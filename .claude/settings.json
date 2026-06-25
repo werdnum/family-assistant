@@ -14,7 +14,19 @@
     ]
   },
   "enabledPlugins": {
+    "bash-guard@werdnum-plugins": true,
+    "format-and-lint@werdnum-plugins": true,
+    "guardian@werdnum-plugins": true,
+    "development-agents@werdnum-plugins": true,
+    "python-utils@werdnum-plugins": true,
     "pyright-lsp@claude-plugins-official": true
   },
-  "extraKnownMarketplaces": {}
+  "extraKnownMarketplaces": {
+    "werdnum-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "werdnum/claude-code-plugins"
+      }
+    }
+  }
 }
