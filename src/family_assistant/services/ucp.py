@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,7 +19,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from family_assistant.config_models import AppConfig, UCPConfig
 
@@ -189,6 +190,7 @@ async def _get_following_same_origin_redirects(
     *,
     headers: dict[str, str],
     timeout: float | None,
+    now: Callable[[], float] = time.monotonic,
 ) -> httpx.Response | None:
     """GET ``url``, following 301/302/etc only while they stay same-origin.
 
@@ -202,11 +204,21 @@ async def _get_following_same_origin_redirects(
     share the original origin, and the chain is bounded. Returns ``None`` when a
     redirect leaves the origin (or the bound is exceeded), so the caller treats
     it as a discovery miss.
+
+    ``timeout`` bounds the *whole* redirect chain, not each hop: each GET is
+    given only the remaining budget, so a slow same-origin redirect chain cannot
+    stall a shopping request for ``(MAX_DISCOVERY_REDIRECTS + 1) * timeout``.
+    ``now`` is injectable for deterministic tests.
     """
+    deadline = None if timeout is None else now() + timeout
     current_url = url
     for _ in range(MAX_DISCOVERY_REDIRECTS + 1):
-        if timeout is not None:
-            response = await client.get(current_url, headers=headers, timeout=timeout)
+        if deadline is not None:
+            remaining = deadline - now()
+            if remaining <= 0:
+                logger.debug("UCP discovery exceeded its time budget for %s", url)
+                return None
+            response = await client.get(current_url, headers=headers, timeout=remaining)
         else:
             response = await client.get(current_url, headers=headers)
         if not response.is_redirect:

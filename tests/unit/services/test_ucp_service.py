@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from pydantic import ValidationError
 
 from family_assistant.config_models import AppConfig, UCPConfig
+from family_assistant.services import ucp as ucp_service
 from family_assistant.services.ucp import (
     MerchantUCPProfile,
     UCPConfigurationError,
@@ -216,6 +217,42 @@ async def test_discover_merchant_ucp_profile_follows_redirect() -> None:
     ]
     assert profile is not None
     assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
+async def test_discovery_redirect_chain_shares_one_timeout_budget() -> None:
+    timeouts: list[float | None] = []
+    clock = {"t": 0.0}
+
+    def now() -> float:
+        return clock["t"]
+
+    class _SlowRedirectClient:
+        async def get(
+            self,
+            _url: str,
+            *,
+            headers: dict[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            timeouts.append(timeout)
+            clock["t"] += 2.0  # each hop "takes" 2s of the budget
+            return httpx.Response(
+                301, headers={"Location": "https://shop.example.com/next"}
+            )
+
+    response = await ucp_service._get_following_same_origin_redirects(  # noqa: SLF001
+        cast("httpx.AsyncClient", _SlowRedirectClient()),
+        "https://shop.example.com/.well-known/ucp",
+        headers={},
+        timeout=5.0,
+        now=now,
+    )
+
+    # The 5s budget is shared across hops (5 → 3 → 1), not reapplied per hop, so
+    # the chain gives up once the budget is spent instead of running all six
+    # allowed redirects at 5s each.
+    assert response is None
+    assert timeouts == [5.0, 3.0, 1.0]
 
 
 async def test_discover_merchant_ucp_profile_handles_malformed_redirect() -> None:
