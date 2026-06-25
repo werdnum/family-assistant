@@ -664,19 +664,23 @@ async def _add_to_cart_checkout_only(
     )
 
 
-def _checkout_input_from_cart(cart: dict[str, object]) -> dict[str, object]:
-    """Build a create_checkout ``checkout`` object from a fetched cart.
+def _checkout_input_from_cart(
+    cart: dict[str, object], cart_id: str
+) -> dict[str, object]:
+    """Build a create_checkout ``checkout`` object that converts an existing cart.
 
-    The UCP create_checkout binding has no ``cart_id`` parameter — it takes a
-    ``checkout`` object whose line items are required — so a cart handoff
-    re-emits the cart's items in request shape and carries over the buyer,
-    context, and signals it already holds.
+    The cart capability extends create_checkout with ``cart_id`` (see the
+    "Checkout with Cart" schema, ``cart.json#/$defs/checkout``): the business
+    uses the cart's stored contents for conversion and ignores overlapping
+    payload fields, preserving server-side cart state (discounts, holds). The
+    cart's line items are still sent because the base checkout schema requires
+    them; buyer/context/signals are carried over for merchants that read them.
     """
     line_items = _merge_cart_line_items(cart, [])
     if not line_items:
         msg = "Cart has no line items to check out."
         raise ValueError(msg)
-    checkout_input: dict[str, object] = {"line_items": line_items}
+    checkout_input: dict[str, object] = {"cart_id": cart_id, "line_items": line_items}
     for field in ("buyer", "context", "signals"):
         value = cart.get(field)
         if isinstance(value, dict):
@@ -770,9 +774,9 @@ async def ucp_transfer_checkout_to_human_tool(
     # discovery round-trip first.
     _require_signing_config(app_config)
     resolved = await _resolve_endpoint_for(business_url)
-    # create_checkout takes a `checkout` object with the line items, so read the
-    # cart first and build the checkout from its contents rather than sending a
-    # (non-spec) cart_id.
+    # The cart capability extends create_checkout with cart_id for
+    # cart-to-checkout conversion, so read the cart and hand off its cart_id
+    # (plus its contents) inside the checkout object.
     cart_response = await _post_ucp_tool_call(
         app_config,
         endpoint=resolved.endpoint,
@@ -783,5 +787,5 @@ async def ucp_transfer_checkout_to_human_tool(
     return await _create_checkout_session(
         app_config,
         endpoint=resolved.endpoint,
-        arguments={"checkout": _checkout_input_from_cart(cart)},
+        arguments={"checkout": _checkout_input_from_cart(cart, cart_id)},
     )

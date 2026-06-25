@@ -54,6 +54,11 @@ _SCHEMAS_BY_ID: dict[str, dict[str, object]] = {
         _load_schema("types", "line_item.json"),
     )
 }
+# The cart capability extends create_checkout with cart_id for cart-to-checkout
+# conversion ("Checkout with Cart"); a cart handoff is validated against it.
+_CART_CHECKOUT_SCHEMA = cast(
+    "dict[str, dict[str, object]]", _load_schema("cart.json")["$defs"]
+)["checkout"]
 # Which lifecycle operation each method's object param represents.
 _METHOD_OP = {
     "create_checkout": "create",
@@ -98,22 +103,42 @@ def _request_object_schema(
     *,
     provided_params: frozenset[str] = frozenset(),
 ) -> dict[str, object]:
-    """Derive the request-time JSON Schema for a UCP object schema."""
-    properties = cast("dict[str, dict[str, object]]", schema.get("properties", {}))
-    base_required = set(cast("list[str]", schema.get("required", [])))
+    """Derive the request-time JSON Schema for a UCP object schema.
+
+    ``allOf`` members (used by the cart capability's "Checkout with Cart"
+    extension, which composes the base checkout with a ``cart_id`` field) are
+    resolved and merged, so a composed schema contributes every branch's
+    request fields.
+    """
+    members: list[dict[str, object]] = []
+    for sub in cast("list[dict[str, object]]", schema.get("allOf", [])):
+        ref = sub.get("$ref")
+        members.append(
+            _SCHEMAS_BY_ID[ref]
+            if isinstance(ref, str) and ref in _SCHEMAS_BY_ID
+            else sub
+        )
+    members.append(schema)
     request_props: dict[str, object] = {}
     required: list[str] = []
-    for name, prop in properties.items():
-        mode = _request_mode(prop.get("ucp_request"), op)
-        if mode is None:
-            mode = "required" if name in base_required else "optional"
-        if mode == "omit":
-            continue
-        request_props[name] = _value_schema(prop, op)
-        # A field the MCP method also supplies as its own top-level param (the
-        # cart id on update_cart) need not be repeated inside the object.
-        if mode == "required" and name not in provided_params:
-            required.append(name)
+    for member in members:
+        properties = cast("dict[str, dict[str, object]]", member.get("properties", {}))
+        base_required = set(cast("list[str]", member.get("required", [])))
+        for name, prop in properties.items():
+            mode = _request_mode(prop.get("ucp_request"), op)
+            if mode is None:
+                mode = "required" if name in base_required else "optional"
+            if mode == "omit":
+                continue
+            request_props[name] = _value_schema(prop, op)
+            # A field the MCP method also supplies as its own top-level param
+            # (the cart id on update_cart) need not be repeated inside the object.
+            if (
+                mode == "required"
+                and name not in provided_params
+                and name not in required
+            ):
+                required.append(name)
     return {
         "type": "object",
         "properties": request_props,
@@ -130,8 +155,15 @@ def _method(name: str) -> dict[str, object]:
     raise AssertionError(msg)
 
 
-def _arguments_schema(method_name: str) -> dict[str, object]:
-    """Build the JSON Schema for a method's ``tools/call`` arguments object."""
+def _arguments_schema(
+    method_name: str, *, cart_checkout: bool = False
+) -> dict[str, object]:
+    """Build the JSON Schema for a method's ``tools/call`` arguments object.
+
+    ``cart_checkout`` selects the cart-capability "Checkout with Cart" extension
+    (which permits ``cart_id``) for the ``checkout`` param, used by the cart
+    handoff; the checkout-only path validates against the base checkout schema.
+    """
     method = _method(method_name)
     op = _METHOD_OP[method_name]
     params = cast("list[dict[str, object]]", method["params"])
@@ -145,8 +177,13 @@ def _arguments_schema(method_name: str) -> dict[str, object]:
         if name == "meta":
             props[name] = {"type": "object"}
         elif isinstance(ref, str) and ref in _SCHEMAS_BY_ID:
+            object_schema = (
+                _CART_CHECKOUT_SCHEMA
+                if cart_checkout and name == "checkout"
+                else _SCHEMAS_BY_ID[ref]
+            )
             props[name] = _request_object_schema(
-                _SCHEMAS_BY_ID[ref], op, provided_params=param_names
+                object_schema, op, provided_params=param_names
             )
         elif schema.get("type") == "string":
             props[name] = {"type": "string"}
@@ -162,11 +199,15 @@ def _arguments_schema(method_name: str) -> dict[str, object]:
     }
 
 
-def _assert_conforms(method_name: str, body: dict[str, object]) -> None:
+def _assert_conforms(
+    method_name: str, body: dict[str, object], *, cart_checkout: bool = False
+) -> None:
     params = cast("dict[str, object]", body["params"])
     assert params["name"] == method_name
     arguments = cast("dict[str, object]", params["arguments"])
-    Draft202012Validator(_arguments_schema(method_name)).validate(arguments)
+    Draft202012Validator(
+        _arguments_schema(method_name, cart_checkout=cart_checkout)
+    ).validate(arguments)
 
 
 def _private_key_pem() -> str:
@@ -362,7 +403,16 @@ async def test_cart_handoff_create_checkout_request_conforms_to_spec(
     )
 
     _assert_conforms("get_cart", _CapturingClient.posts[0])
-    _assert_conforms("create_checkout", _CapturingClient.posts[1])
+    create = _CapturingClient.posts[1]
+    # The cart handoff converts via cart_id, valid under the cart extension.
+    _assert_conforms("create_checkout", create, cart_checkout=True)
+    checkout = cast(
+        "dict[str, object]",
+        cast("dict[str, object]", create["params"])["arguments"],
+    )["checkout"]
+    assert cast("dict[str, object]", checkout)["cart_id"] == (
+        "gid://shopify/Cart/cart_abc123"
+    )
 
 
 def test_contract_rejects_the_shapes_these_fixes_corrected() -> None:
@@ -377,5 +427,20 @@ def test_contract_rejects_the_shapes_these_fixes_corrected() -> None:
     with pytest.raises(ValidationError):
         validator.validate({"meta": {}, "line_items": line_items})
 
-    # The corrected shape validates.
+    # The corrected base shape validates.
     validator.validate({"meta": {}, "checkout": {"line_items": line_items}})
+
+    # cart_id is only valid inside checkout under the cart-capability extension:
+    # rejected against the base schema, accepted against the extended one.
+    with pytest.raises(ValidationError):
+        validator.validate({
+            "meta": {},
+            "checkout": {"cart_id": "c1", "line_items": line_items},
+        })
+    cart_validator = Draft202012Validator(
+        _arguments_schema("create_checkout", cart_checkout=True)
+    )
+    cart_validator.validate({
+        "meta": {},
+        "checkout": {"cart_id": "c1", "line_items": line_items},
+    })

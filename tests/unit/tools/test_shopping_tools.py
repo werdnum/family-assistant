@@ -442,8 +442,11 @@ async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
     params = cast("dict[str, object]", request.body["params"])
     assert params["name"] == "create_checkout"
     arguments = cast("dict[str, object]", params["arguments"])
+    # cart_id rides inside the checkout object (cart capability extension), not
+    # at the arguments root, and converts the existing cart.
     assert "cart_id" not in arguments
     checkout_payload = cast("dict[str, object]", arguments["checkout"])
+    assert checkout_payload["cart_id"] == "gid://shopify/Cart/cart_abc123"
     assert checkout_payload["line_items"] == [
         {"quantity": 1, "item": {"id": "gid://shopify/ProductVariant/12345678901"}}
     ]

@@ -240,6 +240,9 @@ async def test_discovery_redirect_chain_shares_one_timeout_budget() -> None:
                 301, headers={"Location": "https://shop.example.com/next"}
             )
 
+    # Call the private redirect helper directly: the chain-level timeout budget
+    # has no public seam for injecting a deterministic clock, so the helper is
+    # the unit under test here.
     response = await ucp_service._get_following_same_origin_redirects(  # noqa: SLF001
         cast("httpx.AsyncClient", _SlowRedirectClient()),
         "https://shop.example.com/.well-known/ucp",
