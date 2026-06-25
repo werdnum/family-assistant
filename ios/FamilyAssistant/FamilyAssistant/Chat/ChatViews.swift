@@ -162,21 +162,28 @@ private struct ConversationRow: View {
 private struct ChatThreadView: View {
     var viewModel: ChatViewModel
     @Environment(\.scenePhase) private var scenePhase
+    // Latches true the first time the scene is active, then stays true. Gates the
+    // thread between two competing watchdog hazards (see
+    // `ChatViewModel.shouldRenderThread`): keep the LazyVStack OUT of the tree on
+    // an offscreen background launch, but keep it mounted across later
+    // background transitions once it has been realized.
+    @State private var hasMountedThread = false
 
     var body: some View {
         VStack(spacing: 0) {
             PendingConfirmationsBanner(viewModel: viewModel)
-            if scenePhase == .active {
+            if viewModel.shouldRenderThread(
+                isActive: scenePhase == .active,
+                hasMountedBefore: hasMountedThread
+            ) {
                 messageScrollArea
             } else {
-                // Only lay out the chat thread when the scene is active. SwiftUI
-                // reports .background on an offscreen background launch (push /
-                // state restoration / snapshot) and .inactive during restoration,
-                // snapshots, and foreground/background transitions; laying out a
-                // long restored thread in either state overruns the ~10s
-                // scene-update watchdog and the app is killed with 0x8BADF00D. The
-                // real list renders when the scene becomes active. See
-                // docs/design/ios-chat-layout-watchdog-crash.md.
+                // Offscreen background launch (push / state restoration /
+                // snapshot): SwiftUI reports .background/.inactive before the
+                // thread has ever been active. Laying out a restored thread here
+                // overruns the ~10s scene-update watchdog (0x8BADF00D). The real
+                // list renders when the scene first becomes active and then stays
+                // mounted. See docs/design/ios-chat-layout-watchdog-crash.md.
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -184,7 +191,10 @@ private struct ChatThreadView: View {
             Divider()
             ChatComposerView(viewModel: viewModel)
         }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
+        .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
+            if newPhase == .active {
+                hasMountedThread = true
+            }
             // Returning to the foreground from the BACKGROUND: re-establish the
             // live-updates follow stream and catch up persisted history. A turn
             // that finished while the app was backgrounded (the follow Task is
@@ -249,10 +259,16 @@ private struct ChatThreadView: View {
                 }
             }
             .onChange(of: viewModel.visibleGroupedMessages.last?.id) { _, newValue in
-                if let lastID = newValue {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
+                // Only animate the scroll while active. A message landing during a
+                // background transition would otherwise kick an animated layout
+                // transaction right as iOS is suspending the app — a suspend
+                // watchdog hazard. On the next foregrounding `onAppear` lands at
+                // the bottom without animation.
+                guard scenePhase == .active, let lastID = newValue else {
+                    return
+                }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(lastID, anchor: .bottom)
                 }
             }
         }

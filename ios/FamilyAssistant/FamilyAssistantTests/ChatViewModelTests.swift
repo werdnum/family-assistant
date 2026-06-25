@@ -2054,6 +2054,19 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: false))
     }
 
+    func testShouldRenderThreadKeepsListMountedOnceActive() {
+        // Offscreen background launch (never been active): keep the LazyVStack out
+        // of the tree so a background scene-update can't run the expensive layout.
+        let model = makeViewModel(conversationID: "web_conv_render")
+        XCTAssertFalse(model.shouldRenderThread(isActive: false, hasMountedBefore: false))
+        // First foregrounding realizes the thread.
+        XCTAssertTrue(model.shouldRenderThread(isActive: true, hasMountedBefore: false))
+        // Once realized, it stays mounted across later background transitions, so
+        // backgrounding does not tear it down (a suspend-watchdog hazard).
+        XCTAssertTrue(model.shouldRenderThread(isActive: false, hasMountedBefore: true))
+        XCTAssertTrue(model.shouldRenderThread(isActive: true, hasMountedBefore: true))
+    }
+
     func testLiveFollowMergeKeepsRunningBubbleAfterNewlyFetchedOlderRow() async throws {
         // When a follow turn drops mid-stream and the catch-up merge fetches an
         // older row for that turn (e.g. its own user prompt persisted after our
