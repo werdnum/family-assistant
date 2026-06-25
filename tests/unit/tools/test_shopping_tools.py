@@ -102,6 +102,43 @@ def _cart_response() -> dict[str, object]:
     }
 
 
+def _checkout_only_profile() -> dict[str, object]:
+    # Advertises the checkout capability but not cart: a checkout-only merchant.
+    return {
+        "ucp": {
+            "services": {
+                "dev.ucp.shopping": [
+                    {
+                        "transport": "mcp",
+                        "endpoint": "https://shop.example.com/ucp/rpc",
+                    }
+                ]
+            },
+            "capabilities": {"dev.ucp.shopping.checkout": [{}]},
+        }
+    }
+
+
+def _cart_and_checkout_profile() -> dict[str, object]:
+    # Advertises both cart and checkout: the normal cart flow applies.
+    return {
+        "ucp": {
+            "services": {
+                "dev.ucp.shopping": [
+                    {
+                        "transport": "mcp",
+                        "endpoint": "https://shop.example.com/ucp/rpc",
+                    }
+                ]
+            },
+            "capabilities": {
+                "dev.ucp.shopping.cart": [{}],
+                "dev.ucp.shopping.checkout": [{}],
+            },
+        }
+    }
+
+
 def _checkout_response() -> dict[str, object]:
     return {
         "jsonrpc": "2.0",
@@ -608,6 +645,98 @@ async def test_ucp_get_cart_raises_when_cart_envelope_is_missing(
             business_url="https://shop.example.com",
             cart_id="gid://shopify/Cart/cart_abc123",
         )
+
+
+async def test_ucp_add_to_cart_checkout_only_merchant_skips_cart(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_checkout_only_profile())
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_checkout_response())]
+    app_config = AppConfig(
+        server_url="https://assistant.example",
+        ucp_config=UCPConfig(
+            signing_key_id="platform-2026",
+            signing_private_key=_private_key_pem(),
+        ),
+    )
+
+    result = await shopping.ucp_add_to_cart_tool(
+        _context(app_config),
+        business_url="https://shop.example.com/products/serum",
+        line_items=[{"variant_id": "variant-1", "quantity": 2}],
+        context={"address_country": "AU"},
+    )
+
+    assert "https://shop.example.com/checkouts/c/checkout_abc123" in result.get_text()
+    # A single create_checkout call from the line items — no cart endpoint hit.
+    assert len(_FakeAsyncClient.requests) == 1
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop.example.com/ucp/rpc"
+    assert "Signature" in request.headers
+    params = cast("dict[str, object]", request.body["params"])
+    assert params["name"] == "create_checkout"
+    arguments = cast("dict[str, object]", params["arguments"])
+    assert arguments["line_items"] == [{"quantity": 2, "item": {"id": "variant-1"}}]
+    assert arguments["context"] == {"address_country": "AU"}
+
+
+async def test_ucp_add_to_cart_checkout_only_rejects_cart_id(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_checkout_only_profile())
+    ]
+    _FakeAsyncClient.responses = []
+    app_config = AppConfig(
+        server_url="https://assistant.example",
+        ucp_config=UCPConfig(
+            signing_key_id="platform-2026",
+            signing_private_key=_private_key_pem(),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="only supports checkout"):
+        await shopping.ucp_add_to_cart_tool(
+            _context(app_config),
+            business_url="https://shop.example.com",
+            cart_id="gid://shopify/Cart/cart_abc123",
+            line_items=[{"variant_id": "variant-1", "quantity": 1}],
+        )
+
+    # A checkout-only merchant cannot update a cart, so nothing is posted.
+    assert _FakeAsyncClient.requests == []
+
+
+async def test_ucp_add_to_cart_uses_cart_flow_when_cart_capability_advertised(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    # When the merchant advertises a cart capability the normal cart flow runs.
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop.example.com/ucp/rpc"
+    params = cast("dict[str, object]", request.body["params"])
+    assert params["name"] == "create_cart"
 
 
 async def test_ucp_add_to_existing_cart_preserves_supported_cart_state(

@@ -191,6 +191,57 @@ async def test_discover_merchant_ucp_profile_returns_advertised_endpoint() -> No
     assert profile.version == "2026-04-08"
 
 
+async def test_discover_merchant_ucp_profile_follows_redirect() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(
+                301,
+                headers={"Location": "https://shop.example.com/ucp-config"},
+            )
+        return httpx.Response(200, json=_merchant_profile_payload())
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com/products/sweater", client=client
+        )
+
+    # The 301 is followed to the canonical config URL instead of being treated
+    # as an empty/undecodable body.
+    assert requested == [
+        "https://shop.example.com/.well-known/ucp",
+        "https://shop.example.com/ucp-config",
+    ]
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
+async def test_discover_merchant_ucp_profile_ignores_cross_origin_redirect() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "shop.example.com":
+            # An off-origin redirect must not be followed (SSRF guard).
+            return httpx.Response(
+                302,
+                headers={"Location": "https://attacker.example/.well-known/ucp"},
+            )
+        raise AssertionError(  # pragma: no cover
+            "cross-origin redirect target must not be fetched"
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert requested == ["https://shop.example.com/.well-known/ucp"]
+    assert profile is None
+
+
 async def test_discover_merchant_ucp_profile_collects_all_endpoints() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

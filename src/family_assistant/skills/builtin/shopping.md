@@ -26,6 +26,12 @@ advertises UCP, `browser_open` tells you so and gives you the `business_url` to 
 4. Send the `continue_url` to the user and tell them they must complete payment on the merchant
    checkout page.
 
+Some merchants are **checkout-only**: they advertise UCP checkout but not a cart. For these,
+`ucp_add_to_cart` skips the (nonexistent) cart and opens a checkout session straight from the line
+items, returning the handoff link itself — so you do not need a separate
+`ucp_transfer_checkout_to_human` call. Omit `cart_id` for these merchants; there is no cart to
+update.
+
 ## Boundaries
 
 - Do not call any tool that completes checkout or submits payment. This assistant does not have a

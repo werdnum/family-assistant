@@ -180,6 +180,47 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
     )
 
 
+MAX_DISCOVERY_REDIRECTS = 5
+
+
+async def _get_following_same_origin_redirects(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str],
+    timeout: float | None,
+) -> httpx.Response | None:
+    """GET ``url``, following 301/302/etc only while they stay same-origin.
+
+    Live merchants frequently serve ``/.well-known/ucp`` behind a redirect
+    (commonly a trailing-slash or path canonicalization), and httpx does not
+    follow redirects by default — so the 3xx would otherwise be treated as an
+    empty body and discovery would silently fail. Redirects are followed
+    manually rather than with ``follow_redirects=True`` because the profile URL
+    is merchant-controlled: an off-origin ``Location`` could otherwise point the
+    discovery GET at an arbitrary internal host (SSRF). Each hop is required to
+    share the original origin, and the chain is bounded. Returns ``None`` when a
+    redirect leaves the origin (or the bound is exceeded), so the caller treats
+    it as a discovery miss.
+    """
+    current_url = url
+    for _ in range(MAX_DISCOVERY_REDIRECTS + 1):
+        if timeout is not None:
+            response = await client.get(current_url, headers=headers, timeout=timeout)
+        else:
+            response = await client.get(current_url, headers=headers)
+        if not response.is_redirect:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        next_url = urljoin(current_url, location)
+        if not same_origin(next_url, url):
+            return None
+        current_url = next_url
+    return None
+
+
 async def discover_merchant_ucp_profile(
     url: str,
     *,
@@ -203,12 +244,14 @@ async def discover_merchant_ucp_profile(
     profile_url = f"{origin}{UCP_PROFILE_PATH}"
     headers = {"Accept": "application/json"}
     try:
-        if timeout is not None:
-            response = await client.get(profile_url, headers=headers, timeout=timeout)
-        else:
-            response = await client.get(profile_url, headers=headers)
+        response = await _get_following_same_origin_redirects(
+            client, profile_url, headers=headers, timeout=timeout
+        )
     except httpx.HTTPError as exc:
         logger.debug("UCP discovery request failed for %s: %s", origin, exc)
+        return None
+    if response is None:
+        logger.debug("UCP discovery for %s redirected off-origin; not followed", origin)
         return None
     if response.is_error:
         logger.debug(
