@@ -206,7 +206,9 @@ async def _resolve_ucp_endpoint(
     falls back to the Shopify convention (``/api/ucp/mcp``) when the merchant
     advertises no usable shopping MCP binding. The returned ``checkout_only``
     flag reflects the discovered capabilities so callers can bypass the cart for
-    checkout-only merchants.
+    checkout-only merchants — but only when the profile's own (same-origin)
+    endpoint is used; on fallback the flag is cleared, since the capability
+    described a binding that was not adopted.
 
     Only a binding that is same-origin as ``business_url`` is accepted, and every
     advertised binding is considered (not just the first) so a usable same-origin
@@ -224,12 +226,12 @@ async def _resolve_ucp_endpoint(
     profile = await discover_merchant_ucp_profile(
         business_url, client=client, timeout=UCP_DISCOVERY_TIMEOUT_SECONDS
     )
-    checkout_only = _is_checkout_only(profile)
     if profile is not None:
         same_origin_endpoint = profile.same_origin_mcp_endpoint
         if same_origin_endpoint is not None:
             return _ResolvedMerchant(
-                endpoint=same_origin_endpoint, checkout_only=checkout_only
+                endpoint=same_origin_endpoint,
+                checkout_only=_is_checkout_only(profile),
             )
         if profile.mcp_endpoints:
             logger.warning(
@@ -237,8 +239,12 @@ async def _resolve_ucp_endpoint(
                 len(profile.mcp_endpoints),
                 origin,
             )
+    # No profile, or only unusable (cross-origin) bindings: fall back to the
+    # Shopify convention. That endpoint supports carts, so the profile's
+    # checkout-only capability — which described the binding we just refused —
+    # must not carry over and make the caller skip the cart here.
     return _ResolvedMerchant(
-        endpoint=f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}", checkout_only=checkout_only
+        endpoint=f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}", checkout_only=False
     )
 
 

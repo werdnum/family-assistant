@@ -757,6 +757,47 @@ async def test_ucp_add_to_cart_checkout_only_rejects_cart_id(
     assert _FakeAsyncClient.requests == []
 
 
+async def test_ucp_add_to_cart_checkout_only_cross_origin_falls_back_to_cart(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    # Checkout-only capability, but the only binding is cross-origin (unusable).
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://internal-host/ucp/rpc",
+                            }
+                        ]
+                    },
+                    "capabilities": {"dev.ucp.shopping.checkout": [{}]},
+                }
+            },
+        )
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    # The checkout-only capability described the refused cross-origin binding, so
+    # the Shopify fallback must NOT inherit it: the cart flow runs as normal.
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop.example.com/api/ucp/mcp"
+    params = cast("dict[str, object]", request.body["params"])
+    assert params["name"] == "create_cart"
+
+
 async def test_ucp_add_to_cart_uses_cart_flow_when_cart_capability_advertised(
     monkeypatch: MonkeyPatch,
 ) -> None:
