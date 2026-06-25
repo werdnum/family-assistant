@@ -769,9 +769,9 @@ final class ChatViewModel {
                 || stopAfterRegistrationConversationID != nil
             if start.alreadyComplete {
                 if hadPendingStop || stopRequestedTurnIDs.contains(turnID) {
-                    dropPendingSteers(pendingSteers)
+                    detachPendingSteers(pendingSteers, requeue: false)
                 } else {
-                    queuePendingSteersAsFollowUp(pendingSteers)
+                    detachPendingSteers(pendingSteers, requeue: true)
                 }
                 // The retried turn finished durably but is not replayable from the
                 // hub. Don't subscribe; reload persisted history to surface it.
@@ -790,7 +790,7 @@ final class ChatViewModel {
                 return
             }
             if hadPendingStop {
-                dropPendingSteers(pendingSteers)
+                detachPendingSteers(pendingSteers, requeue: false)
                 let secured: Bool
                 do {
                     secured = try await requestStopWithRetry(ActiveChatTurn(turnID: turnID, conversationID: id))
@@ -1270,7 +1270,7 @@ final class ChatViewModel {
             if isCurrentTurn {
                 steerErrorMessage = "Could not steer the assistant. Please try again."
             } else if originalTurnEnded,
-                      canRecoverFailedSteerAfterTurnEnded(activeTurn.turnID),
+                      canRecoverSteerAfterTurnEnded(activeTurn.turnID, defaultWhenUnknown: true),
                       isSameConversation {
                 recoverSteerAsDraft(prompt)
             }
@@ -1311,7 +1311,7 @@ final class ChatViewModel {
         guard let conversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID) else {
             return false
         }
-        dropPendingSteers(pendingSteersByTurnID.removeValue(forKey: turnID) ?? [])
+        detachPendingSteers(pendingSteersByTurnID.removeValue(forKey: turnID) ?? [], requeue: false)
         let turnToCancel = ActiveChatTurn(turnID: turnID, conversationID: conversationID)
         let cancellationTask = Task { [weak self] in
             guard let self else {
@@ -1425,16 +1425,19 @@ final class ChatViewModel {
         }
     }
 
-    private func canRecoverSteerAfterTurnEnded(_ turnID: String) -> Bool {
+    /// Whether a steer for a turn that has already ended can still be recovered
+    /// (re-sent as a follow-up or restored to the draft). A turn that ended as
+    /// `cancelled`/`failed` is never recoverable. `defaultWhenUnknown` is the
+    /// answer when the turn ended without a recorded status (e.g. it was
+    /// finalized off the always-on follow stream): an accepted steer treats an
+    /// unknown status conservatively (false), a failed-steer recovery
+    /// optimistically (true).
+    private func canRecoverSteerAfterTurnEnded(
+        _ turnID: String,
+        defaultWhenUnknown: Bool = false
+    ) -> Bool {
         guard let status = endedTurnStatusByTurnID[turnID] else {
-            return false
-        }
-        return status != "cancelled" && status != "failed"
-    }
-
-    private func canRecoverFailedSteerAfterTurnEnded(_ turnID: String) -> Bool {
-        guard let status = endedTurnStatusByTurnID[turnID] else {
-            return true
+            return defaultWhenUnknown
         }
         return status != "cancelled" && status != "failed"
     }
@@ -1444,24 +1447,19 @@ final class ChatViewModel {
             || (activeTurn == nil && conversationID == stoppedTurn.conversationID)
     }
 
-    private func queuePendingSteersAsFollowUp(_ prompts: [String]) {
+    /// Tear down steers that were queued before their turn registered: drop their
+    /// in-flight/awaiting-echo tracking and clear a matching steer draft. With
+    /// `requeue` true the prompt is re-queued as a normal follow-up (the turn
+    /// finished durably before it could be steered); with false it is discarded
+    /// (e.g. a stop superseded it).
+    private func detachPendingSteers(_ prompts: [String], requeue: Bool) {
         for prompt in prompts {
             removeInFlightSteer(prompt)
             removeAwaitingEchoSteer(prompt)
-            queuedFollowUpSteers.append(prompt)
-            if steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines) == prompt {
-                steerDraftText = ""
+            if requeue {
+                queuedFollowUpSteers.append(prompt)
             }
-        }
-    }
-
-    private func dropPendingSteers(_ prompts: [String]) {
-        for prompt in prompts {
-            removeInFlightSteer(prompt)
-            removeAwaitingEchoSteer(prompt)
-            if steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines) == prompt {
-                steerDraftText = ""
-            }
+            clearSteerDraftIfMatching(prompt)
         }
     }
 
@@ -1556,9 +1554,7 @@ final class ChatViewModel {
         let followUp = queuedFollowUpSteers.removeFirst()
         let remainingQueuedFollowUps = queuedFollowUpSteers
         queuedFollowUpSteers = []
-        if steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines) == followUp {
-            steerDraftText = ""
-        }
+        clearSteerDraftIfMatching(followUp)
         let preservedDraftText = draftText
         let preservedDraftAttachments = draftAttachments
         draftText = followUp
@@ -1945,7 +1941,7 @@ final class ChatViewModel {
             // returns an empty delta, and so the merge then sees an unmapped
             // `local_` bubble it can drop and replace with the persisted reply.
             if event.type == .turnEnded, let turnID = event.turnID {
-                finalizeLiveFollowBubble(turnID: turnID)
+                finalizeLiveFollowBubble(turnID: turnID, status: event.status)
             }
             // Only surface and acknowledge while this device is NOT actively
             // streaming its own turn: during a send the send path owns the ack
@@ -2050,8 +2046,8 @@ final class ChatViewModel {
     /// persisted reply lags (an empty or unrelated delta at `turn_ended`) keeps
     /// showing its completed streamed text rather than vanishing or stranding as a
     /// stuck spinner.
-    private func finalizeLiveFollowBubble(turnID: String) {
-        markTurnEnded(turnID, status: nil)
+    private func finalizeLiveFollowBubble(turnID: String, status: String?) {
+        markTurnEnded(turnID, status: status)
         guard let bubbleID = liveFollowBubbleByTurnID[turnID],
               let index = messages.firstIndex(where: { $0.id == bubbleID })
         else {
@@ -2331,9 +2327,7 @@ final class ChatViewModel {
         }
         removeInFlightSteer(text)
         removeAwaitingEchoSteer(text)
-        if steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines) == text {
-            steerDraftText = ""
-        }
+        clearSteerDraftIfMatching(text)
         steerErrorMessage = nil
     }
 
