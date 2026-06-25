@@ -280,6 +280,10 @@ async def test_discover_merchant_ucp_profile_ignores_cross_origin_redirect() -> 
                 302,
                 headers={"Location": "https://attacker.example/.well-known/ucp"},
             )
+        # Excluded from coverage: the off-origin redirect above must never be
+        # followed, so this branch is unreachable; if discovery ever fetched the
+        # cross-origin target, the assertion fails the test rather than silently
+        # passing.
         raise AssertionError(  # pragma: no cover
             "cross-origin redirect target must not be fetched"
         )
