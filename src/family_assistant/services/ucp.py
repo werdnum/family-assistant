@@ -247,13 +247,17 @@ async def discover_merchant_ucp_profile(
     *,
     client: httpx.AsyncClient,
     timeout: float | None = None,
+    now: Callable[[], float] = time.monotonic,
 ) -> MerchantUCPProfile | None:
     """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
 
     ``url`` may be any URL on the merchant; only its HTTPS origin is used.
-    ``timeout`` bounds just the discovery GET (independent of the caller's
-    client-wide timeout) so a slow/tarpit ``/.well-known/ucp`` cannot stall a
-    subsequent request; when ``None`` the client's default timeout applies.
+    ``timeout`` bounds the whole discovery GET — including any same-origin
+    redirect chain (each hop gets only the remaining budget) — independent of
+    the caller's client-wide timeout, so a slow/tarpit ``/.well-known/ucp``
+    cannot stall a subsequent request; when ``None`` the client's default
+    timeout applies. ``now`` is the monotonic clock used for that budget,
+    injectable so tests can drive the deadline deterministically.
     Returns ``None`` when the origin is not HTTPS, the profile is unreachable or
     not valid JSON, or it advertises no shopping service. Network and decode
     errors are swallowed so callers can fall back without special handling.
@@ -266,7 +270,7 @@ async def discover_merchant_ucp_profile(
     headers = {"Accept": "application/json"}
     try:
         response = await _get_following_same_origin_redirects(
-            client, profile_url, headers=headers, timeout=timeout
+            client, profile_url, headers=headers, timeout=timeout, now=now
         )
     except httpx.HTTPError as exc:
         logger.debug("UCP discovery request failed for %s: %s", origin, exc)

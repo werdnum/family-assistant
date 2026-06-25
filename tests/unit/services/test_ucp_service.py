@@ -10,7 +10,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from pydantic import ValidationError
 
 from family_assistant.config_models import AppConfig, UCPConfig
-from family_assistant.services import ucp as ucp_service
 from family_assistant.services.ucp import (
     MerchantUCPProfile,
     UCPConfigurationError,
@@ -240,13 +239,11 @@ async def test_discovery_redirect_chain_shares_one_timeout_budget() -> None:
                 301, headers={"Location": "https://shop.example.com/next"}
             )
 
-    # Call the private redirect helper directly: the chain-level timeout budget
-    # has no public seam for injecting a deterministic clock, so the helper is
-    # the unit under test here.
-    response = await ucp_service._get_following_same_origin_redirects(  # noqa: SLF001
-        cast("httpx.AsyncClient", _SlowRedirectClient()),
-        "https://shop.example.com/.well-known/ucp",
-        headers={},
+    # Driven through the public API with an injected clock (the `now` seam) so we
+    # never reach into the private redirect helper.
+    profile = await discover_merchant_ucp_profile(
+        "https://shop.example.com",
+        client=cast("httpx.AsyncClient", _SlowRedirectClient()),
         timeout=5.0,
         now=now,
     )
@@ -254,7 +251,7 @@ async def test_discovery_redirect_chain_shares_one_timeout_budget() -> None:
     # The 5s budget is shared across hops (5 → 3 → 1), not reapplied per hop, so
     # the chain gives up once the budget is spent instead of running all six
     # allowed redirects at 5s each.
-    assert response is None
+    assert profile is None
     assert timeouts == [5.0, 3.0, 1.0]
 
 
