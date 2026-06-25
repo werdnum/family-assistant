@@ -214,7 +214,16 @@ async def _get_following_same_origin_redirects(
         location = response.headers.get("location")
         if not location:
             return response
-        next_url = urljoin(current_url, location)
+        # The Location is merchant-controlled; a malformed value (e.g. a bad
+        # IPv6 host) makes urljoin raise, so treat that as a discovery miss
+        # rather than letting it crash endpoint resolution / the browser probe.
+        try:
+            next_url = urljoin(current_url, location)
+        except ValueError:
+            logger.debug(
+                "UCP discovery got a malformed redirect Location: %r", location
+            )
+            return None
         if not same_origin(next_url, url):
             return None
         current_url = next_url

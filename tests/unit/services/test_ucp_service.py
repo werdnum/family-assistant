@@ -218,6 +218,20 @@ async def test_discover_merchant_ucp_profile_follows_redirect() -> None:
     assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
 
 
+async def test_discover_merchant_ucp_profile_handles_malformed_redirect() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        # A merchant-controlled Location that urljoin cannot parse must not crash
+        # discovery; it is treated as a miss.
+        return httpx.Response(302, headers={"Location": "https://[zzz]/ucp"})
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert profile is None
+
+
 async def test_discover_merchant_ucp_profile_ignores_cross_origin_redirect() -> None:
     requested: list[str] = []
 
