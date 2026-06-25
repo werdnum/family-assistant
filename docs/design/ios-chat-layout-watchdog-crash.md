@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed — pending approval.
+M1–M3 shipped (PR #920, 2026-06-18). M4 added after a suspend-watchdog recurrence
+on build 21 (see "M4 — Suspend-watchdog recurrence" below).
 
 ## Summary
 
@@ -108,6 +109,42 @@ diff before and after.
   markdown; wide table) reachable under a launch flag, so the hang is reproducible on demand.
 - **Regression test.** A layout/measurement test (or a UI test gated behind the harness) that fails
   if the chat thread layout time regresses past a threshold.
+
+### M4 — Suspend-watchdog recurrence (post-M1–M3)
+
+`scratch/FamilyAssistant-2026-06-25-013649.ips` crashed on build 21 (archived
+2026-06-21), which already contains M1–M3 (PR #920, merged 2026-06-18). It is the
+same hang family but a **different watchdog**:
+
+- `termination`: FRONTBOARD `0x8BADF00D`, **"Failed to terminate gracefully after
+  5.0s"** — the 5 s `process-exit` (suspend) watchdog, not the 10 s `scene-update`
+  one the M1–M3 reports tripped. `WatchdogVisibility: Background`, `procRole: Non UI`.
+- Main thread: `_UIUpdateSequenceRunNext` → `_UIHostingView.beginTransaction` →
+  `GraphHost.flushTransactions` → `LazyLayoutViewCache.updateItemPhases` /
+  `supportsViewHierarchyPrefetching` — a LazyVStack item-phase/prefetch render
+  transaction running at the moment iOS tries to suspend the app.
+
+Root cause of the recurrence: M1 gates the whole list behind
+`if scenePhase == .active { messageScrollArea } else { Color.clear }`, so every
+`.active → .background` transition **unmounts the entire `LazyVStack`**, forcing a
+teardown transaction (`updateItemPhases` over all realized items) exactly when the
+OS wants the app quiescent. M1 fixed the offscreen-*launch* path but introduced a
+teardown-at-suspend path.
+
+Fix:
+
+- **Keep the thread mounted once it has been active.** `ChatThreadView` latches
+  `hasMountedThread` true on the first `.active` phase and gates on
+  `ChatViewModel.shouldRenderThread(isActive:hasMountedBefore:)`
+  (`isActive || hasMountedBefore`). An offscreen launch (never active) still keeps
+  the list out of the tree — preserving M1 — but a later backgrounding no longer
+  tears it down, so no transaction is kicked at suspend.
+- **Don't drive layout while inactive.** The scroll-to-latest `withAnimation` in
+  `messageScrollArea` is guarded on `scenePhase == .active`, so a message landing
+  during a background transition can't kick an animated layout transaction at
+  suspend. On the next foregrounding `onAppear` lands at the bottom unanimated.
+
+Decision is unit-tested (`testShouldRenderThreadKeepsListMountedOnceActive`).
 
 ## Verification
 

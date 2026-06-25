@@ -1106,6 +1106,28 @@ final class ChatViewModel {
         cameFromBackground && isNowActive
     }
 
+    /// Whether the chat thread's message list should be realized into the view
+    /// hierarchy for the current scene phase.
+    ///
+    /// An offscreen background *launch* (push / state restoration / snapshot)
+    /// must keep the `LazyVStack` out of the tree entirely: laying out a restored
+    /// thread while inactive overruns the ~10 s `scene-update` watchdog
+    /// (`docs/design/ios-chat-layout-watchdog-crash.md`).
+    ///
+    /// But once the thread has been realized while active, it must stay mounted
+    /// across later background transitions. Tearing it down on every
+    /// `.active → .background` swap runs a `LazyLayoutViewCache.updateItemPhases`
+    /// teardown transaction at the exact moment iOS is trying to suspend the app,
+    /// which overruns the tighter 5 s `process-exit` (suspend) watchdog and is
+    /// killed with `0x8BADF00D` (the suspend-variant recurrence in build 21).
+    /// Keeping it mounted means no fresh transaction is kicked at suspend time.
+    ///
+    /// Kept SwiftUI-agnostic (booleans) so the gating is unit-testable without
+    /// importing the scene-phase type into the view model.
+    func shouldRenderThread(isActive: Bool, hasMountedBefore: Bool) -> Bool {
+        isActive || hasMountedBefore
+    }
+
     /// The seq the follow loop should resume from on a (re)connect: just after the
     /// highest seq this client has applied, so a mid-turn reconnect replays the
     /// frames produced during the drop into the live bubble instead of tailing
