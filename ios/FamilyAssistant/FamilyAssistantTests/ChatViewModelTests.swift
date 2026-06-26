@@ -1497,6 +1497,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(turnStarts.value, 1)
     }
 
+
     func testAcceptedSteerIsClearedWhenStreamFallsBackToHistoryRecovery() async throws {
         let stream = HangingStream()
         let postedTurnID = AtomicString()
@@ -3568,6 +3569,72 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "same steer", "same steer"])
 
+        model = nil
+    }
+
+    func testLiveFollowUserInputEchoNotSuppressedByAssistantRowWithSameText() async throws {
+        let holdStream = HangingStream()
+        let streamConnects = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_assistant_echo/messages"):
+                // The assistant reply shares the steer's turn id and text ("OK").
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_assistant_echo",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"turn_id":"turn-assistant-echo","role":"assistant","content":"OK","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    switch streamConnects.increment() {
+                    case 1:
+                        return .text(
+                            """
+                            event: user_input
+                            data: {"turn_id":"turn-assistant-echo","content":"OK","seq":2}
+
+                            """
+                        )
+                    default:
+                        return .hangingStream("", controller: holdStream)
+                    }
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_assistant_echo",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_assistant_echo")
+        try await waitUntil { streamConnects.value >= 2 }
+
+        // The assistant "OK" row must NOT consume the user-input echo's slot: the
+        // user's mid-turn steer bubble still renders (the role filter keeps the
+        // assistant row from being counted as the persisted user-input echo).
+        try await waitUntil {
+            model?.messages.filter {
+                $0.role == .user && $0.text == "OK" && $0.turnID == "turn-assistant-echo"
+            }.count == 1
+        }
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "OK", "OK"])
+
+        holdStream.finish()
         model = nil
     }
 

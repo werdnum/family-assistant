@@ -483,7 +483,11 @@ final class ChatViewModel {
             return []
         }
         var persistedUserCounts: [UserInputEchoKey: Int] = [:]
-        for message in persisted where message.id.hasPrefix("msg_") {
+        // Only persisted USER rows can stand in for a local user-input echo. An
+        // assistant reply that happens to share the steer's turn id and text
+        // (e.g. both are "OK") must not consume the echo's slot, or the user's
+        // mid-turn steer bubble would vanish on the next history merge.
+        for message in persisted where message.id.hasPrefix("msg_") && message.role == .user {
             guard let key = userInputEchoKey(for: message) else {
                 continue
             }
@@ -1230,13 +1234,18 @@ final class ChatViewModel {
         let isSameConversation = conversationID == activeTurn.conversationID
         let originalTurnEnded = endedTurnIDs.contains(activeTurn.turnID)
         let originalTurnEndedCleanly = canRecoverSteerAfterTurnEnded(activeTurn.turnID)
+        // A late result for a turn that is neither active nor ended was superseded
+        // (cancelStream/a new send cleared THIS turn's steer arrays). The steer
+        // collections are keyed by prompt text, so a newer turn may already hold an
+        // identical prompt; removing by text here would untrack the newer turn's
+        // steer. Don't touch the shared arrays — just drop a stale matching draft.
+        guard isCurrentTurn || originalTurnEnded else {
+            clearSteerDraftIfMatching(prompt)
+            return
+        }
         switch result {
         case .accepted:
             guard removeInFlightSteer(prompt) else {
-                return
-            }
-            if !isCurrentTurn, !originalTurnEnded {
-                clearSteerDraftIfMatching(prompt)
                 return
             }
             if originalTurnEnded {
@@ -2336,7 +2345,9 @@ final class ChatViewModel {
             return false
         }
         let persistedCount = messages.filter { message in
-            message.id.hasPrefix("msg_") && userInputEchoKey(for: message) == key
+            message.id.hasPrefix("msg_")
+                && message.role == .user
+                && userInputEchoKey(for: message) == key
         }.count
         let localEchoCount = messages.filter { message in
             isLocalUserInputEcho(message) && userInputEchoKey(for: message) == key
