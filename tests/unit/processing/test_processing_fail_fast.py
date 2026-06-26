@@ -568,7 +568,6 @@ def test_default_system_prompt_templates_only_use_supported_placeholders() -> No
 
     allowed_placeholders = {
         "aggregated_other_context",
-        "available_service_profiles",
         "current_time",
         "profile_id",
         "server_url",
@@ -597,19 +596,22 @@ def test_default_system_prompt_templates_only_use_supported_placeholders() -> No
     assert invalid_placeholders_by_profile == {}
 
 
-@pytest.mark.no_db
-def test_render_available_service_profiles_without_registry() -> None:
-    service = _make_service()
+class _DelegateAdvertisingToolsProvider(SimpleToolsProvider):
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "delegate_to_service",
+                    "description": "Delegate to another profile.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
 
-    rendered = service.render_available_service_profiles()
 
-    assert rendered == "No specific service profiles are currently described."
-
-
-@pytest.mark.no_db
-def test_render_available_service_profiles_lists_registry_profiles() -> None:
-    service = _make_service()
-    service.processing_services_registry = cast(
+def _registry_with_profiles() -> Any:  # noqa: ANN401 - test stub registry
+    return cast(
         "Any",
         {
             "browser_profile": SimpleNamespace(
@@ -623,6 +625,19 @@ def test_render_available_service_profiles_lists_registry_profiles() -> None:
         },
     )
 
+
+@pytest.mark.no_db
+def test_render_available_service_profiles_without_registry() -> None:
+    service = _make_service()
+
+    assert not service.render_available_service_profiles()
+
+
+@pytest.mark.no_db
+def test_render_available_service_profiles_lists_registry_profiles() -> None:
+    service = _make_service()
+    service.processing_services_registry = _registry_with_profiles()
+
     rendered = service.render_available_service_profiles()
 
     assert "- ID: browser_profile, Description: Drives a web browser." in rendered
@@ -630,25 +645,25 @@ def test_render_available_service_profiles_lists_registry_profiles() -> None:
 
 
 @pytest.mark.no_db
-def test_system_prompt_fills_available_service_profiles_placeholder() -> None:
+@pytest.mark.asyncio
+async def test_delegation_catalog_addition_empty_when_cannot_delegate() -> None:
     service = _make_service()
-    service.service_config.prompts = {
-        "system_prompt": "Time {current_time}\nProfiles:\n{available_service_profiles}"
-    }
-    service.processing_services_registry = cast(
-        "Any",
-        {
-            "browser_profile": SimpleNamespace(
-                service_config=SimpleNamespace(
-                    id="browser_profile", description="Drives a web browser."
-                )
-            ),
-        },
-    )
+    service.processing_services_registry = _registry_with_profiles()
 
-    rendered = service._render_system_prompt("tester", "")
+    assert not await service.delegation_catalog_addition()
 
-    assert "- ID: browser_profile, Description: Drives a web browser." in rendered
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_delegation_catalog_addition_lists_profiles_when_advertised() -> None:
+    service = _make_service()
+    service.tools_provider = _DelegateAdvertisingToolsProvider()
+    service.processing_services_registry = _registry_with_profiles()
+
+    addition = await service.delegation_catalog_addition()
+
+    assert "delegate_to_service" in addition
+    assert "- ID: browser_profile, Description: Drives a web browser." in addition
 
 
 @pytest.mark.no_db

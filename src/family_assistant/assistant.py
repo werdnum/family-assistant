@@ -703,8 +703,8 @@ class Assistant:
 
         # Format the doc tool description with the list of available user docs.
         # The delegate_to_service profile catalog is no longer injected into the
-        # tool schema; it is rendered into each profile's system prompt instead
-        # (see ProcessingService._render_available_service_profiles).
+        # tool schema; it is appended to each delegate-capable profile's system
+        # prompt instead (see ProcessingService.delegation_catalog_addition).
         for tool_def_template in base_local_tools_definition:
             tool_name = tool_def_template.get("function", {}).get("name")
             if tool_name == "get_user_documentation_content":

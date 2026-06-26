@@ -165,11 +165,6 @@ async def _get_context_data(
             "server_url": target_service.server_url,
             "profile_id": target_service.service_config.id,
         }
-        render_profiles = getattr(
-            target_service, "render_available_service_profiles", None
-        )
-        if callable(render_profiles):
-            format_args["available_service_profiles"] = render_profiles()
 
         # Add any missing placeholders to avoid KeyErrors
         # Only match simple variable names (letters, numbers, underscores)
@@ -216,6 +211,13 @@ async def _get_context_data(
                 f"Error formatting system prompt: {e}, format_args: {format_args}"
             )
             formatted_system_prompt = system_prompt_template.strip()
+
+        if isinstance(target_service, ProcessingService):
+            addition = await target_service.delegation_catalog_addition()
+            if addition:
+                formatted_system_prompt = (
+                    f"{formatted_system_prompt}\n\n{addition}".strip()
+                )
 
         return {
             "profile_id": target_service.service_config.id,

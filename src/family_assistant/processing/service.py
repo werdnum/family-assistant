@@ -318,22 +318,52 @@ class ProcessingService:
         return pruned_count
 
     def render_available_service_profiles(self) -> str:
-        """Render the catalog of delegatable service profiles for the system prompt.
+        """Render the catalog of delegatable service profiles.
 
         Sourced from the live processing-services registry so it reflects the
-        operator's configured profiles (including custom ones). Used by the
-        ``{available_service_profiles}`` system-prompt placeholder; this replaces
-        the catalog that used to be embedded in the delegate_to_service schema.
+        operator's configured profiles (including custom ones). Returns an empty
+        string when no registry is available.
         """
         registry = self.processing_services_registry
         if not registry:
-            return "No specific service profiles are currently described."
+            return ""
         lines = [
             f"- ID: {profile_id}, Description: "
             f"{service.service_config.description or 'No description available.'}"
             for profile_id, service in registry.items()
         ]
         return "\n".join(lines)
+
+    async def delegation_catalog_addition(self) -> str:
+        """Return a system-prompt section listing delegation targets, or "".
+
+        This used to live in the delegate_to_service schema. It is now appended
+        to the rendered system prompt independently of the per-profile prompt
+        template, so every profile that actually advertises delegate_to_service
+        gets the catalog (some shipped profiles override system_prompt and would
+        otherwise miss it). Returns "" when the profile cannot delegate or the
+        registry is empty.
+        """
+        catalog = self.render_available_service_profiles()
+        if not catalog:
+            return ""
+        from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+            get_tool_definitions_for_advertisement,
+        )
+
+        advertised = await get_tool_definitions_for_advertisement(
+            self.tools_provider, can_confirm=True
+        )
+        advertised_names = {
+            definition.get("function", {}).get("name") for definition in advertised
+        }
+        if "delegate_to_service" not in advertised_names:
+            return ""
+        return (
+            "## Service profiles you can delegate to\n"
+            "Use `delegate_to_service` with one of these IDs as `target_service_id`:\n"
+            f"{catalog}"
+        )
 
     def _render_system_prompt(
         self, user_name: str, aggregated_other_context_str: str
@@ -356,7 +386,6 @@ class ProcessingService:
             "aggregated_other_context": aggregated_other_context_str,
             "server_url": self.server_url,
             "profile_id": self.service_config.id,
-            "available_service_profiles": self.render_available_service_profiles(),
         }
 
         formatter = Formatter()
@@ -672,6 +701,11 @@ class ProcessingService:
             user_name=user_name,
             aggregated_other_context_str=aggregated_other_context_str,
         )
+        delegation_addition = await self.delegation_catalog_addition()
+        if delegation_addition:
+            final_system_prompt = (
+                f"{final_system_prompt}\n\n{delegation_addition}".strip()
+            )
         if final_system_prompt:
             messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
 

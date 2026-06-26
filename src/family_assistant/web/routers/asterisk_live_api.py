@@ -1506,6 +1506,14 @@ async def asterisk_live_endpoint(
                 system_instruction = sys_prompt_template.replace(
                     "{current_time}", current_time
                 )
+                from family_assistant.processing import (  # noqa: PLC0415
+                    ProcessingService,
+                )
+
+                if isinstance(telephone_service, ProcessingService):
+                    addition = await telephone_service.delegation_catalog_addition()
+                    if addition:
+                        system_instruction = f"{system_instruction}\n\n{addition}"
 
             # Get tools
             if telephone_service.tools_provider:
