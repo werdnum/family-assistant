@@ -21,6 +21,7 @@ struct ChatStreamEvent: Equatable {
     let confirmation: ChatPendingConfirmation?
     let confirmationResult: ChatConfirmationResult?
     let errorMessage: String?
+    let status: String?
 }
 
 enum ChatAttachmentSource: String, Equatable {
@@ -38,6 +39,7 @@ enum ChatStreamEventType: String, Equatable {
     case error
     case turnStarted
     case turnEnded
+    case userInput
     case connected
     case message
     case heartbeat
@@ -106,7 +108,8 @@ final class SSEParser {
                 attachmentSource: .response,
                 confirmation: nil,
                 confirmationResult: nil,
-                errorMessage: nil
+                errorMessage: nil,
+                status: nil
             )
         }
 
@@ -125,7 +128,8 @@ final class SSEParser {
                 attachmentSource: .response,
                 confirmation: nil,
                 confirmationResult: nil,
-                errorMessage: "Malformed stream event: \(event.data)"
+                errorMessage: "Malformed stream event: \(event.data)",
+                status: nil
             )
         }
 
@@ -143,7 +147,9 @@ final class SSEParser {
             switch eventType {
             case .turnEnded, .turnStarted, .heartbeat, .streamDropped, .connected:
                 let errorMessage = payload["error"]?.stringValue
-                return baseEvent(type: eventType, errorMessage: errorMessage)
+                return baseEvent(type: eventType, errorMessage: errorMessage, status: payload["status"]?.stringValue)
+            case .userInput:
+                return baseEvent(type: .userInput, text: payload["content"]?.stringValue)
             default:
                 break
             }
@@ -279,7 +285,8 @@ final class SSEParser {
         attachmentSource: ChatAttachmentSource = .response,
         confirmation: ChatPendingConfirmation? = nil,
         confirmationResult: ChatConfirmationResult? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        status: String? = nil
     ) -> ChatStreamEvent {
         ChatStreamEvent(
             type: type,
@@ -293,7 +300,8 @@ final class SSEParser {
             attachmentSource: attachmentSource,
             confirmation: confirmation,
             confirmationResult: confirmationResult,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            status: status
         )
     }
 
@@ -311,6 +319,8 @@ final class SSEParser {
             "turnStarted"
         case "turn_ended":
             "turnEnded"
+        case "user_input":
+            "userInput"
         case "stream_dropped":
             "streamDropped"
         default:
