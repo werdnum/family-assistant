@@ -1175,6 +1175,45 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.steerDraftText, "")
     }
 
+    func testStopTurnBeforeRegistrationWarnsWhenCancelCannotBeSecured() async throws {
+        let postedTurnID = AtomicString()
+        let startRequests = AtomicCounter()
+        let cancelRequests = AtomicCounter()
+        let releaseStart = DispatchSemaphore(value: 0)
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                startRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                postedTurnID.set(try XCTUnwrap(payload["turn_id"] as? String))
+                _ = releaseStart.wait(timeout: .now() + 5)
+                return .json(#"{"detail":"lost response"}"#, statusCode: 500)
+            case ("POST", _)
+                where path.hasPrefix("/api/v1/chat/turns/") && path.hasSuffix("/cancel"):
+                cancelRequests.increment()
+                // A non-retryable failure: the queued stop cannot be secured.
+                return .json(#"{"detail":"forbidden"}"#, statusCode: 403)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_stop_unsecured")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && startRequests.value == 1 }
+
+        await model.stopTurn()
+        releaseStart.signal()
+        try await waitUntil { cancelRequests.value == 1 }
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.stopWarningMessage, "Stop could not be confirmed. Pending approvals from this turn may still be active.")
+    }
+
     func testSteerBeforeRegistrationPostsAfterStartCompletes() async throws {
         let stream = HangingStream()
         let postedTurnID = AtomicString()
@@ -3633,6 +3672,77 @@ final class ChatViewModelTests: XCTestCase {
             }.count == 1
         }
         XCTAssertEqual(model?.messages.map(\.text), ["Earlier", "OK", "OK"])
+
+        holdStream.finish()
+        model = nil
+    }
+
+    func testLateFollowUserInputForEndedTurnIsNotAppended() async throws {
+        let holdStream = HangingStream()
+        let streamConnects = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_late_dedupe/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_late_dedupe",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    switch streamConnects.increment() {
+                    case 1:
+                        // End the turn first, so it is recorded in endedTurnIDs.
+                        return .text(
+                            """
+                            event: turn_ended
+                            data: {"turn_id":"turn-late-dedupe","status":"complete","seq":1}
+
+                            """
+                        )
+                    case 2:
+                        // A lagging user_input echo for the now-ended turn.
+                        return .text(
+                            """
+                            event: user_input
+                            data: {"turn_id":"turn-late-dedupe","content":"focus next week","seq":2}
+
+                            """
+                        )
+                    default:
+                        return .hangingStream("", controller: holdStream)
+                    }
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_late_dedupe",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_late_dedupe")
+        try await waitUntil { streamConnects.value >= 3 }
+
+        // The late echo for the ended turn must not append a duplicate user bubble.
+        XCTAssertEqual(
+            model?.messages.filter { $0.text == "focus next week" }.count,
+            0
+        )
+        XCTAssertEqual(model?.messages.map(\.text), ["Earlier"])
 
         holdStream.finish()
         model = nil

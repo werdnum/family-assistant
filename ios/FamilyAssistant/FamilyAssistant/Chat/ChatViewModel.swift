@@ -943,6 +943,11 @@ final class ChatViewModel {
                     assistantMessageID: assistantMessageID
                 )
             case .failed(let message):
+                // A fatal subscribe failure ends this send. Clear any steer the
+                // user had in flight/awaiting echo (as the failed-completion path
+                // does) so a stranded text entry doesn't keep blocking re-sending
+                // the same steer as a normal draft.
+                clearRecoverableSteers()
                 appendStreamError(message, assistantMessageID: assistantMessageID)
             }
         } catch is CancellationError {
@@ -1334,7 +1339,10 @@ final class ChatViewModel {
                 return false
             }
         }
-        _ = await cancellationTask.value
+        let secured = await cancellationTask.value
+        if !secured, shouldSurfaceStopWarning(for: turnToCancel) {
+            stopWarningMessage = "Stop could not be confirmed. Pending approvals from this turn may still be active."
+        }
         return true
     }
 
@@ -1970,7 +1978,11 @@ final class ChatViewModel {
                 }
             }
         case .userInput:
-            if !isStreaming {
+            // Skip a late follow-stream echo for a turn that has already ended
+            // (its persisted steering row is reconciled via history), mirroring
+            // the token path's `endedTurnIDs` guard, so a lagging copy can't
+            // append a duplicate local user bubble.
+            if !isStreaming, let turnID = event.turnID, !endedTurnIDs.contains(turnID) {
                 if let seq = event.seq {
                     recordAppliedSeq(seq)
                 }
@@ -2068,6 +2080,12 @@ final class ChatViewModel {
         messages[index].isLoading = false
         if messages[index].status != .failed {
             messages[index].status = .complete
+        }
+        // A turn stopped on another device finalizes here with no streamed text
+        // if the persisted stopped row hasn't merged yet; show the same stopped
+        // marker the send-stream path uses rather than an empty bubble.
+        if status == "cancelled", messages[index].text.isEmpty {
+            messages[index].text = "Response stopped."
         }
     }
 
