@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -567,6 +568,7 @@ def test_default_system_prompt_templates_only_use_supported_placeholders() -> No
 
     allowed_placeholders = {
         "aggregated_other_context",
+        "available_service_profiles",
         "current_time",
         "profile_id",
         "server_url",
@@ -593,6 +595,60 @@ def test_default_system_prompt_templates_only_use_supported_placeholders() -> No
             invalid_placeholders_by_profile[profile_id] = placeholders
 
     assert invalid_placeholders_by_profile == {}
+
+
+@pytest.mark.no_db
+def test_render_available_service_profiles_without_registry() -> None:
+    service = _make_service()
+
+    rendered = service.render_available_service_profiles()
+
+    assert rendered == "No specific service profiles are currently described."
+
+
+@pytest.mark.no_db
+def test_render_available_service_profiles_lists_registry_profiles() -> None:
+    service = _make_service()
+    service.processing_services_registry = cast(
+        "Any",
+        {
+            "browser_profile": SimpleNamespace(
+                service_config=SimpleNamespace(
+                    id="browser_profile", description="Drives a web browser."
+                )
+            ),
+            "bare_profile": SimpleNamespace(
+                service_config=SimpleNamespace(id="bare_profile", description="")
+            ),
+        },
+    )
+
+    rendered = service.render_available_service_profiles()
+
+    assert "- ID: browser_profile, Description: Drives a web browser." in rendered
+    assert "- ID: bare_profile, Description: No description available." in rendered
+
+
+@pytest.mark.no_db
+def test_system_prompt_fills_available_service_profiles_placeholder() -> None:
+    service = _make_service()
+    service.service_config.prompts = {
+        "system_prompt": "Time {current_time}\nProfiles:\n{available_service_profiles}"
+    }
+    service.processing_services_registry = cast(
+        "Any",
+        {
+            "browser_profile": SimpleNamespace(
+                service_config=SimpleNamespace(
+                    id="browser_profile", description="Drives a web browser."
+                )
+            ),
+        },
+    )
+
+    rendered = service._render_system_prompt("tester", "")
+
+    assert "- ID: browser_profile, Description: Drives a web browser." in rendered
 
 
 @pytest.mark.no_db

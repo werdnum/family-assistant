@@ -186,6 +186,9 @@ async def _get_formatted_system_prompt(
             "aggregated_other_context": aggregated_context,
             "server_url": processing_service.server_url,
             "profile_id": processing_service.service_config.id,
+            "available_service_profiles": (
+                processing_service.render_available_service_profiles()
+            ),
         }
 
         # Simple placeholder replacement

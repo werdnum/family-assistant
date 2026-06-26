@@ -317,6 +317,24 @@ class ProcessingService:
                 break
         return pruned_count
 
+    def render_available_service_profiles(self) -> str:
+        """Render the catalog of delegatable service profiles for the system prompt.
+
+        Sourced from the live processing-services registry so it reflects the
+        operator's configured profiles (including custom ones). Used by the
+        ``{available_service_profiles}`` system-prompt placeholder; this replaces
+        the catalog that used to be embedded in the delegate_to_service schema.
+        """
+        registry = self.processing_services_registry
+        if not registry:
+            return "No specific service profiles are currently described."
+        lines = [
+            f"- ID: {profile_id}, Description: "
+            f"{service.service_config.description or 'No description available.'}"
+            for profile_id, service in registry.items()
+        ]
+        return "\n".join(lines)
+
     def _render_system_prompt(
         self, user_name: str, aggregated_other_context_str: str
     ) -> str:
@@ -338,6 +356,7 @@ class ProcessingService:
             "aggregated_other_context": aggregated_other_context_str,
             "server_url": self.server_url,
             "profile_id": self.service_config.id,
+            "available_service_profiles": self.render_available_service_profiles(),
         }
 
         formatter = Formatter()

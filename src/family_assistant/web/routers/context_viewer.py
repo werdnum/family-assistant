@@ -165,6 +165,11 @@ async def _get_context_data(
             "server_url": target_service.server_url,
             "profile_id": target_service.service_config.id,
         }
+        render_profiles = getattr(
+            target_service, "render_available_service_profiles", None
+        )
+        if callable(render_profiles):
+            format_args["available_service_profiles"] = render_profiles()
 
         # Add any missing placeholders to avoid KeyErrors
         # Only match simple variable names (letters, numbers, underscores)
