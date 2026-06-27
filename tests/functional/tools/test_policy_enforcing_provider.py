@@ -26,7 +26,10 @@ from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService
-    from family_assistant.tools.types import ToolDefinition
+    from family_assistant.tools.types import (
+        RequestConfirmationCallback,
+        ToolDefinition,
+    )
 
 
 def _names(definitions: list[ToolDefinition]) -> list[str]:
@@ -60,7 +63,9 @@ def _exec_context(
         turn_id=None,
         db_context=MagicMock(spec=DatabaseContext),
         processing_service=cast("ProcessingService", processing_service),
-        request_confirmation_callback=confirmation_callback,  # type: ignore[arg-type]
+        request_confirmation_callback=cast(
+            "RequestConfirmationCallback | None", confirmation_callback
+        ),
         clock=None,
         home_assistant_client=None,
         event_sources=None,

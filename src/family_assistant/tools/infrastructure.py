@@ -25,6 +25,7 @@ from typing import (
 )
 
 from family_assistant.tools.attachment_utils import process_attachment_arguments
+from family_assistant.tools.confirmation import confirmation_payload_block_reason
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     ToolRegistration,
@@ -856,10 +857,6 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             raise ToolPolicyDeniedError(name, evaluation.reason or "denied by policy")
 
         if evaluation.decision is ToolPolicyDecision.CONFIRM:
-            from family_assistant.tools.confirmation import (  # noqa: PLC0415
-                confirmation_payload_block_reason,
-            )
-
             # Refuse a confirm-gated call whose confirmation prompt could not show
             # the approver the full payload, instead of rendering a misleading
             # prompt. Scoped to confirm-gated calls, so unconfirmed calls are
