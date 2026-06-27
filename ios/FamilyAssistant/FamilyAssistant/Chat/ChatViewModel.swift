@@ -27,7 +27,6 @@ final class ChatViewModel {
     var errorMessage: String?
     var liveUpdatesConnected = true
     var mobileShowsConversationList = false
-    var steerDraftText = ""
     var steerErrorMessage: String?
     var stopWarningMessage: String?
 
@@ -306,6 +305,12 @@ final class ChatViewModel {
     }
 
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
+        // The main composer doubles as the steer input and is shared across
+        // conversations, so on an actual switch clear it: steer text typed for
+        // the previous turn must not leak into — and be sent in — the newly
+        // selected thread. Restoring the current conversation (id unchanged) keeps
+        // any draft the user is typing.
+        let isSwitchingConversation = id != conversationID
         let queuedStopTurnID = activeTurn.flatMap { activeTurn in
             stopAfterRegistrationByTurnID[activeTurn.turnID] == nil ? nil : activeTurn.turnID
         }
@@ -323,6 +328,9 @@ final class ChatViewModel {
         endedTurnStatusByTurnID.removeAll()
         resetTurnControlState()
         displayedMessageLimit = Self.initialDisplayedMessageCount
+        if isSwitchingConversation {
+            draftText = ""
+        }
         conversationID = id
         conversationSelection = id
         persistConversationID()
@@ -354,6 +362,7 @@ final class ChatViewModel {
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
+        draftText = ""
         draftAttachments = []
         mobileShowsConversationList = false
         persistConversationID()
@@ -371,7 +380,6 @@ final class ChatViewModel {
         queuedFollowUpSteers.removeAll()
         localUserInputConversationIDByMessageID.removeAll()
         representedPersistedUserInputEchoCounts.removeAll()
-        steerDraftText = ""
         steerErrorMessage = nil
         stopWarningMessage = nil
     }
@@ -639,6 +647,9 @@ final class ChatViewModel {
         }
         guard let id = conversationID else {
             startNewConversation()
+            // startNewConversation clears the composer; restore the captured
+            // prompt so the recursive send still has it.
+            draftText = prompt
             return await sendDraft()
         }
 
@@ -1145,7 +1156,6 @@ final class ChatViewModel {
     /// superseded task must not nil out the new turn's streamTask.
     private func finishStreaming(_ streamToken: UUID) {
         if currentStreamToken == streamToken {
-            preserveSteerDraftAsNormalDraft()
             isStreaming = false
             streamTask = nil
             currentStreamToken = nil
@@ -1195,20 +1205,16 @@ final class ChatViewModel {
     }
 
     func sendSteerDraft() async {
-        let prompt = steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
             return
         }
         steerErrorMessage = nil
+        // No turn is running, so there is nothing to steer: the composer text is
+        // just a normal message. Send it as one (sendDraft consumes and clears
+        // the composer).
         guard let activeTurn else {
-            steerDraftText = ""
-            let preservedDraftText = draftText
-            let preservedDraftAttachments = draftAttachments
-            draftText = prompt
-            draftAttachments = []
             await sendDraft()
-            draftText = preservedDraftText
-            draftAttachments = preservedDraftAttachments
             return
         }
         guard !hasPendingSteer(prompt) else {
@@ -1245,7 +1251,7 @@ final class ChatViewModel {
         // identical prompt; removing by text here would untrack the newer turn's
         // steer. Don't touch the shared arrays — just drop a stale matching draft.
         guard isCurrentTurn || originalTurnEnded else {
-            clearSteerDraftIfMatching(prompt)
+            clearComposerIfMatching(prompt)
             return
         }
         switch result {
@@ -1255,10 +1261,10 @@ final class ChatViewModel {
             }
             if originalTurnEnded {
                 guard originalTurnEndedCleanly, isCurrentTurn || isSameConversation else {
-                    clearSteerDraftIfMatching(prompt)
+                    clearComposerIfMatching(prompt)
                     return
                 }
-                steerDraftText = ""
+                clearComposerIfMatching(prompt)
                 queuedFollowUpSteers.append(prompt)
                 await sendNextQueuedFollowUpSteerIfReady()
             } else {
@@ -1268,14 +1274,14 @@ final class ChatViewModel {
             removeInFlightSteer(prompt)
             removeAwaitingEchoSteer(prompt)
             guard isCurrentTurn || (isSameConversation && originalTurnEnded) else {
-                clearSteerDraftIfMatching(prompt)
+                clearComposerIfMatching(prompt)
                 return
             }
             if originalTurnEnded, !originalTurnEndedCleanly {
-                clearSteerDraftIfMatching(prompt)
+                clearComposerIfMatching(prompt)
                 return
             }
-            steerDraftText = ""
+            clearComposerIfMatching(prompt)
             queuedFollowUpSteers.append(prompt)
             await sendNextQueuedFollowUpSteerIfReady()
         case .error:
@@ -1421,7 +1427,7 @@ final class ChatViewModel {
 
     private func clearRecoverableSteers() {
         for prompt in inFlightSteers + awaitingEchoSteers + queuedFollowUpSteers {
-            clearSteerDraftIfMatching(prompt)
+            clearComposerIfMatching(prompt)
         }
         inFlightSteers.removeAll()
         awaitingEchoSteers.removeAll()
@@ -1430,7 +1436,7 @@ final class ChatViewModel {
 
     private func dropAcceptedSteersAwaitingEcho() {
         for prompt in awaitingEchoSteers {
-            clearSteerDraftIfMatching(prompt)
+            clearComposerIfMatching(prompt)
         }
         awaitingEchoSteers.removeAll()
     }
@@ -1476,7 +1482,7 @@ final class ChatViewModel {
             if requeue {
                 queuedFollowUpSteers.append(prompt)
             }
-            clearSteerDraftIfMatching(prompt)
+            clearComposerIfMatching(prompt)
         }
     }
 
@@ -1487,26 +1493,20 @@ final class ChatViewModel {
             || pendingSteersByTurnID.values.contains { $0.contains(prompt) }
     }
 
-    private func preserveSteerDraftAsNormalDraft() {
-        let prompt = steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty else {
-            return
-        }
-        guard !hasPendingSteer(prompt) else {
-            return
-        }
-        appendPromptToDraft(prompt)
-        steerDraftText = ""
-    }
-
+    /// Ensure a steer prompt is present in the composer so the user can edit or
+    /// resend it. The main composer doubles as the steer input, so "recovering a
+    /// steer as a draft" just means making sure its text is in `draftText`;
+    /// `appendPromptToDraft` is a no-op when the prompt is already there.
     private func recoverSteerAsDraft(_ prompt: String) {
         appendPromptToDraft(prompt)
-        clearSteerDraftIfMatching(prompt)
     }
 
-    private func clearSteerDraftIfMatching(_ prompt: String) {
-        if steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines) == prompt {
-            steerDraftText = ""
+    /// Clear the composer if it still holds exactly this (consumed) steer text.
+    /// The match guard is what stops a fresh edit the user typed while a steer
+    /// was in flight from being clobbered.
+    private func clearComposerIfMatching(_ prompt: String) {
+        if draftText.trimmingCharacters(in: .whitespacesAndNewlines) == prompt {
+            draftText = ""
         }
     }
 
@@ -1515,18 +1515,10 @@ final class ChatViewModel {
         guard !prompts.isEmpty else {
             return
         }
-        let currentSteerDraft = steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        var recoveredCurrentSteerDraft = false
         for prompt in prompts {
             removeInFlightSteer(prompt)
             removeAwaitingEchoSteer(prompt)
             recoverSteerAsDraft(prompt)
-            if prompt == currentSteerDraft {
-                recoveredCurrentSteerDraft = true
-            }
-        }
-        if recoveredCurrentSteerDraft {
-            steerDraftText = ""
         }
     }
 
@@ -1571,7 +1563,7 @@ final class ChatViewModel {
         let followUp = queuedFollowUpSteers.removeFirst()
         let remainingQueuedFollowUps = queuedFollowUpSteers
         queuedFollowUpSteers = []
-        clearSteerDraftIfMatching(followUp)
+        clearComposerIfMatching(followUp)
         let preservedDraftText = draftText
         let preservedDraftAttachments = draftAttachments
         draftText = followUp
@@ -2325,7 +2317,7 @@ final class ChatViewModel {
         if shouldRepresentWithPersistedUserInputEcho(turnID: event.turnID, text: text) {
             removeInFlightSteer(text)
             removeAwaitingEchoSteer(text)
-            clearSteerDraftIfMatching(text)
+            clearComposerIfMatching(text)
             steerErrorMessage = nil
             return
         }
@@ -2354,7 +2346,7 @@ final class ChatViewModel {
         }
         removeInFlightSteer(text)
         removeAwaitingEchoSteer(text)
-        clearSteerDraftIfMatching(text)
+        clearComposerIfMatching(text)
         steerErrorMessage = nil
     }
 
