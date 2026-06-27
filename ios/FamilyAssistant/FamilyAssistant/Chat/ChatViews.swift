@@ -913,8 +913,13 @@ enum MarkdownRenderBudget {
     static let maxPages = 6
 
     enum RenderPlan {
-        case markdown(blocks: [NativeMarkdownBlock], hasMore: Bool)
-        case plain(text: String, hasMore: Bool)
+        // `canPageMore`: more content is revealable by tapping "Show more" (the
+        // source prefix / leaf budget / per-Text cap all grow with pages).
+        // `truncatedPermanently`: content was dropped that paging can NEVER reveal
+        // (table columns past `maxTableColumns`, nesting past `maxNestingDepth`),
+        // so it gets a static truncation indicator instead of a no-op button.
+        case markdown(blocks: [NativeMarkdownBlock], canPageMore: Bool, truncatedPermanently: Bool)
+        case plain(text: String, canPageMore: Bool)
     }
 
     /// A bounded prefix of `markdown` for `pages` worth of budget, plus whether the
@@ -931,15 +936,19 @@ enum MarkdownRenderBudget {
 
     /// The single choke point that bounds every layout cost — parse size (char
     /// prefix), structure (leaf budget + table cells), nesting depth, and
-    /// single-`Text` length. The plain-vs-markdown decision is made on the BOUNDED
-    /// prefix (not the full message), so the syntax scan stays bounded and a huge
-    /// plain response can't render as one unbounded `Text`. Shared by
+    /// single-`Text` length. The plain-vs-markdown decision is made on the FIRST
+    /// page's prefix (not the full message and not the current page), so the
+    /// syntax scan stays bounded AND the render mode can't flip across pages (which
+    /// would otherwise make "Show more" *shrink* already-visible text). Shared by
     /// `NativeMarkdownView` and the layout-budget tests.
     static func renderPlan(for markdown: String, pages: Int) -> RenderPlan {
         let clampedPages = max(1, min(pages, maxPages))
+        // Mode is decided once, on the first page, so paging only ever reveals
+        // more — it never re-classifies the message.
+        let modeIsMarkdown = containsMarkdownSyntax(boundedSource(markdown, pages: 1).text)
         let source = boundedSource(markdown, pages: clampedPages)
-        guard containsMarkdownSyntax(source.text) else {
-            return .plain(text: source.text, hasMore: source.truncated)
+        guard modeIsMarkdown else {
+            return .plain(text: source.text, canPageMore: source.truncated)
         }
         let parsed = NativeMarkdownRenderer.blocks(from: source.text)
         // Grow the per-Text cap with pages too, so "Show more" reveals the rest of
@@ -951,7 +960,11 @@ enum MarkdownRenderBudget {
             textCharCap: textCharCap * clampedPages,
             depth: 0
         )
-        return .markdown(blocks: bounded.blocks, hasMore: bounded.hitBudget || source.truncated)
+        return .markdown(
+            blocks: bounded.blocks,
+            canPageMore: bounded.outcome.canPageMore || source.truncated,
+            truncatedPermanently: bounded.outcome.truncatedPermanently
+        )
     }
 }
 
@@ -976,37 +989,53 @@ private func markdownLeafCount(_ block: NativeMarkdownBlock) -> Int {
     }
 }
 
-/// Truncate a block tree to `leafBudget` leaves, capping single-`Text` content
-/// to `textCharCap`. Returns the bounded blocks and whether any blocks/items
-/// were dropped *for budget reasons* (text-cap truncation alone does not count —
-/// that is shown inline — so the "Show more" affordance only appears when paging
-/// would actually reveal more structure).
+/// Why content was dropped during bounding. `canPageMore` means tapping "Show
+/// more" (which grows the source/leaf/text budgets) would reveal more.
+/// `truncatedPermanently` means it never would — table columns past
+/// `maxTableColumns` or nesting past `maxNestingDepth` are clamped regardless of
+/// pages — so the view shows a static truncation indicator, not a no-op button.
+struct MarkdownBudgetOutcome {
+    var canPageMore = false
+    var truncatedPermanently = false
+
+    mutating func merge(_ other: MarkdownBudgetOutcome) {
+        canPageMore = canPageMore || other.canPageMore
+        truncatedPermanently = truncatedPermanently || other.truncatedPermanently
+    }
+}
+
+/// Truncate a block tree to `leafBudget` leaves, capping single-`Text` content to
+/// `textCharCap`. Returns the bounded blocks and an outcome distinguishing
+/// pageable truncation (leaf/text budget) from permanent truncation (depth).
 func boundedMarkdownBlocks(
     _ blocks: [NativeMarkdownBlock],
     leafBudget: Int,
     textCharCap: Int,
     depth: Int
-) -> (blocks: [NativeMarkdownBlock], hitBudget: Bool) {
+) -> (blocks: [NativeMarkdownBlock], outcome: MarkdownBudgetOutcome) {
     if depth > MarkdownRenderBudget.maxNestingDepth {
-        return (blocks.isEmpty ? [] : [.paragraph("…")], !blocks.isEmpty)
+        // Nesting depth is fixed; paging never reveals the collapsed subtree.
+        var outcome = MarkdownBudgetOutcome()
+        outcome.truncatedPermanently = !blocks.isEmpty
+        return (blocks.isEmpty ? [] : [.paragraph("…")], outcome)
     }
     var remaining = leafBudget
     var result: [NativeMarkdownBlock] = []
-    var hitBudget = false
+    var outcome = MarkdownBudgetOutcome()
     for block in blocks {
         if remaining <= 0 {
-            hitBudget = true
+            outcome.canPageMore = true
             break
         }
         let bounded = boundOneMarkdownBlock(block, leafBudget: remaining, textCharCap: textCharCap, depth: depth)
         result.append(bounded.block)
         remaining -= bounded.cost
-        hitBudget = hitBudget || bounded.hitBudget
+        outcome.merge(bounded.outcome)
     }
     if result.count < blocks.count {
-        hitBudget = true
+        outcome.canPageMore = true
     }
-    return (result, hitBudget)
+    return (result, outcome)
 }
 
 private func boundOneMarkdownBlock(
@@ -1014,61 +1043,69 @@ private func boundOneMarkdownBlock(
     leafBudget: Int,
     textCharCap: Int,
     depth: Int
-) -> (block: NativeMarkdownBlock, cost: Int, hitBudget: Bool) {
-    // A single-`Text` block clamped by the char cap reports `hitBudget` so the
-    // "Show more" affordance appears; paging grows `textCharCap` (see renderPlan),
-    // so the rest of an oversized paragraph/code block stays reachable rather than
-    // being stranded behind a bare ellipsis.
+) -> (block: NativeMarkdownBlock, cost: Int, outcome: MarkdownBudgetOutcome) {
+    func pageable(_ truncated: Bool) -> MarkdownBudgetOutcome {
+        var outcome = MarkdownBudgetOutcome()
+        outcome.canPageMore = truncated
+        return outcome
+    }
+    // A single-`Text` block clamped by the char cap is *pageable* (paging grows
+    // `textCharCap`, see renderPlan), so the rest of an oversized paragraph/code
+    // block stays reachable rather than stranded behind a bare ellipsis.
     switch block {
     case .paragraph(let text):
         let capped = cappedMarkdownText(text, cap: textCharCap)
-        return (.paragraph(capped.text), 1, capped.truncated)
+        return (.paragraph(capped.text), 1, pageable(capped.truncated))
     case .fallback(let text):
         let capped = cappedMarkdownText(text, cap: textCharCap)
-        return (.fallback(capped.text), 1, capped.truncated)
+        return (.fallback(capped.text), 1, pageable(capped.truncated))
     case .heading(let level, let text):
         let capped = cappedMarkdownText(text, cap: textCharCap)
-        return (.heading(level: level, text: capped.text), 1, capped.truncated)
+        return (.heading(level: level, text: capped.text), 1, pageable(capped.truncated))
     case .thematicBreak:
-        return (.thematicBreak, 1, false)
+        return (.thematicBreak, 1, MarkdownBudgetOutcome())
     case .codeBlock(let language, let code):
         let capped = cappedMarkdownText(code, cap: textCharCap)
-        return (.codeBlock(language: language, code: capped.text), 1, capped.truncated)
+        return (.codeBlock(language: language, code: capped.text), 1, pageable(capped.truncated))
     case .unorderedList(let items):
         let bounded = boundedMarkdownItems(items, leafBudget: leafBudget, textCharCap: textCharCap, depth: depth)
-        return (.unorderedList(bounded.items), bounded.cost, bounded.hitBudget)
+        return (.unorderedList(bounded.items), bounded.cost, bounded.outcome)
     case .orderedList(let startIndex, let items):
         let bounded = boundedMarkdownItems(items, leafBudget: leafBudget, textCharCap: textCharCap, depth: depth)
-        return (.orderedList(startIndex: startIndex, items: bounded.items), bounded.cost, bounded.hitBudget)
+        return (.orderedList(startIndex: startIndex, items: bounded.items), bounded.cost, bounded.outcome)
     case .blockQuote(let blocks):
         let bounded = boundedMarkdownBlocks(blocks, leafBudget: leafBudget, textCharCap: textCharCap, depth: depth + 1)
         let cost = max(1, bounded.blocks.reduce(0) { $0 + markdownLeafCount($1) })
-        return (.blockQuote(bounded.blocks), cost, bounded.hitBudget)
+        return (.blockQuote(bounded.blocks), cost, bounded.outcome)
     case .table(let header, let rows):
         // Bound BOTH dimensions: a wide table builds rows×cols cells in a Grid
-        // under a horizontal ScrollView, which is super-linear to lay out, so
-        // counting only rows (an earlier bug) left wide tables unbounded.
+        // under a horizontal ScrollView, which is super-linear to lay out.
         let columnCount = max(1, header.count)
         let keptColumns = min(columnCount, MarkdownRenderBudget.maxTableColumns)
         let maxRows = max(0, leafBudget / keptColumns - 1)
-        // Track per-cell text truncation too: a small table with one oversized
-        // cell drops no rows/columns, but its content is still clipped — so it must
-        // also report `hitBudget` to keep a "Show more" path (matches paragraphs).
-        var cellTruncated = false
+        var outcome = MarkdownBudgetOutcome()
         let keptRows = rows.prefix(maxRows).map { row in
             row.prefix(keptColumns).map { cell -> String in
                 let capped = cappedMarkdownText(cell, cap: textCharCap)
-                cellTruncated = cellTruncated || capped.truncated
+                outcome.canPageMore = outcome.canPageMore || capped.truncated
                 return capped.text
             }
         }
         let cappedHeader = header.prefix(keptColumns).map { cell -> String in
             let capped = cappedMarkdownText(cell, cap: textCharCap)
-            cellTruncated = cellTruncated || capped.truncated
+            outcome.canPageMore = outcome.canPageMore || capped.truncated
             return capped.text
         }
-        let dropped = keptRows.count < rows.count || keptColumns < columnCount || cellTruncated
-        return (.table(header: cappedHeader, rows: keptRows), (keptRows.count + 1) * keptColumns, dropped)
+        // Rows grow with the leaf budget (pageable); columns are capped at
+        // `maxTableColumns` regardless of pages (permanent), so a >16-column table
+        // gets a truncation indicator rather than a no-op "Show more".
+        if keptRows.count < rows.count {
+            outcome.canPageMore = true
+        }
+        if keptColumns < columnCount {
+            outcome.truncatedPermanently = true
+        }
+        return (.table(header: cappedHeader, rows: keptRows), (keptRows.count + 1) * keptColumns, outcome)
     }
 }
 
@@ -1077,26 +1114,26 @@ private func boundedMarkdownItems(
     leafBudget: Int,
     textCharCap: Int,
     depth: Int
-) -> (items: [NativeMarkdownListItem], cost: Int, hitBudget: Bool) {
+) -> (items: [NativeMarkdownListItem], cost: Int, outcome: MarkdownBudgetOutcome) {
     var remaining = leafBudget
     var result: [NativeMarkdownListItem] = []
-    var hitBudget = false
+    var outcome = MarkdownBudgetOutcome()
     for item in items {
         if remaining <= 1 {
-            hitBudget = true
+            outcome.canPageMore = true
             break
         }
         remaining -= 1
         let bounded = boundedMarkdownBlocks(item.blocks, leafBudget: remaining, textCharCap: textCharCap, depth: depth + 1)
         remaining -= bounded.blocks.reduce(0) { $0 + markdownLeafCount($1) }
         result.append(NativeMarkdownListItem(checkbox: item.checkbox, blocks: bounded.blocks))
-        hitBudget = hitBudget || bounded.hitBudget
+        outcome.merge(bounded.outcome)
     }
     if result.count < items.count {
-        hitBudget = true
+        outcome.canPageMore = true
     }
     let cost = max(1, result.reduce(0) { $0 + 1 + $1.blocks.reduce(0) { $0 + markdownLeafCount($1) } })
-    return (result, cost, hitBudget)
+    return (result, cost, outcome)
 }
 
 private struct NativeMarkdownView: View {
@@ -1107,25 +1144,31 @@ private struct NativeMarkdownView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             switch MarkdownRenderBudget.renderPlan(for: markdown, pages: pages) {
-            case let .markdown(blocks, hasMore):
+            case let .markdown(blocks, canPageMore, truncatedPermanently):
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                     MarkdownBlockView(block: block)
                 }
-                showMoreButton(hasMore: hasMore)
-            case let .plain(text, hasMore):
+                truncationAffordance(canPageMore: canPageMore, truncatedPermanently: truncatedPermanently)
+            case let .plain(text, canPageMore):
                 Text(text)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                showMoreButton(hasMore: hasMore)
+                truncationAffordance(canPageMore: canPageMore, truncatedPermanently: false)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Shown only while more content remains AND we are below the page ceiling, so
-    /// repeated taps can't grow the realized tree without bound (see maxPages).
+    /// Trailing affordance for truncated content:
+    /// - "Show more" only when paging would actually reveal more and we are below
+    ///   the page ceiling (so repeated taps can't grow the realized tree without
+    ///   bound — see maxPages).
+    /// - Otherwise, a static indicator when content was dropped that paging cannot
+    ///   reveal (columns/nesting) or that remains at the ceiling, so the tail is
+    ///   never silently dropped behind a no-op control.
     @ViewBuilder
-    private func showMoreButton(hasMore: Bool) -> some View {
-        if hasMore, pages < MarkdownRenderBudget.maxPages {
+    private func truncationAffordance(canPageMore: Bool, truncatedPermanently: Bool) -> some View {
+        let atCeiling = pages >= MarkdownRenderBudget.maxPages
+        if canPageMore, !atCeiling {
             Button {
                 pages += 1
             } label: {
@@ -1134,6 +1177,11 @@ private struct NativeMarkdownView: View {
             }
             .buttonStyle(.borderless)
             .accessibilityIdentifier("markdown-show-more")
+        } else if truncatedPermanently || (canPageMore && atCeiling) {
+            Label("Message truncated", systemImage: "ellipsis.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("markdown-truncated")
         }
     }
 }

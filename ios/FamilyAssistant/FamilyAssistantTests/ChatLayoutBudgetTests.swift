@@ -98,7 +98,7 @@ final class ChatLayoutBudgetTests: XCTestCase {
         let maxPlainChars = MarkdownRenderBudget.charsPerPage
         func check(_ label: String, _ markdown: String) {
             switch MarkdownRenderBudget.renderPlan(for: markdown, pages: 1) {
-            case let .markdown(blocks, _):
+            case let .markdown(blocks, _, _):
                 let leaves = blocks.reduce(0) { $0 + Self.renderedLeafCount($1) }
                 let longest = blocks.reduce(0) { max($0, Self.maxTextLength($1)) }
                 let deepest = blocks.reduce(0) { max($0, Self.nestingDepth($1)) }
@@ -141,7 +141,7 @@ final class ChatLayoutBudgetTests: XCTestCase {
         for shape in Self.adversarialShapes() {
             for pages in [MarkdownRenderBudget.maxPages, MarkdownRenderBudget.maxPages + 100] {
                 switch MarkdownRenderBudget.renderPlan(for: shape.markdown, pages: pages) {
-                case let .markdown(blocks, _):
+                case let .markdown(blocks, _, _):
                     let leaves = blocks.reduce(0) { $0 + Self.renderedLeafCount($1) }
                     let longest = blocks.reduce(0) { max($0, Self.maxTextLength($1)) }
                     if leaves > maxLeaves || longest > maxText {
@@ -158,6 +158,37 @@ final class ChatLayoutBudgetTests: XCTestCase {
             offenders.isEmpty,
             "renderPlan grows without bound past maxPages (\"Show more\" could re-arm the watchdog):\n" + offenders.joined(separator: "\n")
         )
+    }
+
+    /// Truncation that paging can never reveal (table columns past
+    /// maxTableColumns, nesting past maxNestingDepth) must be reported as
+    /// permanent, so the view shows a static indicator instead of a no-op
+    /// "Show more".
+    func testPermanentTruncationIsReportedSeparately() {
+        let wide = MarkdownShapes.bigTable(rows: 3, cols: MarkdownRenderBudget.maxTableColumns + 20)
+        guard case let .markdown(_, _, widePermanent) = MarkdownRenderBudget.renderPlan(for: wide, pages: 1) else {
+            return XCTFail("expected a markdown plan for a table")
+        }
+        XCTAssertTrue(widePermanent, "clipped table columns must be reported as permanent truncation")
+
+        let deep = MarkdownShapes.nestedList(depth: MarkdownRenderBudget.maxNestingDepth + 20)
+        guard case let .markdown(_, _, deepPermanent) = MarkdownRenderBudget.renderPlan(for: deep, pages: 1) else {
+            return XCTFail("expected a markdown plan for a nested list")
+        }
+        XCTAssertTrue(deepPermanent, "collapsed deep nesting must be reported as permanent truncation")
+    }
+
+    /// The plain/markdown mode is decided once (first page), so paging never
+    /// re-classifies a message — otherwise "Show more" could flip a plain message
+    /// into the markdown path and shrink already-visible text.
+    func testRenderModeIsMonotonicAcrossPages() {
+        // First 16KB is plain prose (no markers); markdown appears only later.
+        let mixed = String(repeating: "word ", count: 5000) + "\n\n## Heading\n\n- a\n- b\n"
+        for pages in 1...MarkdownRenderBudget.maxPages {
+            guard case .plain = MarkdownRenderBudget.renderPlan(for: mixed, pages: pages) else {
+                return XCTFail("render mode flipped away from plain at page \(pages)")
+            }
+        }
     }
 
     /// Mirror of the renderer's leaf accounting, over the bounded block tree.
