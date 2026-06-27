@@ -335,16 +335,11 @@ private struct MessageBubble: View {
                 LoadingDotsView()
             }
             if !message.text.isEmpty {
-                if containsMarkdownSyntax(message.text) {
-                    NativeMarkdownView(markdown: message.text)
-                } else {
-                    // Plain prose skips the markdown parser entirely. Streamed
-                    // deltas are coalesced (see ChatViewModel) and completed
-                    // text is memoized, so live-formatted rendering stays off
-                    // the main thread long enough to avoid the layout watchdog.
-                    Text(message.text)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                // Always route through the budgeted renderer. It decides plain vs
+                // markdown on a bounded prefix, so a huge plain response can't
+                // render as one unbounded `Text` and the syntax scan stays bounded
+                // — both layout-watchdog hazards if the plain fast path lived here.
+                NativeMarkdownView(markdown: message.text)
             }
             if !message.toolCalls.isEmpty {
                 ToolGroupView(toolCalls: message.toolCalls, viewModel: viewModel)
@@ -909,33 +904,54 @@ enum MarkdownRenderBudget {
     /// Raw markdown parsed per page. Bounds parse cost (and, transitively, any
     /// shape we haven't reasoned about) before structural bounding even runs.
     static let charsPerPage = 16384
+    /// Upper bound on "Show more" pages. Each page grows the parsed prefix and the
+    /// leaf/text budget, so without a ceiling repeated taps could rebuild the very
+    /// thousands-node tree this budget exists to prevent — re-arming the watchdog.
+    /// At the cap the affordance is hidden and the tail stays truncated (ellipsis).
+    /// The worst realized size is therefore `maxPages * leafBudget` leaves /
+    /// `maxPages * charsPerPage` parsed characters.
+    static let maxPages = 6
 
-    /// The fully-bounded blocks to render for `markdown` at `pages` worth of
-    /// budget, plus whether more content remains (→ show "Show more"). This is
-    /// the single choke point that bounds every layout cost — parse size (char
-    /// prefix), structure (leaf budget + table cells), and single-`Text` length
-    /// — so the content-sizing pass can't overrun the watchdog for any shape.
-    /// Shared by `NativeMarkdownView` and the layout-budget tests.
-    static func renderPlan(for markdown: String, pages: Int) -> (blocks: [NativeMarkdownBlock], hasMore: Bool) {
-        let charLimit = charsPerPage * max(1, pages)
-        // Decide truncation in O(charLimit), never O(markdown.count): `body` is
-        // re-evaluated many times per message (scroll, animation, LazyVStack), and
-        // an O(n) length check over a multi-hundred-KB message there is itself a
-        // main-thread hang. `prefix` stops after charLimit+1 Characters.
+    enum RenderPlan {
+        case markdown(blocks: [NativeMarkdownBlock], hasMore: Bool)
+        case plain(text: String, hasMore: Bool)
+    }
+
+    /// A bounded prefix of `markdown` for `pages` worth of budget, plus whether the
+    /// source was truncated. O(prefix), never O(markdown.count): `body` is
+    /// re-evaluated many times per message (scroll, animation, LazyVStack), so an
+    /// O(n) scan over a multi-hundred-KB message here is itself a main-thread hang.
+    /// `prefix` stops after charLimit+1 Characters.
+    static func boundedSource(_ markdown: String, pages: Int) -> (text: String, truncated: Bool) {
+        let charLimit = charsPerPage * max(1, min(pages, maxPages))
         let head = markdown.prefix(charLimit + 1)
-        let sourceTruncated = head.count > charLimit
-        let source = sourceTruncated ? String(head.prefix(charLimit)) : markdown
-        let parsed = NativeMarkdownRenderer.blocks(from: source)
+        let truncated = head.count > charLimit
+        return (truncated ? String(head.prefix(charLimit)) : markdown, truncated)
+    }
+
+    /// The single choke point that bounds every layout cost — parse size (char
+    /// prefix), structure (leaf budget + table cells), nesting depth, and
+    /// single-`Text` length. The plain-vs-markdown decision is made on the BOUNDED
+    /// prefix (not the full message), so the syntax scan stays bounded and a huge
+    /// plain response can't render as one unbounded `Text`. Shared by
+    /// `NativeMarkdownView` and the layout-budget tests.
+    static func renderPlan(for markdown: String, pages: Int) -> RenderPlan {
+        let clampedPages = max(1, min(pages, maxPages))
+        let source = boundedSource(markdown, pages: clampedPages)
+        guard containsMarkdownSyntax(source.text) else {
+            return .plain(text: source.text, hasMore: source.truncated)
+        }
+        let parsed = NativeMarkdownRenderer.blocks(from: source.text)
         // Grow the per-Text cap with pages too, so "Show more" reveals the rest of
         // a single oversized block (a long paragraph or code dump), not just more
         // structure.
         let bounded = boundedMarkdownBlocks(
             parsed,
-            leafBudget: leafBudget * max(1, pages),
-            textCharCap: textCharCap * max(1, pages),
+            leafBudget: leafBudget * clampedPages,
+            textCharCap: textCharCap * clampedPages,
             depth: 0
         )
-        return (bounded.blocks, bounded.hitBudget || sourceTruncated)
+        return .markdown(blocks: bounded.blocks, hasMore: bounded.hitBudget || source.truncated)
     }
 }
 
@@ -1035,11 +1051,23 @@ private func boundOneMarkdownBlock(
         let columnCount = max(1, header.count)
         let keptColumns = min(columnCount, MarkdownRenderBudget.maxTableColumns)
         let maxRows = max(0, leafBudget / keptColumns - 1)
+        // Track per-cell text truncation too: a small table with one oversized
+        // cell drops no rows/columns, but its content is still clipped — so it must
+        // also report `hitBudget` to keep a "Show more" path (matches paragraphs).
+        var cellTruncated = false
         let keptRows = rows.prefix(maxRows).map { row in
-            row.prefix(keptColumns).map { cappedMarkdownText($0, cap: textCharCap).text }
+            row.prefix(keptColumns).map { cell -> String in
+                let capped = cappedMarkdownText(cell, cap: textCharCap)
+                cellTruncated = cellTruncated || capped.truncated
+                return capped.text
+            }
         }
-        let cappedHeader = header.prefix(keptColumns).map { cappedMarkdownText($0, cap: textCharCap).text }
-        let dropped = keptRows.count < rows.count || keptColumns < columnCount
+        let cappedHeader = header.prefix(keptColumns).map { cell -> String in
+            let capped = cappedMarkdownText(cell, cap: textCharCap)
+            cellTruncated = cellTruncated || capped.truncated
+            return capped.text
+        }
+        let dropped = keptRows.count < rows.count || keptColumns < columnCount || cellTruncated
         return (.table(header: cappedHeader, rows: keptRows), (keptRows.count + 1) * keptColumns, dropped)
     }
 }
@@ -1077,23 +1105,36 @@ private struct NativeMarkdownView: View {
     @State private var pages = 1
 
     var body: some View {
-        let plan = MarkdownRenderBudget.renderPlan(for: markdown, pages: pages)
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(plan.blocks.enumerated()), id: \.offset) { _, block in
-                MarkdownBlockView(block: block)
-            }
-            if plan.hasMore {
-                Button {
-                    pages += 1
-                } label: {
-                    Label("Show more", systemImage: "chevron.down")
-                        .font(.caption)
+            switch MarkdownRenderBudget.renderPlan(for: markdown, pages: pages) {
+            case let .markdown(blocks, hasMore):
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    MarkdownBlockView(block: block)
                 }
-                .buttonStyle(.borderless)
-                .accessibilityIdentifier("markdown-show-more")
+                showMoreButton(hasMore: hasMore)
+            case let .plain(text, hasMore):
+                Text(text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                showMoreButton(hasMore: hasMore)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Shown only while more content remains AND we are below the page ceiling, so
+    /// repeated taps can't grow the realized tree without bound (see maxPages).
+    @ViewBuilder
+    private func showMoreButton(hasMore: Bool) -> some View {
+        if hasMore, pages < MarkdownRenderBudget.maxPages {
+            Button {
+                pages += 1
+            } label: {
+                Label("Show more", systemImage: "chevron.down")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("markdown-show-more")
+        }
     }
 }
 

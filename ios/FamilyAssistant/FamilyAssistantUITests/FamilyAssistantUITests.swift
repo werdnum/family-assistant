@@ -156,17 +156,27 @@ final class FamilyAssistantUITests: XCTestCase {
     func testFollowUpAfterToolTurnStaysResponsive() {
         relaunch(initialPath: "/chat?conversation_id=web_conv_tool_heavy")
 
-        openConversationIfNeeded(id: "web_conv_tool_heavy", marker: "Anything else?")
+        openConversationIfNeeded(id: "web_conv_tool_heavy")
 
-        // The composer becoming hittable proves the thread (with a very large
-        // assistant message) rendered without wedging the main thread on open.
-        let composer = app.textFields["chat-composer"]
+        // The "Show more" control is produced only by web_conv_tool_heavy's very
+        // large (bounded) assistant answer, and sits at the bottom of that bubble
+        // where the open-time scroll-to-bottom leaves it visible. Its presence
+        // proves both that the *seeded* thread opened (a fresh chat has no
+        // messages, so a missed row tap fails here) and that the large message
+        // rendered without wedging the main thread.
+        // web_conv_tool_heavy ends with this small message, so the open-time
+        // scroll-to-bottom leaves it visible. Its presence proves the *seeded*
+        // thread opened (a fresh chat has no messages, so a missed row tap fails
+        // here) and that the thread — including the huge answer just above it —
+        // rendered without wedging the main thread.
         XCTAssertTrue(
-            composer.waitForExistence(timeout: 30),
-            "Chat thread with a very large message did not become interactive — main thread likely wedged in layout."
+            app.staticTexts["Tool-heavy summary complete."].waitForExistence(timeout: 30),
+            "Tool-heavy thread did not open/render — main thread likely wedged in layout."
         )
-        composer.tap()
-        composer.typeText("Anything else?")
+
+        let composer = app.textFields["chat-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: Self.readyTimeout))
+        typeText("Anything else?", into: composer)
         app.buttons["chat-send-button"].tap()
 
         XCTAssertTrue(
@@ -304,8 +314,10 @@ final class FamilyAssistantUITests: XCTestCase {
     /// Opens a seeded conversation by id when the launch deep link did not
     /// auto-open it (compact width can land on the conversation list). `marker`
     /// is a piece of the thread's content used to detect that it is already open.
-    private func openConversationIfNeeded(id: String, marker: String) {
-        if app.staticTexts[marker].waitForExistence(timeout: 2) {
+    private func openConversationIfNeeded(id: String) {
+        // The deep link normally opens the thread directly; in compact width the
+        // launch can land on the conversation list, so tap the row if it's shown.
+        if app.textFields["chat-composer"].waitForExistence(timeout: 4) {
             return
         }
         let row = app.descendants(matching: .any)["conversation-row-\(id)"]

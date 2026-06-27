@@ -75,6 +75,10 @@ final class ChatLayoutBudgetTests: XCTestCase {
             ("one-huge-unbroken-word", MarkdownShapes.longUnbrokenWord(40_000)),
             ("inline-formatting-storm", MarkdownShapes.longInlineFormatting(2500)),
             ("everything-mixed", MarkdownShapes.everything(repeats: 250)),
+            // Plain prose with no markdown markers exercises the plain branch of
+            // renderPlan, which must also stay bounded (one giant Text is a
+            // watchdog hazard too).
+            ("huge-plain-prose", String(repeating: "word ", count: 60_000)),
         ]
     }
 
@@ -91,15 +95,22 @@ final class ChatLayoutBudgetTests: XCTestCase {
         let maxDepth = MarkdownRenderBudget.maxNestingDepth + 2 // + the collapse marker
         var offenders: [String] = []
 
+        let maxPlainChars = MarkdownRenderBudget.charsPerPage
         func check(_ label: String, _ markdown: String) {
-            let plan = MarkdownRenderBudget.renderPlan(for: markdown, pages: 1)
-            let leaves = plan.blocks.reduce(0) { $0 + Self.renderedLeafCount($1) }
-            let longest = plan.blocks.reduce(0) { max($0, Self.maxTextLength($1)) }
-            let deepest = plan.blocks.reduce(0) { max($0, Self.nestingDepth($1)) }
-            if leaves > maxLeaves || longest > maxText || deepest > maxDepth {
-                offenders.append(
-                    "\(label): leaves=\(leaves) (max \(maxLeaves)), longestText=\(longest) (max \(maxText)), depth=\(deepest) (max \(maxDepth))"
-                )
+            switch MarkdownRenderBudget.renderPlan(for: markdown, pages: 1) {
+            case let .markdown(blocks, _):
+                let leaves = blocks.reduce(0) { $0 + Self.renderedLeafCount($1) }
+                let longest = blocks.reduce(0) { max($0, Self.maxTextLength($1)) }
+                let deepest = blocks.reduce(0) { max($0, Self.nestingDepth($1)) }
+                if leaves > maxLeaves || longest > maxText || deepest > maxDepth {
+                    offenders.append(
+                        "\(label): leaves=\(leaves) (max \(maxLeaves)), longestText=\(longest) (max \(maxText)), depth=\(deepest) (max \(maxDepth))"
+                    )
+                }
+            case let .plain(text, _):
+                if text.count > maxPlainChars {
+                    offenders.append("\(label): plain text \(text.count) chars (max \(maxPlainChars))")
+                }
             }
         }
 
@@ -116,6 +127,36 @@ final class ChatLayoutBudgetTests: XCTestCase {
         XCTAssertTrue(
             offenders.isEmpty,
             "Render plan is unbounded for some shapes (watchdog-hang risk):\n" + offenders.joined(separator: "\n")
+        )
+    }
+
+    /// "Show more" grows the budget per page, so an unbounded page counter could
+    /// rebuild the huge tree this change prevents. Verify the plan stays bounded
+    /// at the page ceiling and beyond (the counter is clamped to `maxPages`).
+    func testRenderPlanStaysBoundedAtAndBeyondMaxPages() {
+        let maxLeaves = MarkdownRenderBudget.leafBudget * MarkdownRenderBudget.maxPages * 3
+        let maxText = MarkdownRenderBudget.textCharCap * MarkdownRenderBudget.maxPages + 1
+        let maxPlainChars = MarkdownRenderBudget.charsPerPage * MarkdownRenderBudget.maxPages
+        var offenders: [String] = []
+        for shape in Self.adversarialShapes() {
+            for pages in [MarkdownRenderBudget.maxPages, MarkdownRenderBudget.maxPages + 100] {
+                switch MarkdownRenderBudget.renderPlan(for: shape.markdown, pages: pages) {
+                case let .markdown(blocks, _):
+                    let leaves = blocks.reduce(0) { $0 + Self.renderedLeafCount($1) }
+                    let longest = blocks.reduce(0) { max($0, Self.maxTextLength($1)) }
+                    if leaves > maxLeaves || longest > maxText {
+                        offenders.append("\(shape.name)@pages=\(pages): leaves=\(leaves) (max \(maxLeaves)), longestText=\(longest) (max \(maxText))")
+                    }
+                case let .plain(text, _):
+                    if text.count > maxPlainChars {
+                        offenders.append("\(shape.name)@pages=\(pages): plain \(text.count) chars (max \(maxPlainChars))")
+                    }
+                }
+            }
+        }
+        XCTAssertTrue(
+            offenders.isEmpty,
+            "renderPlan grows without bound past maxPages (\"Show more\" could re-arm the watchdog):\n" + offenders.joined(separator: "\n")
         )
     }
 

@@ -506,6 +506,21 @@ private final class UITestBackendURLProtocol: URLProtocol {
                 toolCallID: nil,
                 attachments: nil
             ),
+            // A small final message so the open-time scroll-to-bottom lands on
+            // content that is reliably visible and unique to this seeded thread
+            // (the huge answer above is a tall LazyVStack item whose interior is
+            // not realized in the accessibility tree once scrolled). The follow-up
+            // still re-lays out the huge answer just above it, exercising the
+            // watchdog scenario.
+            UITestChatMessage(
+                internalID: 5,
+                role: "assistant",
+                content: "Tool-heavy summary complete.",
+                timestamp: "2026-06-08T09:00:04Z",
+                toolCalls: nil,
+                toolCallID: nil,
+                attachments: nil
+            ),
         ]
     }
 
