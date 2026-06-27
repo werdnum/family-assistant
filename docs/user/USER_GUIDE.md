@@ -36,12 +36,13 @@ services to respond or perform actions.
   automatically opens to the chat page for quick access.
 
   - **Stop or steer a reply while it's working:** While the assistant is generating a response, the
-    Send button in the chat box becomes a **Stop** button — click it to halt the current response
-    immediately (it's marked "Stopped", not an error). A small **Steer** box also appears beside the
-    chat input: type a quick course-correction there (for example, "actually, focus on next week")
-    and the assistant folds it into the work it's already doing without starting over. Native iOS
-    Chat has the same controls while a reply is running. This is the web and iOS equivalent of
-    Telegram's `/interrupt` and mid-response follow-up messages.
+    chat box doubles as a steering box. Leave it empty and the Send button becomes a **Stop** button
+    — click it to halt the current response immediately (it's marked "Stopped", not an error). Or
+    type a quick course-correction into the same box (for example, "actually, focus on next week")
+    and the button becomes **Steer** — send it and the assistant folds your note into the work it's
+    already doing without starting over. Native iOS Chat has the same controls while a reply is
+    running. This is the web and iOS equivalent of Telegram's `/interrupt` and mid-response
+    follow-up messages.
 
   ![Landing Page](../../screenshots/desktop/landing-page.png) *The Family Assistant landing page
   provides quick access to all major features*
@@ -205,13 +206,12 @@ You can ask the assistant a wide variety of things:
   `/.well-known/ucp` profile (following any redirect the merchant serves there), and while browsing
   it automatically notices when a site supports UCP shopping. This includes Shopify stores on their
   own custom domain, whose commerce endpoint lives on a `*.myshopify.com` host — you can just give
-  the assistant the storefront you browsed. Some merchants are checkout-only (they
-  support checkout but not a cart); for these the assistant opens a checkout session directly from
-  the selected items instead of building a cart first. The server also publishes its own public UCP
-  platform profile at `/.well-known/ucp`. Checkout handoff requires signed UCP requests; configure
-  `UCP_SIGNING_KEY_ID` and either `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with
-  an EC P-256 or P-384 private key. The assistant does not complete checkout or collect payment
-  credentials in chat.
+  the assistant the storefront you browsed. Some merchants are checkout-only (they support checkout
+  but not a cart); for these the assistant opens a checkout session directly from the selected items
+  instead of building a cart first. The server also publishes its own public UCP platform profile at
+  `/.well-known/ucp`. Checkout handoff requires signed UCP requests; configure `UCP_SIGNING_KEY_ID`
+  and either `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384
+  private key. The assistant does not complete checkout or collect payment credentials in chat.
 
 - **Ingest Documents (Files and URLs):**
 

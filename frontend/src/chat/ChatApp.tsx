@@ -16,7 +16,7 @@ import { NotificationSettings } from './NotificationSettings';
 import { PendingConfirmationsTray } from './PendingConfirmationsTray';
 import ProfileSelector from './ProfileSelector';
 import { PushNotificationButton } from './PushNotificationButton';
-import { ChatControlsContext } from './chatControls';
+import { ChatControlsContext, type SteerResult } from './chatControls';
 import { Thread } from './Thread';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
 import type { PendingToolConfirmation } from './ToolConfirmationContext';
@@ -401,12 +401,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // The turn id of the currently-streaming turn, used to tag mid-turn steering
   // user bubbles. Set in handleNew, cleared when the turn completes.
   const activeTurnIdRef = useRef<string | null>(null);
-  // The steer-input draft, owned here so it survives the SteerBar unmounting at
-  // turn end (a steer the turn never echoed is preserved for resend). Cleared
-  // when the conversation changes so it doesn't leak across threads.
-  const [steerDraft, setSteerDraft] = useState('');
-  // Last steer error (e.g. a transient 5xx), shown in the SteerBar; the draft is
-  // kept so the user can retry.
+  // Last steer error (e.g. a transient 5xx), shown above the composer; the
+  // composer keeps its text so the user can retry.
   const [steerError, setSteerError] = useState<string | null>(null);
   // Follow-up messages queued while a stream was still settling (a steer that
   // hit a finished turn, or recovered un-echoed steers). Fired one at a time
@@ -416,11 +412,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // Accepted steers awaiting their user_input echo. If the turn completes
   // without echoing them (the model was in a final text-only iteration, so the
   // loop never drained them), they're recovered as normal follow-ups rather than
-  // left stale in a SteerBar that's about to unmount. A list, since the user can
-  // submit several steers during one long turn.
+  // silently lost. A list, since the user can submit several steers during one
+  // long turn.
   const awaitingEchoSteersRef = useRef<string[]>([]);
   useEffect(() => {
-    setSteerDraft('');
     setSteerError(null);
     // Drop any queued/awaiting steers so they can't fire into the new conversation.
     awaitingEchoSteersRef.current = [];
@@ -858,13 +853,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const cleanCompletion = completed && !wasStopped && !lastError;
       if (cleanCompletion) {
         // Accepted steers the turn never echoed (it finished a final text-only
-        // iteration without draining them) would otherwise be stranded in the
-        // about-to-unmount SteerBar. Recover them as normal follow-ups.
+        // iteration without draining them) would otherwise be lost. Recover
+        // them as normal follow-ups.
         const unEchoed = awaitingEchoSteersRef.current;
         if (unEchoed.length > 0) {
           awaitingEchoSteersRef.current = [];
           pendingFollowupsRef.current.push(...unEchoed);
-          setSteerDraft((prev) => (unEchoed.some((s) => s.trim() === prev.trim()) ? '' : prev));
         }
 
         // Fire the next queued follow-up (a steer that hit an already-finished
@@ -916,10 +910,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       next.splice(idx, 0, steeringMessage);
       return next;
     });
-    // The echo confirms the turn consumed this steer, so clear the draft if it
-    // still matches what was sent (don't clobber a newer edit the user typed)
-    // and drop one matching awaiting-echo entry so it isn't recovered later.
-    setSteerDraft((prev) => (prev.trim() === content.trim() ? '' : prev));
+    // The echo confirms the turn consumed this steer, so drop one matching
+    // awaiting-echo entry so it isn't recovered as a follow-up later.
     const idx = awaitingEchoSteersRef.current.findIndex((s) => s.trim() === content.trim());
     if (idx !== -1) {
       awaitingEchoSteersRef.current.splice(idx, 1);
@@ -1902,54 +1894,51 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     },
   });
 
-  // Mid-run controls handed down to the Thread's composer (steering input). The
-  // draft text lives here (not in the SteerBar) so a steer that the turn never
-  // echoed isn't lost when the SteerBar unmounts at turn end.
-  const submitSteer = useCallback(async () => {
-    const prompt = steerDraft.trim();
-    if (!prompt) {
-      return;
-    }
-    setSteerError(null);
-    const result = await steerStream({ prompt });
-    if (result === 'accepted') {
-      // Deliberately do NOT clear here: the draft is cleared only when the
-      // matching user_input echo confirms the turn actually consumed it. Track
-      // it as awaiting-echo so that if the turn completes without draining it
-      // (a final text-only iteration), the completion handler recovers it as a
-      // normal follow-up instead of losing it.
-      awaitingEchoSteersRef.current.push(prompt);
-      return;
-    }
-    if (result === 'error') {
-      // The turn may still be running and the steer may even have been accepted
-      // before the response failed, so DON'T auto-resend. Surface it and keep
-      // the draft for a manual retry.
-      setSteerError('Could not steer the assistant. Please try again.');
-      return;
-    }
-    // 'finished': the steer targeted an already-finished turn. Don't lose the
-    // text — send it as a normal follow-up. If a stream is still settling, defer
-    // until its completion handler runs so we don't race its shared-ref cleanup.
-    setSteerDraft('');
-    if (streamingMessageIdRef.current) {
-      pendingFollowupsRef.current.push(prompt);
-    } else {
-      await handleNew({ content: [{ text: prompt }] });
-    }
-  }, [steerDraft, steerStream, handleNew]);
+  // Submit a steer into the running turn. While a turn runs the main composer
+  // doubles as the steer input, so the text is passed in (and owned by the
+  // composer); the result tells the composer whether to clear itself.
+  const submitSteer = useCallback(
+    async (promptRaw: string): Promise<SteerResult> => {
+      const prompt = promptRaw.trim();
+      if (!prompt) {
+        return 'finished';
+      }
+      setSteerError(null);
+      const result = await steerStream({ prompt });
+      if (result === 'accepted') {
+        // Track it as awaiting-echo so that if the turn completes without
+        // draining it (a final text-only iteration), the completion handler
+        // recovers it as a normal follow-up instead of losing it.
+        awaitingEchoSteersRef.current.push(prompt);
+        return 'accepted';
+      }
+      if (result === 'error') {
+        // The turn may still be running and the steer may even have been
+        // accepted before the response failed, so DON'T auto-resend. Surface it
+        // and let the composer keep the text for a manual retry.
+        setSteerError('Could not steer the assistant. Please try again.');
+        return 'error';
+      }
+      // 'finished': the steer targeted an already-finished turn. Don't lose the
+      // text — send it as a normal follow-up. If a stream is still settling,
+      // defer until its completion handler runs so we don't race its shared-ref
+      // cleanup.
+      if (streamingMessageIdRef.current) {
+        pendingFollowupsRef.current.push(prompt);
+      } else {
+        await handleNew({ content: [{ text: prompt }] });
+      }
+      return 'finished';
+    },
+    [steerStream, handleNew]
+  );
 
   const chatControls = useMemo(
     () => ({
-      steerText: steerDraft,
-      setSteerText: (text: string) => {
-        setSteerError(null);
-        setSteerDraft(text);
-      },
       submitSteer,
       steerError,
     }),
-    [steerDraft, steerError, submitSteer]
+    [steerError, submitSteer]
   );
 
   // Initialize conversation ID from URL or localStorage

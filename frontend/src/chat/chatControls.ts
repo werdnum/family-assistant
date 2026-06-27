@@ -1,25 +1,25 @@
 import { createContext, useContext } from 'react';
 
+/** Outcome of submitting a steer, so the composer knows whether to clear. */
+export type SteerResult = 'accepted' | 'finished' | 'error';
+
 /**
  * Mid-run controls shared from ChatApp down into the assistant-ui Thread, where
  * the composer lives. Kept in its own module so Thread doesn't import ChatApp
  * (which would be circular).
+ *
+ * While a turn is running the main composer doubles as the steer input, so the
+ * steer text lives in the assistant-ui composer (not here); these controls only
+ * carry the submit action and the last error.
  */
 export interface ChatControls {
   /**
-   * The current steer-input text. Owned by ChatApp (not the SteerBar) so it
-   * survives the SteerBar unmounting when a turn ends: a steer that was never
-   * echoed (the turn finished before draining it) is preserved, not lost.
+   * Submit ``prompt`` into the running turn and report what happened, so the
+   * composer can clear itself on success (``accepted``/``finished``) but keep
+   * the text for a retry on ``error``.
    */
-  steerText: string;
-  setSteerText: (text: string) => void;
-  /**
-   * Submit the current steer text into the running turn. Does NOT clear the
-   * text — it's cleared only when the matching ``user_input`` echo confirms the
-   * turn actually consumed it (see ChatApp.handleStreamingUserInput).
-   */
-  submitSteer: () => Promise<void>;
-  /** Last steer failure message (transient error), shown in the SteerBar. */
+  submitSteer: (prompt: string) => Promise<SteerResult>;
+  /** Last steer failure message (transient error), shown above the composer. */
   steerError: string | null;
 }
 

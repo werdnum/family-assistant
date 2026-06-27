@@ -4,7 +4,9 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useComposer,
+  useComposerRuntime,
   useMessage,
+  useThread,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
@@ -251,77 +253,64 @@ const ThreadWelcomeSuggestions: React.FC = () => {
   );
 };
 
-// While a turn is running the composer's Send button is replaced by Stop, so the
-// user can't send a follow-up through it. This thin secondary input lets them
-// steer the running turn: the message is injected mid-turn and the model adapts
-// without restarting. Shown only while running (wrapped in ThreadPrimitive.If).
-const SteerBar: React.FC = () => {
+// Transient steer failure, shown just above the composer (the composer keeps
+// its text so the user can retry). Rendered only while a turn is running.
+const SteerError: React.FC = () => {
   const controls = useChatControls();
-  const [submitting, setSubmitting] = useState(false);
-
-  const submit = async () => {
-    if (submitting || !controls || controls.steerText.trim().length === 0) {
-      return;
-    }
-    setSubmitting(true);
-    try {
-      // submitSteer never clears the draft; it's cleared only when the turn
-      // echoes the steer back (so an un-drained steer isn't lost).
-      await controls.submitSteer();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  if (!controls) {
+  if (!controls?.steerError) {
     return null;
   }
-
   return (
-    <div className="flex flex-col gap-1" data-testid="steer-bar">
-      <div className="flex gap-2 items-end">
-        <div className="flex-1 relative">
-          <input
-            type="text"
-            value={controls.steerText}
-            onChange={(e) => controls.setSteerText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder="Steer the assistant while it works…"
-            className="w-full min-h-9 pl-4 pr-4 py-2 text-sm border rounded-2xl bg-muted/20 border-dashed border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
-            data-testid="steer-input"
-          />
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-9 shrink-0 rounded-full"
-          onClick={() => void submit()}
-          disabled={submitting || controls.steerText.trim().length === 0}
-          data-testid="steer-button"
-        >
-          Steer
-        </Button>
-      </div>
-      {controls.steerError && (
-        <p className="px-2 text-xs text-destructive" data-testid="steer-error">
-          {controls.steerError}
-        </p>
-      )}
-    </div>
+    <p className="px-2 text-xs text-destructive" data-testid="steer-error">
+      {controls.steerError}
+    </p>
   );
 };
 
 const Composer: React.FC = () => {
+  const isRunning = useThread((t) => t.isRunning);
+  const composerRuntime = useComposerRuntime();
+  const controls = useChatControls();
+  const [steering, setSteering] = useState(false);
+
+  // While a turn is running the main composer doubles as the steer input: the
+  // typed message is injected mid-turn and the model adapts without restarting.
+  // Cleared on accept/finished; kept on error so the user can retry.
+  const submitSteer = async () => {
+    if (!controls || steering) {
+      return;
+    }
+    const text = composerRuntime.getState().text.trim();
+    if (!text) {
+      return;
+    }
+    setSteering(true);
+    try {
+      const result = await controls.submitSteer(text);
+      // Clear on success, but only if the user hasn't typed something new while
+      // the steer was in flight (don't clobber a fresh edit).
+      if (result !== 'error' && composerRuntime.getState().text.trim() === text) {
+        composerRuntime.setText('');
+      }
+    } finally {
+      setSteering(false);
+    }
+  };
+
+  // While running, Enter steers the turn instead of starting a new one; when
+  // idle, fall through to the composer's default submit-on-enter.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!isRunning || e.key !== 'Enter' || e.shiftKey) {
+      return;
+    }
+    e.preventDefault();
+    void submitSteer();
+  };
+
   return (
     <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
       <ThreadPrimitive.If running>
-        <SteerBar />
+        <SteerError />
       </ThreadPrimitive.If>
       <ComposerAttachments />
       <div className="flex gap-2 items-end">
@@ -330,23 +319,34 @@ const Composer: React.FC = () => {
           <ComposerPrimitive.Input
             rows={1}
             autoFocus
-            placeholder="Message Family Assistant..."
+            placeholder={
+              isRunning ? 'Steer the assistant while it works…' : 'Message Family Assistant...'
+            }
+            onKeyDown={handleKeyDown}
             className="w-full min-h-11 max-h-48 pl-4 pr-4 py-2.5 text-sm border rounded-2xl bg-muted/40 border-border/60 resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all duration-200 placeholder:text-muted-foreground/60"
             data-testid="chat-input"
           />
         </div>
-        <ComposerAction />
+        <ComposerAction steering={steering} onSteer={submitSteer} />
       </div>
     </ComposerPrimitive.Root>
   );
 };
 
-const ComposerAction: React.FC = () => {
+interface ComposerActionProps {
+  steering: boolean;
+  onSteer: () => void;
+}
+
+const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) => {
   // Check if any attachments are currently uploading
   const hasUploadingAttachments = useComposer((state) => {
     const attachments = state.attachments || [];
     return attachments.some((att) => att.status?.type === 'running');
   });
+  // While running, the single action button steers when there's text to send
+  // and stops the turn when the composer is empty.
+  const hasText = useComposer((state) => state.text.trim().length > 0);
 
   return (
     <>
@@ -370,18 +370,37 @@ const ComposerAction: React.FC = () => {
         </ComposerPrimitive.Send>
       </ThreadPrimitive.If>
       <ThreadPrimitive.If running>
-        <ComposerPrimitive.Cancel asChild>
-          {/* @ts-expect-error - TooltipIconButton JSX component */}
+        {hasText ? (
+          /* @ts-expect-error - TooltipIconButton JSX component */
           <TooltipIconButton
-            tooltip="Stop generating"
+            tooltip="Steer the assistant"
             variant="default"
             side="top"
             className="h-11 w-11 shrink-0 rounded-full"
-            data-testid="stop-button"
+            data-testid="steer-button"
+            disabled={steering}
+            onClick={onSteer}
           >
-            <SquareIcon size={14} />
+            {steering ? (
+              <Loader2Icon size={16} className="animate-spin" />
+            ) : (
+              <ArrowUpIcon size={16} />
+            )}
           </TooltipIconButton>
-        </ComposerPrimitive.Cancel>
+        ) : (
+          <ComposerPrimitive.Cancel asChild>
+            {/* @ts-expect-error - TooltipIconButton JSX component */}
+            <TooltipIconButton
+              tooltip="Stop generating"
+              variant="default"
+              side="top"
+              className="h-11 w-11 shrink-0 rounded-full"
+              data-testid="stop-button"
+            >
+              <SquareIcon size={14} />
+            </TooltipIconButton>
+          </ComposerPrimitive.Cancel>
+        )}
       </ThreadPrimitive.If>
     </>
   );

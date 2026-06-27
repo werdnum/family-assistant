@@ -9,7 +9,9 @@ import { renderChatApp } from '../../test/utils/renderChatApp';
 // A controllable SSE stream: the handler emits turn_started and then parks,
 // handing its controller to the test so it can drive cancelled / user_input
 // events on demand. This keeps the turn "running" (isStreaming true) so the
-// Stop button and steer input are mounted.
+// Stop/Steer action is mounted. While running the main composer doubles as the
+// steer input, so steering = type into the chat input then click the steer
+// action (which replaces Stop once there's text).
 function installOpenStream(): {
   ready: Promise<ReadableStreamDefaultController<Uint8Array>>;
   turnIdRef: { current: string };
@@ -144,10 +146,11 @@ describe('Web turn control (Stop / Steer)', () => {
 
       const controller = await ready;
 
-      // Steer input appears only while running.
-      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      // While running, the main composer doubles as the steer input and the
+      // Stop action becomes Steer once there's text.
+      const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'focus on tomorrow');
-      await user.click(screen.getByTestId('steer-button'));
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
 
       await waitFor(() => {
         expect(steerBody).not.toBeNull();
@@ -207,9 +210,9 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(turnsPosts).toBe(1);
       }, WAIT);
 
-      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'do it differently');
-      await user.click(screen.getByTestId('steer-button'));
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
 
       // The 409 fallback is serialized after the current stream settles, so let
       // the first turn finish; the queued follow-up then fires.
@@ -274,9 +277,11 @@ describe('Web turn control (Stop / Steer)', () => {
       }, WAIT);
 
       // Steer (accepted, awaiting echo) then Stop before the echo arrives.
-      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'changed my mind');
-      await user.click(screen.getByTestId('steer-button'));
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+      // The accepted steer clears the composer, so the action reverts to Stop.
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
       await user.click(await screen.findByTestId('stop-button', undefined, WAIT));
 
       controller.enqueue(
@@ -334,9 +339,9 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(turnsPosts).toBe(1);
       }, WAIT);
 
-      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'use the newer plan');
-      await user.click(screen.getByTestId('steer-button'));
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
 
       // The turn completes WITHOUT echoing the accepted steer; on completion it
       // is recovered as a normal follow-up (a 2nd kickoff) rather than lost.
@@ -442,9 +447,9 @@ describe('Web turn control (Stop / Steer)', () => {
       await user.keyboard('{Enter}');
 
       const controller = await ready;
-      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'focus on tomorrow');
-      await user.click(screen.getByTestId('steer-button'));
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
 
       // The first steer 404s (registration race); steerStream retries and the
       // turn accepts it — no fallback new turn.
@@ -550,13 +555,16 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(turnsPosts).toBe(1);
       }, WAIT);
 
-      // Two accepted steers during the same turn.
-      const steerInput = await screen.findByTestId('steer-input', undefined, WAIT);
+      // Two accepted steers during the same turn. Each accept clears the
+      // composer; wait for that before typing the next so the in-flight clear
+      // can't clobber it.
+      const steerInput = screen.getByTestId('chat-input');
       await user.type(steerInput, 'first steer');
-      await user.click(screen.getByTestId('steer-button'));
-      await user.clear(steerInput);
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
       await user.type(steerInput, 'second steer');
-      await user.click(screen.getByTestId('steer-button'));
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
 
       // The turn ends without echoing either steer; BOTH are recovered as
       // follow-ups (sequentially), so two extra kickoffs fire.
