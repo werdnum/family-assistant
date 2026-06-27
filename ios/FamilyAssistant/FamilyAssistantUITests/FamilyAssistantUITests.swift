@@ -144,6 +144,48 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "native-chat-streamed-tool-call")
     }
 
+    /// Regression test for the scene-update watchdog hang (0x8BADF00D) that
+    /// killed the app when sending a follow-up after a turn that used a tool
+    /// returning a large result (build 23,
+    /// scratch/FamilyAssistant-2026-06-27-192549.ips). The seeded conversation's
+    /// latest turn carries a very large tool result; opening it and sending a
+    /// follow-up must keep the app responsive. Before the fix the main thread
+    /// wedges re-laying out the tool group and the streamed reply never arrives
+    /// within budget, so the wait below times out (the in-test manifestation of
+    /// the device watchdog kill).
+    func testFollowUpAfterToolTurnStaysResponsive() {
+        relaunch(initialPath: "/chat?conversation_id=web_conv_tool_heavy")
+
+        openConversationIfNeeded(id: "web_conv_tool_heavy")
+
+        // The "Show more" control is produced only by web_conv_tool_heavy's very
+        // large (bounded) assistant answer, and sits at the bottom of that bubble
+        // where the open-time scroll-to-bottom leaves it visible. Its presence
+        // proves both that the *seeded* thread opened (a fresh chat has no
+        // messages, so a missed row tap fails here) and that the large message
+        // rendered without wedging the main thread.
+        // web_conv_tool_heavy ends with this small message, so the open-time
+        // scroll-to-bottom leaves it visible. Its presence proves the *seeded*
+        // thread opened (a fresh chat has no messages, so a missed row tap fails
+        // here) and that the thread — including the huge answer just above it —
+        // rendered without wedging the main thread.
+        XCTAssertTrue(
+            app.staticTexts["Tool-heavy summary complete."].waitForExistence(timeout: 30),
+            "Tool-heavy thread did not open/render — main thread likely wedged in layout."
+        )
+
+        let composer = app.textFields["chat-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: Self.readyTimeout))
+        typeText("Anything else?", into: composer)
+        app.buttons["chat-send-button"].tap()
+
+        XCTAssertTrue(
+            app.staticTexts["Native reply to Anything else?"].waitForExistence(timeout: 20),
+            "Follow-up reply never appeared — the app froze re-laying out the tool-heavy thread."
+        )
+        attachScreenshot(named: "native-chat-tool-heavy-followup")
+    }
+
     func testNativeChatInitialPromptDeepLinkSendsNewConversation() {
         relaunch(initialPath: "/chat?q=Deep%20link")
 
@@ -264,6 +306,21 @@ final class FamilyAssistantUITests: XCTestCase {
             return
         }
         let row = app.descendants(matching: .any)["conversation-row-web_conv_seed"]
+        if row.waitForExistence(timeout: 6) {
+            row.tap()
+        }
+    }
+
+    /// Opens a seeded conversation by id when the launch deep link did not
+    /// auto-open it (compact width can land on the conversation list). `marker`
+    /// is a piece of the thread's content used to detect that it is already open.
+    private func openConversationIfNeeded(id: String) {
+        // The deep link normally opens the thread directly; in compact width the
+        // launch can land on the conversation list, so tap the row if it's shown.
+        if app.textFields["chat-composer"].waitForExistence(timeout: 4) {
+            return
+        }
+        let row = app.descendants(matching: .any)["conversation-row-\(id)"]
         if row.waitForExistence(timeout: 6) {
             row.tap()
         }
