@@ -152,6 +152,13 @@ def test_ucp_tools_are_default_on_demand_and_not_confirm_gated() -> None:
     assert "shopping_profile" not in profile_by_id
     browser_profile = profile_by_id["browser_profile"]
     browser_engine = PolicyEngine.from_policy_config(browser_profile.tools_policy)
+    complex_tasks_profile = profile_by_id["complex_tasks"]
+    complex_tasks_engine = PolicyEngine.from_policy_config(
+        complex_tasks_profile.tools_policy
+    )
+    assert shopping_tool_names <= set(
+        complex_tasks_profile.tools_config.on_demand_local_tools
+    )
 
     for descriptor in descriptors.values():
         assert (
@@ -170,6 +177,13 @@ def test_ucp_tools_are_default_on_demand_and_not_confirm_gated() -> None:
         )
         assert (
             default_engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=False,
+            ).decision
+            == ToolPolicyDecision.ALLOW
+        )
+        assert (
+            complex_tasks_engine.evaluate_for_advertisement(
                 descriptor,
                 can_confirm=False,
             ).decision

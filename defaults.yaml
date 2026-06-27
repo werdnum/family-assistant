@@ -1356,6 +1356,9 @@ service_profiles:
         - "list_home_assistant_entities"
         - "list_home_assistant_actions"
         - "call_home_assistant_action"
+        - "ucp_add_to_cart"
+        - "ucp_get_cart"
+        - "ucp_transfer_checkout_to_human"
       on_demand_mcp_server_ids:
         - "homeassistant"
     tools_policy:
@@ -1414,6 +1417,9 @@ service_profiles:
               - "list_worker_tasks"
               - "cancel_worker_task"
               - "mqtt_publish"
+              - "ucp_add_to_cart"
+              - "ucp_get_cart"
+              - "ucp_transfer_checkout_to_human"
           decision: "allow"
           priority: 10
         - match:
