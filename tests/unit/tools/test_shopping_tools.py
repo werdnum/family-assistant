@@ -92,11 +92,9 @@ def _cart_response() -> dict[str, object]:
         "id": "rpc-1",
         "result": {
             "structuredContent": {
-                "cart": {
-                    "id": "gid://shopify/Cart/cart_abc123",
-                    "continue_url": "https://shop.example.com/cart/c/cart_abc123",
-                    "line_items": [],
-                }
+                "id": "gid://shopify/Cart/cart_abc123",
+                "continue_url": "https://shop.example.com/cart/c/cart_abc123",
+                "line_items": [],
             }
         },
     }
@@ -147,16 +145,14 @@ def _cart_with_items_response() -> dict[str, object]:
         "id": "rpc-1",
         "result": {
             "structuredContent": {
-                "cart": {
-                    "id": "gid://shopify/Cart/cart_abc123",
-                    "line_items": [
-                        {
-                            "quantity": 1,
-                            "item": {"id": "gid://shopify/ProductVariant/12345678901"},
-                        }
-                    ],
-                    "continue_url": "https://shop.example.com/cart/c/cart_abc123",
-                }
+                "id": "gid://shopify/Cart/cart_abc123",
+                "line_items": [
+                    {
+                        "quantity": 1,
+                        "item": {"id": "gid://shopify/ProductVariant/12345678901"},
+                    }
+                ],
+                "continue_url": "https://shop.example.com/cart/c/cart_abc123",
             }
         },
     }
@@ -251,6 +247,44 @@ async def test_ucp_add_to_cart_uses_discovered_merchant_endpoint(
 
     request = _FakeAsyncClient.requests[0]
     assert request.url == "https://shop.example.com/ucp/rpc"
+
+
+async def test_ucp_add_to_cart_uses_trusted_platform_endpoint_cross_site(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # A Shopify storefront on a custom domain advertises its *.myshopify.com shop
+    # host; the default trusted suffix lets that cross-site endpoint be used
+    # instead of falling back to a non-existent custom-domain path.
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(
+            200,
+            json={
+                "ucp": {
+                    "services": {
+                        "dev.ucp.shopping": [
+                            {
+                                "transport": "mcp",
+                                "endpoint": "https://shop-2.myshopify.com/api/ucp/mcp",
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+    ]
+    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://statusanxiety.example/products/wallet",
+        line_items=[{"variant_id": "variant-1", "quantity": 1}],
+    )
+
+    request = _FakeAsyncClient.requests[0]
+    assert request.url == "https://shop-2.myshopify.com/api/ucp/mcp"
 
 
 async def test_ucp_add_to_cart_rejects_cross_origin_discovered_endpoint(
@@ -381,11 +415,9 @@ async def test_ucp_add_to_existing_cart_resolves_endpoint_once(
                 "id": "rpc-1",
                 "result": {
                     "structuredContent": {
-                        "cart": {
-                            "id": "gid://shopify/Cart/cart_abc123",
-                            "line_items": [],
-                            "continue_url": "https://shop.example.com/cart/c/abc",
-                        }
+                        "id": "gid://shopify/Cart/cart_abc123",
+                        "line_items": [],
+                        "continue_url": "https://shop.example.com/cart/c/abc",
                     }
                 },
             },
@@ -640,15 +672,13 @@ async def test_ucp_get_cart_raises_for_unusable_cart_message(
                 "id": "rpc-1",
                 "result": {
                     "structuredContent": {
-                        "cart": {
-                            "messages": [
-                                {
-                                    "type": "error",
-                                    "code": "cart_not_found",
-                                    "content": "Cart was not found or has expired",
-                                }
-                            ]
-                        }
+                        "messages": [
+                            {
+                                "type": "error",
+                                "code": "cart_not_found",
+                                "content": "Cart was not found or has expired",
+                            }
+                        ]
                     }
                 },
             },
@@ -835,19 +865,17 @@ async def test_ucp_add_to_existing_cart_preserves_supported_cart_state(
         "id": "rpc-1",
         "result": {
             "structuredContent": {
-                "cart": {
-                    "id": "gid://shopify/Cart/cart_abc123",
-                    "line_items": [
-                        {
-                            "quantity": 1,
-                            "item": {"id": "gid://shopify/ProductVariant/existing"},
-                        }
-                    ],
-                    "context": {"address_country": "US"},
-                    "buyer": {"identity_token": "buyer-token"},
-                    "signals": {"attribute_preferences": ["durable"]},
-                    "continue_url": "https://shop.example.com/cart/c/cart_abc123",
-                }
+                "id": "gid://shopify/Cart/cart_abc123",
+                "line_items": [
+                    {
+                        "quantity": 1,
+                        "item": {"id": "gid://shopify/ProductVariant/existing"},
+                    }
+                ],
+                "context": {"address_country": "US"},
+                "buyer": {"identity_token": "buyer-token"},
+                "signals": {"attribute_preferences": ["durable"]},
+                "continue_url": "https://shop.example.com/cart/c/cart_abc123",
             }
         },
     }

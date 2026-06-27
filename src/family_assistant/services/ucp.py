@@ -17,6 +17,7 @@ import httpx
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
+from publicsuffix2 import get_sld
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -66,16 +67,28 @@ class MerchantUCPProfile:
         """The first advertised shopping MCP endpoint, if any."""
         return self.mcp_endpoints[0] if self.mcp_endpoints else None
 
-    @property
-    def same_origin_mcp_endpoint(self) -> str | None:
-        """The first advertised endpoint that is same-origin as this merchant.
+    def usable_mcp_endpoint(
+        self, *, trusted_suffixes: tuple[str, ...] = ()
+    ) -> str | None:
+        """The first advertised endpoint safe to post to for this merchant.
 
-        Callers post/sign only to a same-origin endpoint (untrusted metadata
-        must not redirect requests cross-host), so this is the endpoint actually
-        usable for the origin — and what the browser hint should gate on.
+        The profile is untrusted merchant-controlled metadata, so the signed
+        POST must not be redirected to an arbitrary host. An endpoint is usable
+        when it is same-origin as the merchant, same-site as the merchant (a
+        sibling subdomain of the same registrable domain — still the merchant's
+        own site, e.g. ``eve.theiconic.com.au`` for ``www.theiconic.com.au``),
+        or hosted on a configured trusted commerce-platform suffix
+        (``myshopify.com`` covers Shopify storefronts on custom domains, whose
+        UCP endpoint lives on the ``*.myshopify.com`` shop host). Anything else
+        is ignored so the caller falls back rather than posting to an unrelated
+        host. This is also what the browser shopping hint gates on.
         """
         for endpoint in self.mcp_endpoints:
-            if same_origin(endpoint, self.origin):
+            if (
+                same_origin(endpoint, self.origin)
+                or same_site(endpoint, self.origin)
+                or host_matches_trusted_suffix(endpoint, trusted_suffixes)
+            ):
                 return endpoint
         return None
 
@@ -106,6 +119,58 @@ def same_origin(url_a: str, url_b: str) -> bool:
     """Whether two URLs share a scheme/host/effective-port origin."""
     key_a = _origin_key(url_a)
     return key_a is not None and key_a == _origin_key(url_b)
+
+
+def _https_host(url: str) -> str | None:
+    """Return the lowercased host of an HTTPS URL, or ``None``.
+
+    Non-HTTPS or unparseable URLs return ``None`` so trust comparisons treat
+    them as non-matching rather than raising on merchant-controlled metadata.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    if parsed.scheme != "https":
+        return None
+    host = (parsed.hostname or "").lower()
+    return host or None
+
+
+def same_site(url_a: str, url_b: str) -> bool:
+    """Whether two HTTPS URLs share a registrable domain (eTLD+1).
+
+    Same-site-but-not-same-origin covers a merchant serving its UCP endpoint
+    from a sibling subdomain of its storefront (``eve.theiconic.com.au`` for
+    ``www.theiconic.com.au``) — still the merchant's own site. The registrable
+    domain is resolved against the public suffix list so multi-label suffixes
+    (``com.au``) are handled correctly.
+    """
+    host_a = _https_host(url_a)
+    host_b = _https_host(url_b)
+    if host_a is None or host_b is None:
+        return False
+    domain_a = get_sld(host_a)
+    return bool(domain_a) and domain_a == get_sld(host_b)
+
+
+def host_matches_trusted_suffix(url: str, suffixes: tuple[str, ...]) -> bool:
+    """Whether an HTTPS URL's host equals or is a subdomain of a trusted suffix.
+
+    Trusted suffixes name commerce platforms whose backend hosts are safe to
+    post to even cross-site (``myshopify.com`` for Shopify shop hosts). Matching
+    is on whole labels, so ``status-anxiety-2.myshopify.com`` matches
+    ``myshopify.com`` while ``notmyshopify.com`` and ``myshopify.com.evil.com``
+    do not.
+    """
+    host = _https_host(url)
+    if host is None:
+        return False
+    for suffix in suffixes:
+        normalized = suffix.strip().lstrip(".").lower()
+        if normalized and (host == normalized or host.endswith(f".{normalized}")):
+            return True
+    return False
 
 
 def merchant_origin(url: str) -> str | None:

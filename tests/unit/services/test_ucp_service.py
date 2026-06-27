@@ -15,7 +15,9 @@ from family_assistant.services.ucp import (
     UCPConfigurationError,
     build_ucp_profile,
     discover_merchant_ucp_profile,
+    host_matches_trusted_suffix,
     merchant_origin,
+    same_site,
     sign_ucp_request,
 )
 
@@ -378,11 +380,11 @@ async def test_discover_merchant_ucp_profile_returns_none_on_undecodable_body() 
     assert profile is None
 
 
-def test_same_origin_mcp_endpoint_prefers_same_origin_binding() -> None:
+def test_usable_mcp_endpoint_prefers_same_origin_binding() -> None:
     profile = MerchantUCPProfile(
         origin="https://shop.example.com",
         mcp_endpoints=(
-            "https://other.example.com/mcp",
+            "https://other.unrelated.com/mcp",
             "https://shop.example.com:443/ucp/rpc",
         ),
         service_names=("dev.ucp.shopping",),
@@ -390,21 +392,70 @@ def test_same_origin_mcp_endpoint_prefers_same_origin_binding() -> None:
         version=None,
     )
 
-    # Skips the cross-origin binding; matches the default-port same-origin one.
-    assert profile.same_origin_mcp_endpoint == "https://shop.example.com:443/ucp/rpc"
+    # Skips the untrusted cross-host binding; matches the same-origin one.
+    assert profile.usable_mcp_endpoint() == "https://shop.example.com:443/ucp/rpc"
 
 
-def test_same_origin_mcp_endpoint_none_when_only_cross_origin() -> None:
+def test_usable_mcp_endpoint_none_when_only_untrusted_cross_host() -> None:
     profile = MerchantUCPProfile(
         origin="https://shop.example.com",
-        mcp_endpoints=("https://other.example.com/mcp",),
+        mcp_endpoints=("https://other.unrelated.com/mcp",),
         service_names=("dev.ucp.shopping",),
         capability_names=(),
         version=None,
     )
 
-    assert profile.same_origin_mcp_endpoint is None
+    assert profile.usable_mcp_endpoint() is None
     assert profile.supports_shopping is True
+
+
+def test_usable_mcp_endpoint_accepts_same_site_subdomain() -> None:
+    # THE ICONIC serves its endpoint from a sibling subdomain of the storefront.
+    profile = MerchantUCPProfile(
+        origin="https://www.theiconic.com.au",
+        mcp_endpoints=("https://eve.theiconic.com.au/ucp/v1",),
+        service_names=("dev.ucp.shopping",),
+        capability_names=(),
+        version=None,
+    )
+
+    assert profile.usable_mcp_endpoint() == "https://eve.theiconic.com.au/ucp/v1"
+
+
+def test_usable_mcp_endpoint_accepts_trusted_suffix_only_when_configured() -> None:
+    # A Shopify storefront on a custom domain advertises its *.myshopify.com host.
+    profile = MerchantUCPProfile(
+        origin="https://statusanxiety.com.au",
+        mcp_endpoints=("https://status-anxiety-2.myshopify.com/api/ucp/mcp",),
+        service_names=("dev.ucp.shopping",),
+        capability_names=(),
+        version=None,
+    )
+
+    assert profile.usable_mcp_endpoint() is None
+    assert profile.usable_mcp_endpoint(trusted_suffixes=("myshopify.com",)) == (
+        "https://status-anxiety-2.myshopify.com/api/ucp/mcp"
+    )
+
+
+def test_same_site_uses_registrable_domain() -> None:
+    assert same_site("https://eve.theiconic.com.au/x", "https://www.theiconic.com.au")
+    # Different registrable domains under the same multi-label public suffix.
+    assert not same_site("https://statusanxiety.com.au", "https://example.com.au")
+    assert not same_site("http://eve.theiconic.com.au", "https://www.theiconic.com.au")
+
+
+def test_host_matches_trusted_suffix_is_label_anchored() -> None:
+    suffixes = ("myshopify.com",)
+    assert host_matches_trusted_suffix(
+        "https://status-anxiety-2.myshopify.com/api/ucp/mcp", suffixes
+    )
+    assert host_matches_trusted_suffix("https://myshopify.com/api", suffixes)
+    assert not host_matches_trusted_suffix("https://notmyshopify.com/api", suffixes)
+    assert not host_matches_trusted_suffix(
+        "https://myshopify.com.evil.com/api", suffixes
+    )
+    assert not host_matches_trusted_suffix("http://shop.myshopify.com/api", suffixes)
 
 
 async def test_discover_merchant_ucp_profile_resolves_relative_endpoint() -> None:
