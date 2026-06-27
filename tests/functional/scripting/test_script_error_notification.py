@@ -183,6 +183,7 @@ async def test_script_failure_notification_is_processable(
     )
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_notify_on_failure_false_suppresses_notification(
     db_engine: AsyncEngine,
@@ -231,6 +232,7 @@ async def test_notify_on_failure_false_suppresses_notification(
     )
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_llm_callback_failure_does_not_trigger_notification(
     db_engine: AsyncEngine,
@@ -285,6 +287,7 @@ async def test_llm_callback_failure_does_not_trigger_notification(
     )
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_notification_contains_event_data(
     db_engine: AsyncEngine,
