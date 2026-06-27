@@ -107,6 +107,15 @@ private final class UITestBackendURLProtocol: URLProtocol {
                 // a "Load earlier messages" control rather than hanging. See
                 // docs/design/ios-chat-layout-watchdog-crash.md.
                 "web_conv_large": largeMarkdownThread(),
+                // Repro for the scene-update watchdog hang on build 23
+                // (scratch/FamilyAssistant-2026-06-27-192549.ips): a tool-using
+                // turn whose (always-visible) assistant answer is a very large
+                // markdown document. Sending a follow-up re-lays out that bubble's
+                // unbounded block tree on the main thread and overruns the 10s
+                // budget. (A collapsed tool group is NOT laid out, so the large
+                // result is incidental; the visible answer is what hangs.) See
+                // docs/design/ios-chat-layout-watchdog-crash.md.
+                "web_conv_tool_heavy": toolHeavyThread(),
             ]
             pendingChatReplies = [:]
             pendingChatTurnIDs = [:]
@@ -420,6 +429,84 @@ private final class UITestBackendURLProtocol: URLProtocol {
             ))
         }
         return messages
+    }
+
+    /// A tool-using turn whose (always-visible) assistant answer is a very large
+    /// markdown document. Reproduces the production scene-update watchdog hang
+    /// (0x8BADF00D) seen when sending a follow-up after a tool-using turn:
+    /// re-laying out the bubble's unbounded block tree (thousands of `Text` nodes
+    /// across headings, wrapping paragraphs, nested lists, and wide tables) under
+    /// the stack layout's multi-proposal sizing overruns the main-thread budget.
+    /// The tool call/result are present so the turn matches the reported trigger,
+    /// but the collapsed tool group is not laid out — the visible answer is the
+    /// hang.
+    private static func toolHeavyThread() -> [UITestChatMessage] {
+        let chunk = """
+        ## Section \u{2116}
+
+        Paragraph with **bold**, _italic_, and `inline code` that wraps across
+        several lines so the text engine has real work to measure on each pass.
+
+        - point one
+          - nested detail a
+          - nested detail b
+        - point two
+
+        | Col A | Col B | Col C | Col D |
+        | --- | --- | --- | --- |
+        | alpha | beta | gamma | delta |
+        | one | two | three | four |
+        """
+        let largeResult = (0..<1000)
+            .map { chunk.replacingOccurrences(of: "\u{2116}", with: "\($0 + 1)") }
+            .joined(separator: "\n\n")
+        return [
+            UITestChatMessage(
+                internalID: 1,
+                role: "user",
+                content: "Search everything and summarize.",
+                timestamp: "2026-06-08T09:00:00Z",
+                toolCalls: nil,
+                toolCallID: nil,
+                attachments: nil
+            ),
+            UITestChatMessage(
+                internalID: 2,
+                role: "assistant",
+                content: "",
+                timestamp: "2026-06-08T09:00:01Z",
+                toolCalls: [
+                    UITestToolCall(
+                        id: "call-large",
+                        type: "function",
+                        function: UITestToolFunction(
+                            name: "search_notes",
+                            arguments: #"{"query":"everything"}"#
+                        )
+                    ),
+                ],
+                toolCallID: nil,
+                attachments: nil
+            ),
+            UITestChatMessage(
+                internalID: 3,
+                role: "tool",
+                content: "Found 3 matching notes.",
+                timestamp: "2026-06-08T09:00:02Z",
+                toolCalls: nil,
+                toolCallID: "call-large",
+                attachments: nil
+            ),
+            UITestChatMessage(
+                internalID: 4,
+                role: "assistant",
+                content: largeResult + "\n\nHere is what I found.",
+                timestamp: "2026-06-08T09:00:03Z",
+                toolCalls: nil,
+                toolCallID: nil,
+                attachments: nil
+            ),
+        ]
     }
 
     private static func chatConversationSummaries() -> [UITestConversationSummary] {

@@ -144,6 +144,38 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "native-chat-streamed-tool-call")
     }
 
+    /// Regression test for the scene-update watchdog hang (0x8BADF00D) that
+    /// killed the app when sending a follow-up after a turn that used a tool
+    /// returning a large result (build 23,
+    /// scratch/FamilyAssistant-2026-06-27-192549.ips). The seeded conversation's
+    /// latest turn carries a very large tool result; opening it and sending a
+    /// follow-up must keep the app responsive. Before the fix the main thread
+    /// wedges re-laying out the tool group and the streamed reply never arrives
+    /// within budget, so the wait below times out (the in-test manifestation of
+    /// the device watchdog kill).
+    func testFollowUpAfterToolTurnStaysResponsive() {
+        relaunch(initialPath: "/chat?conversation_id=web_conv_tool_heavy")
+
+        openConversationIfNeeded(id: "web_conv_tool_heavy", marker: "Anything else?")
+
+        // The composer becoming hittable proves the thread (with a very large
+        // assistant message) rendered without wedging the main thread on open.
+        let composer = app.textFields["chat-composer"]
+        XCTAssertTrue(
+            composer.waitForExistence(timeout: 30),
+            "Chat thread with a very large message did not become interactive — main thread likely wedged in layout."
+        )
+        composer.tap()
+        composer.typeText("Anything else?")
+        app.buttons["chat-send-button"].tap()
+
+        XCTAssertTrue(
+            app.staticTexts["Native reply to Anything else?"].waitForExistence(timeout: 20),
+            "Follow-up reply never appeared — the app froze re-laying out the tool-heavy thread."
+        )
+        attachScreenshot(named: "native-chat-tool-heavy-followup")
+    }
+
     func testNativeChatInitialPromptDeepLinkSendsNewConversation() {
         relaunch(initialPath: "/chat?q=Deep%20link")
 
@@ -264,6 +296,19 @@ final class FamilyAssistantUITests: XCTestCase {
             return
         }
         let row = app.descendants(matching: .any)["conversation-row-web_conv_seed"]
+        if row.waitForExistence(timeout: 6) {
+            row.tap()
+        }
+    }
+
+    /// Opens a seeded conversation by id when the launch deep link did not
+    /// auto-open it (compact width can land on the conversation list). `marker`
+    /// is a piece of the thread's content used to detect that it is already open.
+    private func openConversationIfNeeded(id: String, marker: String) {
+        if app.staticTexts[marker].waitForExistence(timeout: 2) {
+            return
+        }
+        let row = app.descendants(matching: .any)["conversation-row-\(id)"]
         if row.waitForExistence(timeout: 6) {
             row.tap()
         }

@@ -259,17 +259,16 @@ private struct ChatThreadView: View {
                 }
             }
             .onChange(of: viewModel.visibleGroupedMessages.last?.id) { _, newValue in
-                // Only animate the scroll while active. A message landing during a
-                // background transition would otherwise kick an animated layout
-                // transaction right as iOS is suspending the app — a suspend
-                // watchdog hazard. On the next foregrounding `onAppear` lands at
-                // the bottom without animation.
                 guard scenePhase == .active, let lastID = newValue else {
                     return
                 }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(lastID, anchor: .bottom)
-                }
+                // Scroll without animation. Animating scrollTo(bottom) past a very
+                // tall bubble makes the LazyVStack re-place/re-apply its rows on
+                // every animation frame without settling — a main-thread wedge that
+                // trips the scene-update watchdog. The jump is acceptable; the
+                // suspend-watchdog concern that previously required gating here is
+                // already handled by not driving layout while inactive (above).
+                proxy.scrollTo(lastID, anchor: .bottom)
             }
         }
     }
@@ -384,6 +383,33 @@ private struct MessageBubble: View {
         }
     }
 }
+
+#if DEBUG
+/// Test seam for the chat-layout budget/fuzz harness (`ChatLayoutBudgetTests`).
+/// Renders the production message-list layout — `ScrollView` + `LazyVStack` +
+/// `MessageBubble` — over an explicit message array so a hosting controller can
+/// force a content-sizing pass and time it. Mirrors
+/// `ChatThreadView.messageScrollArea` without the scroll-position plumbing. The
+/// invariant the harness enforces is that this layout stays bounded (well under
+/// the scene-update watchdog) for any message shape; see
+/// docs/design/ios-chat-layout-watchdog-crash.md.
+struct ChatMessageListLayoutProbe: View {
+    let messages: [ChatMessage]
+    let viewModel: ChatViewModel
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 14) {
+                ForEach(messages) { message in
+                    MessageBubble(message: message, viewModel: viewModel)
+                        .id(message.id)
+                }
+            }
+            .padding()
+        }
+    }
+}
+#endif
 
 private struct ChatComposerView: View {
     var viewModel: ChatViewModel
@@ -789,17 +815,198 @@ enum NativeMarkdownRenderer {
     }
 }
 
+/// Bounds the layout cost of a single rendered message.
+///
+/// A message can be arbitrarily large (a long assistant answer, or an expanded
+/// tool result that dumped a whole document), and a large message is not just
+/// many top-level blocks — it can be one block with thousands of children (a
+/// huge list/table) or one enormous `Text` (a giant code block or unbroken
+/// string). Rendering any of these unbounded builds a view tree the enclosing
+/// ScrollView must size in one main-thread pass; under the stack layout's
+/// multi-proposal sizing that overruns the scene-update watchdog (0x8BADF00D)
+/// and the app is killed. See docs/design/ios-chat-layout-watchdog-crash.md.
+///
+/// `leafBudget` caps the total leaf views (paragraphs, list items, table rows,
+/// …) realized; content beyond it is paged in behind "Show more". `textCharCap`
+/// clamps any single `Text` so one giant string can't dominate a layout pass on
+/// its own (truncation is marked inline with an ellipsis, never silent).
+enum MarkdownRenderBudget {
+    static let leafBudget = 150
+    static let textCharCap = 2000
+    static let maxTableColumns = 16
+    /// Deeply nested lists/quotes are cheap by leaf *count* but layout cost grows
+    /// super-linearly with nesting *depth* (each level re-proposes sizes), so cap
+    /// the depth independently and collapse anything deeper to an ellipsis.
+    static let maxNestingDepth = 6
+    /// Raw markdown parsed per page. Bounds parse cost (and, transitively, any
+    /// shape we haven't reasoned about) before structural bounding even runs.
+    static let charsPerPage = 16384
+
+    /// The fully-bounded blocks to render for `markdown` at `pages` worth of
+    /// budget, plus whether more content remains (→ show "Show more"). This is
+    /// the single choke point that bounds every layout cost — parse size (char
+    /// prefix), structure (leaf budget + table cells), and single-`Text` length
+    /// — so the content-sizing pass can't overrun the watchdog for any shape.
+    /// Shared by `NativeMarkdownView` and the layout-budget tests.
+    static func renderPlan(for markdown: String, pages: Int) -> (blocks: [NativeMarkdownBlock], hasMore: Bool) {
+        let charLimit = charsPerPage * max(1, pages)
+        // Decide truncation in O(charLimit), never O(markdown.count): `body` is
+        // re-evaluated many times per message (scroll, animation, LazyVStack), and
+        // an O(n) length check over a multi-hundred-KB message there is itself a
+        // main-thread hang. `prefix` stops after charLimit+1 Characters.
+        let head = markdown.prefix(charLimit + 1)
+        let sourceTruncated = head.count > charLimit
+        let source = sourceTruncated ? String(head.prefix(charLimit)) : markdown
+        let parsed = NativeMarkdownRenderer.blocks(from: source)
+        let bounded = boundedMarkdownBlocks(parsed, leafBudget: leafBudget * max(1, pages), textCharCap: textCharCap, depth: 0)
+        return (bounded.blocks, bounded.hitBudget || sourceTruncated)
+    }
+}
+
+private func cappedMarkdownText(_ text: String, cap: Int) -> (text: String, truncated: Bool) {
+    guard text.count > cap else {
+        return (text, false)
+    }
+    return (String(text.prefix(cap)) + "…", true)
+}
+
+/// Approximate number of leaf views a block realizes, used to spend the budget.
+private func markdownLeafCount(_ block: NativeMarkdownBlock) -> Int {
+    switch block {
+    case .paragraph, .fallback, .heading, .thematicBreak, .codeBlock:
+        return 1
+    case .unorderedList(let items), .orderedList(_, let items):
+        return items.reduce(0) { $0 + 1 + $1.blocks.reduce(0) { $0 + markdownLeafCount($1) } }
+    case .blockQuote(let blocks):
+        return max(1, blocks.reduce(0) { $0 + markdownLeafCount($1) })
+    case .table(let header, let rows):
+        return (rows.count + 1) * max(1, header.count)
+    }
+}
+
+/// Truncate a block tree to `leafBudget` leaves, capping single-`Text` content
+/// to `textCharCap`. Returns the bounded blocks and whether any blocks/items
+/// were dropped *for budget reasons* (text-cap truncation alone does not count —
+/// that is shown inline — so the "Show more" affordance only appears when paging
+/// would actually reveal more structure).
+func boundedMarkdownBlocks(
+    _ blocks: [NativeMarkdownBlock],
+    leafBudget: Int,
+    textCharCap: Int,
+    depth: Int
+) -> (blocks: [NativeMarkdownBlock], hitBudget: Bool) {
+    if depth > MarkdownRenderBudget.maxNestingDepth {
+        return (blocks.isEmpty ? [] : [.paragraph("…")], !blocks.isEmpty)
+    }
+    var remaining = leafBudget
+    var result: [NativeMarkdownBlock] = []
+    var hitBudget = false
+    for block in blocks {
+        if remaining <= 0 {
+            hitBudget = true
+            break
+        }
+        let bounded = boundOneMarkdownBlock(block, leafBudget: remaining, textCharCap: textCharCap, depth: depth)
+        result.append(bounded.block)
+        remaining -= bounded.cost
+        hitBudget = hitBudget || bounded.hitBudget
+    }
+    if result.count < blocks.count {
+        hitBudget = true
+    }
+    return (result, hitBudget)
+}
+
+private func boundOneMarkdownBlock(
+    _ block: NativeMarkdownBlock,
+    leafBudget: Int,
+    textCharCap: Int,
+    depth: Int
+) -> (block: NativeMarkdownBlock, cost: Int, hitBudget: Bool) {
+    switch block {
+    case .paragraph(let text):
+        return (.paragraph(cappedMarkdownText(text, cap: textCharCap).text), 1, false)
+    case .fallback(let text):
+        return (.fallback(cappedMarkdownText(text, cap: textCharCap).text), 1, false)
+    case .heading(let level, let text):
+        return (.heading(level: level, text: cappedMarkdownText(text, cap: textCharCap).text), 1, false)
+    case .thematicBreak:
+        return (.thematicBreak, 1, false)
+    case .codeBlock(let language, let code):
+        return (.codeBlock(language: language, code: cappedMarkdownText(code, cap: textCharCap).text), 1, false)
+    case .unorderedList(let items):
+        let bounded = boundedMarkdownItems(items, leafBudget: leafBudget, textCharCap: textCharCap, depth: depth)
+        return (.unorderedList(bounded.items), bounded.cost, bounded.hitBudget)
+    case .orderedList(let startIndex, let items):
+        let bounded = boundedMarkdownItems(items, leafBudget: leafBudget, textCharCap: textCharCap, depth: depth)
+        return (.orderedList(startIndex: startIndex, items: bounded.items), bounded.cost, bounded.hitBudget)
+    case .blockQuote(let blocks):
+        let bounded = boundedMarkdownBlocks(blocks, leafBudget: leafBudget, textCharCap: textCharCap, depth: depth + 1)
+        let cost = max(1, bounded.blocks.reduce(0) { $0 + markdownLeafCount($1) })
+        return (.blockQuote(bounded.blocks), cost, bounded.hitBudget)
+    case .table(let header, let rows):
+        // Bound BOTH dimensions: a wide table builds rows×cols cells in a Grid
+        // under a horizontal ScrollView, which is super-linear to lay out, so
+        // counting only rows (an earlier bug) left wide tables unbounded.
+        let columnCount = max(1, header.count)
+        let keptColumns = min(columnCount, MarkdownRenderBudget.maxTableColumns)
+        let maxRows = max(0, leafBudget / keptColumns - 1)
+        let keptRows = rows.prefix(maxRows).map { row in
+            row.prefix(keptColumns).map { cappedMarkdownText($0, cap: textCharCap).text }
+        }
+        let cappedHeader = header.prefix(keptColumns).map { cappedMarkdownText($0, cap: textCharCap).text }
+        let dropped = keptRows.count < rows.count || keptColumns < columnCount
+        return (.table(header: cappedHeader, rows: keptRows), (keptRows.count + 1) * keptColumns, dropped)
+    }
+}
+
+private func boundedMarkdownItems(
+    _ items: [NativeMarkdownListItem],
+    leafBudget: Int,
+    textCharCap: Int,
+    depth: Int
+) -> (items: [NativeMarkdownListItem], cost: Int, hitBudget: Bool) {
+    var remaining = leafBudget
+    var result: [NativeMarkdownListItem] = []
+    var hitBudget = false
+    for item in items {
+        if remaining <= 1 {
+            hitBudget = true
+            break
+        }
+        remaining -= 1
+        let bounded = boundedMarkdownBlocks(item.blocks, leafBudget: remaining, textCharCap: textCharCap, depth: depth + 1)
+        remaining -= bounded.blocks.reduce(0) { $0 + markdownLeafCount($1) }
+        result.append(NativeMarkdownListItem(checkbox: item.checkbox, blocks: bounded.blocks))
+        hitBudget = hitBudget || bounded.hitBudget
+    }
+    if result.count < items.count {
+        hitBudget = true
+    }
+    let cost = max(1, result.reduce(0) { $0 + 1 + $1.blocks.reduce(0) { $0 + markdownLeafCount($1) } })
+    return (result, cost, hitBudget)
+}
+
 private struct NativeMarkdownView: View {
     let markdown: String
 
-    private var blocks: [NativeMarkdownBlock] {
-        NativeMarkdownRenderer.blocks(from: markdown)
-    }
+    @State private var pages = 1
 
     var body: some View {
+        let plan = MarkdownRenderBudget.renderPlan(for: markdown, pages: pages)
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(plan.blocks.enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block)
+            }
+            if plan.hasMore {
+                Button {
+                    pages += 1
+                } label: {
+                    Label("Show more", systemImage: "chevron.down")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("markdown-show-more")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

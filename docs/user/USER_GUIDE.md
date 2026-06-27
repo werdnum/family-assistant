@@ -481,7 +481,9 @@ various tasks with dark mode support and mobile optimization.
   corresponding pages inside the app. Native Chat shares the same conversation history as the
   browser, streams replies as they are generated, supports profile switching, shows Markdown and
   tool calls, handles approve/reject confirmations, and can upload images, PDFs, plain text, and
-  Markdown files up to 100 MB. You can search, read, create, edit, and delete notes on iOS,
+  Markdown files up to 100 MB. A very long message (or a large tool result) renders a section at a
+  time with a **Show more** control, so the thread stays responsive no matter how big the content
+  is. You can search, read, create, edit, and delete notes on iOS,
   including changing whether a note is included in the assistant's system prompt. The **More** tab
   gathers the long-tail destinations — Voice, Events, History, Automations, Tools, and more — and a
   single **Settings** screen with notification controls and sign-out. Use the tab bar to move
