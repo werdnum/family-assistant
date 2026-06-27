@@ -506,6 +506,24 @@ def test_https_trust_rejects_malformed_port() -> None:
     )
 
 
+def test_https_trust_requires_default_port() -> None:
+    # Same-site / trusted-suffix matching trusts only the standard HTTPS service;
+    # an alternate port could reach a different service on the same host, so it
+    # is rejected, while an explicit :443 is accepted as the default.
+    assert not same_site(
+        "https://eve.theiconic.com.au:8443/x", "https://www.theiconic.com.au"
+    )
+    assert same_site(
+        "https://eve.theiconic.com.au:443/x", "https://www.theiconic.com.au"
+    )
+    assert not host_matches_trusted_suffix(
+        "https://shop.myshopify.com:8443/x", ("myshopify.com",)
+    )
+    assert host_matches_trusted_suffix(
+        "https://shop.myshopify.com:443/x", ("myshopify.com",)
+    )
+
+
 async def test_discover_merchant_ucp_profile_resolves_relative_endpoint() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_merchant_profile_payload(endpoint="/ucp/mcp"))

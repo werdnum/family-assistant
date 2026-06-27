@@ -128,21 +128,24 @@ def same_origin(url_a: str, url_b: str) -> bool:
 
 
 def _https_host(url: str) -> str | None:
-    """Return the lowercased host of an HTTPS URL, or ``None``.
+    """Return the lowercased host of a default-port HTTPS URL, or ``None``.
 
-    Non-HTTPS, unparseable, or malformed-port URLs return ``None`` so trust
-    comparisons treat them as non-matching rather than raising (or silently
-    keeping the host) on merchant-controlled metadata.
+    Returns ``None`` for non-HTTPS, unparseable, malformed-port, or non-default
+    port URLs. Used only by the same-site / trusted-suffix checks, which trust
+    the standard HTTPS service on a host but not arbitrary other ports: a
+    non-default port (e.g. ``:8443``) could reach a different service on the
+    same registrable domain or trusted platform host — an SSRF surface.
+    Same-origin matching, which legitimately carries an explicit port, uses
+    ``_origin_key`` instead, not this.
     """
     try:
         parsed = urlparse(url)
         # Accessing .port validates it: an out-of-range port (e.g. :99999)
-        # raises ValueError here, so a malformed endpoint is rejected rather
-        # than matched and then selected for a POST that cannot succeed.
-        _ = parsed.port
+        # raises ValueError, so a malformed endpoint is rejected here.
+        port = parsed.port
     except ValueError:
         return None
-    if parsed.scheme != "https":
+    if parsed.scheme != "https" or port not in {None, 443}:
         return None
     host = (parsed.hostname or "").lower()
     return host or None
