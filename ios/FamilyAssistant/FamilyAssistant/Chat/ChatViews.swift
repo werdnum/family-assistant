@@ -156,6 +156,13 @@ private struct ConversationRow: View {
             }
         }
         .padding(.vertical, 4)
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = conversation.conversationID
+            } label: {
+                Label("Copy Conversation ID", systemImage: "doc.on.doc")
+            }
+        }
     }
 }
 
@@ -357,6 +364,18 @@ private struct MessageBubble: View {
         // One textSelection for the whole bubble. It applies to every Text in the
         // subtree, so per-element copies are redundant and only add layout work.
         .textSelection(.enabled)
+        // Long-press copies the entire message in one tap. textSelection stays
+        // enabled alongside it, so press-and-drag partial selection (and the
+        // selection menu's Select All) remain available for sub-message copies.
+        .contextMenu {
+            if !message.text.isEmpty {
+                Button {
+                    UIPasteboard.general.string = message.text
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+            }
+        }
         .padding(12)
         .background(isUser ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
