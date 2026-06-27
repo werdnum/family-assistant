@@ -177,6 +177,80 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'clicking Steer injects mid-turn without also submitting a new turn',
+    async () => {
+      // The Steer button lives inside the composer form; if it defaults to a
+      // submit button, a mouse click both steers and fires the form's submit
+      // (a second kickoff POST). It must be type="button" so only the steer
+      // endpoint is hit.
+      const { ready, turnIdRef } = installOpenStream();
+      let turnsPosts = 0;
+      let steerPosts = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          turnIdRef.current = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || `web_conv_${Date.now()}`,
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          steerPosts += 1;
+          const body = (await request.json()) as { conversation_id: string };
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            accepted: true,
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      await waitFor(() => {
+        expect(turnsPosts).toBe(1);
+      }, WAIT);
+
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'focus on tomorrow');
+      const steerButton = await screen.findByTestId('steer-button', undefined, WAIT);
+      // The button lives inside the composer form, so it must opt out of the
+      // default type="submit" or a click would also submit a new message.
+      expect(steerButton).toHaveAttribute('type', 'button');
+      await user.click(steerButton);
+
+      await waitFor(() => {
+        expect(steerPosts).toBe(1);
+      }, WAIT);
+      // The composer clears on an accepted steer; give any errant form submit a
+      // chance to fire a second kickoff before asserting it never happened.
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+      expect(turnsPosts).toBe(1);
+
+      // Echo the steer as a user_input event so it counts as delivered; without
+      // this the un-echoed-steer recovery would re-send it as a fresh turn.
+      controller.enqueue(
+        sse('user_input', { turn_id: turnIdRef.current, content: 'focus on tomorrow', seq: 1 })
+      );
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
+      );
+      controller.close();
+      expect(turnsPosts).toBe(1);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'steering a finished turn falls back to sending a normal new message',
     async () => {
       const { ready, turnIdRef } = installOpenStream();

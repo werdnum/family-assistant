@@ -373,6 +373,7 @@ const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) =>
         {hasText ? (
           /* @ts-expect-error - TooltipIconButton JSX component */
           <TooltipIconButton
+            type="button"
             tooltip="Steer the assistant"
             variant="default"
             side="top"
