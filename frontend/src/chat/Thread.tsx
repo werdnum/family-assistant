@@ -314,9 +314,12 @@ const Composer: React.FC = () => {
       <ThreadPrimitive.If running>
         <SteerError />
       </ThreadPrimitive.If>
-      <ComposerAttachments />
+      {/* Steering sends text only, so attachments can't ride along on a steer.
+          Hide the attachment UI while a turn runs to avoid a picked file being
+          silently ignored by the steer and then sent with the next message. */}
+      {!isRunning && <ComposerAttachments />}
       <div className="flex gap-2 items-end">
-        <ComposerAddAttachment />
+        {!isRunning && <ComposerAddAttachment />}
         <div className="flex-1 relative">
           <ComposerPrimitive.Input
             rows={1}

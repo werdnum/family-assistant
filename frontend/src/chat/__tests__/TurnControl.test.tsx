@@ -67,6 +67,10 @@ describe('Web turn control (Stop / Steer)', () => {
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
+    // Reset the URL so a conversation switch in one test (which pushes a
+    // ?conversation_id=... URL) can't leak into the next test's initial
+    // conversation id.
+    window.history.pushState({}, '', '/chat');
   });
 
   it(
@@ -298,6 +302,62 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
       );
       controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'hides the attachment UI while a turn is running',
+    async () => {
+      const { ready, turnIdRef } = installOpenStream();
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      // Idle: the add-attachment affordance is available.
+      expect(screen.getByTestId('add-attachment-button')).toBeInTheDocument();
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+
+      // Running (steer mode): no attachment button, since a steer is text-only and
+      // a picked file would otherwise be silently dropped from the steer.
+      await waitFor(() => {
+        expect(screen.queryByTestId('add-attachment-button')).not.toBeInTheDocument();
+      }, WAIT);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 1 })
+      );
+      controller.close();
+
+      // Idle again: the attachment button returns.
+      await waitFor(() => {
+        expect(screen.getByTestId('add-attachment-button')).toBeInTheDocument();
+      }, WAIT);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'clears composer text when switching conversations',
+    async () => {
+      // The main composer doubles as the steer input and its runtime is shared
+      // across conversations, so text left in it (e.g. a half-typed steer for a
+      // running turn) must not leak into a newly selected conversation. The clear
+      // is driven purely by the conversation-id change, so this exercises it
+      // without an active stream.
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const input = screen.getByTestId('chat-input');
+      await user.type(input, 'half-typed steer');
+      expect(input).toHaveValue('half-typed steer');
+
+      await user.click(await screen.findByTestId('new-chat-button', undefined, WAIT));
+      await waitFor(() => expect(screen.getByTestId('chat-input')).toHaveValue(''), WAIT);
     },
     { timeout: 30000 }
   );

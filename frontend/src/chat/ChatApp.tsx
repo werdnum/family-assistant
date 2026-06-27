@@ -1894,6 +1894,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     },
   });
 
+  // The main composer doubles as the steer input and its runtime is reused
+  // across conversation changes. On a real conversation switch, clear it so
+  // steer text typed for the previous turn can't leak into — and be sent in —
+  // the newly selected thread. Guarded on an actual id change so an unrelated
+  // runtime re-render never wipes text the user is typing.
+  const prevConversationIdRef = useRef(conversationId);
+  useEffect(() => {
+    if (prevConversationIdRef.current !== conversationId) {
+      prevConversationIdRef.current = conversationId;
+      runtime.thread.composer.setText('');
+    }
+  }, [conversationId, runtime]);
+
   // Submit a steer into the running turn. While a turn runs the main composer
   // doubles as the steer input, so the text is passed in (and owned by the
   // composer); the result tells the composer whether to clear itself.
