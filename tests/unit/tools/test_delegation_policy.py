@@ -60,7 +60,9 @@ async def test_delegate_to_service_blocks_disallowed_source_profile() -> None:
 
 
 @pytest.mark.asyncio
-async def test_delegate_to_service_refuses_over_length_request() -> None:
+async def test_delegate_to_service_refuses_over_length_request_when_confirming() -> (
+    None
+):
     target_handler = AsyncMock()
     target_service = SimpleNamespace(
         service_config=SimpleNamespace(
@@ -93,10 +95,13 @@ async def test_delegate_to_service_refuses_over_length_request() -> None:
     )
 
     over_limit = "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
+    # confirm_delegation=True means this hand-off will be approved against a
+    # confirmation prompt, so the over-long request must be refused.
     result = await delegate_to_service_tool(
         exec_context=context,
         target_service_id="target_profile",
         user_request=over_limit,
+        confirm_delegation=True,
     )
 
     assert isinstance(result, ToolResult)

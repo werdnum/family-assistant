@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from family_assistant import calendar_integration
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from zoneinfo import ZoneInfo
 
     from family_assistant.tools.infrastructure import ToolsProvider
@@ -413,9 +414,9 @@ async def render_delegate_to_service_confirmation(
 
     _ = context
     if len(user_request) > MAX_DELEGATION_REQUEST_CHARS:
-        # delegate_to_service_tool refuses requests over this length, so never
-        # show a partial body the approver might rubber-stamp — say plainly that
-        # the hand-off will be refused.
+        # A confirm-gated delegation over this length is refused before it runs
+        # (see confirmation_payload_block_reason), so never show a partial body
+        # the approver might rubber-stamp — say plainly that it will be refused.
         request_field = (
             f"- Request: ⚠️ This request is {len(user_request)} characters, longer than the "
             f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable here. "
@@ -432,6 +433,44 @@ async def render_delegate_to_service_confirmation(
     if attachment_ids:
         fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))
     return "Do you want to delegate this task to another profile?\n" + "\n".join(fields)
+
+
+def over_length_delegation_block_reason(user_request: str) -> str | None:
+    """Return an error if a delegation request is too long to confirm, else None.
+
+    A confirm-gated hand-off is approved against its confirmation prompt, so a
+    request that cannot be shown there in full must be refused rather than
+    delegated on the strength of a partial preview. This applies only to
+    delegations that are actually confirm-gated; unconfirmed hand-offs are not
+    size-capped (bulk content there is legitimate and never shown for approval).
+    """
+    if len(user_request) <= MAX_DELEGATION_REQUEST_CHARS:
+        return None
+    return (
+        f"Error: delegation request is {len(user_request)} characters, which exceeds the "
+        f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable in a "
+        "confirmation prompt. Shorten the request, or move bulk content into an attachment and "
+        "reference it via attachment_ids."
+    )
+
+
+def confirmation_payload_block_reason(
+    tool_name: str,
+    arguments: Mapping[str, object],
+) -> str | None:
+    """Return why a confirm-gated tool call must be refused before prompting, else None.
+
+    Lets the policy layer refuse a call whose confirmation prompt could not show
+    the approver the full payload they would be approving, instead of rendering a
+    truncated or misleading prompt. Only invoked once a call is known to be
+    confirm-gated, so it never constrains unconfirmed calls. Currently only
+    ``delegate_to_service`` is bounded.
+    """
+    if tool_name == "delegate_to_service":
+        return over_length_delegation_block_reason(
+            str(arguments.get("user_request", ""))
+        )
+    return None
 
 
 # Mapping of tool names to their confirmation renderers

@@ -16,6 +16,8 @@ import pytest
 from family_assistant.tools.confirmation import (
     CONFIRMATION_VALUE_MAX_CHARS,
     MAX_DELEGATION_REQUEST_CHARS,
+    confirmation_payload_block_reason,
+    over_length_delegation_block_reason,
     render_delegate_to_service_confirmation,
 )
 
@@ -80,3 +82,42 @@ async def test_delegate_confirmation_refuses_over_limit_request() -> None:
     assert over_limit not in prompt
     assert "will be refused" in prompt
     assert str(len(over_limit)) in prompt
+
+
+def test_over_length_block_reason_only_fires_above_the_cap() -> None:
+    assert (
+        over_length_delegation_block_reason("x" * MAX_DELEGATION_REQUEST_CHARS) is None
+    )
+    reason = over_length_delegation_block_reason(
+        "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
+    )
+    assert reason is not None
+    assert str(MAX_DELEGATION_REQUEST_CHARS) in reason
+    assert "exceeds" in reason
+
+
+def test_confirmation_payload_block_reason_only_applies_to_delegation() -> None:
+    over_limit = "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
+
+    # A non-delegation tool is never size-capped by this hook.
+    assert (
+        confirmation_payload_block_reason(
+            "add_calendar_event", {"user_request": over_limit}
+        )
+        is None
+    )
+
+    # A delegation with an over-limit request is refused.
+    assert (
+        confirmation_payload_block_reason(
+            "delegate_to_service", {"user_request": over_limit}
+        )
+        is not None
+    )
+    # A delegation within the cap is allowed through.
+    assert (
+        confirmation_payload_block_reason(
+            "delegate_to_service", {"user_request": "short"}
+        )
+        is None
+    )

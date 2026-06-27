@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
 )
+from family_assistant.tools.confirmation import MAX_DELEGATION_REQUEST_CHARS
 from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.policy import (
     PolicyEngine,
@@ -17,13 +22,106 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.processing import ProcessingService
     from family_assistant.tools.types import ToolDefinition
 
 
 def _names(definitions: list[ToolDefinition]) -> list[str]:
     return [definition["function"]["name"] for definition in definitions]
+
+
+def _delegate_policy(decision: ToolPolicyDecision) -> PolicyEngine:
+    return PolicyEngine.from_policy_config(
+        ToolPolicyConfig(
+            default_decision=ToolPolicyDecision.DENY,
+            rules=[
+                PolicyRule(
+                    match=ToolMatcher(names=["delegate_to_service"]),
+                    decision=decision,
+                    priority=10,
+                ),
+            ],
+        )
+    )
+
+
+def _exec_context(
+    *,
+    confirmation_callback: object | None,
+    processing_service: object | None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id=None,
+        db_context=MagicMock(spec=DatabaseContext),
+        processing_service=cast("ProcessingService", processing_service),
+        request_confirmation_callback=confirmation_callback,  # type: ignore[arg-type]
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_gated_delegation_refuses_over_length_request() -> None:
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
+        policy_engine=_delegate_policy(ToolPolicyDecision.CONFIRM),
+    )
+    confirmation_callback = AsyncMock()
+    context = _exec_context(
+        confirmation_callback=confirmation_callback, processing_service=None
+    )
+
+    result = await policy_provider.execute_tool(
+        "delegate_to_service",
+        {
+            "target_service_id": "engineer",
+            "user_request": "x" * (MAX_DELEGATION_REQUEST_CHARS + 1),
+        },
+        context,
+    )
+
+    assert isinstance(result, ToolResult)
+    assert result.text is not None
+    assert str(MAX_DELEGATION_REQUEST_CHARS) in result.text
+    # The over-long request is refused before a confirmation prompt is ever shown.
+    confirmation_callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_delegation_is_not_size_capped() -> None:
+    policy_provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
+        policy_engine=_delegate_policy(ToolPolicyDecision.ALLOW),
+    )
+    # No registry, so the underlying tool reports that — proving the size guard
+    # did NOT short-circuit an ordinary (unconfirmed) hand-off.
+    source_service = SimpleNamespace(processing_services_registry=None)
+    context = _exec_context(
+        confirmation_callback=None, processing_service=source_service
+    )
+
+    result = await policy_provider.execute_tool(
+        "delegate_to_service",
+        {
+            "target_service_id": "complex_tasks",
+            "user_request": "x" * (MAX_DELEGATION_REQUEST_CHARS + 1),
+        },
+        context,
+    )
+
+    text = result.get_text() if isinstance(result, ToolResult) else str(result)
+    assert str(MAX_DELEGATION_REQUEST_CHARS) not in text
+    assert "registry is not available" in text
 
 
 @pytest.mark.asyncio
