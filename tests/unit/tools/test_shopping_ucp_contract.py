@@ -25,6 +25,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012, SchemaRegistry
 
 from family_assistant.config_models import AppConfig, UCPConfig
 from family_assistant.tools import shopping
@@ -43,6 +45,38 @@ def _load_schema(*parts: str) -> dict[str, object]:
         "dict[str, object]",
         json.loads(_SCHEMA_DIR.joinpath(*parts).read_text(encoding="utf-8")),
     )
+
+
+def _response_registry() -> SchemaRegistry:
+    """Registry of every vendored JSON-Schema document (those carrying an ``$id``).
+
+    Lets a UCP *response* be validated against the real ``cart``/``checkout``
+    schemas with all their ``$ref``s resolved against the vendored closure — not
+    a hand-authored stand-in that could re-encode the very wrapper mistake the
+    validation is meant to catch. Each schema is keyed by its declared ``$id``.
+    """
+    registry: SchemaRegistry = Registry()
+    for path in sorted(_SCHEMA_DIR.rglob("*.json")):
+        contents = json.loads(path.read_text(encoding="utf-8"))
+        schema_id = contents.get("$id") if isinstance(contents, dict) else None
+        if isinstance(schema_id, str):
+            registry = registry.with_resource(
+                schema_id,
+                Resource.from_contents(contents, default_specification=DRAFT202012),
+            )
+    return registry
+
+
+_RESPONSE_REGISTRY = _response_registry()
+
+
+def _assert_response_conforms(
+    schema_file: str, structured_content: dict[str, object]
+) -> None:
+    """Validate a UCP method's structuredContent against its vendored schema."""
+    Draft202012Validator(
+        _load_schema(schema_file), registry=_RESPONSE_REGISTRY
+    ).validate(structured_content)
 
 
 _OPENRPC = _load_schema("mcp.openrpc.json")
@@ -284,20 +318,66 @@ def _reset_client(
     _CapturingClient.profile_responses = profile_responses or []
 
 
+def _spec_totals() -> list[dict[str, object]]:
+    # UCP totals MUST contain exactly one subtotal and one total entry.
+    return [
+        {"type": "subtotal", "display_text": "Subtotal", "amount": 3500},
+        {"type": "total", "display_text": "Total", "amount": 3500},
+    ]
+
+
+def _spec_line_item() -> dict[str, object]:
+    return {
+        "id": "gid://shopify/LineItem/1",
+        "item": {
+            "id": "gid://shopify/ProductVariant/1",
+            "title": "Socks",
+            "price": 3500,
+        },
+        "quantity": 1,
+        "totals": _spec_totals(),
+    }
+
+
+def _spec_cart(
+    *, line_items: list[dict[str, object]] | None = None
+) -> dict[str, object]:
+    return {
+        "ucp": {"version": "2026-04-08"},
+        "id": "gid://shopify/Cart/cart_abc123",
+        "line_items": line_items if line_items is not None else [_spec_line_item()],
+        "currency": "AUD",
+        "totals": _spec_totals(),
+        "continue_url": "https://shop.example.com/cart/c/cart_abc123",
+    }
+
+
+def _spec_checkout() -> dict[str, object]:
+    return {
+        "ucp": {"version": "2026-04-08", "payment_handlers": {}},
+        "id": "gid://shopify/Checkout/checkout_abc123",
+        "line_items": [_spec_line_item()],
+        "currency": "AUD",
+        "totals": _spec_totals(),
+        "status": "requires_escalation",
+        "links": [{"type": "terms_of_use", "url": "https://shop.example.com/terms"}],
+        "continue_url": "https://shop.example.com/checkouts/c/checkout_abc123",
+    }
+
+
 def _cart_response(
     *, line_items: list[dict[str, object]] | None = None
 ) -> httpx.Response:
-    cart: dict[str, object] = {
-        "id": "gid://shopify/Cart/cart_abc123",
-        "line_items": line_items if line_items is not None else [],
-        "continue_url": "https://shop.example.com/cart/c/cart_abc123",
-    }
+    # A UCP cart method returns the cart object itself as structuredContent
+    # (cart_result = oneOf[cart, error_response]); it is NOT nested under a
+    # "cart" key. Shaping the canned response like a real merchant's keeps the
+    # parser exercised against the spec.
     return httpx.Response(
         200,
         json={
             "jsonrpc": "2.0",
             "id": "rpc",
-            "result": {"structuredContent": {"cart": cart}},
+            "result": {"structuredContent": _spec_cart(line_items=line_items)},
         },
     )
 
@@ -308,13 +388,7 @@ def _checkout_response() -> httpx.Response:
         json={
             "jsonrpc": "2.0",
             "id": "rpc",
-            "result": {
-                "structuredContent": {
-                    "id": "gid://shopify/Checkout/checkout_abc123",
-                    "status": "requires_escalation",
-                    "continue_url": "https://shop.example.com/checkouts/c/checkout_abc123",
-                }
-            },
+            "result": {"structuredContent": _spec_checkout()},
         },
     )
 
@@ -444,3 +518,37 @@ def test_contract_rejects_the_shapes_these_fixes_corrected() -> None:
         "meta": {},
         "checkout": {"cart_id": "c1", "line_items": line_items},
     })
+
+
+def test_cart_response_fixture_conforms_to_cart_schema() -> None:
+    # The canned cart response is shaped like a real merchant's, so it must
+    # validate against the vendored cart schema (with all $refs resolved).
+    _assert_response_conforms("cart.json", _spec_cart())
+
+
+def test_checkout_response_fixture_conforms_to_checkout_schema() -> None:
+    _assert_response_conforms("checkout.json", _spec_checkout())
+
+
+def test_cart_parser_reads_spec_shaped_response_and_rejects_legacy_wrapper() -> None:
+    # The cart is the structuredContent itself (cart_result = oneOf[cart,
+    # error_response]); a legacy ``{"cart": {...}}`` wrapper is not spec-valid
+    # and the parser must not accept it. This couples the parser to the spec so
+    # the wrapper bug cannot return unnoticed.
+    spec_cart = _spec_cart()
+    with pytest.raises(ValidationError):
+        _assert_response_conforms("cart.json", {"cart": spec_cart})
+
+    response: dict[str, object] = {
+        "response": {"result": {"structuredContent": spec_cart}}
+    }
+    # SLF001: this test deliberately pins the module-private response parser to
+    # the spec, so calling it directly is the point of the test.
+    assert shopping._cart_from_response(response)["id"] == spec_cart["id"]  # noqa: SLF001
+
+    wrapped: dict[str, object] = {
+        "response": {"result": {"structuredContent": {"cart": spec_cart}}}
+    }
+    with pytest.raises(ValueError, match="did not include a cart"):
+        # SLF001: same rationale — exercise the private parser directly.
+        shopping._cart_from_response(wrapped)  # noqa: SLF001

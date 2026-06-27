@@ -141,6 +141,7 @@ dependencies = [
     "opentelemetry-distro>=0.46b0",
     "opentelemetry-exporter-otlp>=1.25.0",
     "cryptography>=44.0.1",
+    "publicsuffix2>=2.20191221",
 ]
 
 [project.optional-dependencies]
@@ -229,7 +230,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Specify that the 'family_assistant' package should include
 # all files within its 'templates' and 'static' subdirectories.
-family_assistant = ["templates/**/*", "static/**/*", "py.typed"]
+family_assistant = ["templates/**/*", "static/**/*", "data/**/*", "py.typed"]
 
 
 # --- Task Runner Configuration (poethepoet) ---

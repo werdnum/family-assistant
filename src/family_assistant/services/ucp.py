@@ -17,6 +17,7 @@ import httpx
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
+from publicsuffix2 import PublicSuffixList
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -66,17 +67,35 @@ class MerchantUCPProfile:
         """The first advertised shopping MCP endpoint, if any."""
         return self.mcp_endpoints[0] if self.mcp_endpoints else None
 
-    @property
-    def same_origin_mcp_endpoint(self) -> str | None:
-        """The first advertised endpoint that is same-origin as this merchant.
+    def usable_mcp_endpoint(
+        self, *, trusted_suffixes: tuple[str, ...] = ()
+    ) -> str | None:
+        """The first advertised endpoint safe to post to for this merchant.
 
-        Callers post/sign only to a same-origin endpoint (untrusted metadata
-        must not redirect requests cross-host), so this is the endpoint actually
-        usable for the origin — and what the browser hint should gate on.
+        The profile is untrusted merchant-controlled metadata, so the signed
+        POST must not be redirected to an arbitrary host. An endpoint is usable
+        when it is same-origin as the merchant, same-site as the merchant (a
+        sibling subdomain of the same registrable domain — still the merchant's
+        own site, e.g. ``eve.theiconic.com.au`` for ``www.theiconic.com.au``),
+        or hosted on a configured trusted commerce-platform suffix
+        (``myshopify.com`` covers Shopify storefronts on custom domains, whose
+        UCP endpoint lives on the ``*.myshopify.com`` shop host). Anything else
+        is ignored so the caller falls back rather than posting to an unrelated
+        host. This is also what the browser shopping hint gates on.
+
+        Candidates are ranked by trust class — same-origin first, then
+        same-site, then trusted suffix — so a profile that lists a platform or
+        same-site binding ahead of the merchant-local one still resolves to the
+        safest available endpoint rather than the first broad match.
         """
-        for endpoint in self.mcp_endpoints:
-            if same_origin(endpoint, self.origin):
-                return endpoint
+        for predicate in (
+            lambda endpoint: same_origin(endpoint, self.origin),
+            lambda endpoint: same_site(endpoint, self.origin),
+            lambda endpoint: host_matches_trusted_suffix(endpoint, trusted_suffixes),
+        ):
+            for endpoint in self.mcp_endpoints:
+                if predicate(endpoint):
+                    return endpoint
         return None
 
 
@@ -106,6 +125,92 @@ def same_origin(url_a: str, url_b: str) -> bool:
     """Whether two URLs share a scheme/host/effective-port origin."""
     key_a = _origin_key(url_a)
     return key_a is not None and key_a == _origin_key(url_b)
+
+
+def _https_host(url: str) -> str | None:
+    """Return the lowercased host of a default-port HTTPS URL, or ``None``.
+
+    Returns ``None`` for non-HTTPS, unparseable, malformed-port, or non-default
+    port URLs. Used only by the same-site / trusted-suffix checks, which trust
+    the standard HTTPS service on a host but not arbitrary other ports: a
+    non-default port (e.g. ``:8443``) could reach a different service on the
+    same registrable domain or trusted platform host — an SSRF surface.
+    Same-origin matching, which legitimately carries an explicit port, uses
+    ``_origin_key`` instead, not this.
+    """
+    try:
+        parsed = urlparse(url)
+        # Accessing .port validates it: an out-of-range port (e.g. :99999)
+        # raises ValueError, so a malformed endpoint is rejected here.
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or port not in {None, 443}:
+        return None
+    host = (parsed.hostname or "").lower()
+    return host or None
+
+
+# A vendored, current Public Suffix List (including the PRIVATE section) rather
+# than publicsuffix2's bundled 2019 snapshot: an outdated list collapses
+# unrelated tenants on multi-tenant suffixes added since 2019 (``vercel.app``,
+# ``pages.dev``, ``fly.dev``) to the platform domain, which would let a profile
+# on ``foo.vercel.app`` pass off ``bar.vercel.app`` as same-site. Refresh the
+# file from https://publicsuffix.org/list/public_suffix_list.dat periodically.
+_PUBLIC_SUFFIX_LIST_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "public_suffix_list.dat"
+)
+_PUBLIC_SUFFIX_LIST = PublicSuffixList(psl_file=str(_PUBLIC_SUFFIX_LIST_PATH))
+
+
+def _registrable_domain(host: str) -> str | None:
+    """Registrable domain (eTLD+1) for ``host``, or ``None`` without a real one.
+
+    ``strict=True`` returns ``None`` for hosts with no public-suffix match — IP
+    literals and internal names like ``foo.internal`` — which the public suffix
+    list would otherwise collapse to a shared token (``1``, ``internal``).
+    """
+    return _PUBLIC_SUFFIX_LIST.get_sld(host, strict=True)
+
+
+def same_site(url_a: str, url_b: str) -> bool:
+    """Whether two HTTPS URLs share a registrable domain (eTLD+1).
+
+    Same-site-but-not-same-origin covers a merchant serving its UCP endpoint
+    from a sibling subdomain of its storefront (``eve.theiconic.com.au`` for
+    ``www.theiconic.com.au``) — still the merchant's own site. The registrable
+    domain is resolved against a vendored current public suffix list so
+    multi-label suffixes (``com.au``) and multi-tenant platform suffixes
+    (``vercel.app``) are handled correctly, and hosts without a real public
+    suffix (IP literals, internal names) never match — keeping an SSRF-prone
+    profile fetched from an IP/private zone or a co-tenant on a shared platform
+    from sliding an endpoint on a different host through this check.
+    """
+    host_a = _https_host(url_a)
+    host_b = _https_host(url_b)
+    if host_a is None or host_b is None:
+        return False
+    domain_a = _registrable_domain(host_a)
+    return bool(domain_a) and domain_a == _registrable_domain(host_b)
+
+
+def host_matches_trusted_suffix(url: str, suffixes: tuple[str, ...]) -> bool:
+    """Whether an HTTPS URL's host equals or is a subdomain of a trusted suffix.
+
+    Trusted suffixes name commerce platforms whose backend hosts are safe to
+    post to even cross-site (``myshopify.com`` for Shopify shop hosts). Matching
+    is on whole labels, so ``status-anxiety-2.myshopify.com`` matches
+    ``myshopify.com`` while ``notmyshopify.com`` and ``myshopify.com.evil.com``
+    do not.
+    """
+    host = _https_host(url)
+    if host is None:
+        return False
+    for suffix in suffixes:
+        normalized = suffix.strip().lstrip(".").lower()
+        if normalized and (host == normalized or host.endswith(f".{normalized}")):
+            return True
+    return False
 
 
 def merchant_origin(url: str) -> str | None:

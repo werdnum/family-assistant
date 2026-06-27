@@ -14,6 +14,11 @@ explicitly ask to add products to a cart at a merchant that supports the Univers
 (UCP). Shopify stores are supported, and so is any other UCP merchant. When you browse a site that
 advertises UCP, `browser_open` tells you so and gives you the `business_url` to use.
 
+Pass the merchant's storefront origin as `business_url` (the domain you browsed, e.g.
+`https://www.example.com`). The tools resolve the merchant's actual shopping endpoint from its UCP
+profile — including Shopify stores on a custom domain, whose endpoint lives on a `*.myshopify.com`
+host — so you do not need to find or pass that backend host yourself.
+
 ## Workflow
 
 1. Use browser/search tools to find a suitable product and identify the concrete variant, merchant,

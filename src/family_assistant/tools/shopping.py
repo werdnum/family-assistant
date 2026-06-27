@@ -198,7 +198,10 @@ def _is_checkout_only(profile: MerchantUCPProfile | None) -> bool:
 
 
 async def _resolve_ucp_endpoint(
-    business_url: str, *, client: httpx.AsyncClient
+    business_url: str,
+    *,
+    client: httpx.AsyncClient,
+    trusted_suffixes: tuple[str, ...] = (),
 ) -> _ResolvedMerchant:
     """Resolve the merchant's shopping MCP endpoint for ``business_url``.
 
@@ -206,18 +209,20 @@ async def _resolve_ucp_endpoint(
     falls back to the Shopify convention (``/api/ucp/mcp``) when the merchant
     advertises no usable shopping MCP binding. The returned ``checkout_only``
     flag reflects the discovered capabilities so callers can bypass the cart for
-    checkout-only merchants — but only when the profile's own (same-origin)
-    endpoint is used; on fallback the flag is cleared, since the capability
-    described a binding that was not adopted.
+    checkout-only merchants — but only when the profile's own endpoint is used;
+    on fallback the flag is cleared, since the capability described a binding
+    that was not adopted.
 
-    Only a binding that is same-origin as ``business_url`` is accepted, and every
-    advertised binding is considered (not just the first) so a usable same-origin
-    binding is still selected when a cross-origin one is listed ahead of it. The
-    profile is untrusted merchant-controlled metadata, so a cross-origin (or
-    protocol-relative) endpoint could otherwise redirect the signed POST at an
-    arbitrary/internal host — an SSRF vector. Discovery is also given a short
-    timeout so a store that does not publish a profile (and may tarpit the
-    well-known path) falls back promptly instead of stalling the POST.
+    A binding is usable when it is same-origin, same-site (a sibling subdomain of
+    ``business_url``'s registrable domain), or hosted on a configured trusted
+    platform suffix (``trusted_suffixes``, e.g. ``myshopify.com`` for Shopify
+    storefronts on custom domains). Every advertised binding is considered, so a
+    usable one is still selected when an unusable binding is listed ahead of it.
+    Anything else is ignored: the profile is untrusted merchant-controlled
+    metadata, so an arbitrary cross-host endpoint could otherwise redirect the
+    signed POST at an unrelated/internal host — an SSRF vector. Discovery is also
+    given a short timeout so a store that does not publish a profile (and may
+    tarpit the well-known path) falls back promptly instead of stalling the POST.
     """
     origin = merchant_origin(business_url)
     if origin is None:
@@ -227,20 +232,20 @@ async def _resolve_ucp_endpoint(
         business_url, client=client, timeout=UCP_DISCOVERY_TIMEOUT_SECONDS
     )
     if profile is not None:
-        same_origin_endpoint = profile.same_origin_mcp_endpoint
-        if same_origin_endpoint is not None:
+        usable_endpoint = profile.usable_mcp_endpoint(trusted_suffixes=trusted_suffixes)
+        if usable_endpoint is not None:
             return _ResolvedMerchant(
-                endpoint=same_origin_endpoint,
+                endpoint=usable_endpoint,
                 checkout_only=_is_checkout_only(profile),
             )
         if profile.mcp_endpoints:
             logger.warning(
-                "Ignoring %d cross-origin UCP endpoint(s) advertised by %s",
+                "Ignoring %d untrusted cross-host UCP endpoint(s) advertised by %s",
                 len(profile.mcp_endpoints),
                 origin,
             )
-    # No profile, or only unusable (cross-origin) bindings: fall back to the
-    # Shopify convention. That endpoint supports carts, so the profile's
+    # No profile, or only unusable (untrusted cross-host) bindings: fall back to
+    # the Shopify convention. That endpoint supports carts, so the profile's
     # checkout-only capability — which described the binding we just refused —
     # must not carry over and make the caller skip the cart here.
     return _ResolvedMerchant(
@@ -248,7 +253,9 @@ async def _resolve_ucp_endpoint(
     )
 
 
-async def _resolve_endpoint_for(business_url: str) -> _ResolvedMerchant:
+async def _resolve_endpoint_for(
+    business_url: str, *, trusted_suffixes: tuple[str, ...] = ()
+) -> _ResolvedMerchant:
     """Resolve the merchant MCP endpoint once, with a dedicated short client.
 
     Resolving up front (rather than inside each POST) means a multi-step
@@ -257,7 +264,13 @@ async def _resolve_endpoint_for(business_url: str) -> _ResolvedMerchant:
     discovery could split reads and writes across different endpoints.
     """
     async with httpx.AsyncClient(timeout=UCP_DISCOVERY_TIMEOUT_SECONDS) as client:
-        return await _resolve_ucp_endpoint(business_url, client=client)
+        return await _resolve_ucp_endpoint(
+            business_url, client=client, trusted_suffixes=trusted_suffixes
+        )
+
+
+def _trusted_endpoint_suffixes(app_config: AppConfig) -> tuple[str, ...]:
+    return tuple(app_config.ucp_config.trusted_endpoint_suffixes)
 
 
 def _normalize_line_items(
@@ -468,9 +481,13 @@ def _cart_failure_text(cart: dict[str, object]) -> str | None:
 
 
 def _cart_from_response(response_data: dict[str, object]) -> dict[str, object]:
-    structured = _structured_content(response_data)
-    cart = structured.get("cart")
-    if not isinstance(cart, dict):
+    # A UCP cart method returns the cart object itself as the MCP
+    # structuredContent (the OpenRPC result is cart_result = oneOf[cart,
+    # error_response]); the cart's id/line_items are top-level, not nested under
+    # a "cart" key. Reading a non-existent wrapper made every spec-compliant
+    # response report "did not include a cart".
+    cart = _structured_content(response_data)
+    if not cart:
         msg = "UCP response did not include a cart."
         raise ValueError(msg)
     failure_text = _cart_failure_text(cart)
@@ -703,7 +720,9 @@ async def ucp_add_to_cart_tool(
     """
     app_config = _get_app_config(exec_context)
     normalized_items = _normalize_line_items(line_items)
-    resolved = await _resolve_endpoint_for(business_url)
+    resolved = await _resolve_endpoint_for(
+        business_url, trusted_suffixes=_trusted_endpoint_suffixes(app_config)
+    )
 
     if resolved.checkout_only:
         return await _add_to_cart_checkout_only(
@@ -751,7 +770,9 @@ async def ucp_get_cart_tool(
 ) -> ToolResult:
     """Fetch a UCP merchant cart."""
     app_config = _get_app_config(exec_context)
-    resolved = await _resolve_endpoint_for(business_url)
+    resolved = await _resolve_endpoint_for(
+        business_url, trusted_suffixes=_trusted_endpoint_suffixes(app_config)
+    )
     response_data = await _post_ucp_tool_call(
         app_config,
         endpoint=resolved.endpoint,
@@ -773,7 +794,9 @@ async def ucp_transfer_checkout_to_human_tool(
     # deployment checkout cannot succeed, so fail fast instead of paying a
     # discovery round-trip first.
     _require_signing_config(app_config)
-    resolved = await _resolve_endpoint_for(business_url)
+    resolved = await _resolve_endpoint_for(
+        business_url, trusted_suffixes=_trusted_endpoint_suffixes(app_config)
+    )
     # The cart capability extends create_checkout with cart_id for
     # cart-to-checkout conversion, so read the cart and hand off its cart_id
     # (plus its contents) inside the checkout object.

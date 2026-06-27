@@ -297,6 +297,12 @@ ucp_config:
   signing_private_key_path: null
   additional_signing_keys: []
   payment_handlers: {}
+  # Host suffixes a merchant profile may point its shopping endpoint at even when
+  # cross-site, so Shopify storefronts on custom domains can resolve to their
+  # *.myshopify.com shop host. Same-origin and same-site endpoints are always
+  # accepted; this list only widens trust to named commerce platforms.
+  trusted_endpoint_suffixes:
+    - "myshopify.com"
 
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
