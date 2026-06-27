@@ -17,7 +17,7 @@ import httpx
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
-from publicsuffix2 import get_sld
+from publicsuffix2 import PublicSuffixList
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -148,26 +148,47 @@ def _https_host(url: str) -> str | None:
     return host or None
 
 
+# A vendored, current Public Suffix List (including the PRIVATE section) rather
+# than publicsuffix2's bundled 2019 snapshot: an outdated list collapses
+# unrelated tenants on multi-tenant suffixes added since 2019 (``vercel.app``,
+# ``pages.dev``, ``fly.dev``) to the platform domain, which would let a profile
+# on ``foo.vercel.app`` pass off ``bar.vercel.app`` as same-site. Refresh the
+# file from https://publicsuffix.org/list/public_suffix_list.dat periodically.
+_PUBLIC_SUFFIX_LIST_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "public_suffix_list.dat"
+)
+_PUBLIC_SUFFIX_LIST = PublicSuffixList(psl_file=str(_PUBLIC_SUFFIX_LIST_PATH))
+
+
+def _registrable_domain(host: str) -> str | None:
+    """Registrable domain (eTLD+1) for ``host``, or ``None`` without a real one.
+
+    ``strict=True`` returns ``None`` for hosts with no public-suffix match — IP
+    literals and internal names like ``foo.internal`` — which the public suffix
+    list would otherwise collapse to a shared token (``1``, ``internal``).
+    """
+    return _PUBLIC_SUFFIX_LIST.get_sld(host, strict=True)
+
+
 def same_site(url_a: str, url_b: str) -> bool:
     """Whether two HTTPS URLs share a registrable domain (eTLD+1).
 
     Same-site-but-not-same-origin covers a merchant serving its UCP endpoint
     from a sibling subdomain of its storefront (``eve.theiconic.com.au`` for
     ``www.theiconic.com.au``) — still the merchant's own site. The registrable
-    domain is resolved against the public suffix list (``strict=True``) so
-    multi-label suffixes (``com.au``) are handled correctly and hosts without a
-    real public suffix — IP literals and internal names like ``foo.internal``,
-    which ``get_sld`` would otherwise collapse to a shared token (``1``,
-    ``internal``) and wrongly treat as same-site — return ``None`` and never
-    match. That keeps an SSRF-prone profile fetched from an IP/private zone from
-    sliding an endpoint on a different internal host through this check.
+    domain is resolved against a vendored current public suffix list so
+    multi-label suffixes (``com.au``) and multi-tenant platform suffixes
+    (``vercel.app``) are handled correctly, and hosts without a real public
+    suffix (IP literals, internal names) never match — keeping an SSRF-prone
+    profile fetched from an IP/private zone or a co-tenant on a shared platform
+    from sliding an endpoint on a different host through this check.
     """
     host_a = _https_host(url_a)
     host_b = _https_host(url_b)
     if host_a is None or host_b is None:
         return False
-    domain_a = get_sld(host_a, strict=True)
-    return bool(domain_a) and domain_a == get_sld(host_b, strict=True)
+    domain_a = _registrable_domain(host_a)
+    return bool(domain_a) and domain_a == _registrable_domain(host_b)
 
 
 def host_matches_trusted_suffix(url: str, suffixes: tuple[str, ...]) -> bool:

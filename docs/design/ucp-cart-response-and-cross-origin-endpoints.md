@@ -50,7 +50,15 @@ The profile is untrusted merchant-controlled metadata, so the signed POST must n
 an arbitrary host (SSRF). This design keeps that bound:
 
 - **Same-site** only extends trust to the merchant's own registrable domain — the site the user
-  chose to shop at. No new authority beyond what same-origin already implied for that merchant.
+  chose to shop at. No new authority beyond what same-origin already implied for that merchant. The
+  registrable domain is resolved against a **vendored current Public Suffix List**
+  (`src/family_assistant/data/public_suffix_list.dat`, including the PRIVATE section) rather than
+  `publicsuffix2`'s bundled 2019 snapshot: a stale list collapses co-tenants on multi-tenant
+  suffixes added since 2019 (`vercel.app`, `pages.dev`, `fly.dev`) to the platform domain, which
+  would let a profile on `foo.vercel.app` pass off `bar.vercel.app` as same-site. Hosts with no
+  public-suffix match (IP literals, internal names) and malformed-port URLs never resolve to a
+  registrable domain and so never match. Refresh the vendored list periodically from
+  <https://publicsuffix.org/list/public_suffix_list.dat>.
 - **Trusted suffixes** are an explicit, operator-controlled allowlist of public commerce-platform
   backends. `*.myshopify.com` resolves to Shopify's public edge and cannot be pointed at our
   internal network, so it neutralizes the SSRF-to-internal-host vector. The residual risk is a

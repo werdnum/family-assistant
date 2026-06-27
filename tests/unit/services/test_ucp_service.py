@@ -487,6 +487,16 @@ def test_same_site_rejects_ip_and_internal_hosts() -> None:
     assert not same_site("https://10.0.0.1/mcp", "https://10.0.0.1")
 
 
+def test_same_site_separates_multi_tenant_platform_hosts() -> None:
+    # The vendored current PSL lists modern multi-tenant suffixes in its PRIVATE
+    # section, so co-tenants are distinct registrable domains and never same-site
+    # (a stale 2019 list would collapse both to the platform domain).
+    assert not same_site("https://foo.vercel.app/mcp", "https://bar.vercel.app")
+    assert not same_site("https://foo.pages.dev/mcp", "https://bar.pages.dev")
+    # A merchant's own sibling subdomain is still same-site.
+    assert same_site("https://eve.theiconic.com.au/x", "https://www.theiconic.com.au")
+
+
 def test_https_trust_rejects_malformed_port() -> None:
     # An out-of-range port must be treated as a discovery miss, not silently
     # matched on the bare host.
