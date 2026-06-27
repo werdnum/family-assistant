@@ -92,6 +92,27 @@ def _truncate_confirmation_prompt_for_telegram(prompt_text: str) -> str:
     return prompt_text[:max_prompt_chars] + TELEGRAM_CONFIRMATION_TRUNCATION_NOTICE
 
 
+def confirmation_text_and_parse_mode(
+    prompt_text: str,
+) -> tuple[str, ParseMode | None]:
+    """Choose the message body and parse mode that stay within Telegram's limit.
+
+    MarkdownV2 escaping can expand the text past Telegram's single-message limit
+    even when the raw prompt fit — which would make ``send_message`` fail with a
+    length error and leave the user unable to approve. So only use MarkdownV2 when
+    the *converted* text still fits; otherwise fall back to the already
+    length-bounded plain text.
+    """
+    prompt_text_to_send = _truncate_confirmation_prompt_for_telegram(prompt_text)
+    if prompt_text_to_send != prompt_text:
+        # Already truncated; send as plain text (see _send_confirmation_message).
+        return prompt_text_to_send, None
+    converted_text, parse_mode_str = convert_to_telegram_markdown(prompt_text_to_send)
+    if parse_mode_str and len(converted_text) <= TELEGRAM_CONFIRMATION_MESSAGE_LIMIT:
+        return converted_text, ParseMode.MARKDOWN_V2
+    return prompt_text_to_send, None
+
+
 class TelegramConfirmationUIManager(ConfirmationUIManager):
     """Implementation of ConfirmationUIManager using Telegram Inline Keyboards."""
 
@@ -149,14 +170,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         ])
 
         prompt_text_to_send = _truncate_confirmation_prompt_for_telegram(prompt_text)
-        if prompt_text_to_send == prompt_text:
-            text_to_send, parse_mode_str = convert_to_telegram_markdown(
-                prompt_text_to_send
-            )
-            parse_mode = ParseMode.MARKDOWN_V2 if parse_mode_str else None
-        else:
-            text_to_send = prompt_text_to_send
-            parse_mode = None
+        text_to_send, parse_mode = confirmation_text_and_parse_mode(prompt_text)
 
         try:
             message = await self.application.bot.send_message(

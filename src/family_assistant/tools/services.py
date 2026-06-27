@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from family_assistant.llm.content_parts import attachment_content, text_content
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
+from family_assistant.tools.confirmation import (
+    MAX_DELEGATION_REQUEST_CHARS,
+    over_length_delegation_block_reason,
+)
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolAttachment,
@@ -604,6 +608,21 @@ async def delegate_to_service_tool(
     actual_confirm_delegation = confirm_delegation
 
     if actual_confirm_delegation:
+        # This hand-off will be approved against a confirmation prompt, so refuse
+        # a request too long to show there in full rather than ask the user to
+        # approve a payload they cannot fully review. (Policy-confirm-gated calls
+        # are bounded earlier, in PolicyEnforcingToolsProvider.) Unconfirmed
+        # delegations are intentionally not size-capped.
+        over_length_reason = over_length_delegation_block_reason(user_request)
+        if over_length_reason is not None:
+            logger.warning(
+                "Refusing confirm-gated delegation to '%s': request is %d chars (limit %d).",
+                target_service_id,
+                len(user_request),
+                MAX_DELEGATION_REQUEST_CHARS,
+            )
+            return ToolResult(text=over_length_reason, attachments=None)
+
         if not exec_context.request_confirmation_callback:
             logger.error(
                 f"Confirmation required for delegating to '{target_service_id}', but no confirmation callback is available. Aborting delegation."
