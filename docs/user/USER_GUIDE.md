@@ -39,8 +39,9 @@ services to respond or perform actions.
     Send button in the chat box becomes a **Stop** button — click it to halt the current response
     immediately (it's marked "Stopped", not an error). A small **Steer** box also appears beside the
     chat input: type a quick course-correction there (for example, "actually, focus on next week")
-    and the assistant folds it into the work it's already doing without starting over. This is the
-    web equivalent of Telegram's `/interrupt` and mid-response follow-up messages.
+    and the assistant folds it into the work it's already doing without starting over. Native iOS
+    Chat has the same controls while a reply is running. This is the web and iOS equivalent of
+    Telegram's `/interrupt` and mid-response follow-up messages.
 
   ![Landing Page](../../screenshots/desktop/landing-page.png) *The Family Assistant landing page
   provides quick access to all major features*
@@ -201,11 +202,16 @@ You can ask the assistant a wide variety of things:
   return the merchant checkout URL for you to complete payment yourself. It works with any merchant
   that supports the Universal Commerce Protocol (UCP) — Shopify stores and other UCP merchants
   alike. The assistant discovers each merchant's commerce endpoint from the merchant's own
-  `/.well-known/ucp` profile, and while browsing it automatically notices when a site supports UCP
-  shopping. The server also publishes its own public UCP platform profile at `/.well-known/ucp`.
-  Checkout handoff requires signed UCP requests; configure `UCP_SIGNING_KEY_ID` and either
-  `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key.
-  The assistant does not complete checkout or collect payment credentials in chat.
+  `/.well-known/ucp` profile (following any redirect the merchant serves there), and while browsing
+  it automatically notices when a site supports UCP shopping. This includes Shopify stores on their
+  own custom domain, whose commerce endpoint lives on a `*.myshopify.com` host — you can just give
+  the assistant the storefront you browsed. Some merchants are checkout-only (they
+  support checkout but not a cart); for these the assistant opens a checkout session directly from
+  the selected items instead of building a cart first. The server also publishes its own public UCP
+  platform profile at `/.well-known/ucp`. Checkout handoff requires signed UCP requests; configure
+  `UCP_SIGNING_KEY_ID` and either `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with
+  an EC P-256 or P-384 private key. The assistant does not complete checkout or collect payment
+  credentials in chat.
 
 - **Ingest Documents (Files and URLs):**
 
@@ -479,18 +485,18 @@ various tasks with dark mode support and mobile optimization.
   The app is organized into four tabs along the bottom: **Chat**, **Notes**, **Documents**, and
   **More**. Chat and Notes are native screens; Documents and the items under More open the
   corresponding pages inside the app. Native Chat shares the same conversation history as the
-  browser, streams replies as they are generated, supports profile switching, shows Markdown and
-  tool calls, handles approve/reject confirmations, and can upload images, PDFs, plain text, and
-  Markdown files up to 100 MB. A very long message (or a large tool result) renders a section at a
-  time with a **Show more** control, so the thread stays responsive no matter how big the content
-  is. You can search, read, create, edit, and delete notes on iOS,
-  including changing whether a note is included in the assistant's system prompt. The **More** tab
-  gathers the long-tail destinations — Voice, Events, History, Automations, Tools, and more — and a
-  single **Settings** screen with notification controls and sign-out. Use the tab bar to move
-  between sections; each tab remembers where you were. When enabled, iOS notifications can open the
-  relevant tab or page, and confirmation notifications are actionable: they include approve/reject
-  actions, and tapping the notification opens an in-app confirmation dialog showing the full
-  request.
+  browser, streams replies as they are generated, supports stopping or steering a running reply,
+  supports profile switching, shows Markdown and tool calls, handles approve/reject confirmations,
+  and can upload images, PDFs, plain text, and Markdown files up to 100 MB. A very long message (or
+  a large tool result) renders a section at a time with a **Show more** control, so the thread stays
+  responsive no matter how big the content is. You can search, read, create, edit, and delete notes
+  on iOS, including changing whether a note is included in the assistant's system prompt. The
+  **More** tab gathers the long-tail destinations — Voice, Events, History, Automations, Tools, and
+  more — and a single **Settings** screen with notification controls and sign-out. Use the tab bar
+  to move between sections; each tab remembers where you were. When enabled, iOS notifications can
+  open the relevant tab or page, and confirmation notifications are actionable: they include
+  approve/reject actions, and tapping the notification opens an in-app confirmation dialog showing
+  the full request.
 
 - **Siri & Shortcuts (iOS):** The iOS app adds actions you can run with Siri or the **Shortcuts**
   app — no setup required. Just say or run:
@@ -515,6 +521,7 @@ various tasks with dark mode support and mobile optimization.
 - **Chat Features:**
 
   - Real-time streaming responses - see the assistant's replies as they're being generated
+  - Stop or steer a running reply from the web chat or native iOS Chat
   - Compact tool usage display - completed tool calls are summarized in collapsible groups
   - Easy conversation management and switching
   - Native iOS conversation list, profile picker, attachment previews, file downloads, and pending

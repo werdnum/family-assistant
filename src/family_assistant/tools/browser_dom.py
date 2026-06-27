@@ -279,15 +279,42 @@ async def _probe_ucp_support(
         profile = session.ucp_profiles[origin]
     else:
         async with httpx.AsyncClient(timeout=UCP_PROBE_TIMEOUT_SECONDS) as client:
-            profile = await discover_merchant_ucp_profile(origin, client=client)
+            # Pass the timeout explicitly so it bounds the whole redirect chain,
+            # not just each hop: relying on the client-level timeout alone would
+            # let a same-origin redirect chain stall the probe for up to
+            # (MAX_DISCOVERY_REDIRECTS + 1) * UCP_PROBE_TIMEOUT_SECONDS.
+            profile = await discover_merchant_ucp_profile(
+                origin, client=client, timeout=UCP_PROBE_TIMEOUT_SECONDS
+            )
         session.ucp_profiles[origin] = profile
 
-    # Only hint when there is a same-origin endpoint, matching what the shopping
-    # tools will actually use — a profile advertising only cross-origin bindings
-    # is not usable for this origin, so hinting it would mislead the model.
-    if profile is not None and profile.same_origin_mcp_endpoint is not None:
+    # Only hint when the profile advertises an endpoint the shopping tools will
+    # actually use (same-origin, same-site, or a trusted platform suffix); a
+    # profile whose only binding is an untrusted cross-host endpoint is not
+    # usable for this origin, so hinting it would mislead the model.
+    trusted_suffixes = _trusted_endpoint_suffixes(exec_context)
+    if (
+        profile is not None
+        and profile.usable_mcp_endpoint(trusted_suffixes=trusted_suffixes) is not None
+    ):
         return _format_ucp_hint(profile)
     return None
+
+
+def _trusted_endpoint_suffixes(
+    exec_context: ToolExecutionContext,
+) -> tuple[str, ...]:
+    """Trusted shopping-endpoint suffixes from config, or ``()`` if unavailable.
+
+    The probe runs from snapshot paths that may lack a fully wired processing
+    service; falling back to an empty tuple keeps it to same-origin/same-site
+    hinting rather than raising.
+    """
+    service = getattr(exec_context, "processing_service", None)
+    app_config = getattr(service, "app_config", None) if service is not None else None
+    if app_config is None:
+        return ()
+    return tuple(app_config.ucp_config.trusted_endpoint_suffixes)
 
 
 async def _ucp_hint_on_url_change(

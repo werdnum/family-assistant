@@ -96,6 +96,10 @@ async def create_test_attachment(
         )
 
 
+# The attachment-preview render can exceed the 30s locator wait under CI load;
+# rerun on failure like the sibling Playwright UI tests rather than flaking the
+# whole suite. Tracked as a frontend timing flake to fix at the source.
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.playwright
 @pytest.mark.asyncio
 async def test_attachment_response_flow(

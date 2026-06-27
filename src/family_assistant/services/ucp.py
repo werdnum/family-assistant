@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,9 +17,10 @@ import httpx
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
+from publicsuffix2 import PublicSuffixList
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from family_assistant.config_models import AppConfig, UCPConfig
 
@@ -65,17 +67,35 @@ class MerchantUCPProfile:
         """The first advertised shopping MCP endpoint, if any."""
         return self.mcp_endpoints[0] if self.mcp_endpoints else None
 
-    @property
-    def same_origin_mcp_endpoint(self) -> str | None:
-        """The first advertised endpoint that is same-origin as this merchant.
+    def usable_mcp_endpoint(
+        self, *, trusted_suffixes: tuple[str, ...] = ()
+    ) -> str | None:
+        """The first advertised endpoint safe to post to for this merchant.
 
-        Callers post/sign only to a same-origin endpoint (untrusted metadata
-        must not redirect requests cross-host), so this is the endpoint actually
-        usable for the origin — and what the browser hint should gate on.
+        The profile is untrusted merchant-controlled metadata, so the signed
+        POST must not be redirected to an arbitrary host. An endpoint is usable
+        when it is same-origin as the merchant, same-site as the merchant (a
+        sibling subdomain of the same registrable domain — still the merchant's
+        own site, e.g. ``eve.theiconic.com.au`` for ``www.theiconic.com.au``),
+        or hosted on a configured trusted commerce-platform suffix
+        (``myshopify.com`` covers Shopify storefronts on custom domains, whose
+        UCP endpoint lives on the ``*.myshopify.com`` shop host). Anything else
+        is ignored so the caller falls back rather than posting to an unrelated
+        host. This is also what the browser shopping hint gates on.
+
+        Candidates are ranked by trust class — same-origin first, then
+        same-site, then trusted suffix — so a profile that lists a platform or
+        same-site binding ahead of the merchant-local one still resolves to the
+        safest available endpoint rather than the first broad match.
         """
-        for endpoint in self.mcp_endpoints:
-            if same_origin(endpoint, self.origin):
-                return endpoint
+        for predicate in (
+            lambda endpoint: same_origin(endpoint, self.origin),
+            lambda endpoint: same_site(endpoint, self.origin),
+            lambda endpoint: host_matches_trusted_suffix(endpoint, trusted_suffixes),
+        ):
+            for endpoint in self.mcp_endpoints:
+                if predicate(endpoint):
+                    return endpoint
         return None
 
 
@@ -105,6 +125,92 @@ def same_origin(url_a: str, url_b: str) -> bool:
     """Whether two URLs share a scheme/host/effective-port origin."""
     key_a = _origin_key(url_a)
     return key_a is not None and key_a == _origin_key(url_b)
+
+
+def _https_host(url: str) -> str | None:
+    """Return the lowercased host of a default-port HTTPS URL, or ``None``.
+
+    Returns ``None`` for non-HTTPS, unparseable, malformed-port, or non-default
+    port URLs. Used only by the same-site / trusted-suffix checks, which trust
+    the standard HTTPS service on a host but not arbitrary other ports: a
+    non-default port (e.g. ``:8443``) could reach a different service on the
+    same registrable domain or trusted platform host — an SSRF surface.
+    Same-origin matching, which legitimately carries an explicit port, uses
+    ``_origin_key`` instead, not this.
+    """
+    try:
+        parsed = urlparse(url)
+        # Accessing .port validates it: an out-of-range port (e.g. :99999)
+        # raises ValueError, so a malformed endpoint is rejected here.
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or port not in {None, 443}:
+        return None
+    host = (parsed.hostname or "").lower()
+    return host or None
+
+
+# A vendored, current Public Suffix List (including the PRIVATE section) rather
+# than publicsuffix2's bundled 2019 snapshot: an outdated list collapses
+# unrelated tenants on multi-tenant suffixes added since 2019 (``vercel.app``,
+# ``pages.dev``, ``fly.dev``) to the platform domain, which would let a profile
+# on ``foo.vercel.app`` pass off ``bar.vercel.app`` as same-site. Refresh the
+# file from https://publicsuffix.org/list/public_suffix_list.dat periodically.
+_PUBLIC_SUFFIX_LIST_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "public_suffix_list.dat"
+)
+_PUBLIC_SUFFIX_LIST = PublicSuffixList(psl_file=str(_PUBLIC_SUFFIX_LIST_PATH))
+
+
+def _registrable_domain(host: str) -> str | None:
+    """Registrable domain (eTLD+1) for ``host``, or ``None`` without a real one.
+
+    ``strict=True`` returns ``None`` for hosts with no public-suffix match — IP
+    literals and internal names like ``foo.internal`` — which the public suffix
+    list would otherwise collapse to a shared token (``1``, ``internal``).
+    """
+    return _PUBLIC_SUFFIX_LIST.get_sld(host, strict=True)
+
+
+def same_site(url_a: str, url_b: str) -> bool:
+    """Whether two HTTPS URLs share a registrable domain (eTLD+1).
+
+    Same-site-but-not-same-origin covers a merchant serving its UCP endpoint
+    from a sibling subdomain of its storefront (``eve.theiconic.com.au`` for
+    ``www.theiconic.com.au``) — still the merchant's own site. The registrable
+    domain is resolved against a vendored current public suffix list so
+    multi-label suffixes (``com.au``) and multi-tenant platform suffixes
+    (``vercel.app``) are handled correctly, and hosts without a real public
+    suffix (IP literals, internal names) never match — keeping an SSRF-prone
+    profile fetched from an IP/private zone or a co-tenant on a shared platform
+    from sliding an endpoint on a different host through this check.
+    """
+    host_a = _https_host(url_a)
+    host_b = _https_host(url_b)
+    if host_a is None or host_b is None:
+        return False
+    domain_a = _registrable_domain(host_a)
+    return bool(domain_a) and domain_a == _registrable_domain(host_b)
+
+
+def host_matches_trusted_suffix(url: str, suffixes: tuple[str, ...]) -> bool:
+    """Whether an HTTPS URL's host equals or is a subdomain of a trusted suffix.
+
+    Trusted suffixes name commerce platforms whose backend hosts are safe to
+    post to even cross-site (``myshopify.com`` for Shopify shop hosts). Matching
+    is on whole labels, so ``status-anxiety-2.myshopify.com`` matches
+    ``myshopify.com`` while ``notmyshopify.com`` and ``myshopify.com.evil.com``
+    do not.
+    """
+    host = _https_host(url)
+    if host is None:
+        return False
+    for suffix in suffixes:
+        normalized = suffix.strip().lstrip(".").lower()
+        if normalized and (host == normalized or host.endswith(f".{normalized}")):
+            return True
+    return False
 
 
 def merchant_origin(url: str) -> str | None:
@@ -180,18 +286,83 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
     )
 
 
+MAX_DISCOVERY_REDIRECTS = 5
+
+
+async def _get_following_same_origin_redirects(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str],
+    timeout: float | None,
+    now: Callable[[], float] = time.monotonic,
+) -> httpx.Response | None:
+    """GET ``url``, following 301/302/etc only while they stay same-origin.
+
+    Live merchants frequently serve ``/.well-known/ucp`` behind a redirect
+    (commonly a trailing-slash or path canonicalization), and httpx does not
+    follow redirects by default — so the 3xx would otherwise be treated as an
+    empty body and discovery would silently fail. Redirects are followed
+    manually rather than with ``follow_redirects=True`` because the profile URL
+    is merchant-controlled: an off-origin ``Location`` could otherwise point the
+    discovery GET at an arbitrary internal host (SSRF). Each hop is required to
+    share the original origin, and the chain is bounded. Returns ``None`` when a
+    redirect leaves the origin (or the bound is exceeded), so the caller treats
+    it as a discovery miss.
+
+    ``timeout`` bounds the *whole* redirect chain, not each hop: each GET is
+    given only the remaining budget, so a slow same-origin redirect chain cannot
+    stall a shopping request for ``(MAX_DISCOVERY_REDIRECTS + 1) * timeout``.
+    ``now`` is injectable for deterministic tests.
+    """
+    deadline = None if timeout is None else now() + timeout
+    current_url = url
+    for _ in range(MAX_DISCOVERY_REDIRECTS + 1):
+        if deadline is not None:
+            remaining = deadline - now()
+            if remaining <= 0:
+                logger.debug("UCP discovery exceeded its time budget for %s", url)
+                return None
+            response = await client.get(current_url, headers=headers, timeout=remaining)
+        else:
+            response = await client.get(current_url, headers=headers)
+        if not response.is_redirect:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        # The Location is merchant-controlled; a malformed value (e.g. a bad
+        # IPv6 host) makes urljoin raise, so treat that as a discovery miss
+        # rather than letting it crash endpoint resolution / the browser probe.
+        try:
+            next_url = urljoin(current_url, location)
+        except ValueError:
+            logger.debug(
+                "UCP discovery got a malformed redirect Location: %r", location
+            )
+            return None
+        if not same_origin(next_url, url):
+            return None
+        current_url = next_url
+    return None
+
+
 async def discover_merchant_ucp_profile(
     url: str,
     *,
     client: httpx.AsyncClient,
     timeout: float | None = None,
+    now: Callable[[], float] = time.monotonic,
 ) -> MerchantUCPProfile | None:
     """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
 
     ``url`` may be any URL on the merchant; only its HTTPS origin is used.
-    ``timeout`` bounds just the discovery GET (independent of the caller's
-    client-wide timeout) so a slow/tarpit ``/.well-known/ucp`` cannot stall a
-    subsequent request; when ``None`` the client's default timeout applies.
+    ``timeout`` bounds the whole discovery GET — including any same-origin
+    redirect chain (each hop gets only the remaining budget) — independent of
+    the caller's client-wide timeout, so a slow/tarpit ``/.well-known/ucp``
+    cannot stall a subsequent request; when ``None`` the client's default
+    timeout applies. ``now`` is the monotonic clock used for that budget,
+    injectable so tests can drive the deadline deterministically.
     Returns ``None`` when the origin is not HTTPS, the profile is unreachable or
     not valid JSON, or it advertises no shopping service. Network and decode
     errors are swallowed so callers can fall back without special handling.
@@ -203,12 +374,14 @@ async def discover_merchant_ucp_profile(
     profile_url = f"{origin}{UCP_PROFILE_PATH}"
     headers = {"Accept": "application/json"}
     try:
-        if timeout is not None:
-            response = await client.get(profile_url, headers=headers, timeout=timeout)
-        else:
-            response = await client.get(profile_url, headers=headers)
+        response = await _get_following_same_origin_redirects(
+            client, profile_url, headers=headers, timeout=timeout, now=now
+        )
     except httpx.HTTPError as exc:
         logger.debug("UCP discovery request failed for %s: %s", origin, exc)
+        return None
+    if response is None:
+        logger.debug("UCP discovery for %s redirected off-origin; not followed", origin)
         return None
     if response.is_error:
         logger.debug(

@@ -193,6 +193,10 @@ async def _get_formatted_system_prompt(
         for key, value in format_args.items():
             formatted = formatted.replace(f"{{{key}}}", str(value))
 
+        delegation_addition = await processing_service.delegation_catalog_addition()
+        if delegation_addition:
+            formatted = f"{formatted}\n\n{delegation_addition}"
+
         # Add voice mode specific instruction
         voice_instruction = (
             "\n\n[Voice Mode Active] You are currently in voice conversation mode. "

@@ -300,11 +300,13 @@ class TestProbeUcpSupport:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls: list[str] = []
+        timeouts: list[float | None] = []
 
         async def fake_discover(
-            url: str, *, client: object
+            url: str, *, client: object, timeout: float | None = None
         ) -> MerchantUCPProfile | None:
             calls.append(url)
+            timeouts.append(timeout)
             return _shopping_profile("https://shop.example.com")
 
         monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
@@ -318,12 +320,14 @@ class TestProbeUcpSupport:
         assert second == first
         # Discovery runs once per origin; the second navigation hits the cache.
         assert len(calls) == 1
+        # The probe budget is passed through so it bounds the whole redirect chain.
+        assert timeouts == [browser_dom.UCP_PROBE_TIMEOUT_SECONDS]
 
     async def test_returns_none_for_non_https_origin(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def fail_discover(
-            url: str, *, client: object
+            url: str, *, client: object, timeout: float | None = None
         ) -> MerchantUCPProfile | None:  # pragma: no cover - must not be called
             raise AssertionError("non-HTTPS origin must not be probed")
 
@@ -333,25 +337,26 @@ class TestProbeUcpSupport:
         )
         assert result is None
 
-    async def test_no_hint_when_only_cross_origin_endpoints(
+    async def test_no_hint_when_only_untrusted_cross_host_endpoints(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def fake_discover(
-            url: str, *, client: object
+            url: str, *, client: object, timeout: float | None = None
         ) -> MerchantUCPProfile | None:
             return MerchantUCPProfile(
                 origin="https://shop.example.com",
-                mcp_endpoints=("https://other.example.com/mcp",),
+                mcp_endpoints=("https://internal-host/mcp",),
                 service_names=("dev.ucp.shopping",),
                 capability_names=("dev.ucp.shopping.cart",),
                 version=None,
             )
 
         monkeypatch.setattr(browser_dom, "discover_merchant_ucp_profile", fake_discover)
-        # supports_shopping is True, but no same-origin endpoint exists, so the
-        # model must not be told this origin is shoppable.
+        # supports_shopping is True, but the only endpoint is neither same-origin,
+        # same-site, nor a trusted platform suffix, so the shopping tools could
+        # not use it — the model must not be told this origin is shoppable.
         result = await _probe_ucp_support(
-            self._context("probe-cross-origin-test"), "https://shop.example.com/"
+            self._context("probe-cross-host-test"), "https://shop.example.com/"
         )
         assert result is None
 
@@ -361,7 +366,7 @@ class TestProbeUcpSupport:
         calls: list[str] = []
 
         async def fake_discover(
-            url: str, *, client: object
+            url: str, *, client: object, timeout: float | None = None
         ) -> MerchantUCPProfile | None:
             calls.append(url)
             return None

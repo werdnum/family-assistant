@@ -217,8 +217,47 @@ struct ChatAPIClient {
         return ChatTurnStart(
             conversationID: turn.conversationID,
             firstSeq: turn.firstSeq,
-            alreadyComplete: turn.alreadyComplete
+            alreadyComplete: turn.alreadyComplete,
+            incomplete: turn.incomplete
         )
+    }
+
+    /// Request server-side cancellation of a running turn.
+    ///
+    /// POSTs `/api/v1/chat/turns/{turnID}/cancel`. The server ends the turn as
+    /// `cancelled` and rejects pending durable confirmations for that turn; the
+    /// caller should keep the stream open and let the terminal SSE event settle
+    /// the visible bubble.
+    func cancelTurn(turnID: String, conversationID: String) async throws -> ChatTurnCancelResult {
+        let encodedTurnID = Self.encodedPathComponent(turnID)
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/turns/\(encodedTurnID)/cancel"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.chatEncoder.encode(ChatTurnControlRequest(conversationID: conversationID))
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(ChatTurnCancelResult.self, from: data)
+    }
+
+    /// Inject a steering message into a running turn.
+    ///
+    /// POSTs `/api/v1/chat/turns/{turnID}/steer`. A 409 response means the turn
+    /// has already finished and the text should be sent as a normal follow-up.
+    func steerTurn(turnID: String, conversationID: String, prompt: String) async throws -> ChatTurnSteerResult {
+        let encodedTurnID = Self.encodedPathComponent(turnID)
+        var request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/turns/\(encodedTurnID)/steer"),
+            method: "POST"
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.chatEncoder.encode(
+            ChatTurnSteerRequest(conversationID: conversationID, prompt: prompt)
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(ChatTurnSteerResult.self, from: data)
     }
 
     /// Subscribe to (or resume) a turn's event stream. Second step of the
@@ -538,6 +577,7 @@ struct ChatTurnStart {
     let conversationID: String
     let firstSeq: Int
     let alreadyComplete: Bool
+    let incomplete: Bool
 }
 
 private struct EphemeralTokenRequestBody: Encodable {
@@ -619,17 +659,63 @@ private struct ChatStreamRequest: Encodable {
     }
 }
 
+private struct ChatTurnControlRequest: Encodable {
+    let conversationID: String
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+    }
+}
+
+private struct ChatTurnSteerRequest: Encodable {
+    let conversationID: String
+    let prompt: String
+
+    enum CodingKeys: String, CodingKey {
+        case conversationID = "conversation_id"
+        case prompt
+    }
+}
+
+struct ChatTurnCancelResult: Decodable, Equatable {
+    let turnID: String
+    let conversationID: String
+    let status: String
+    let alreadyComplete: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
+        case conversationID = "conversation_id"
+        case status
+        case alreadyComplete = "already_complete"
+    }
+}
+
+struct ChatTurnSteerResult: Decodable, Equatable {
+    let turnID: String
+    let conversationID: String
+    let accepted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
+        case conversationID = "conversation_id"
+        case accepted
+    }
+}
+
 private struct ChatTurnResponse: Decodable {
     let turnID: String
     let conversationID: String
     let firstSeq: Int
     let alreadyComplete: Bool
+    let incomplete: Bool
 
     enum CodingKeys: String, CodingKey {
         case turnID = "turn_id"
         case conversationID = "conversation_id"
         case firstSeq = "first_seq"
         case alreadyComplete = "already_complete"
+        case incomplete
     }
 
     init(from decoder: Decoder) throws {
@@ -640,6 +726,7 @@ private struct ChatTurnResponse: Decodable {
         // Durable-idempotency fallback: a turn found in the DB but not the hub
         // returns already_complete=true and is not replayable from the stream.
         alreadyComplete = try container.decodeIfPresent(Bool.self, forKey: .alreadyComplete) ?? false
+        incomplete = try container.decodeIfPresent(Bool.self, forKey: .incomplete) ?? false
     }
 }
 

@@ -27,6 +27,9 @@ final class ChatViewModel {
     var errorMessage: String?
     var liveUpdatesConnected = true
     var mobileShowsConversationList = false
+    var steerDraftText = ""
+    var steerErrorMessage: String?
+    var stopWarningMessage: String?
 
     var canSendDraft: Bool {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,6 +57,17 @@ final class ChatViewModel {
     @ObservationIgnored private var currentStreamToken: UUID?
     @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
+    @ObservationIgnored private var activeTurn: ActiveChatTurn?
+    @ObservationIgnored private var registeredTurnIDs: Set<String> = []
+    @ObservationIgnored private var pendingStopTurnIDs: Set<String> = []
+    @ObservationIgnored private var stopAfterRegistrationByTurnID: [String: String] = [:]
+    @ObservationIgnored private var stopRequestedTurnIDs: Set<String> = []
+    @ObservationIgnored private var pendingSteersByTurnID: [String: [String]] = [:]
+    @ObservationIgnored private var inFlightSteers: [String] = []
+    @ObservationIgnored private var awaitingEchoSteers: [String] = []
+    @ObservationIgnored private var queuedFollowUpSteers: [String] = []
+    @ObservationIgnored private var localUserInputConversationIDByMessageID: [String: String] = [:]
+    @ObservationIgnored private var representedPersistedUserInputEchoCounts: [UserInputEchoKey: Int] = [:]
     @ObservationIgnored private var lastProcessedInitialPrompt: String?
     // Highest stream seq applied for the active conversation, threaded into the
     // follow subscribe's `ack_seq` and the `/ack` POST after a turn_ended so the
@@ -73,11 +87,22 @@ final class ChatViewModel {
     // skip rendering follow tokens for an already-ended turn. Reset per
     // conversation.
     @ObservationIgnored private var endedTurnIDs: Set<String> = []
+    @ObservationIgnored private var endedTurnStatusByTurnID: [String: String] = [:]
 
     private enum Keys {
         static let lastConversationID = "lastConversationId"
         static let lastConversationActiveAt = "lastConversationActiveAt"
         static let selectedProfileID = "selectedProfileId"
+    }
+
+    private struct ActiveChatTurn: Equatable {
+        let turnID: String
+        let conversationID: String
+    }
+
+    private struct UserInputEchoKey: Hashable {
+        let turnID: String
+        let text: String
     }
 
     // How recently the last conversation must have been active for it to reopen
@@ -281,7 +306,10 @@ final class ChatViewModel {
     }
 
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
-        cancelStream()
+        let queuedStopTurnID = activeTurn.flatMap { activeTurn in
+            stopAfterRegistrationByTurnID[activeTurn.turnID] == nil ? nil : activeTurn.turnID
+        }
+        cancelStream(sendQueuedStopCancel: false)
         // Tear down the previous conversation's follow loop NOW, before the
         // `await loadMessages` below suspends. `cancelStream` only cancels the
         // send task; without this the old conversation's still-live follow loop
@@ -292,11 +320,16 @@ final class ChatViewModel {
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
+        endedTurnStatusByTurnID.removeAll()
+        resetTurnControlState()
         displayedMessageLimit = Self.initialDisplayedMessageCount
         conversationID = id
         conversationSelection = id
         persistConversationID()
         mobileShowsConversationList = false
+        if let queuedStopTurnID {
+            _ = await cancelStopQueuedBeforeRegistration(for: queuedStopTurnID)
+        }
         // Load persisted history BEFORE starting the live-events follow loop. The
         // follow stream now renders live tokens into local bubbles, and
         // `loadMessages` does a full `messages =` replace — starting the loop
@@ -315,6 +348,8 @@ final class ChatViewModel {
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
+        endedTurnStatusByTurnID.removeAll()
+        resetTurnControlState()
         displayedMessageLimit = Self.initialDisplayedMessageCount
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
@@ -323,6 +358,22 @@ final class ChatViewModel {
         mobileShowsConversationList = false
         persistConversationID()
         startLiveEvents()
+    }
+
+    private func resetTurnControlState() {
+        activeTurn = nil
+        registeredTurnIDs.removeAll()
+        pendingStopTurnIDs.removeAll()
+        stopRequestedTurnIDs.removeAll()
+        pendingSteersByTurnID.removeAll()
+        inFlightSteers.removeAll()
+        awaitingEchoSteers.removeAll()
+        queuedFollowUpSteers.removeAll()
+        localUserInputConversationIDByMessageID.removeAll()
+        representedPersistedUserInputEchoCounts.removeAll()
+        steerDraftText = ""
+        steerErrorMessage = nil
+        stopWarningMessage = nil
     }
 
     func changeProfile(to profileID: String) {
@@ -391,22 +442,92 @@ final class ChatViewModel {
     }
 
     /// Reconcile against the rendered persisted rows, then combine them with the
-    /// still-held live-follow bubbles ordered by creation time. A single
+    /// still-held live-follow bubbles and local user-input echoes. A single
     /// in-progress reply lands last (its bubble was created after every persisted
     /// row), and two overlapping turns keep their relative order instead of the
-    /// older one being forced after the newer finished one. The index tiebreaker
+    /// older one being forced after the newer finished one. A local user echo for
+    /// the same turn is kept before its assistant bubble even when its timestamp
+    /// is newer because it arrived after the first token. The index tiebreaker
     /// keeps a stable order for equal timestamps (preserving backend order).
     private func withLiveFollowBubbles(_ base: [ChatMessage]) -> [ChatMessage] {
         reconcileLiveFollowBubbles(against: base)
-        let heldBubbles = heldLiveFollowBubbles()
-        guard !heldBubbles.isEmpty else {
+        let heldMessages = heldLocalUserInputEchoes(against: base) + heldLiveFollowBubbles()
+        guard !heldMessages.isEmpty else {
             return base
         }
         let baseIDs = Set(base.map(\.id))
-        let combined = base + heldBubbles.filter { !baseIDs.contains($0.id) }
+        let combined = base + heldMessages.filter { !baseIDs.contains($0.id) }
         return combined.enumerated()
-            .sorted { ($0.element.createdAt, $0.offset) < ($1.element.createdAt, $1.offset) }
+            .sorted { lhs, rhs in
+                let left = lhs.element
+                let right = rhs.element
+                if left.turnID == right.turnID, left.turnID != nil {
+                    let leftIsUserEcho = isLocalUserInputEcho(left)
+                    let rightIsUserEcho = isLocalUserInputEcho(right)
+                    let leftIsFollowBubble = isLiveFollowBubble(left)
+                    let rightIsFollowBubble = isLiveFollowBubble(right)
+                    if leftIsUserEcho, rightIsFollowBubble {
+                        return true
+                    }
+                    if leftIsFollowBubble, rightIsUserEcho {
+                        return false
+                    }
+                }
+                return (left.createdAt, lhs.offset) < (right.createdAt, rhs.offset)
+            }
             .map(\.element)
+    }
+
+    private func heldLocalUserInputEchoes(against persisted: [ChatMessage]) -> [ChatMessage] {
+        guard let conversationID else {
+            return []
+        }
+        var persistedUserCounts: [UserInputEchoKey: Int] = [:]
+        // Only persisted USER rows can stand in for a local user-input echo. An
+        // assistant reply that happens to share the steer's turn id and text
+        // (e.g. both are "OK") must not consume the echo's slot, or the user's
+        // mid-turn steer bubble would vanish on the next history merge.
+        for message in persisted where message.id.hasPrefix("msg_") && message.role == .user {
+            guard let key = userInputEchoKey(for: message) else {
+                continue
+            }
+            persistedUserCounts[key, default: 0] += 1
+        }
+        return messages.filter { message in
+            guard isLocalUserInputEcho(message),
+                  localUserInputConversationIDByMessageID[message.id] == conversationID
+            else {
+                return false
+            }
+            guard let key = userInputEchoKey(for: message) else {
+                return true
+            }
+            guard let persistedCount = persistedUserCounts[key], persistedCount > 0 else {
+                return true
+            }
+            persistedUserCounts[key] = persistedCount - 1
+            representedPersistedUserInputEchoCounts[key, default: 0] += 1
+            return false
+        }
+    }
+
+    private func isLocalUserInputEcho(_ message: ChatMessage) -> Bool {
+        message.id.hasPrefix("local_user_input_") && message.role == .user
+    }
+
+    private func userInputEchoKey(for message: ChatMessage) -> UserInputEchoKey? {
+        userInputEchoKey(turnID: message.turnID, text: message.text)
+    }
+
+    private func userInputEchoKey(turnID: String?, text: String) -> UserInputEchoKey? {
+        guard let turnID else {
+            return nil
+        }
+        return UserInputEchoKey(turnID: turnID, text: text)
+    }
+
+    private func isLiveFollowBubble(_ message: ChatMessage) -> Bool {
+        message.id.hasPrefix("local_follow_") && message.role == .assistant
     }
 
     /// Reconcile the held thread with newly persisted messages without refetching
@@ -523,6 +644,7 @@ final class ChatViewModel {
 
         cancelStream()
 
+        let turnID = UUID().uuidString
         let uploadedAttachments = draftAttachments.filter { $0.uploadState == .uploaded }
         let userMessage = ChatMessage(
             id: "local_user_\(UUID().uuidString)",
@@ -534,7 +656,8 @@ final class ChatViewModel {
             isLoading: false,
             status: .complete,
             processingProfileID: selectedProfileID,
-            errorTraceback: nil
+            errorTraceback: nil,
+            turnID: turnID
         )
         let assistantMessageID = "local_assistant_\(UUID().uuidString)"
         let assistantMessage = ChatMessage(
@@ -547,7 +670,8 @@ final class ChatViewModel {
             isLoading: true,
             status: .running,
             processingProfileID: selectedProfileID,
-            errorTraceback: nil
+            errorTraceback: nil,
+            turnID: turnID
         )
         messages.append(userMessage)
         messages.append(assistantMessage)
@@ -556,9 +680,14 @@ final class ChatViewModel {
         isStreaming = true
         persistConversationID()
 
-        let turnID = UUID().uuidString
         let streamToken = UUID()
         currentStreamToken = streamToken
+        activeTurn = ActiveChatTurn(
+            turnID: turnID,
+            conversationID: id
+        )
+        steerErrorMessage = nil
+        stopWarningMessage = nil
         streamTask = Task { [weak self] in
             guard let self else { return }
             await runSendTurn(
@@ -580,7 +709,7 @@ final class ChatViewModel {
     /// losing the connection mid-turn must recover, not surface a spurious error.
     private enum TurnSubscriptionOutcome: Equatable {
         /// `turn_ended` seen — the turn finished while we were watching.
-        case completed
+        case completed(status: String?)
         /// Server sent `stream_dropped` (subscriber overflow / shutdown), or the
         /// connect failed transiently (5xx). Resumable: resubscribe from the last
         /// applied seq.
@@ -594,6 +723,13 @@ final class ChatViewModel {
         case reloadHistory
         /// A genuinely fatal failure (e.g. auth) that recovery can't paper over.
         case failed(String)
+
+        var isCompleted: Bool {
+            if case .completed = self {
+                return true
+            }
+            return false
+        }
     }
 
     private func runSendTurn(
@@ -613,18 +749,89 @@ final class ChatViewModel {
                 profileID: selectedProfileID,
                 attachments: attachments
             )
+            let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
+                if let stopConversationID = stopAfterRegistrationConversationID {
+                    let turnToCancel = ActiveChatTurn(turnID: turnID, conversationID: stopConversationID)
+                    Task { [weak self] in
+                        guard let self else {
+                            return
+                        }
+                        do {
+                            _ = try await self.requestStopWithRetry(turnToCancel)
+                        } catch {
+                            self.errorMessage = error.localizedDescription
+                            self.errorReporter.report(error, component: "Chat.stopTurn")
+                        }
+                    }
+                }
                 return
             }
+            registeredTurnIDs.insert(turnID)
+            let pendingSteers = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
+            let hadPendingStop = pendingStopTurnIDs.remove(turnID) != nil
+                || stopAfterRegistrationConversationID != nil
             if start.alreadyComplete {
+                if hadPendingStop || stopRequestedTurnIDs.contains(turnID) {
+                    detachPendingSteers(pendingSteers, requeue: false)
+                } else {
+                    detachPendingSteers(pendingSteers, requeue: true)
+                }
                 // The retried turn finished durably but is not replayable from the
                 // hub. Don't subscribe; reload persisted history to surface it.
-                await recoverByReloadingHistory(
-                    conversationID: id,
-                    assistantMessageID: assistantMessageID
-                )
+                if start.incomplete {
+                    appendStreamError(
+                        "The assistant reply could not be recovered. Please try again.",
+                        assistantMessageID: assistantMessageID
+                    )
+                } else {
+                    await recoverByReloadingHistory(
+                        conversationID: id,
+                        assistantMessageID: assistantMessageID
+                    )
+                }
                 finishStreaming(streamToken)
                 return
+            }
+            if hadPendingStop {
+                detachPendingSteers(pendingSteers, requeue: false)
+                let secured: Bool
+                do {
+                    secured = try await requestStopWithRetry(ActiveChatTurn(turnID: turnID, conversationID: id))
+                } catch {
+                    appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
+                    finishStreaming(streamToken)
+                    return
+                }
+                guard !Task.isCancelled, currentStreamToken == streamToken else {
+                    return
+                }
+                if !secured {
+                    stopWarningMessage = "Stop could not be confirmed. Pending approvals from this turn may still be active."
+                }
+            }
+            if !hadPendingStop {
+                for prompt in pendingSteers {
+                    let activeTurn = ActiveChatTurn(turnID: turnID, conversationID: id)
+                    let result: SteerSubmissionResult
+                    do {
+                        result = try await requestSteerWithRetry(activeTurn, prompt: prompt)
+                    } catch {
+                        removeInFlightSteer(prompt)
+                        removeAwaitingEchoSteer(prompt)
+                        steerErrorMessage = error.localizedDescription
+                        errorReporter.report(error, component: "Chat.steerTurn")
+                        continue
+                    }
+                    guard !Task.isCancelled, currentStreamToken == streamToken else {
+                        return
+                    }
+                    await handleSteerSubmissionResult(
+                        result,
+                        prompt: prompt,
+                        activeTurn: activeTurn
+                    )
+                }
             }
 
             var outcome = await runTurnSubscription(
@@ -696,7 +903,7 @@ final class ChatViewModel {
             }
 
             switch outcome {
-            case .completed:
+            case .completed(let status):
                 // Acknowledge the highest received seq so the server suppresses the
                 // disconnect push for a reply we actually saw. Fire-and-forget so
                 // UI completion isn't blocked on the ack.
@@ -707,7 +914,17 @@ final class ChatViewModel {
                 completeStream(assistantMessageID: assistantMessageID)
                 await refreshRecentConversations()
                 await mergeNewMessages(conversationID: id)
+                if status == "cancelled" || status == "failed" || stopRequestedTurnIDs.contains(turnID) {
+                    clearRecoverableSteers()
+                } else {
+                    recoverUnconsumedSteers()
+                }
             case .reloadHistory, .dropped, .interrupted:
+                if stopRequestedTurnIDs.contains(turnID) {
+                    clearRecoverableSteers()
+                } else {
+                    dropAcceptedSteersAwaitingEcho()
+                }
                 // The connection dropped before turn_ended, but the turn keeps
                 // running durably. Mark it ended for the follow loop FIRST: the
                 // always-on follow stream still carries this turn's later tokens,
@@ -716,7 +933,7 @@ final class ChatViewModel {
                 // a duplicate of the partial reply this reload surfaces as a `msg_`
                 // row. Suppressing the live re-render lets the durable reply land
                 // through history catch-up (and the completion push) instead.
-                endedTurnIDs.insert(turnID)
+                markTurnEnded(turnID, status: nil)
                 // Reload persisted history silently. Don't write to `errorMessage`:
                 // that drives a modal "Chat Error" alert, which would be spurious
                 // for a reply that actually succeeded. The disconnected indicator
@@ -726,11 +943,20 @@ final class ChatViewModel {
                     assistantMessageID: assistantMessageID
                 )
             case .failed(let message):
+                // A fatal subscribe failure ends this send. Clear any steer the
+                // user had in flight/awaiting echo (as the failed-completion path
+                // does) so a stranded text entry doesn't keep blocking re-sending
+                // the same steer as a normal draft.
+                clearRecoverableSteers()
                 appendStreamError(message, assistantMessageID: assistantMessageID)
             }
         } catch is CancellationError {
+            _ = await cancelStopQueuedBeforeRegistration(for: turnID)
             markStreamStopped(assistantMessageID: assistantMessageID)
         } catch {
+            if !(await cancelStopQueuedBeforeRegistration(for: turnID)) {
+                recoverPendingSteersAsDraft(for: turnID)
+            }
             // Reaching here means starting the turn itself failed — the prompt was
             // never accepted, so there is no durable turn to recover; surface it.
             appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
@@ -768,7 +994,7 @@ final class ChatViewModel {
             )
             // A clean turn_ended is the happy path; only breadcrumb the cases the
             // recovery layer otherwise swallows silently (the reported symptom).
-            if outcome != .completed {
+            if !outcome.isCompleted {
                 reportStreamOutcome(
                     phase: "send-subscribe",
                     outcome: Self.outcomeLabel(outcome),
@@ -882,13 +1108,16 @@ final class ChatViewModel {
                 // Mark this turn ended so a late, out-of-step copy of one of its
                 // tokens arriving on the always-on follow stream after the send
                 // finishes can't spawn a duplicate live bubble for it.
-                endedTurnIDs.insert(turnID)
+                markTurnEnded(turnID, status: event.status)
                 // A failed turn carries its error on the terminal event; surface
                 // it so the bubble shows the failure rather than an empty reply.
-                if let message = event.errorMessage, !message.isEmpty {
+                if event.status != "cancelled",
+                   let message = event.errorMessage,
+                   !message.isEmpty
+                {
                     appendStreamError(message, assistantMessageID: assistantMessageID)
                 }
-                return .completed
+                return .completed(status: event.status)
             }
         }
         // The loop only exits here when the stream closed (or was cancelled)
@@ -916,18 +1145,464 @@ final class ChatViewModel {
     /// superseded task must not nil out the new turn's streamTask.
     private func finishStreaming(_ streamToken: UUID) {
         if currentStreamToken == streamToken {
+            preserveSteerDraftAsNormalDraft()
             isStreaming = false
             streamTask = nil
+            currentStreamToken = nil
+            if let turnID = activeTurn?.turnID {
+                registeredTurnIDs.remove(turnID)
+                pendingStopTurnIDs.remove(turnID)
+                stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
+                stopRequestedTurnIDs.remove(turnID)
+                pendingSteersByTurnID[turnID] = nil
+            }
+            activeTurn = nil
+            Task { [weak self] in
+                await self?.sendNextQueuedFollowUpSteerIfReady()
+            }
         }
     }
 
-    func cancelStream() {
+    func stopTurn() async {
+        guard let activeTurn else {
+            cancelStream()
+            return
+        }
+        stopWarningMessage = nil
+        stopRequestedTurnIDs.insert(activeTurn.turnID)
+        guard registeredTurnIDs.contains(activeTurn.turnID) else {
+            pendingStopTurnIDs.insert(activeTurn.turnID)
+            stopAfterRegistrationByTurnID[activeTurn.turnID] = activeTurn.conversationID
+            return
+        }
+        let secured: Bool
+        do {
+            secured = try await requestStopWithRetry(activeTurn)
+        } catch {
+            guard shouldSurfaceStopWarning(for: activeTurn) else {
+                return
+            }
+            errorMessage = error.localizedDescription
+            errorReporter.report(error, component: "Chat.stopTurn")
+            return
+        }
+        if !secured {
+            guard shouldSurfaceStopWarning(for: activeTurn) else {
+                return
+            }
+            stopWarningMessage = "Stop could not be confirmed. Pending approvals from this turn may still be active."
+        }
+    }
+
+    func sendSteerDraft() async {
+        let prompt = steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            return
+        }
+        steerErrorMessage = nil
+        guard let activeTurn else {
+            steerDraftText = ""
+            let preservedDraftText = draftText
+            let preservedDraftAttachments = draftAttachments
+            draftText = prompt
+            draftAttachments = []
+            await sendDraft()
+            draftText = preservedDraftText
+            draftAttachments = preservedDraftAttachments
+            return
+        }
+        guard !hasPendingSteer(prompt) else {
+            return
+        }
+        inFlightSteers.append(prompt)
+        guard registeredTurnIDs.contains(activeTurn.turnID) else {
+            pendingSteersByTurnID[activeTurn.turnID, default: []].append(prompt)
+            return
+        }
+        do {
+            let result = try await requestSteerWithRetry(activeTurn, prompt: prompt)
+            await handleSteerSubmissionResult(result, prompt: prompt, activeTurn: activeTurn)
+        } catch {
+            removeInFlightSteer(prompt)
+            removeAwaitingEchoSteer(prompt)
+            steerErrorMessage = error.localizedDescription
+            errorReporter.report(error, component: "Chat.steerTurn")
+        }
+    }
+
+    private func handleSteerSubmissionResult(
+        _ result: SteerSubmissionResult,
+        prompt: String,
+        activeTurn: ActiveChatTurn
+    ) async {
+        let isCurrentTurn = self.activeTurn == activeTurn
+        let isSameConversation = conversationID == activeTurn.conversationID
+        let originalTurnEnded = endedTurnIDs.contains(activeTurn.turnID)
+        let originalTurnEndedCleanly = canRecoverSteerAfterTurnEnded(activeTurn.turnID)
+        // A late result for a turn that is neither active nor ended was superseded
+        // (cancelStream/a new send cleared THIS turn's steer arrays). The steer
+        // collections are keyed by prompt text, so a newer turn may already hold an
+        // identical prompt; removing by text here would untrack the newer turn's
+        // steer. Don't touch the shared arrays — just drop a stale matching draft.
+        guard isCurrentTurn || originalTurnEnded else {
+            clearSteerDraftIfMatching(prompt)
+            return
+        }
+        switch result {
+        case .accepted:
+            guard removeInFlightSteer(prompt) else {
+                return
+            }
+            if originalTurnEnded {
+                guard originalTurnEndedCleanly, isCurrentTurn || isSameConversation else {
+                    clearSteerDraftIfMatching(prompt)
+                    return
+                }
+                steerDraftText = ""
+                queuedFollowUpSteers.append(prompt)
+                await sendNextQueuedFollowUpSteerIfReady()
+            } else {
+                awaitingEchoSteers.append(prompt)
+            }
+        case .finished:
+            removeInFlightSteer(prompt)
+            removeAwaitingEchoSteer(prompt)
+            guard isCurrentTurn || (isSameConversation && originalTurnEnded) else {
+                clearSteerDraftIfMatching(prompt)
+                return
+            }
+            if originalTurnEnded, !originalTurnEndedCleanly {
+                clearSteerDraftIfMatching(prompt)
+                return
+            }
+            steerDraftText = ""
+            queuedFollowUpSteers.append(prompt)
+            await sendNextQueuedFollowUpSteerIfReady()
+        case .error:
+            removeInFlightSteer(prompt)
+            removeAwaitingEchoSteer(prompt)
+            if isCurrentTurn {
+                steerErrorMessage = "Could not steer the assistant. Please try again."
+            } else if originalTurnEnded,
+                      canRecoverSteerAfterTurnEnded(activeTurn.turnID, defaultWhenUnknown: true),
+                      isSameConversation {
+                recoverSteerAsDraft(prompt)
+            }
+        }
+    }
+
+    private enum SteerSubmissionResult {
+        case accepted
+        case finished
+        case error
+    }
+
+    private func requestStopWithRetry(_ activeTurn: ActiveChatTurn) async throws -> Bool {
+        let attempts = 5
+        for attempt in 0..<attempts {
+            do {
+                _ = try await apiClient.cancelTurn(
+                    turnID: activeTurn.turnID,
+                    conversationID: activeTurn.conversationID
+                )
+                return true
+            } catch let error as ChatAPIError {
+                if !Self.isRetryableTurnControlError(error) {
+                    errorReporter.report(error, component: "Chat.stopTurn")
+                    return false
+                }
+            } catch let error as URLError {
+                guard Self.isRetryableTurnTransportError(error) else {
+                    throw error
+                }
+            }
+            await sleepBeforeTurnControlRetry(attempt: attempt, attempts: attempts)
+        }
+        return false
+    }
+
+    private func cancelStopQueuedBeforeRegistration(for turnID: String) async -> Bool {
+        guard let conversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID) else {
+            return false
+        }
+        detachPendingSteers(pendingSteersByTurnID.removeValue(forKey: turnID) ?? [], requeue: false)
+        let turnToCancel = ActiveChatTurn(turnID: turnID, conversationID: conversationID)
+        let cancellationTask = Task { [weak self] in
+            guard let self else {
+                return false
+            }
+            do {
+                return try await self.requestStopWithRetry(turnToCancel)
+            } catch {
+                self.errorMessage = error.localizedDescription
+                self.errorReporter.report(error, component: "Chat.stopTurn")
+                return false
+            }
+        }
+        let secured = await cancellationTask.value
+        if !secured, shouldSurfaceStopWarning(for: turnToCancel) {
+            stopWarningMessage = "Stop could not be confirmed. Pending approvals from this turn may still be active."
+        }
+        return true
+    }
+
+    private func requestSteerWithRetry(
+        _ activeTurn: ActiveChatTurn,
+        prompt: String
+    ) async throws -> SteerSubmissionResult {
+        let attempts = 5
+        var lastWasNotFound = false
+        var hadAmbiguousFailure = false
+        for attempt in 0..<attempts {
+            do {
+                _ = try await apiClient.steerTurn(
+                    turnID: activeTurn.turnID,
+                    conversationID: activeTurn.conversationID,
+                    prompt: prompt
+                )
+                return .accepted
+            } catch let error as ChatAPIError {
+                switch error {
+                case .server(let statusCode, _) where statusCode == 409:
+                    return hadAmbiguousFailure ? .error : .finished
+                case .server(let statusCode, _) where statusCode == 404:
+                    lastWasNotFound = true
+                case .server(let statusCode, _) where statusCode < 500:
+                    errorReporter.report(error, component: "Chat.steerTurn")
+                    return .error
+                default:
+                    hadAmbiguousFailure = true
+                    lastWasNotFound = false
+                }
+            } catch let error as URLError {
+                guard Self.isRetryableTurnTransportError(error) else {
+                    throw error
+                }
+                hadAmbiguousFailure = true
+                lastWasNotFound = false
+            }
+            await sleepBeforeTurnControlRetry(attempt: attempt, attempts: attempts)
+        }
+        return lastWasNotFound && !hadAmbiguousFailure ? .finished : .error
+    }
+
+    private static func isRetryableTurnControlError(_ error: ChatAPIError) -> Bool {
+        if case .server(let statusCode, _) = error {
+            return statusCode == 404 || statusCode >= 500
+        }
+        return false
+    }
+
+    private static func isRetryableTurnTransportError(_ error: URLError) -> Bool {
+        switch error.code {
+        case .timedOut, .networkConnectionLost, .notConnectedToInternet,
+             .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+             .badServerResponse, .resourceUnavailable:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func sleepBeforeTurnControlRetry(attempt: Int, attempts: Int) async {
+        guard attempt < attempts - 1 else {
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(150 * (attempt + 1)))
+    }
+
+    private func recoverUnconsumedSteers() {
+        guard !awaitingEchoSteers.isEmpty else {
+            return
+        }
+        queuedFollowUpSteers.append(contentsOf: awaitingEchoSteers)
+        awaitingEchoSteers.removeAll()
+    }
+
+    private func clearRecoverableSteers() {
+        for prompt in inFlightSteers + awaitingEchoSteers + queuedFollowUpSteers {
+            clearSteerDraftIfMatching(prompt)
+        }
+        inFlightSteers.removeAll()
+        awaitingEchoSteers.removeAll()
+        queuedFollowUpSteers.removeAll()
+    }
+
+    private func dropAcceptedSteersAwaitingEcho() {
+        for prompt in awaitingEchoSteers {
+            clearSteerDraftIfMatching(prompt)
+        }
+        awaitingEchoSteers.removeAll()
+    }
+
+    private func markTurnEnded(_ turnID: String, status: String?) {
+        endedTurnIDs.insert(turnID)
+        if let status {
+            endedTurnStatusByTurnID[turnID] = status
+        }
+    }
+
+    /// Whether a steer for a turn that has already ended can still be recovered
+    /// (re-sent as a follow-up or restored to the draft). A turn that ended as
+    /// `cancelled`/`failed` is never recoverable. `defaultWhenUnknown` is the
+    /// answer when the turn ended without a recorded status (e.g. it was
+    /// finalized off the always-on follow stream): an accepted steer treats an
+    /// unknown status conservatively (false), a failed-steer recovery
+    /// optimistically (true).
+    private func canRecoverSteerAfterTurnEnded(
+        _ turnID: String,
+        defaultWhenUnknown: Bool = false
+    ) -> Bool {
+        guard let status = endedTurnStatusByTurnID[turnID] else {
+            return defaultWhenUnknown
+        }
+        return status != "cancelled" && status != "failed"
+    }
+
+    private func shouldSurfaceStopWarning(for stoppedTurn: ActiveChatTurn) -> Bool {
+        activeTurn == stoppedTurn
+            || (activeTurn == nil && conversationID == stoppedTurn.conversationID)
+    }
+
+    /// Tear down steers that were queued before their turn registered: drop their
+    /// in-flight/awaiting-echo tracking and clear a matching steer draft. With
+    /// `requeue` true the prompt is re-queued as a normal follow-up (the turn
+    /// finished durably before it could be steered); with false it is discarded
+    /// (e.g. a stop superseded it).
+    private func detachPendingSteers(_ prompts: [String], requeue: Bool) {
+        for prompt in prompts {
+            removeInFlightSteer(prompt)
+            removeAwaitingEchoSteer(prompt)
+            if requeue {
+                queuedFollowUpSteers.append(prompt)
+            }
+            clearSteerDraftIfMatching(prompt)
+        }
+    }
+
+    private func hasPendingSteer(_ prompt: String) -> Bool {
+        inFlightSteers.contains(prompt)
+            || awaitingEchoSteers.contains(prompt)
+            || queuedFollowUpSteers.contains(prompt)
+            || pendingSteersByTurnID.values.contains { $0.contains(prompt) }
+    }
+
+    private func preserveSteerDraftAsNormalDraft() {
+        let prompt = steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            return
+        }
+        guard !hasPendingSteer(prompt) else {
+            return
+        }
+        appendPromptToDraft(prompt)
+        steerDraftText = ""
+    }
+
+    private func recoverSteerAsDraft(_ prompt: String) {
+        appendPromptToDraft(prompt)
+        clearSteerDraftIfMatching(prompt)
+    }
+
+    private func clearSteerDraftIfMatching(_ prompt: String) {
+        if steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines) == prompt {
+            steerDraftText = ""
+        }
+    }
+
+    private func recoverPendingSteersAsDraft(for turnID: String) {
+        let prompts = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
+        guard !prompts.isEmpty else {
+            return
+        }
+        let currentSteerDraft = steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var recoveredCurrentSteerDraft = false
+        for prompt in prompts {
+            removeInFlightSteer(prompt)
+            removeAwaitingEchoSteer(prompt)
+            recoverSteerAsDraft(prompt)
+            if prompt == currentSteerDraft {
+                recoveredCurrentSteerDraft = true
+            }
+        }
+        if recoveredCurrentSteerDraft {
+            steerDraftText = ""
+        }
+    }
+
+    private func appendPromptToDraft(_ prompt: String) {
+        let prompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            return
+        }
+        let existingDraft = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if existingDraft.isEmpty {
+            draftText = prompt
+            return
+        }
+        let existingLines = existingDraft
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard !existingLines.contains(prompt) else {
+            return
+        }
+        draftText += draftText.hasSuffix("\n") ? prompt : "\n\(prompt)"
+    }
+
+    @discardableResult
+    private func removeInFlightSteer(_ prompt: String) -> Bool {
+        if let index = inFlightSteers.firstIndex(of: prompt) {
+            inFlightSteers.remove(at: index)
+            return true
+        }
+        return false
+    }
+
+    private func removeAwaitingEchoSteer(_ prompt: String) {
+        if let index = awaitingEchoSteers.firstIndex(of: prompt) {
+            awaitingEchoSteers.remove(at: index)
+        }
+    }
+
+    private func sendNextQueuedFollowUpSteerIfReady() async {
+        guard !isStreaming, !queuedFollowUpSteers.isEmpty else {
+            return
+        }
+        let followUp = queuedFollowUpSteers.removeFirst()
+        let remainingQueuedFollowUps = queuedFollowUpSteers
+        queuedFollowUpSteers = []
+        clearSteerDraftIfMatching(followUp)
+        let preservedDraftText = draftText
+        let preservedDraftAttachments = draftAttachments
+        draftText = followUp
+        draftAttachments = []
+        await sendDraft()
+        draftText = preservedDraftText
+        draftAttachments = preservedDraftAttachments
+        queuedFollowUpSteers = remainingQueuedFollowUps + queuedFollowUpSteers
+    }
+
+    func cancelStream(sendQueuedStopCancel: Bool = true) {
         guard streamTask != nil || isStreaming else {
             return
         }
         streamTask?.cancel()
         streamTask = nil
+        if sendQueuedStopCancel, let activeTurn,
+           stopAfterRegistrationByTurnID[activeTurn.turnID] != nil {
+            let turnID = activeTurn.turnID
+            Task { [weak self] in
+                await self?.cancelStopQueuedBeforeRegistration(for: turnID)
+            }
+        }
         isStreaming = false
+        currentStreamToken = nil
+        activeTurn = nil
+        registeredTurnIDs.removeAll()
+        pendingStopTurnIDs.removeAll()
+        stopRequestedTurnIDs.removeAll()
+        pendingSteersByTurnID.removeAll()
+        clearRecoverableSteers()
         flushPendingTextNow()
         if let index = messages.lastIndex(where: { $0.role == .assistant && $0.status == .running }) {
             messages[index].isLoading = false
@@ -1283,7 +1958,7 @@ final class ChatViewModel {
             // returns an empty delta, and so the merge then sees an unmapped
             // `local_` bubble it can drop and replace with the persisted reply.
             if event.type == .turnEnded, let turnID = event.turnID {
-                finalizeLiveFollowBubble(turnID: turnID)
+                finalizeLiveFollowBubble(turnID: turnID, status: event.status)
             }
             // Only surface and acknowledge while this device is NOT actively
             // streaming its own turn: during a send the send path owns the ack
@@ -1301,6 +1976,17 @@ final class ChatViewModel {
                 if event.type == .turnEnded, let seq = event.seq {
                     Task { try? await client.acknowledge(conversationID: conversationID, ackSeq: seq) }
                 }
+            }
+        case .userInput:
+            // Skip a late follow-stream echo for a turn that has already ended
+            // (its persisted steering row is reconciled via history), mirroring
+            // the token path's `endedTurnIDs` guard, so a lagging copy can't
+            // append a duplicate local user bubble.
+            if !isStreaming, let turnID = event.turnID, !endedTurnIDs.contains(turnID) {
+                if let seq = event.seq {
+                    recordAppliedSeq(seq)
+                }
+                appendUserInput(event)
             }
         case .text, .toolCall, .toolResult, .attachment:
             // Render only visible reply content from the always-on follow stream.
@@ -1364,7 +2050,8 @@ final class ChatViewModel {
                     // has selected, so don't stamp `selectedProfileID` and mislabel
                     // it. The persisted reply carries the real profile on merge.
                     processingProfileID: nil,
-                    errorTraceback: nil
+                    errorTraceback: nil,
+                    turnID: turnID
                 )
             )
         }
@@ -1380,8 +2067,8 @@ final class ChatViewModel {
     /// persisted reply lags (an empty or unrelated delta at `turn_ended`) keeps
     /// showing its completed streamed text rather than vanishing or stranding as a
     /// stuck spinner.
-    private func finalizeLiveFollowBubble(turnID: String) {
-        endedTurnIDs.insert(turnID)
+    private func finalizeLiveFollowBubble(turnID: String, status: String?) {
+        markTurnEnded(turnID, status: status)
         guard let bubbleID = liveFollowBubbleByTurnID[turnID],
               let index = messages.firstIndex(where: { $0.id == bubbleID })
         else {
@@ -1393,6 +2080,12 @@ final class ChatViewModel {
         messages[index].isLoading = false
         if messages[index].status != .failed {
             messages[index].status = .complete
+        }
+        // A turn stopped on another device finalizes here with no streamed text
+        // if the persisted stopped row hasn't merged yet; show the same stopped
+        // marker the send-stream path uses rather than an empty bubble.
+        if status == "cancelled", messages[index].text.isEmpty {
+            messages[index].text = "Response stopped."
         }
     }
 
@@ -1542,6 +2235,10 @@ final class ChatViewModel {
     }
 
     private func apply(streamEvent event: ChatStreamEvent, assistantMessageID: String) {
+        if event.type == .userInput {
+            appendUserInput(event)
+            return
+        }
         guard let index = messages.firstIndex(where: { $0.id == assistantMessageID }) else {
             return
         }
@@ -1607,9 +2304,78 @@ final class ChatViewModel {
         case .turnEnded:
             messages[index].isLoading = false
             messages[index].status = .complete
-        case .turnStarted, .connected, .message, .heartbeat, .streamDropped:
+            if event.status == "cancelled" && messages[index].text.isEmpty {
+                messages[index].text = "Response stopped."
+            }
+        case .turnStarted, .connected, .message, .heartbeat, .streamDropped, .userInput:
             break
         }
+    }
+
+    private func appendUserInput(_ event: ChatStreamEvent) {
+        guard let text = event.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else {
+            return
+        }
+        let id = "local_user_input_\(event.turnID ?? "turn")_\(event.seq.map(String.init) ?? UUID().uuidString)"
+        guard !messages.contains(where: { $0.id == id }) else {
+            return
+        }
+        if shouldRepresentWithPersistedUserInputEcho(turnID: event.turnID, text: text) {
+            removeInFlightSteer(text)
+            removeAwaitingEchoSteer(text)
+            clearSteerDraftIfMatching(text)
+            steerErrorMessage = nil
+            return
+        }
+        let message = ChatMessage(
+            id: id,
+            role: .user,
+            text: text,
+            createdAt: Date(),
+            toolCalls: [],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: selectedProfileID,
+            errorTraceback: nil,
+            turnID: event.turnID
+        )
+        if let conversationID {
+            localUserInputConversationIDByMessageID[id] = conversationID
+        }
+        if let index = messages.firstIndex(
+            where: { $0.role == .assistant && $0.status == .running && $0.turnID == event.turnID }
+        ) {
+            messages.insert(message, at: index)
+        } else {
+            messages.append(message)
+        }
+        removeInFlightSteer(text)
+        removeAwaitingEchoSteer(text)
+        clearSteerDraftIfMatching(text)
+        steerErrorMessage = nil
+    }
+
+    private func shouldRepresentWithPersistedUserInputEcho(turnID: String?, text: String) -> Bool {
+        guard let key = userInputEchoKey(turnID: turnID, text: text) else {
+            return false
+        }
+        let persistedCount = messages.filter { message in
+            message.id.hasPrefix("msg_")
+                && message.role == .user
+                && userInputEchoKey(for: message) == key
+        }.count
+        let localEchoCount = messages.filter { message in
+            isLocalUserInputEcho(message) && userInputEchoKey(for: message) == key
+        }.count
+        let representedCount = localEchoCount + (representedPersistedUserInputEchoCounts[key] ?? 0)
+        guard persistedCount > representedCount else {
+            return false
+        }
+        representedPersistedUserInputEchoCounts[key, default: 0] += 1
+        return true
     }
 
     /// Schedule a deferred flush of buffered stream text. A single pending timer

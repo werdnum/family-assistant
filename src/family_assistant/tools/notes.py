@@ -114,21 +114,11 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "add_or_update_note",
             "description": (
                 "Add a new note or update an existing note with the given title. Use this to remember information provided by the user. "
-                "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs.\n\n"
-                "Prompt inclusion (`include_in_prompt`):\n"
-                "- Default is `false`: the note is stored, indexed, and its title is surfaced in the 'Other available notes' "
-                "section of your system prompt — you can load its full content on demand via `get_note`.\n"
-                "- Set `true` ONLY for short, evergreen context that should be auto-loaded on every turn (e.g. durable user "
-                "preferences, household policies, identity facts about the user). Every `true` note grows the system prompt "
-                "for every future turn, so be selective.\n"
-                "- Specific facts, one-off details, lists, lookup tables, references, and anything you'd retrieve only when "
-                "relevant should stay at the default `false`.\n\n"
-                "To create a skill instead of a regular note, include YAML frontmatter with `name` and `description` fields "
-                "at the top of the content (between `---` delimiters). Skills appear in the Available Skills catalog "
-                "instead of the regular notes section and are loaded on demand via `get_note`.\n\n"
-                "Returns: A string indicating the operation result. "
-                "On success, returns 'Note [title] has been [created/updated] successfully.'. "
-                "On error, returns 'Error: Failed to add/update note [title]. [error details]'."
+                "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs. "
+                "Leave `include_in_prompt` at its default `false` unless the note is short, evergreen context that must load every "
+                "turn (see the parameter description). To create a reusable skill instead of a plain note, load the 'Skill Creation' "
+                "skill via `get_note` for the frontmatter format.\n\n"
+                "Returns a string indicating success or an error message."
             ),
             "parameters": {
                 "type": "object",

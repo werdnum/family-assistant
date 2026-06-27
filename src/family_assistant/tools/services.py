@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from family_assistant.llm.content_parts import attachment_content, text_content
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
+from family_assistant.tools.confirmation import (
+    MAX_DELEGATION_REQUEST_CHARS,
+    over_length_delegation_block_reason,
+)
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolAttachment,
@@ -432,20 +436,15 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Delegates a specific user request to another specialized assistant profile (service) "
                 "that might have different tools or capabilities. Use this if the main assistant "
                 "cannot handle a request directly or if a specialized profile is more appropriate "
-                "for the task. Profile-to-profile delegation controls are enforced by the "
+                "for the task. The available service profiles and their descriptions are listed in "
+                "your system prompt. Profile-to-profile delegation controls are enforced by the "
                 "tool policy engine.\n\n"
-                "Available service profiles:\n{available_service_profiles_with_descriptions}\n\n"
-                "Returns: A string containing the delegated service's response or an error message. "
-                "On successful delegation, returns the text response from the target service. "
-                "If service returns no text, returns 'Service [id] processed the request but provided no textual response.'. "
-                "If service registry unavailable, returns 'Error: Service registry is not available to delegate the task.'. "
-                "If target service not found, returns 'Error: Target service profile [id] not found.'. "
-                "If delegation blocked by security policy, returns 'Error: Tool \\'delegate_to_service\\' is not allowed. [reason]'. "
-                "If confirmation required but unavailable, returns 'Error: Confirmation required to delegate to [id], but no confirmation mechanism is available.'. "
-                "If user cancels confirmation, returns 'OK. Delegation to service [id] cancelled by user.'. "
-                "If confirmation times out, returns 'Error: Confirmation timed out for delegating to [id].'. "
-                "If the delegated profile is still running after the handoff deadline, returns an async reference ID; the result then wakes the delegating profile automatically when it finishes, and that profile's follow-up response is delivered to the conversation, so end your turn rather than polling get_delegation_status in a loop. "
-                "On delegation error, returns 'Error: Failed to delegate task to service [id]. Details: [error]' or 'Error from [id] service: [detail]' along with a reference ID you can pass to get_delegation_status for the full error."
+                "Returns the delegated service's text response, or — when the work runs long — an "
+                "async reference ID. When you get a reference, the result wakes this profile "
+                "automatically once it finishes and your follow-up is delivered to the conversation, "
+                "so end your turn instead of polling get_delegation_status in a loop. Errors are "
+                "returned as text (and, for failed async runs, a reference ID you can pass to "
+                "get_delegation_status for the full detail)."
             ),
             "parameters": {
                 "type": "object",
@@ -609,6 +608,21 @@ async def delegate_to_service_tool(
     actual_confirm_delegation = confirm_delegation
 
     if actual_confirm_delegation:
+        # This hand-off will be approved against a confirmation prompt, so refuse
+        # a request too long to show there in full rather than ask the user to
+        # approve a payload they cannot fully review. (Policy-confirm-gated calls
+        # are bounded earlier, in PolicyEnforcingToolsProvider.) Unconfirmed
+        # delegations are intentionally not size-capped.
+        over_length_reason = over_length_delegation_block_reason(user_request)
+        if over_length_reason is not None:
+            logger.warning(
+                "Refusing confirm-gated delegation to '%s': request is %d chars (limit %d).",
+                target_service_id,
+                len(user_request),
+                MAX_DELEGATION_REQUEST_CHARS,
+            )
+            return ToolResult(text=over_length_reason, attachments=None)
+
         if not exec_context.request_confirmation_callback:
             logger.error(
                 f"Confirmation required for delegating to '{target_service_id}', but no confirmation callback is available. Aborting delegation."

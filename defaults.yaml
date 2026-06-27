@@ -297,6 +297,12 @@ ucp_config:
   signing_private_key_path: null
   additional_signing_keys: []
   payment_handlers: {}
+  # Host suffixes a merchant profile may point its shopping endpoint at even when
+  # cross-site, so Shopify storefronts on custom domains can resolve to their
+  # *.myshopify.com shop host. Same-origin and same-site endpoints are always
+  # accepted; this list only widens trust to named commerce platforms.
+  trusted_endpoint_suffixes:
+    - "myshopify.com"
 
 # --- Default Service Profile Configuration ---
 # Settings for the primary, default assistant behavior.
@@ -340,6 +346,19 @@ default_profile_settings:
     on_demand_local_tools:
       - "execute_script"
       - "test_script_with_simulated_tools"
+      - "save_script"
+      - "list_scripts"
+      - "get_script"
+      - "delete_script"
+      - "get_delegation_status"
+      - "list_delegations"
+      - "query_recent_events"
+      - "reindex_email"
+      - "schedule_future_callback"
+      - "schedule_action"
+      - "list_pending_callbacks"
+      - "modify_pending_callback"
+      - "cancel_pending_callback"
       - "render_home_assistant_template"
       - "get_camera_snapshot"
       - "download_state_history"
@@ -460,8 +479,9 @@ default_profile_settings:
             - "delegate_to_service"
           argument_equals:
             target_service_id: "engineer"
-        decision: "deny"
+        decision: "confirm"
         priority: 99
+        description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
       - match:
           names:
             - "delete_calendar_event"
@@ -609,6 +629,14 @@ service_profiles:
               - "list_delegations"
           decision: "allow"
           priority: 10
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "engineer"
+          decision: "confirm"
+          priority: 99
+          description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
     slash_commands:
       - "/browse"
   - id: "browser_visual_profile"
@@ -1232,8 +1260,9 @@ service_profiles:
               - "delegate_to_service"
             argument_equals:
               target_service_id: "engineer"
-          decision: "deny"
+          decision: "confirm"
           priority: 99
+          description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
     slash_commands: []
   - id: "telephone_external"
     description: "Restricted profile for external callers. Takes messages and notifies family."
@@ -1343,6 +1372,9 @@ service_profiles:
         - "list_home_assistant_entities"
         - "list_home_assistant_actions"
         - "call_home_assistant_action"
+        - "ucp_add_to_cart"
+        - "ucp_get_cart"
+        - "ucp_transfer_checkout_to_human"
       on_demand_mcp_server_ids:
         - "homeassistant"
     tools_policy:
@@ -1401,6 +1433,9 @@ service_profiles:
               - "list_worker_tasks"
               - "cancel_worker_task"
               - "mqtt_publish"
+              - "ucp_add_to_cart"
+              - "ucp_get_cart"
+              - "ucp_transfer_checkout_to_human"
           decision: "allow"
           priority: 10
         - match:
@@ -1437,8 +1472,9 @@ service_profiles:
               - "delegate_to_service"
             argument_equals:
               target_service_id: "engineer"
-          decision: "deny"
+          decision: "confirm"
           priority: 99
+          description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
         - match:
             names:
               - "delete_calendar_event"
@@ -1480,7 +1516,7 @@ service_profiles:
           - You CANNOT modify any data (no INSERT, UPDATE, DELETE)
           - You CANNOT execute code or scripts
           - You CANNOT send messages to users
-          - You CANNOT delegate to other profiles
+          - You CAN delegate to another profile to hand off a fix or follow-up action, but only after the user confirms (so a human always approves before the engineer reaches outside its read-only sandbox)
           - You CAN create GitHub issues to report bugs (requires confirmation)
           - You CAN reconnect a failed MCP server (requires confirmation)
 
@@ -1523,8 +1559,37 @@ service_profiles:
               - "list_automations"
               - "get_automation"
               - "get_automation_stats"
+              - "get_delegation_status"
+              - "list_delegations"
           decision: "allow"
           priority: 10
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "reminder"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "event_handler"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "telephone_external"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+          decision: "confirm"
+          priority: 20
+          description: "The engineer may hand off to another profile (e.g. to implement a fix), but only with user confirmation. Internal/external-caller profiles are denied above."
         - match:
             names:
               - "create_github_issue"

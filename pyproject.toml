@@ -141,11 +141,12 @@ dependencies = [
     "opentelemetry-distro>=0.46b0",
     "opentelemetry-exporter-otlp>=1.25.0",
     "cryptography>=44.0.1",
+    "publicsuffix2>=2.20191221",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "telegram-bot-api-mock[dev]",  # Mock server for Telegram bot testing
+    "telegram-bot-api-mock[dev]", # Mock server for Telegram bot testing
     "fastapi-sso>=0.18.0",
     "pytest",
     "pytest-asyncio>=0.26.0",
@@ -194,11 +195,12 @@ dev = [
     "hupper>=1.12.1",
     "watchdog>=3.0.0",
     "pytest-playwright-asyncio>=0.2.0",
-    "playwright==1.52.0",  # Pin to match rebrowser-playwright version for shared browser binaries
+    "playwright==1.52.0", # Pin to match rebrowser-playwright version for shared browser binaries
     "homeassistant>=2025.4.4",
     "pixeltable-pgserver>=0.4.0",
-    "monkeytype>=23.3.0",  # Runtime type inference from tests
+    "monkeytype>=23.3.0", # Runtime type inference from tests
     "browser-handoff-service",
+    "jsonschema>=4.24.0",
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",
@@ -228,7 +230,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Specify that the 'family_assistant' package should include
 # all files within its 'templates' and 'static' subdirectories.
-family_assistant = ["templates/**/*", "static/**/*", "py.typed"]
+family_assistant = ["templates/**/*", "static/**/*", "data/**/*", "py.typed"]
 
 
 # --- Task Runner Configuration (poethepoet) ---

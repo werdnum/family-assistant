@@ -1040,6 +1040,13 @@ class UCPConfig(BaseModel):
     signing_private_key: str | None = None
     signing_private_key_path: str | None = None
     additional_signing_keys: list[UCPSigningKeyConfig] = Field(default_factory=list)
+    trusted_endpoint_suffixes: list[str] = Field(
+        default_factory=lambda: ["myshopify.com"]
+    )
+    """Host suffixes a merchant profile may point its shopping MCP endpoint at
+    even when cross-site, letting Shopify storefronts on custom domains resolve
+    to their ``*.myshopify.com`` shop host. Same-origin and same-site endpoints
+    are always accepted regardless of this list."""
     services: dict[str, list[UCPServiceBindingConfig]] = Field(
         default_factory=lambda: {
             "dev.ucp.shopping": [UCPServiceBindingConfig()],

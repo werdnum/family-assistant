@@ -425,6 +425,16 @@ private struct ChatComposerView: View {
             if !viewModel.draftAttachments.isEmpty {
                 DraftAttachmentStrip(viewModel: viewModel)
             }
+            if viewModel.isStreaming {
+                SteerComposerView(viewModel: viewModel)
+            }
+            if let stopWarning = viewModel.stopWarningMessage {
+                Text(stopWarning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("chat-stop-warning")
+            }
             HStack(alignment: .bottom, spacing: 4) {
                 PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                     Image(systemName: "photo")
@@ -460,7 +470,7 @@ private struct ChatComposerView: View {
 
                 Button {
                     if viewModel.isStreaming {
-                        viewModel.cancelStream()
+                        Task { await viewModel.stopTurn() }
                     } else {
                         Task { await viewModel.sendDraft() }
                     }
@@ -598,6 +608,64 @@ private struct DraftAttachmentStrip: View {
             "doc.text"
         case .file:
             "paperclip"
+        }
+    }
+}
+
+private struct SteerComposerView: View {
+    var viewModel: ChatViewModel
+
+    private var canSend: Bool {
+        !viewModel.steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .bottom, spacing: 6) {
+                Image(systemName: "arrow.triangle.turn.up.right.diamond")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 32)
+                TextField(
+                    "Steer",
+                    text: Binding(
+                        get: { viewModel.steerDraftText },
+                        set: { viewModel.steerDraftText = $0 }
+                    ),
+                    axis: .vertical
+                )
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .frame(minHeight: 32)
+                .accessibilityIdentifier("chat-steer-composer")
+
+                Button {
+                    Task { await viewModel.sendSteerDraft() }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.4))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+                .accessibilityIdentifier("chat-steer-send-button")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(.tertiarySystemBackground))
+            )
+
+            if let steerError = viewModel.steerErrorMessage {
+                Text(steerError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("chat-steer-error")
+            }
         }
     }
 }
@@ -858,7 +926,15 @@ enum MarkdownRenderBudget {
         let sourceTruncated = head.count > charLimit
         let source = sourceTruncated ? String(head.prefix(charLimit)) : markdown
         let parsed = NativeMarkdownRenderer.blocks(from: source)
-        let bounded = boundedMarkdownBlocks(parsed, leafBudget: leafBudget * max(1, pages), textCharCap: textCharCap, depth: 0)
+        // Grow the per-Text cap with pages too, so "Show more" reveals the rest of
+        // a single oversized block (a long paragraph or code dump), not just more
+        // structure.
+        let bounded = boundedMarkdownBlocks(
+            parsed,
+            leafBudget: leafBudget * max(1, pages),
+            textCharCap: textCharCap * max(1, pages),
+            depth: 0
+        )
         return (bounded.blocks, bounded.hitBudget || sourceTruncated)
     }
 }
@@ -923,17 +999,25 @@ private func boundOneMarkdownBlock(
     textCharCap: Int,
     depth: Int
 ) -> (block: NativeMarkdownBlock, cost: Int, hitBudget: Bool) {
+    // A single-`Text` block clamped by the char cap reports `hitBudget` so the
+    // "Show more" affordance appears; paging grows `textCharCap` (see renderPlan),
+    // so the rest of an oversized paragraph/code block stays reachable rather than
+    // being stranded behind a bare ellipsis.
     switch block {
     case .paragraph(let text):
-        return (.paragraph(cappedMarkdownText(text, cap: textCharCap).text), 1, false)
+        let capped = cappedMarkdownText(text, cap: textCharCap)
+        return (.paragraph(capped.text), 1, capped.truncated)
     case .fallback(let text):
-        return (.fallback(cappedMarkdownText(text, cap: textCharCap).text), 1, false)
+        let capped = cappedMarkdownText(text, cap: textCharCap)
+        return (.fallback(capped.text), 1, capped.truncated)
     case .heading(let level, let text):
-        return (.heading(level: level, text: cappedMarkdownText(text, cap: textCharCap).text), 1, false)
+        let capped = cappedMarkdownText(text, cap: textCharCap)
+        return (.heading(level: level, text: capped.text), 1, capped.truncated)
     case .thematicBreak:
         return (.thematicBreak, 1, false)
     case .codeBlock(let language, let code):
-        return (.codeBlock(language: language, code: cappedMarkdownText(code, cap: textCharCap).text), 1, false)
+        let capped = cappedMarkdownText(code, cap: textCharCap)
+        return (.codeBlock(language: language, code: capped.text), 1, capped.truncated)
     case .unorderedList(let items):
         let bounded = boundedMarkdownItems(items, leafBudget: leafBudget, textCharCap: textCharCap, depth: depth)
         return (.unorderedList(bounded.items), bounded.cost, bounded.hitBudget)

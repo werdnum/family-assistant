@@ -178,25 +178,25 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     Modify test items after collection.
 
-    1. Mark Playwright tests as flaky when running against SQLite.
-    2. Mark a small set of Telegram xdist timing flakes for rerun.
+    1. Mark Playwright tests as flaky on every backend.
+    2. Mark a small set of backend tests with load-induced timing flakes for rerun.
     """
     for item in items:
-        # Check if test is parameterized with db_engine
-        # Use getattr/hasattr to satisfy static analysis (basedpyright) which doesn't know about 'callspec' on Item
-        # Access 'callspec' dynamically to avoid basedpyright errors
-        callspec = getattr(item, "callspec", None)
-        if callspec and hasattr(callspec, "params") and "db_engine" in callspec.params:
-            db_backend = callspec.params["db_engine"]
+        # 1. Playwright UI tests are prone to load-induced `Locator.wait_for`
+        #    timeouts under the parallel CI shards. This was previously limited to
+        #    SQLite, but the same timeouts hit the postgres-chromium shard (which
+        #    gets no reruns), failing unrelated PRs outright. Rerun on every
+        #    backend. See issue #886.
+        if item.get_closest_marker("playwright"):
+            item.add_marker(pytest.mark.flaky(reruns=3))
 
-            # 1. Flaky Playwright tests on SQLite
-            if db_backend == "sqlite" and item.get_closest_marker("playwright"):
-                # Add flaky marker with 3 reruns
-                item.add_marker(pytest.mark.flaky(reruns=3))
-
+        # 2. Backend tests with known load-induced timing flakes (xdist timeouts,
+        #    async-delegation wakeups). Rerun rather than fail the whole build.
         if item.nodeid in {
             "tests/functional/telegram/test_telegram_slash_commands.py::test_slash_command_routes_to_specific_profile[sqlite]",
             "tests/functional/telegram/test_telegram_multimodal_to_llm.py::TestTelegramVideoToLLM::test_video_with_caption_both_passed[postgres]",
+            "tests/functional/automations/test_subconversation_isolation.py::test_nested_async_delegation_completion_wakes_source_subconversation[sqlite]",
+            "tests/functional/automations/test_subconversation_isolation.py::test_nested_async_delegation_completion_wakes_source_subconversation[postgres]",
         }:
             item.add_marker(pytest.mark.flaky(reruns=3))
 

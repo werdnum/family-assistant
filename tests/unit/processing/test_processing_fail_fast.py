@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -593,6 +594,76 @@ def test_default_system_prompt_templates_only_use_supported_placeholders() -> No
             invalid_placeholders_by_profile[profile_id] = placeholders
 
     assert invalid_placeholders_by_profile == {}
+
+
+class _DelegateAdvertisingToolsProvider(SimpleToolsProvider):
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "delegate_to_service",
+                    "description": "Delegate to another profile.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+
+def _registry_with_profiles() -> Any:  # noqa: ANN401 - test stub registry
+    return cast(
+        "Any",
+        {
+            "browser_profile": SimpleNamespace(
+                service_config=SimpleNamespace(
+                    id="browser_profile", description="Drives a web browser."
+                )
+            ),
+            "bare_profile": SimpleNamespace(
+                service_config=SimpleNamespace(id="bare_profile", description="")
+            ),
+        },
+    )
+
+
+@pytest.mark.no_db
+def test_render_available_service_profiles_without_registry() -> None:
+    service = _make_service()
+
+    assert not service.render_available_service_profiles()
+
+
+@pytest.mark.no_db
+def test_render_available_service_profiles_lists_registry_profiles() -> None:
+    service = _make_service()
+    service.processing_services_registry = _registry_with_profiles()
+
+    rendered = service.render_available_service_profiles()
+
+    assert "- ID: browser_profile, Description: Drives a web browser." in rendered
+    assert "- ID: bare_profile, Description: No description available." in rendered
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_delegation_catalog_addition_empty_when_cannot_delegate() -> None:
+    service = _make_service()
+    service.processing_services_registry = _registry_with_profiles()
+
+    assert not await service.delegation_catalog_addition()
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_delegation_catalog_addition_lists_profiles_when_advertised() -> None:
+    service = _make_service()
+    service.tools_provider = _DelegateAdvertisingToolsProvider()
+    service.processing_services_registry = _registry_with_profiles()
+
+    addition = await service.delegation_catalog_addition()
+
+    assert "delegate_to_service" in addition
+    assert "- ID: browser_profile, Description: Drives a web browser." in addition
 
 
 @pytest.mark.no_db
