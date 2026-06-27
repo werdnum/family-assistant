@@ -38,9 +38,8 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "get_message_history",
             "description": (
-                "Structured and semantic lookup against past conversation history. Use structured mode for exact filters like dates, roles, tools, attachments, or errors; semantic mode for fuzzy recall; and hybrid mode when both are useful.\n\n"
-                "Returns: ToolResult JSON with query metadata and compact message summaries. Each result includes stable message_id, timestamp, role, content, conversation metadata, tool metadata, and optional neighboring context. "
-                "If no messages are found, returns an empty results list. On denied broadened scope or other errors, returns JSON with an error field."
+                "Structured and semantic lookup against past conversation history. Use structured mode for exact filters like dates, roles, tools, attachments, or errors; semantic mode for fuzzy recall; and hybrid mode when both are useful. "
+                "Returns compact message summaries (each with a stable message_id, timestamp, role, content, and optional neighboring context), or an empty list when nothing matches."
             ),
             "parameters": {
                 "type": "object",

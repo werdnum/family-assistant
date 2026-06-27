@@ -212,6 +212,13 @@ async def _get_context_data(
             )
             formatted_system_prompt = system_prompt_template.strip()
 
+        if isinstance(target_service, ProcessingService):
+            addition = await target_service.delegation_catalog_addition()
+            if addition:
+                formatted_system_prompt = (
+                    f"{formatted_system_prompt}\n\n{addition}".strip()
+                )
+
         return {
             "profile_id": target_service.service_config.id,
             "aggregated_context": aggregated_context,
