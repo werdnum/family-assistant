@@ -51,8 +51,10 @@ describe('ChatApp', () => {
     // For assistant-ui, we typically submit by pressing Enter rather than clicking a button
     await user.keyboard('{Enter}');
 
-    // Get fresh reference (input may have been re-rendered after submission)
-    const submittedInput = screen.getByPlaceholderText('Message Family Assistant...');
+    // Get fresh reference (input may have been re-rendered after submission).
+    // Use the stable test id rather than the placeholder: while the turn runs
+    // the composer doubles as the steer input and its placeholder changes.
+    const submittedInput = screen.getByTestId('chat-input');
 
     // Verify the message was sent by checking if the input was cleared
     await waitForMessageSent(submittedInput);

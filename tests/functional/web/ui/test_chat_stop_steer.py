@@ -2,7 +2,8 @@
 
 These drive the real browser against the real backend, gating the (in-process,
 same-event-loop) mock LLM on an asyncio.Event so a turn stays "running" long
-enough to interact with the Stop button and the Steer input.
+enough to interact with the Stop button and the steer action (the main composer
+doubles as the steer input while a turn runs).
 """
 
 import asyncio
@@ -87,8 +88,9 @@ async def test_steer_input_injects_midturn_message(
     mock_llm_client: RuleBasedMockLLMClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """While a turn runs a tool, typing in the Steer box injects a mid-turn
-    message that renders as a user bubble and is folded into the turn."""
+    """While a turn runs a tool, typing in the composer and clicking Steer
+    injects a mid-turn message that renders as a user bubble and is folded into
+    the turn."""
     page = web_test_fixture.page
     chat_page = ChatPage(page, web_test_fixture.base_url)
     await chat_page.navigate_to_chat()
@@ -126,8 +128,9 @@ async def test_steer_input_injects_midturn_message(
     await chat_page.send_message("plan my week")
     await asyncio.wait_for(started.wait(), timeout=15.0)
 
-    # The Steer input appears only while the turn is running.
-    steer_input = page.locator('[data-testid="steer-input"]')
+    # While a turn runs the main composer doubles as the steer input: typing in
+    # it turns the Stop action into Steer, which injects the mid-turn message.
+    steer_input = page.locator('[data-testid="chat-input"]')
     await steer_input.wait_for(state="visible", timeout=10000)
     await steer_input.fill("actually, focus on tomorrow")
     await page.locator('[data-testid="steer-button"]').click()
