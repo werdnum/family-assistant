@@ -65,13 +65,26 @@ Delegation to and from the engineer profile is gated by confirmation rather than
   profiles.
 
 The confirmation requirement preserves the engineer's read-only posture in practice: a human always
-approves before the engineer reaches outside its diagnostic sandbox (the engineer diagnoses and
+approves before the engineer hands work to a *different* profile (the engineer diagnoses and
 reports; a human or another profile implements fixes), while still letting investigation and
 hand-off flow without a hard block. The `delegate_to_service` confirmation prompt shows the full
-target, the (bounded, explicitly-truncation-marked) request text, and any attachment ids, so the
-approver can see exactly what diagnostic context is being handed off. Read-only delegation status
+target, the **complete** request text, and any attachment ids. So the approver can never
+rubber-stamp a silently-cut request, `delegate_to_service` refuses any request longer than
+`MAX_DELEGATION_REQUEST_CHARS` (3000 — well above the generic 1200-char field bound, and sized to
+keep the whole prompt within Telegram's single-message confirmation budget): the tool returns an
+error instead of delegating, and the confirmation prompt for such a request states plainly that the
+hand-off will be refused rather than displaying a partial body. Bulk content therefore belongs in an
+attachment (referenced via `attachment_ids`), not the request string. Read-only delegation status
 tools (`get_delegation_status`, `list_delegations`) are allowed without confirmation so the engineer
 can track an async hand-off.
+
+**Self-delegation.** `engineer → engineer` is *not* confirm-gated: the runtime injects a synthetic
+self-delegation `ALLOW` rule (in `_build_profile_policy_engine`) that, by design, lets every profile
+reach itself without confirmation and outranks the profile's own rules. This is intentional and
+consistent with the project-wide invariant that self-delegation is never a privilege escalation — an
+`engineer → engineer` hand-off stays entirely within the same read-only sandbox and confers no new
+capability. The confirmation gate therefore applies to delegation *between distinct* profiles, which
+is where the trust boundary is actually crossed.
 
 ### Confirmation for Side Effects
 

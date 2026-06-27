@@ -25,6 +25,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 CONFIRMATION_VALUE_MAX_CHARS = 1200
 
+# A delegation hand-off is approved against its confirmation prompt, so the
+# approver must be able to read the ENTIRE delegated request — not a silently cut
+# slice. We therefore show the full request (well above the generic 1200-char
+# field bound) and refuse, rather than truncate, anything longer. The cap keeps
+# the whole prompt within Telegram's single-message confirmation budget
+# (TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800 in telegram/ui.py), reserving
+# headroom for the source prefix, field labels, the target id, attachment ids,
+# and code fences. Bulk content belongs in an attachment, not the request string.
+MAX_DELEGATION_REQUEST_CHARS = 3000
+
 
 def _markdown_code_block(text: str) -> str:
     """Render text as inert markdown using a fence longer than any content fence."""
@@ -402,9 +412,22 @@ async def render_delegate_to_service_confirmation(
     )
 
     _ = context
+    if len(user_request) > MAX_DELEGATION_REQUEST_CHARS:
+        # delegate_to_service_tool refuses requests over this length, so never
+        # show a partial body the approver might rubber-stamp — say plainly that
+        # the hand-off will be refused.
+        request_field = (
+            f"- Request: ⚠️ This request is {len(user_request)} characters, longer than the "
+            f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable here. "
+            "The delegation will be refused — ask the delegating profile to shorten the request or "
+            "move bulk content into an attachment."
+        )
+    else:
+        request_field = f"- Request:\n{_markdown_code_block(user_request)}"
+
     fields = [
         _confirmation_field("Target profile", target_service_id or "target service"),
-        _confirmation_field("Request", user_request),
+        request_field,
     ]
     if attachment_ids:
         fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))

@@ -15,6 +15,7 @@ import pytest
 
 from family_assistant.tools.confirmation import (
     CONFIRMATION_VALUE_MAX_CHARS,
+    MAX_DELEGATION_REQUEST_CHARS,
     render_delegate_to_service_confirmation,
 )
 
@@ -46,15 +47,36 @@ async def test_delegate_confirmation_shows_target_request_and_attachments() -> N
 
 
 @pytest.mark.asyncio
-async def test_delegate_confirmation_marks_truncated_request() -> None:
-    long_request = "x" * (CONFIRMATION_VALUE_MAX_CHARS + 500)
+async def test_delegate_confirmation_shows_request_in_full_above_generic_bound() -> (
+    None
+):
+    # A request longer than the generic 1200-char field bound but within the
+    # delegation budget must still be shown in full so the approver reviews the
+    # complete payload.
+    request = "x" * (CONFIRMATION_VALUE_MAX_CHARS + 500)
+    assert len(request) <= MAX_DELEGATION_REQUEST_CHARS
 
     prompt = await render_delegate_to_service_confirmation(
-        {"target_service_id": "complex_tasks", "user_request": long_request},
+        {"target_service_id": "complex_tasks", "user_request": request},
         _no_context(),
     )
 
-    # The user is shown a bounded slice and explicitly told it was truncated,
-    # so a long request cannot hide sensitive content behind a short prefix.
-    assert "... [truncated]" in prompt
-    assert long_request not in prompt
+    assert request in prompt
+    assert "[truncated]" not in prompt
+    assert "will be refused" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_delegate_confirmation_refuses_over_limit_request() -> None:
+    over_limit = "y" * (MAX_DELEGATION_REQUEST_CHARS + 1)
+
+    prompt = await render_delegate_to_service_confirmation(
+        {"target_service_id": "engineer", "user_request": over_limit},
+        _no_context(),
+    )
+
+    # No partial body is shown (which could be rubber-stamped); the prompt states
+    # the hand-off will be refused so the approver isn't misled.
+    assert over_limit not in prompt
+    assert "will be refused" in prompt
+    assert str(len(over_limit)) in prompt

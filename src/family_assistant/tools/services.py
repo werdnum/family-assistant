@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from family_assistant.llm.content_parts import attachment_content, text_content
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
+from family_assistant.tools.confirmation import MAX_DELEGATION_REQUEST_CHARS
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolAttachment,
@@ -554,6 +555,27 @@ async def delegate_to_service_tool(
     logger.info(
         f"Executing delegate_to_service_tool: target='{target_service_id}', request='{user_request[:50]}...', confirm={confirm_delegation}"
     )
+
+    if len(user_request) > MAX_DELEGATION_REQUEST_CHARS:
+        # A confirm-gated delegation is approved against its confirmation prompt;
+        # an over-long request cannot be shown in full there, so refuse it rather
+        # than hand off context the approver could not fully review. Bulk content
+        # belongs in an attachment, which is surfaced separately.
+        logger.warning(
+            "Refusing delegation to '%s': request is %d chars (limit %d).",
+            target_service_id,
+            len(user_request),
+            MAX_DELEGATION_REQUEST_CHARS,
+        )
+        return ToolResult(
+            text=(
+                f"Error: delegation request is {len(user_request)} characters, which exceeds the "
+                f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable in a "
+                "confirmation prompt. Shorten the request, or move bulk content into an attachment "
+                "and reference it via attachment_ids."
+            ),
+            attachments=None,
+        )
 
     if (
         not exec_context.processing_service
