@@ -47,9 +47,20 @@ Source code tools validate all file paths using `PROJECT_ROOT` from `family_assi
 
 ### Delegation Security
 
-The profile uses `delegation_security_level: "blocked"` to prevent the engineer from delegating to
-other profiles. This is intentional: the engineer diagnoses and reports (via GitHub issue); a human
-or the main assistant implements fixes.
+Delegation to and from the engineer profile is gated by confirmation rather than blocked outright:
+
+- **Into the engineer** (`delegate_to_service` with `target_service_id: "engineer"`): the rule in
+  every delegating profile is `confirm` (priority 99), so the main assistant or a complex-tasks run
+  can hand an investigation to the engineer once the user approves.
+- **Out of the engineer**: the engineer's `tools_policy` allows `delegate_to_service` with a
+  `confirm` decision, so the engineer can hand a fix or follow-up action to another profile — but
+  only after the user confirms.
+
+The confirmation requirement preserves the engineer's read-only posture in practice: a human always
+approves before the engineer reaches outside its diagnostic sandbox (the engineer diagnoses and
+reports; a human or another profile implements fixes), while still letting investigation and
+hand-off flow without a hard block. Read-only delegation status tools (`get_delegation_status`,
+`list_delegations`) are allowed without confirmation so the engineer can track an async hand-off.
 
 ### Confirmation for Side Effects
 
@@ -83,7 +94,8 @@ code or modify files.
 
 ## Usage
 
-Activate via the `/engineer` slash command or by delegating to the `engineer` profile.
+Activate via the `/engineer` slash command or by delegating to the `engineer` profile (delegation
+into the engineer requires user confirmation).
 
 ## History
 

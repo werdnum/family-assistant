@@ -189,3 +189,74 @@ def test_ucp_tools_are_default_on_demand_and_not_confirm_gated() -> None:
             ).decision
             == ToolPolicyDecision.ALLOW
         )
+
+
+def _delegate_descriptor() -> ToolDescriptor:
+    for descriptor in LOCAL_TOOL_DESCRIPTORS:
+        if descriptor.name == "delegate_to_service":
+            return descriptor
+    raise AssertionError("delegate_to_service descriptor not found")
+
+
+def test_delegation_to_engineer_is_confirm_gated_not_blocked() -> None:
+    default_settings, profiles = _load_resolved_profiles()
+    profile_by_id = {profile.id: profile for profile in profiles}
+    delegate = _delegate_descriptor()
+
+    source_engines = {
+        "default_profile_settings": PolicyEngine.from_policy_config(
+            default_settings.tools_policy
+        ),
+        "complex_tasks": PolicyEngine.from_policy_config(
+            profile_by_id["complex_tasks"].tools_policy
+        ),
+        "telephone": PolicyEngine.from_policy_config(
+            profile_by_id["telephone"].tools_policy
+        ),
+    }
+
+    for source_id, engine in source_engines.items():
+        to_engineer = engine.evaluate_for_execution(
+            delegate,
+            arguments={"target_service_id": "engineer"},
+            can_confirm=True,
+        )
+        assert to_engineer.decision is ToolPolicyDecision.CONFIRM, source_id
+
+        # Without a confirmation channel the confirm decision degrades to deny,
+        # so the engineer is never reached unattended.
+        to_engineer_unattended = engine.evaluate_for_execution(
+            delegate,
+            arguments={"target_service_id": "engineer"},
+            can_confirm=False,
+        )
+        assert to_engineer_unattended.decision is ToolPolicyDecision.DENY, source_id
+
+        # Profiles that are blocked outright (e.g. reminder) stay blocked.
+        to_reminder = engine.evaluate_for_execution(
+            delegate,
+            arguments={"target_service_id": "reminder"},
+            can_confirm=True,
+        )
+        assert to_reminder.decision is ToolPolicyDecision.DENY, source_id
+
+
+def test_engineer_can_delegate_out_only_with_confirmation() -> None:
+    _, profiles = _load_resolved_profiles()
+    engineer = {profile.id: profile for profile in profiles}["engineer"]
+    engine = PolicyEngine.from_policy_config(engineer.tools_policy)
+    delegate = _delegate_descriptor()
+
+    outbound = engine.evaluate_for_execution(
+        delegate,
+        arguments={"target_service_id": "default_assistant"},
+        can_confirm=True,
+    )
+    assert outbound.decision is ToolPolicyDecision.CONFIRM
+
+    outbound_unattended = engine.evaluate_for_execution(
+        delegate,
+        arguments={"target_service_id": "default_assistant"},
+        can_confirm=False,
+    )
+    assert outbound_unattended.decision is ToolPolicyDecision.DENY

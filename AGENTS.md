@@ -610,9 +610,13 @@ dynamically adjusting available tools and supervision requirements based on inpu
 4. **Engineer Profile [B]**: Read-only diagnostic access for debugging the application
 
    - Can read sensitive data (source code, database, error logs, notes)
-   - Cannot change state or communicate externally (delegation blocked)
-   - Only side effect: creating GitHub issues (requires user confirmation)
-   - Used via `/engineer` slash command
+   - Cannot change state or communicate externally on its own; delegation to/from the engineer is
+     allowed but always requires user confirmation, so a human approves before the engineer hands
+     off a fix or another profile hands it an investigation
+   - Side effects (all require user confirmation): creating GitHub issues, reconnecting an MCP
+     server, and delegating to another profile
+   - Used via `/engineer` slash command or by delegating to the `engineer` profile (with
+     confirmation)
    - Example: "Why isn't my daily brief firing?" - reads DB state, error logs, source code
 
 5. **Complex Tasks Profile [BC]**: Advanced reasoning with Claude Opus 4.7 for complex tasks
