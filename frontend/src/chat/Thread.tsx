@@ -298,9 +298,11 @@ const Composer: React.FC = () => {
   };
 
   // While running, Enter steers the turn instead of starting a new one; when
-  // idle, fall through to the composer's default submit-on-enter.
+  // idle, fall through to the composer's default submit-on-enter. Skip while an
+  // IME composition is active so committing composing text with Enter doesn't
+  // steer mid-composition (mirrors assistant-ui's own default Enter handler).
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!isRunning || e.key !== 'Enter' || e.shiftKey) {
+    if (!isRunning || e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) {
       return;
     }
     e.preventDefault();

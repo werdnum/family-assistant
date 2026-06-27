@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
@@ -246,6 +246,58 @@ describe('Web turn control (Stop / Steer)', () => {
       );
       controller.close();
       expect(turnsPosts).toBe(1);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'Enter during IME composition does not steer; a committed Enter does',
+    async () => {
+      const { ready, turnIdRef } = installOpenStream();
+      let steerPosts = 0;
+      server.use(
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          steerPosts += 1;
+          const body = (await request.json()) as { conversation_id: string };
+          return HttpResponse.json({
+            turn_id: turnIdRef.current,
+            conversation_id: body.conversation_id,
+            accepted: true,
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'focus on tomorrow');
+
+      // Enter while an IME composition is active must NOT steer — it commits the
+      // composing text. The composer keeps its text and fires no steer request.
+      fireEvent.keyDown(steerInput, { key: 'Enter', isComposing: true });
+      await waitFor(() => expect(steerInput).toHaveValue('focus on tomorrow'), WAIT);
+      expect(steerPosts).toBe(0);
+
+      // A normal (non-composing) Enter steers as usual.
+      fireEvent.keyDown(steerInput, { key: 'Enter' });
+      await waitFor(() => {
+        expect(steerPosts).toBe(1);
+      }, WAIT);
+
+      controller.enqueue(
+        sse('user_input', { turn_id: turnIdRef.current, content: 'focus on tomorrow', seq: 1 })
+      );
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
+      );
+      controller.close();
     },
     { timeout: 30000 }
   );

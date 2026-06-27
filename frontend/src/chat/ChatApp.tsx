@@ -1926,7 +1926,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (streamingMessageIdRef.current) {
         pendingFollowupsRef.current.push(prompt);
       } else {
-        await handleNew({ content: [{ text: prompt }] });
+        // Kick off the follow-up without awaiting its full stream: submitSteer
+        // must resolve promptly so the composer clears and the action reverts to
+        // Stop for the new turn, instead of staying stuck on a disabled Steer
+        // button with stale text for the whole response. handleNew surfaces its
+        // own streaming errors, matching the queued-follow-up path above.
+        void handleNew({ content: [{ text: prompt }] });
       }
       return 'finished';
     },
