@@ -458,6 +458,44 @@ def test_host_matches_trusted_suffix_is_label_anchored() -> None:
     assert not host_matches_trusted_suffix("http://shop.myshopify.com/api", suffixes)
 
 
+def test_usable_mcp_endpoint_prefers_same_origin_over_broader_trust() -> None:
+    # A same-origin binding listed after a trusted-suffix and a same-site one is
+    # still chosen — the safest merchant-local endpoint wins over platform/
+    # same-site fallbacks regardless of profile order.
+    profile = MerchantUCPProfile(
+        origin="https://shop.example.com",
+        mcp_endpoints=(
+            "https://shop-2.myshopify.com/api/ucp/mcp",
+            "https://other.example.com/mcp",
+            "https://shop.example.com/ucp/rpc",
+        ),
+        service_names=("dev.ucp.shopping",),
+        capability_names=(),
+        version=None,
+    )
+
+    assert profile.usable_mcp_endpoint(trusted_suffixes=("myshopify.com",)) == (
+        "https://shop.example.com/ucp/rpc"
+    )
+
+
+def test_same_site_rejects_ip_and_internal_hosts() -> None:
+    # get_sld would collapse these unrelated hosts to a shared token; strict
+    # resolution rejects hosts without a real public suffix so they never match.
+    assert not same_site("https://203.0.113.1/mcp", "https://10.0.0.1")
+    assert not same_site("https://foo.internal/mcp", "https://bar.internal")
+    assert not same_site("https://10.0.0.1/mcp", "https://10.0.0.1")
+
+
+def test_https_trust_rejects_malformed_port() -> None:
+    # An out-of-range port must be treated as a discovery miss, not silently
+    # matched on the bare host.
+    assert not same_site("https://shop.example.com:99999/x", "https://shop.example.com")
+    assert not host_matches_trusted_suffix(
+        "https://shop.myshopify.com:99999/x", ("myshopify.com",)
+    )
+
+
 async def test_discover_merchant_ucp_profile_resolves_relative_endpoint() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_merchant_profile_payload(endpoint="/ucp/mcp"))

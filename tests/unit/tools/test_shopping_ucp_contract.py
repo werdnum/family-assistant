@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from referencing import Registry, Resource
-from referencing.jsonschema import DRAFT202012
+from referencing.jsonschema import DRAFT202012, SchemaRegistry
 
 from family_assistant.config_models import AppConfig, UCPConfig
 from family_assistant.tools import shopping
@@ -47,7 +47,7 @@ def _load_schema(*parts: str) -> dict[str, object]:
     )
 
 
-def _response_registry() -> Registry:  # type: ignore[type-arg]
+def _response_registry() -> SchemaRegistry:
     """Registry of every vendored JSON-Schema document (those carrying an ``$id``).
 
     Lets a UCP *response* be validated against the real ``cart``/``checkout``
@@ -55,7 +55,7 @@ def _response_registry() -> Registry:  # type: ignore[type-arg]
     a hand-authored stand-in that could re-encode the very wrapper mistake the
     validation is meant to catch. Each schema is keyed by its declared ``$id``.
     """
-    registry: Registry = Registry()  # type: ignore[type-arg]
+    registry: SchemaRegistry = Registry()
     for path in sorted(_SCHEMA_DIR.rglob("*.json")):
         contents = json.loads(path.read_text(encoding="utf-8"))
         schema_id = contents.get("$id") if isinstance(contents, dict) else None
@@ -542,10 +542,13 @@ def test_cart_parser_reads_spec_shaped_response_and_rejects_legacy_wrapper() -> 
     response: dict[str, object] = {
         "response": {"result": {"structuredContent": spec_cart}}
     }
+    # SLF001: this test deliberately pins the module-private response parser to
+    # the spec, so calling it directly is the point of the test.
     assert shopping._cart_from_response(response)["id"] == spec_cart["id"]  # noqa: SLF001
 
     wrapped: dict[str, object] = {
         "response": {"result": {"structuredContent": {"cart": spec_cart}}}
     }
     with pytest.raises(ValueError, match="did not include a cart"):
+        # SLF001: same rationale — exercise the private parser directly.
         shopping._cart_from_response(wrapped)  # noqa: SLF001

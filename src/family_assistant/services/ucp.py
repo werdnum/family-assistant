@@ -82,14 +82,20 @@ class MerchantUCPProfile:
         UCP endpoint lives on the ``*.myshopify.com`` shop host). Anything else
         is ignored so the caller falls back rather than posting to an unrelated
         host. This is also what the browser shopping hint gates on.
+
+        Candidates are ranked by trust class — same-origin first, then
+        same-site, then trusted suffix — so a profile that lists a platform or
+        same-site binding ahead of the merchant-local one still resolves to the
+        safest available endpoint rather than the first broad match.
         """
-        for endpoint in self.mcp_endpoints:
-            if (
-                same_origin(endpoint, self.origin)
-                or same_site(endpoint, self.origin)
-                or host_matches_trusted_suffix(endpoint, trusted_suffixes)
-            ):
-                return endpoint
+        for predicate in (
+            lambda endpoint: same_origin(endpoint, self.origin),
+            lambda endpoint: same_site(endpoint, self.origin),
+            lambda endpoint: host_matches_trusted_suffix(endpoint, trusted_suffixes),
+        ):
+            for endpoint in self.mcp_endpoints:
+                if predicate(endpoint):
+                    return endpoint
         return None
 
 
@@ -124,11 +130,16 @@ def same_origin(url_a: str, url_b: str) -> bool:
 def _https_host(url: str) -> str | None:
     """Return the lowercased host of an HTTPS URL, or ``None``.
 
-    Non-HTTPS or unparseable URLs return ``None`` so trust comparisons treat
-    them as non-matching rather than raising on merchant-controlled metadata.
+    Non-HTTPS, unparseable, or malformed-port URLs return ``None`` so trust
+    comparisons treat them as non-matching rather than raising (or silently
+    keeping the host) on merchant-controlled metadata.
     """
     try:
         parsed = urlparse(url)
+        # Accessing .port validates it: an out-of-range port (e.g. :99999)
+        # raises ValueError here, so a malformed endpoint is rejected rather
+        # than matched and then selected for a POST that cannot succeed.
+        _ = parsed.port
     except ValueError:
         return None
     if parsed.scheme != "https":
@@ -143,15 +154,20 @@ def same_site(url_a: str, url_b: str) -> bool:
     Same-site-but-not-same-origin covers a merchant serving its UCP endpoint
     from a sibling subdomain of its storefront (``eve.theiconic.com.au`` for
     ``www.theiconic.com.au``) — still the merchant's own site. The registrable
-    domain is resolved against the public suffix list so multi-label suffixes
-    (``com.au``) are handled correctly.
+    domain is resolved against the public suffix list (``strict=True``) so
+    multi-label suffixes (``com.au``) are handled correctly and hosts without a
+    real public suffix — IP literals and internal names like ``foo.internal``,
+    which ``get_sld`` would otherwise collapse to a shared token (``1``,
+    ``internal``) and wrongly treat as same-site — return ``None`` and never
+    match. That keeps an SSRF-prone profile fetched from an IP/private zone from
+    sliding an endpoint on a different internal host through this check.
     """
     host_a = _https_host(url_a)
     host_b = _https_host(url_b)
     if host_a is None or host_b is None:
         return False
-    domain_a = get_sld(host_a)
-    return bool(domain_a) and domain_a == get_sld(host_b)
+    domain_a = get_sld(host_a, strict=True)
+    return bool(domain_a) and domain_a == get_sld(host_b, strict=True)
 
 
 def host_matches_trusted_suffix(url: str, suffixes: tuple[str, ...]) -> bool:
