@@ -623,6 +623,14 @@ service_profiles:
               - "list_delegations"
           decision: "allow"
           priority: 10
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "engineer"
+          decision: "confirm"
+          priority: 99
+          description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
     slash_commands:
       - "/browse"
   - id: "browser_visual_profile"
@@ -1552,9 +1560,30 @@ service_profiles:
         - match:
             names:
               - "delegate_to_service"
+            argument_equals:
+              target_service_id: "reminder"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "event_handler"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "telephone_external"
+          decision: "deny"
+          priority: 99
+        - match:
+            names:
+              - "delegate_to_service"
           decision: "confirm"
           priority: 20
-          description: "The engineer may hand off to another profile (e.g. to implement a fix), but only with user confirmation."
+          description: "The engineer may hand off to another profile (e.g. to implement a fix), but only with user confirmation. Internal/external-caller profiles are denied above."
         - match:
             names:
               - "create_github_issue"

@@ -394,19 +394,21 @@ async def render_delegate_to_service_confirmation(
     """Render a confirmation prompt for delegating a task to another service."""
     target_service_id = str(args.get("target_service_id", "")).strip()
     user_request = str(args.get("user_request", "")).strip()
-
-    prompt_target = target_service_id if target_service_id else "target service"
-    request_preview = user_request[:100]
-    if user_request and len(user_request) > 100:
-        request_preview += "..."
+    raw_attachment_ids = args.get("attachment_ids")
+    attachment_ids = (
+        [str(a) for a in raw_attachment_ids]
+        if isinstance(raw_attachment_ids, (list, tuple))
+        else []
+    )
 
     _ = context
-    return (
-        "Do you want to delegate this task:\n"
-        f"{_markdown_code_block(request_preview)}\n"
-        "to this profile?\n"
-        f"{_markdown_code_block(prompt_target)}"
-    )
+    fields = [
+        _confirmation_field("Target profile", target_service_id or "target service"),
+        _confirmation_field("Request", user_request),
+    ]
+    if attachment_ids:
+        fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))
+    return "Do you want to delegate this task to another profile?\n" + "\n".join(fields)
 
 
 # Mapping of tool names to their confirmation renderers

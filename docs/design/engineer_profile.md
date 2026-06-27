@@ -49,18 +49,29 @@ Source code tools validate all file paths using `PROJECT_ROOT` from `family_assi
 
 Delegation to and from the engineer profile is gated by confirmation rather than blocked outright:
 
-- **Into the engineer** (`delegate_to_service` with `target_service_id: "engineer"`): the rule in
-  every delegating profile is `confirm` (priority 99), so the main assistant or a complex-tasks run
-  can hand an investigation to the engineer once the user approves.
+- **Into the engineer** (`delegate_to_service` with `target_service_id: "engineer"`): a `confirm`
+  rule (priority 99) is present in every profile that can delegate at all. Profiles that inherit
+  `default_profile_settings` (e.g. `default_assistant`) get it from there; profiles that replace
+  `tools_policy` wholesale and still permit `delegate_to_service` — `browser_profile`, `telephone`,
+  and `complex_tasks` — each carry their own copy of the gate. The delegation tool only checks the
+  *source* profile's policy (and the target's `allowed_delegation_sources`), so the gate must live
+  on every source that can reach the engineer; otherwise a wholesale-replacing profile would allow
+  the engineer unconditionally.
 - **Out of the engineer**: the engineer's `tools_policy` allows `delegate_to_service` with a
   `confirm` decision, so the engineer can hand a fix or follow-up action to another profile — but
-  only after the user confirms.
+  only after the user confirms. Higher-priority (99) `deny` rules block hand-offs to the internal /
+  external-caller profiles that the ordinary delegating policies also deny (`reminder`,
+  `event_handler`, `telephone_external`), so confirmation cannot be used to start those reserved
+  profiles.
 
 The confirmation requirement preserves the engineer's read-only posture in practice: a human always
 approves before the engineer reaches outside its diagnostic sandbox (the engineer diagnoses and
 reports; a human or another profile implements fixes), while still letting investigation and
-hand-off flow without a hard block. Read-only delegation status tools (`get_delegation_status`,
-`list_delegations`) are allowed without confirmation so the engineer can track an async hand-off.
+hand-off flow without a hard block. The `delegate_to_service` confirmation prompt shows the full
+target, the (bounded, explicitly-truncation-marked) request text, and any attachment ids, so the
+approver can see exactly what diagnostic context is being handed off. Read-only delegation status
+tools (`get_delegation_status`, `list_delegations`) are allowed without confirmation so the engineer
+can track an async hand-off.
 
 ### Confirmation for Side Effects
 

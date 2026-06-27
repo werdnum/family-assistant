@@ -203,6 +203,10 @@ def test_delegation_to_engineer_is_confirm_gated_not_blocked() -> None:
     profile_by_id = {profile.id: profile for profile in profiles}
     delegate = _delegate_descriptor()
 
+    # Every profile that can delegate at all must route the engineer through a
+    # confirmation gate (never an unconditional allow). browser_profile,
+    # telephone, and complex_tasks each replace tools_policy wholesale, so each
+    # needs its own gate; default_assistant inherits default_profile_settings.
     source_engines = {
         "default_profile_settings": PolicyEngine.from_policy_config(
             default_settings.tools_policy
@@ -212,6 +216,9 @@ def test_delegation_to_engineer_is_confirm_gated_not_blocked() -> None:
         ),
         "telephone": PolicyEngine.from_policy_config(
             profile_by_id["telephone"].tools_policy
+        ),
+        "browser_profile": PolicyEngine.from_policy_config(
+            profile_by_id["browser_profile"].tools_policy
         ),
     }
 
@@ -232,8 +239,9 @@ def test_delegation_to_engineer_is_confirm_gated_not_blocked() -> None:
         )
         assert to_engineer_unattended.decision is ToolPolicyDecision.DENY, source_id
 
-        # Profiles that are blocked outright (e.g. reminder) stay blocked.
-        to_reminder = engine.evaluate_for_execution(
+    # Profiles that block specific internal targets outright keep blocking them.
+    for source_id in ("default_profile_settings", "complex_tasks", "telephone"):
+        to_reminder = source_engines[source_id].evaluate_for_execution(
             delegate,
             arguments={"target_service_id": "reminder"},
             can_confirm=True,
@@ -260,3 +268,13 @@ def test_engineer_can_delegate_out_only_with_confirmation() -> None:
         can_confirm=False,
     )
     assert outbound_unattended.decision is ToolPolicyDecision.DENY
+
+    # The engineer must not reach internal/external-caller profiles that the
+    # ordinary delegating policies deny outright, even with confirmation.
+    for blocked_target in ("reminder", "event_handler", "telephone_external"):
+        outbound_blocked = engine.evaluate_for_execution(
+            delegate,
+            arguments={"target_service_id": blocked_target},
+            can_confirm=True,
+        )
+        assert outbound_blocked.decision is ToolPolicyDecision.DENY, blocked_target
