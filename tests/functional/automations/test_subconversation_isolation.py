@@ -944,6 +944,15 @@ async def test_nested_async_delegation_completion_wakes_source_subconversation(
             )
             if parent_run is None or child_run is None:
                 return None
+            # The wake commits its data/system rows, the visible response row, and
+            # mark_notified(result_message_internal_id=...) atomically in a single
+            # transaction. run_rows and message_rows are read as two separate READ
+            # COMMITTED snapshots, so a wake that commits between them read-skews: a
+            # stale child_run (result_message_internal_id still NULL) against freshly
+            # committed message rows. Keep polling until the run row reflects the
+            # committed wake so the two snapshots are consistent.
+            if child_run["result_message_internal_id"] is None:
+                return None
             parent_subconversation_id = parent_run["subconversation_id"]
             message_rows = await db_context.fetch_all(
                 select(message_history_table)
