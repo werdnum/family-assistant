@@ -1000,6 +1000,10 @@ final class ChatViewModel {
                         assistantMessageID: assistantMessageID
                     )
                 } else {
+                    // Turn settled (durably complete): retire the optimistic mark
+                    // before the recovery refresh so it surfaces the authoritative
+                    // server summary, matching the completed/410 paths.
+                    optimisticPendingByTurnID.removeValue(forKey: turnID)
                     await recoverByReloadingHistory(
                         conversationID: id,
                         assistantMessageID: assistantMessageID
