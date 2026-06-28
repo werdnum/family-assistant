@@ -340,6 +340,15 @@ final class ChatViewModel {
         conversations.insert(summary, at: 0)
     }
 
+    /// Drop a conversation summary from the held list. Used to undo an optimistic
+    /// insert when starting the turn failed before anything was persisted, so a
+    /// brand-new conversation that never reached the server doesn't linger as a
+    /// phantom row (``refreshRecentConversations`` would otherwise preserve it as
+    /// `untouched`).
+    private func removeLocalConversationSummary(conversationID: String) {
+        conversations.removeAll { $0.conversationID == conversationID }
+    }
+
     /// Drives the conversation list selection binding in the sidebar.
     ///
     /// In compact width, `NavigationSplitView` writes `nil` here when the user
@@ -795,6 +804,10 @@ final class ChatViewModel {
         draftAttachments = []
         isStreaming = true
         persistConversationID()
+        // Whether this conversation already had a row before the optimistic
+        // insert below. A brand-new one is removed again if the turn fails to
+        // start (nothing persisted); an existing one is left alone.
+        let conversationExisted = conversations.contains { $0.conversationID == id }
         upsertLocalConversationSummary(
             conversationID: id,
             lastMessage: prompt.isEmpty ? "Attachment" : prompt
@@ -816,7 +829,8 @@ final class ChatViewModel {
                 conversationID: id,
                 attachments: uploadedAttachments,
                 assistantMessageID: assistantMessageID,
-                streamToken: streamToken
+                streamToken: streamToken,
+                isNewConversation: !conversationExisted
             )
         }
     }
@@ -858,9 +872,15 @@ final class ChatViewModel {
         conversationID id: String,
         attachments: [ChatAttachment],
         assistantMessageID: String,
-        streamToken: UUID
+        streamToken: UUID,
+        isNewConversation: Bool
     ) async {
         var lastSeq: Int?
+        // Becomes true once startTurn returns: the backend persists the user
+        // message inside start_turn, so a successful return means the
+        // conversation is now server-backed and its optimistic row must NOT be
+        // removed on a later failure.
+        var startSucceeded = false
         do {
             let start = try await apiClient.startTurn(
                 turnID: turnID,
@@ -869,6 +889,7 @@ final class ChatViewModel {
                 profileID: selectedProfileID,
                 attachments: attachments
             )
+            startSucceeded = true
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
                 if let stopConversationID = stopAfterRegistrationConversationID {
@@ -1079,6 +1100,12 @@ final class ChatViewModel {
             }
             // Reaching here means starting the turn itself failed — the prompt was
             // never accepted, so there is no durable turn to recover; surface it.
+            // A brand-new conversation never reached the server, so undo its
+            // optimistic list row — otherwise refreshRecentConversations' merge
+            // preserves it as `untouched` and it lingers as a phantom thread.
+            if isNewConversation, !startSucceeded {
+                removeLocalConversationSummary(conversationID: id)
+            }
             appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
         }
         finishStreaming(streamToken)

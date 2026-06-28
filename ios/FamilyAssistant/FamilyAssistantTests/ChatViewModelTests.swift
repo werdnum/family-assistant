@@ -621,6 +621,35 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.conversations.first?.messageCount, 2)
     }
 
+    func testFailedTurnStartRemovesOptimisticConversation() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                // The turn never starts: nothing is persisted server-side.
+                return .json(#"{"detail":"temporary failure"}"#, statusCode: 500)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_failstart/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_failstart","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_failstart")
+        model.draftText = "Hello"
+
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertFalse(
+            model.conversations.contains { $0.conversationID == "web_conv_failstart" },
+            "A brand-new conversation whose turn failed to start must not linger as a phantom in the list."
+        )
+    }
+
     func testActivityStreamRefreshesConversationList() async throws {
         let conversationsRequests = AtomicCounter()
         ChatMockBackendURLProtocol.respond { request in
