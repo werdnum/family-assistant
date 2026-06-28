@@ -74,6 +74,12 @@ final class ChatViewModel {
     @ObservationIgnored private var activityStreamTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     @ObservationIgnored private var activeTurn: ActiveChatTurn?
+    // Conversation ids with an in-flight optimistic summary (their send hasn't
+    // settled). While pending, `refreshRecentConversations` keeps the held
+    // optimistic row over a stale server summary; cleared when the turn settles
+    // so the server becomes authoritative — a lifecycle signal, not a wall-clock
+    // comparison (a skewed client clock can't pin a stale row).
+    @ObservationIgnored private var optimisticPendingConversationIDs: Set<String> = []
     @ObservationIgnored private var registeredTurnIDs: Set<String> = []
     @ObservationIgnored private var pendingStopTurnIDs: Set<String> = []
     @ObservationIgnored private var stopAfterRegistrationByTurnID: [String: String] = [:]
@@ -306,14 +312,15 @@ final class ChatViewModel {
     /// wasteful. Merges the page over the held list, preserving older summaries
     /// the page didn't include.
     ///
-    /// Freshness guard: where a held summary is strictly newer than the server's
-    /// (an optimistic insert/bump the server hasn't caught up to yet), keep the
-    /// held one so a stale in-flight refresh — which still carries the old
-    /// timestamp/preview for an existing thread — can't undo the optimistic bump.
-    /// The whole list (server page plus preserved older summaries) is then sorted
-    /// most-recent-first, so a kept optimistic row — including a brand-new
-    /// conversation the stale page omitted entirely — stays at the top instead of
-    /// sinking below the server page.
+    /// Lifecycle guard: for a conversation whose send is still in flight (in
+    /// ``optimisticPendingConversationIDs``), keep the held optimistic row over
+    /// the server's summary, so a stale in-flight refresh — which still carries
+    /// the old preview/position for an existing thread, or omits a brand-new one
+    /// entirely — can't undo the optimistic insert/bump. The pending mark is
+    /// cleared when the turn settles (not by a client/server timestamp compare,
+    /// which a skewed clock could keep "newer" forever), after which the server
+    /// row is authoritative. The whole list is sorted most-recent-first so a kept
+    /// optimistic row stays at the top.
     private func refreshRecentConversations() async {
         do {
             let recent = try await apiClient.listRecentConversations()
@@ -323,8 +330,8 @@ final class ChatViewModel {
                 uniquingKeysWith: { first, _ in first }
             )
             let merged = recent.map { serverRow -> ChatConversationSummary in
-                if let held = heldByID[serverRow.conversationID],
-                   held.lastTimestamp > serverRow.lastTimestamp
+                if optimisticPendingConversationIDs.contains(serverRow.conversationID),
+                   let held = heldByID[serverRow.conversationID]
                 {
                     return held
                 }
@@ -359,6 +366,8 @@ final class ChatViewModel {
         )
         conversations.removeAll { $0.conversationID == conversationID }
         conversations.insert(summary, at: 0)
+        // Mark pending so a stale refresh keeps this row until the turn settles.
+        optimisticPendingConversationIDs.insert(conversationID)
     }
 
     /// Undo an optimistic summary when starting the turn failed before anything
@@ -372,6 +381,7 @@ final class ChatViewModel {
         conversationID: String,
         to previous: ChatConversationSummary?
     ) {
+        optimisticPendingConversationIDs.remove(conversationID)
         conversations.removeAll { $0.conversationID == conversationID }
         guard let previous else {
             return
@@ -1087,6 +1097,10 @@ final class ChatViewModel {
                     Task { try? await ackClient.acknowledge(conversationID: id, ackSeq: lastSeq) }
                 }
                 completeStream(assistantMessageID: assistantMessageID)
+                // Turn settled: the server reflects this send, so retire the
+                // optimistic mark before refreshing so the authoritative summary
+                // (with the reply preview) replaces the held row.
+                optimisticPendingConversationIDs.remove(id)
                 await refreshRecentConversations()
                 await mergeNewMessages(conversationID: id)
                 if status == "cancelled" || status == "failed" || stopRequestedTurnIDs.contains(turnID) {
@@ -1319,6 +1333,9 @@ final class ChatViewModel {
         assistantMessageID: String
     ) async {
         removeLocalAssistantPlaceholder(assistantMessageID)
+        // The durable turn has settled (recovered via history reload), so retire
+        // the optimistic mark and let the server summary become authoritative.
+        optimisticPendingConversationIDs.remove(id)
         await refreshRecentConversations()
         await mergeNewMessages(conversationID: id)
     }

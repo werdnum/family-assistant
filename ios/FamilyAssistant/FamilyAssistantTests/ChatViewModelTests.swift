@@ -683,54 +683,59 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
-    func testOptimisticBumpSurvivesStaleRefresh() async throws {
-        var streamedTurnID = "turn-stalebump"
+    func testOptimisticRowShownDuringTurnThenReconciles() async throws {
+        let stream = HangingStream()
+        let postedTurnID = AtomicString()
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
             case ("POST", "/api/v1/chat/turns"):
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
-                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
                 return .json(
-                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_bump","first_seq":0}"#
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_live","first_seq":0}"#
                 )
-            case ("GET", "/api/v1/chat/conversations/web_conv_bump/stream"):
-                return .text(
-                    """
-                    event: turn_started
-                    data: {"turn_id":"\(streamedTurnID)","seq":0}
-
-                    event: turn_ended
-                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
-
-                    """
+            case ("GET", "/api/v1/chat/conversations/web_conv_live/stream"):
+                return .hangingStream(
+                    "event: turn_started\ndata: {\"turn_id\":\"\(postedTurnID.value ?? "")\",\"seq\":0}\n\n",
+                    controller: stream
                 )
             case ("GET", "/api/v1/chat/conversations"):
-                // Stale: the server hasn't caught up to the just-sent message, so
-                // it still reports an older preview/timestamp for this thread.
+                // The authoritative summary the server returns once the turn ends.
                 return .json(
-                    #"{"conversations":[{"conversation_id":"web_conv_bump","last_message":"Old preview","last_timestamp":"2020-01-01T00:00:00Z","message_count":3}],"count":1}"#
+                    #"{"conversations":[{"conversation_id":"web_conv_live","last_message":"Live reply","last_timestamp":"2030-01-01T00:00:00Z","message_count":2}],"count":1}"#
                 )
-            case ("GET", "/api/v1/chat/conversations/web_conv_bump/messages"):
+            case ("GET", "/api/v1/chat/conversations/web_conv_live/messages"):
                 return .json(
-                    #"{"conversation_id":"web_conv_bump","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                    #"{"conversation_id":"web_conv_live","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
                 )
             default:
                 return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
             }
         }
 
-        let model = makeViewModel(conversationID: "web_conv_bump")
-        model.draftText = "Fresh message"
-
+        let model = makeViewModel(conversationID: "web_conv_live")
+        model.draftText = "Live message"
         await model.sendDraft()
-        try await waitUntil { !model.isStreaming }
+        try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        let bumped = model.conversations.first { $0.conversationID == "web_conv_bump" }
+        // While the turn is in flight (pending), the optimistic row is shown.
         XCTAssertEqual(
-            bumped?.lastMessage,
-            "Fresh message",
-            "A stale refresh (older server summary) must not revert the optimistic bump."
+            model.conversations.first { $0.conversationID == "web_conv_live" }?.lastMessage,
+            "Live message"
         )
+
+        // Once the turn settles, the optimistic mark is retired and the server
+        // summary becomes authoritative.
+        stream.finish(
+            appending:
+                "event: turn_ended\ndata: {\"turn_id\":\"\(postedTurnID.value ?? "")\",\"status\":\"complete\"}\n\n"
+        )
+        try await waitUntil { !model.isStreaming }
+        try await waitUntil {
+            model.conversations.first { $0.conversationID == "web_conv_live" }?.lastMessage
+                == "Live reply"
+        }
     }
 
     func testNewConversationStaysOnTopAboveExistingOnStaleRefresh() async throws {

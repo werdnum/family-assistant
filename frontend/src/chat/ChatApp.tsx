@@ -499,31 +499,21 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (response.ok) {
         const data = await response.json();
         const serverList: Conversation[] = data.conversations;
-        const serverById = new Map(serverList.map((c) => [c.conversation_id, c]));
-        // Retire an optimistic row only once the server's summary for it is at
-        // least as fresh as the optimistic one. This keeps a not-yet-persisted
-        // new conversation AND a just-bumped existing conversation on top until
-        // the server catches up, so a stale in-flight fetch (which still carries
-        // the old timestamp/preview for an existing thread) can't undo the
-        // optimistic insert or bump.
+        // Prefer optimistic rows that are still pending (their send hasn't
+        // settled). Pending is keyed off the turn lifecycle — set on send,
+        // cleared when the turn completes/fails (see handleStreamingComplete /
+        // handleStreamingError) — NOT off a client/server timestamp comparison,
+        // which a skewed client clock could keep "newest" forever and so pin a
+        // stale preview indefinitely. So a stale in-flight fetch can't undo an
+        // optimistic insert/bump while the turn is in flight, and once it settles
+        // the server row is authoritative.
         const pending = pendingOptimisticConversationsRef.current;
-        for (const [id, optimistic] of [...pending.entries()]) {
-          const serverRow = serverById.get(id);
-          if (
-            serverRow &&
-            Date.parse(serverRow.last_timestamp) >= Date.parse(optimistic.last_timestamp)
-          ) {
-            pending.delete(id);
-          }
-        }
-        const survivors = [...pending.values()];
-        const survivorIds = new Set(survivors.map((c) => c.conversation_id));
-        // Sort the merged list newest-first: survivors come from Map insertion
-        // order, so multiple optimistic rows (e.g. chat A then a newer chat B
-        // before either is server-confirmed) would otherwise show oldest-first.
+        const pendingIds = new Set(pending.keys());
+        // Sort newest-first for display order only (not retirement); multiple
+        // pending rows otherwise follow Map insertion (oldest-first) order.
         const merged = [
-          ...survivors,
-          ...serverList.filter((c) => !survivorIds.has(c.conversation_id)),
+          ...pending.values(),
+          ...serverList.filter((c) => !pendingIds.has(c.conversation_id)),
         ].sort((a, b) => Date.parse(b.last_timestamp) - Date.parse(a.last_timestamp));
         setConversations(merged);
       }
@@ -748,6 +738,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const lastError = lastStreamingErrorRef.current;
       const wasStopped = turnStoppedRef.current;
       turnStoppedRef.current = false;
+
+      // Retire this conversation's optimistic row now the turn has settled: the
+      // server reflects the send, so the fetchConversations below (and later
+      // refreshes) should use the authoritative summary. Cleared on settle
+      // rather than by a timestamp compare so a skewed clock can't pin it.
+      const settledConversationId = activeStreamConversationIdRef.current;
+      if (settledConversationId) {
+        pendingOptimisticConversationsRef.current.delete(settledConversationId);
+      }
 
       if (messageId) {
         const hasContent = Boolean(content);
