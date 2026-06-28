@@ -317,6 +317,13 @@ global_tools_policy:
       decision: "allow"
       priority: 50
       description: "report_technical_problem is available in every profile so the assistant can always report bugs."
+    - match:
+        names:
+          - "read_text_attachment"
+          - "jq_query"
+      decision: "allow"
+      priority: 50
+      description: "read_text_attachment and jq_query are available in every profile so the assistant can always read back tool results that exceeded the large-result threshold and were auto-converted to attachments."
 
 default_profile_settings:
   processing_config:

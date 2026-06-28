@@ -4,6 +4,9 @@ from pathlib import Path
 
 import yaml
 
+from family_assistant.assistant import (
+    _build_profile_policy_engine,  # noqa: PLC2701 - smallest helper that applies global_tools_policy injection to a profile
+)
 from family_assistant.config_loader import (
     load_prompts_yaml,
     resolve_all_service_profiles,
@@ -13,7 +16,7 @@ from family_assistant.config_models import (
     ServiceProfile,
 )
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, PolicyEngine, ToolDescriptor
-from family_assistant.tools.policy import ToolPolicyDecision
+from family_assistant.tools.policy import ToolPolicyConfig, ToolPolicyDecision
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULTS_PATH = REPO_ROOT / "defaults.yaml"
@@ -189,6 +192,55 @@ def test_ucp_tools_are_default_on_demand_and_not_confirm_gated() -> None:
             ).decision
             == ToolPolicyDecision.ALLOW
         )
+
+
+def _load_global_tools_policy() -> ToolPolicyConfig:
+    defaults_data = _load_defaults_yaml()
+    global_policy = defaults_data["global_tools_policy"]
+    assert isinstance(global_policy, dict)
+    return ToolPolicyConfig.model_validate(global_policy)
+
+
+def _local_descriptor(name: str) -> ToolDescriptor:
+    for descriptor in LOCAL_TOOL_DESCRIPTORS:
+        if descriptor.name == name:
+            return descriptor
+    raise AssertionError(f"{name} descriptor not found")
+
+
+def test_large_result_tools_available_in_every_profile() -> None:
+    """read_text_attachment and jq_query must be reachable from every profile.
+
+    Large tool results are auto-converted to attachments and the assistant is
+    told to read them back with these tools, so they have to survive even a
+    deny-by-default profile that never mentions them. The shipped
+    global_tools_policy injects them into every profile's engine.
+    """
+    default_settings, profiles = _load_resolved_profiles()
+    global_policy = _load_global_tools_policy()
+    read_text = _local_descriptor("read_text_attachment")
+    jq = _local_descriptor("jq_query")
+
+    profile_map: dict[str, DefaultProfileSettings | ServiceProfile] = {
+        "default_profile_settings": default_settings,
+        **{profile.id: profile for profile in profiles},
+    }
+
+    for profile_id, profile in profile_map.items():
+        engine = _build_profile_policy_engine(
+            profile_id,
+            profile.tools_policy,
+            None,
+            global_policy,
+        )
+        for descriptor in (read_text, jq):
+            assert (
+                engine.evaluate_for_execution(
+                    descriptor,
+                    can_confirm=False,
+                ).decision
+                is ToolPolicyDecision.ALLOW
+            ), f"{descriptor.name} not allowed in {profile_id}"
 
 
 def _delegate_descriptor() -> ToolDescriptor:
