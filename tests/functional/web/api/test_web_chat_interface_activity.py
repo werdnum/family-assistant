@@ -11,7 +11,9 @@ import asyncio
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm.messages import UserMessage
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
 from family_assistant.storage.context import get_db_context
 from family_assistant.utils.clock import SystemClock
@@ -52,3 +54,48 @@ async def test_send_message_pings_activity_for_conversation_owner(
     assert activity.reason == "message"
     # Not delivered to a different user's activity subscriber.
     assert other.queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_send_message_canonicalizes_alias_owner_for_activity(
+    db_engine: AsyncEngine,
+) -> None:
+    """A conversation stored under an alias owner id (e.g. a Telegram numeric id)
+    still pings the canonical web subscriber, because owner ids are canonicalized
+    before scoping the activity ping."""
+    conversation_id = "web_conv_alias_owner"
+    config = AppConfig.model_validate({
+        "users": [
+            {
+                "id": "andrew@example.com",
+                "oidc": {"emails": ["andrew@example.com"]},
+                "telegram": {"user_ids": [123456789]},
+            }
+        ]
+    })
+    resolver = UserIdentityResolver(config)
+
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+        # Owner stored under the raw Telegram numeric id.
+        await ctx.message_history.add_message(
+            UserMessage(content="set a reminder"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=SystemClock().now(),
+            user_id="123456789",
+        )
+
+    hub = ConversationStreamHub()
+    interface = WebChatInterface(
+        db_engine, notifier=None, stream_hub=hub, identity_resolver=resolver
+    )
+    # The web session subscribes under its canonical id, not the Telegram alias.
+    handle = hub.subscribe_activity("andrew@example.com")
+
+    saved = await interface.send_message(conversation_id, "Your reminder: tea time")
+    assert saved is not None
+
+    activity = await asyncio.wait_for(handle.queue.get(), timeout=1.0)
+    assert activity.conversation_id == conversation_id

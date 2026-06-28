@@ -39,7 +39,6 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.user_identity import (
-    UserIdentityResolutionError,
     UserIdentityResolver,
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -743,15 +742,7 @@ def _canonicalize_owner_id(
     """
     if resolver is None:
         return raw_owner_id
-    if raw_owner_id.isdigit():
-        try:
-            return resolver.resolve_telegram_user(int(raw_owner_id)).user_id
-        except UserIdentityResolutionError:
-            return raw_owner_id
-    try:
-        return resolver.resolve_api_token_user(raw_owner_id).user_id
-    except UserIdentityResolutionError:
-        return raw_owner_id
+    return resolver.canonicalize_owner_id(raw_owner_id)
 
 
 def _canonical_owners(

@@ -155,10 +155,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state, "push_notification_service", None
         )
 
+        # Resolver used to canonicalize conversation owner ids when scoping the
+        # account-global activity ping. Reuse the cached instance if present,
+        # otherwise build it from config (lazily, like the request dependency).
+        identity_resolver = getattr(app.state, "user_identity_resolver", None)
+        if identity_resolver is None:
+            resolver_config = getattr(app.state, "config", None)
+            if resolver_config is not None:
+                from family_assistant.services.user_identity import (  # noqa: PLC0415
+                    UserIdentityResolver,
+                )
+
+                identity_resolver = UserIdentityResolver(resolver_config)
+                app.state.user_identity_resolver = identity_resolver
+
         app.state.web_chat_interface = WebChatInterface(
             app.state.database_engine,
             notifier=notifier,
             stream_hub=getattr(app.state, "conversation_stream_hub", None),
+            identity_resolver=identity_resolver,
         )
         # Register web chat interface in the registry
         if not hasattr(app.state, "chat_interfaces"):

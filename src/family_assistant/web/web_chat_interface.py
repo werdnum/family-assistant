@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.services.notifier import Notifier
+    from family_assistant.services.user_identity import UserIdentityResolver
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class WebChatInterface(ChatInterface):
         database_engine: "AsyncEngine",
         notifier: "Notifier | None" = None,
         stream_hub: "ConversationStreamHub | None" = None,
+        identity_resolver: "UserIdentityResolver | None" = None,
     ) -> None:
         """
         Initialize the WebChatInterface.
@@ -51,10 +53,15 @@ class WebChatInterface(ChatInterface):
             stream_hub: Optional ConversationStreamHub. When set, a ``message``
                 event is published after a successful save so open follow-streams
                 reload for messages sent outside the streaming turn path.
+            identity_resolver: Optional resolver used to canonicalize conversation
+                owner ids before scoping the account-global activity ping, so a
+                conversation stored under an alias (e.g. a Telegram numeric id)
+                still reaches the canonical web/iOS subscriber.
         """
         self.database_engine = database_engine
         self.notifier = notifier
         self.stream_hub = stream_hub
+        self.identity_resolver = identity_resolver
 
     async def send_message(
         self,
@@ -187,11 +194,20 @@ class WebChatInterface(ChatInterface):
             # reply (scheduled/reminder callback, tool-initiated message) surfaces
             # and bumps the conversation in the owner's list on a client sitting
             # on another thread — the per-conversation tickle above only reaches a
-            # client already following THIS conversation.
-            for owner_id in owner_ids:
+            # client already following THIS conversation. Canonicalize owner ids
+            # first: the activity stream subscribes under the caller's canonical
+            # id, so a conversation stored under an alias (e.g. a Telegram numeric
+            # id) would otherwise ping an id no subscriber matches.
+            activity_user_ids = {
+                self.identity_resolver.canonicalize_owner_id(owner_id)
+                if self.identity_resolver is not None
+                else owner_id
+                for owner_id in owner_ids
+            }
+            for user_id in activity_user_ids:
                 await self.stream_hub.publish_activity(
                     conversation_id,
-                    user_id=owner_id,
+                    user_id=user_id,
                     reason="message",
                 )
 
