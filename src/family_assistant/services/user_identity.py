@@ -191,7 +191,10 @@ class UserIdentityResolver:
             try:
                 return self.resolve_telegram_user(int(raw_owner_id)).user_id
             except UserIdentityResolutionError:
-                return raw_owner_id
+                # Not a configured Telegram id — it may still be a numeric OIDC
+                # subject or API-token owner id, so fall through to that lookup
+                # rather than giving up here.
+                pass
         try:
             return self.resolve_api_token_user(raw_owner_id).user_id
         except UserIdentityResolutionError:
