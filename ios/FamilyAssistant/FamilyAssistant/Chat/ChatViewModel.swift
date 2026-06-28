@@ -417,6 +417,13 @@ final class ChatViewModel {
         draftText = ""
         draftAttachments = []
         mobileShowsConversationList = false
+        // A brand-new conversation has no history to load, so it is never in a
+        // loading state. Clear the flag explicitly: starting a new conversation
+        // supersedes any in-flight `selectConversation` whose `loadMessages` will
+        // early-return (leaving the flag set) now that it is no longer the active
+        // conversation. Without this the composer would stay gated and a deep-link
+        // auto-send would be dropped (see `canSendDraft`/`sendDraft`).
+        isLoadingMessages = false
         // A brand-new conversation runs under the user's preferred profile, not
         // whatever an existing thread we were viewing was pinned to.
         selectedProfileID = preferredProfileID

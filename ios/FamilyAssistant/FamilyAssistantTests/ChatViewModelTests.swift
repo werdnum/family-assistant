@@ -446,6 +446,25 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testStartNewConversationClearsLoadingGate() {
+        let model = makeViewModel(conversationID: nil)
+        // Simulate an in-flight conversation load being superseded (e.g. a
+        // deep-link route starting a new conversation mid-load); the orphaned
+        // loadMessages early-returns and leaves isLoadingMessages set.
+        model.isLoadingMessages = true
+
+        model.startNewConversation()
+
+        XCTAssertFalse(
+            model.isLoadingMessages,
+            "A new conversation has no history to load; the loading gate must clear."
+        )
+        // A new conversation must be immediately sendable so its deep-link /
+        // share-extension auto-send isn't dropped by a stale loading flag.
+        model.draftText = "Deep link"
+        XCTAssertTrue(model.canSendDraft)
+    }
+
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
         var streamedTurnID = "turn-send"
         ChatMockBackendURLProtocol.respond { request in
