@@ -514,10 +514,11 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "focus on tomorrow"
+        model.draftText = "focus on tomorrow"
         await model.sendSteerDraft()
         XCTAssertEqual(steerPrompt.value, "focus on tomorrow")
-        XCTAssertEqual(model.steerDraftText, "focus on tomorrow")
+        // The composer clears as soon as the steer is accepted, matching web.
+        XCTAssertEqual(model.draftText, "")
 
         stream.finish(
             appending: """
@@ -534,7 +535,7 @@ final class ChatViewModelTests: XCTestCase {
         )
         try await waitUntil { !model.isStreaming }
 
-        XCTAssertEqual(model.steerDraftText, "")
+        XCTAssertEqual(model.draftText, "")
         XCTAssertNil(model.steerErrorMessage)
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "focus on tomorrow", "Final reply"])
     }
@@ -595,7 +596,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "avoid duplicate"
+        model.draftText = "avoid duplicate"
         let firstSteer = Task { await model.sendSteerDraft() }
         try await waitUntil { steerRequests.value == 1 }
         await model.sendSteerDraft()
@@ -657,7 +658,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && turnStarts.value == 1 }
 
-        model.steerDraftText = "keep this steer"
+        model.draftText = "keep this steer"
         await model.sendSteerDraft()
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), ["keep this steer"])
 
@@ -665,7 +666,6 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         XCTAssertEqual(model.draftText, "keep this steer")
-        XCTAssertEqual(model.steerDraftText, "")
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), [])
         XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
@@ -719,11 +719,13 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "retry as follow-up"
+        model.draftText = "retry as follow-up"
         await model.sendSteerDraft()
         XCTAssertEqual(steerRequests.value, 1)
-        XCTAssertEqual(model.steerDraftText, "retry as follow-up")
-        XCTAssertEqual(model.draftText, "")
+        // The steer failed while the turn was current, so the text stays in the
+        // composer (the unified composer keeps its text on error) for retry.
+        XCTAssertEqual(model.draftText, "retry as follow-up")
+        XCTAssertEqual(model.steerErrorMessage, "Could not steer the assistant. Please try again.")
 
         stream.finish(
             appending:
@@ -731,21 +733,26 @@ final class ChatViewModelTests: XCTestCase {
         )
         try await waitUntil { !model.isStreaming }
 
-        XCTAssertEqual(model.steerDraftText, "")
+        // The turn ended without consuming the failed steer, so it remains a
+        // normal draft the user can resend.
         XCTAssertEqual(model.draftText, "retry as follow-up")
     }
 
-    func testLateSteerFollowUpPreservesMainDraftAndAttachments() async throws {
+    func testSteerWithNoRunningTurnSendsComposerAsNormalMessage() async throws {
+        // The main composer doubles as the steer input. When no turn is running,
+        // tapping the action with composer text simply sends it as a normal new
+        // message — text and any attachments included — and clears the composer.
         let turnStarts = AtomicCounter()
-        let followUpPrompt = AtomicString()
+        let sentPrompt = AtomicString()
+        let sentAttachmentCount = AtomicString()
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
             case ("POST", "/api/v1/chat/turns"):
                 turnStarts.increment()
                 let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
-                followUpPrompt.set(payload["prompt"] as? String)
-                XCTAssertEqual((payload["attachments"] as? [Any])?.count, 0)
+                sentPrompt.set(payload["prompt"] as? String)
+                sentAttachmentCount.set(String((payload["attachments"] as? [Any])?.count ?? 0))
                 let turnID = try XCTUnwrap(payload["turn_id"] as? String)
                 return .json(
                     #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_late_steer_followup","already_complete":true,"first_seq":0}"#
@@ -771,17 +778,16 @@ final class ChatViewModelTests: XCTestCase {
         }
 
         let model = makeViewModel(conversationID: "web_conv_late_steer_followup")
-        model.draftText = "main draft"
+        model.draftText = "late steer"
         model.draftAttachments = [makeAttachment(uploadState: .uploaded)]
-        model.steerDraftText = "late steer"
 
         await model.sendSteerDraft()
         try await waitUntil { turnStarts.value == 1 }
 
-        XCTAssertEqual(followUpPrompt.value, "late steer")
-        XCTAssertEqual(model.draftText, "main draft")
-        XCTAssertEqual(model.draftAttachments.map(\.id), ["attachment-uploaded"])
-        XCTAssertEqual(model.steerDraftText, "")
+        XCTAssertEqual(sentPrompt.value, "late steer")
+        XCTAssertEqual(sentAttachmentCount.value, "1")
+        XCTAssertEqual(model.draftText, "")
+        XCTAssertEqual(model.draftAttachments, [])
     }
 
     func testStopTurnRetriesTurnRegistrationRace() async throws {
@@ -1172,7 +1178,7 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { cancelRequests.value == 1 }
         try await waitUntil { !model.isStreaming }
 
-        XCTAssertEqual(model.steerDraftText, "")
+        XCTAssertEqual(model.draftText, "")
     }
 
     func testStopTurnBeforeRegistrationWarnsWhenCancelCannotBeSecured() async throws {
@@ -1275,7 +1281,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && startRequests.value == 1 }
 
-        model.steerDraftText = "focus on tomorrow"
+        model.draftText = "focus on tomorrow"
         await model.sendSteerDraft()
         XCTAssertEqual(steerRequests.value, 0)
         releaseStart.signal()
@@ -1297,7 +1303,7 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         XCTAssertNil(model.steerErrorMessage)
-        XCTAssertEqual(model.steerDraftText, "")
+        XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "focus on tomorrow", "Final reply"])
     }
 
@@ -1363,7 +1369,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && startRequests.value == 1 }
 
-        model.steerDraftText = "focus on tomorrow"
+        model.draftText = "focus on tomorrow"
         await model.sendSteerDraft()
         await model.stopTurn()
         releaseStart.signal()
@@ -1376,7 +1382,6 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         XCTAssertEqual(steerRequests.value, 0)
-        XCTAssertEqual(model.steerDraftText, "")
         XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Response stopped."])
     }
@@ -1442,7 +1447,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "focus on tomorrow"
+        model.draftText = "focus on tomorrow"
         await model.sendSteerDraft()
         try await waitUntil { steerRequests.value == 2 }
 
@@ -1524,7 +1529,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "stale steer"
+        model.draftText = "stale steer"
         let steerTask = Task { await model.sendSteerDraft() }
         try await waitUntil { steerRequests.value == 1 }
         model.cancelStream()
@@ -1595,7 +1600,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "do not resend"
+        model.draftText = "do not resend"
         await model.sendSteerDraft()
         try await waitUntil { steerRequests.value == 1 }
         stream.finish()
@@ -1604,7 +1609,6 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), [])
         XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
         XCTAssertEqual(turnStarts.value, 1)
-        XCTAssertEqual(model.steerDraftText, "")
         XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Recovered reply"])
     }
@@ -1668,7 +1672,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "retry after recovery"
+        model.draftText = "retry after recovery"
         let steerTask = Task { await model.sendSteerDraft() }
         try await waitUntil { steerRequests.value == 1 }
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), ["retry after recovery"])
@@ -1681,13 +1685,15 @@ final class ChatViewModelTests: XCTestCase {
             """
         )
         try await waitUntil { !model.isStreaming }
-        XCTAssertEqual(model.steerDraftText, "retry after recovery")
-        XCTAssertEqual(model.draftText, "")
+        // The composer doubles as the steer input, so the in-flight steer text
+        // stays put while the stream recovers.
+        XCTAssertEqual(model.draftText, "retry after recovery")
 
         await steerTask.value
 
+        // The steer ultimately fails after the turn ended; its text remains in
+        // the composer as a normal draft the user can resend.
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
-        XCTAssertEqual(model.steerDraftText, "")
         XCTAssertEqual(model.draftText, "retry after recovery")
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Recovered reply"])
         XCTAssertEqual(turnStarts.value, 1)
@@ -1746,7 +1752,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "already applied"
+        model.draftText = "already applied"
         let steerTask = Task { await model.sendSteerDraft() }
         try await waitUntil { steerRequests.value == 1 }
         stream.finish(
@@ -1817,14 +1823,14 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "send after finish"
+        model.draftText = "send after finish"
         await model.sendSteerDraft()
         try await waitUntil { steerRequests.value == 1 }
 
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), [])
         XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), ["send after finish"])
         XCTAssertEqual(turnStarts.value, 1)
-        XCTAssertEqual(model.steerDraftText, "")
+        XCTAssertEqual(model.draftText, "")
         stream.finish()
     }
 
@@ -1881,7 +1887,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "send after finish"
+        model.draftText = "send after finish"
         let steerTask = Task { await model.sendSteerDraft() }
         try await waitUntil { steerRequests.value == 1 }
         stream.finish(
@@ -1894,7 +1900,6 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(steerRequests.value, 2)
         XCTAssertEqual(turnStarts.value, 1)
         XCTAssertEqual(model.draftText, "send after finish")
-        XCTAssertEqual(model.steerDraftText, "")
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), [])
         XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
     }
@@ -1960,7 +1965,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "do not resend"
+        model.draftText = "do not resend"
         let steerTask = Task { await model.sendSteerDraft() }
         try await waitUntil { steerRequests.value == 1 }
         stream.finish(
@@ -1976,7 +1981,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), [])
         XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
-        XCTAssertEqual(model.steerDraftText, "")
+        XCTAssertEqual(model.draftText, "")
     }
 
     func testQueuedFinishedSteerIsClearedWhenTurnIsCancelled() async throws {
@@ -2036,7 +2041,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "do not send after stop"
+        model.draftText = "do not send after stop"
         await model.sendSteerDraft()
         try await waitUntil { steerRequests.value == 1 }
         XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), ["do not send after stop"])
@@ -2112,7 +2117,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "do not preserve after stop"
+        model.draftText = "do not preserve after stop"
         await model.sendSteerDraft()
         try await waitUntil { steerRequests.value == 1 }
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), ["do not preserve after stop"])
@@ -2125,7 +2130,6 @@ final class ChatViewModelTests: XCTestCase {
         )
         try await waitUntil { !model.isStreaming }
 
-        XCTAssertEqual(model.steerDraftText, "")
         XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), [])
     }
@@ -2190,7 +2194,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "do not send after dropped stop"
+        model.draftText = "do not send after dropped stop"
         await model.sendSteerDraft()
         try await waitUntil { steerRequests.value == 1 }
         XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), ["do not send after dropped stop"])
@@ -2267,9 +2271,9 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "first steer"
+        model.draftText = "first steer"
         await model.sendSteerDraft()
-        model.steerDraftText = "second steer"
+        model.draftText = "second steer"
         await model.sendSteerDraft()
         XCTAssertEqual(privateStringArray("awaitingEchoSteers", in: model), ["first steer", "second steer"])
 
@@ -2347,7 +2351,7 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
 
-        model.steerDraftText = "use the newer plan"
+        model.draftText = "use the newer plan"
         await model.sendSteerDraft()
         let preservedAttachment = makeAttachment(uploadState: .uploaded)
         model.draftText = "visible draft"
@@ -2358,8 +2362,9 @@ final class ChatViewModelTests: XCTestCase {
         )
         try await waitUntil { turnStarts.value == 2 }
 
-        XCTAssertEqual(model.steerDraftText, "")
         XCTAssertEqual(followUpPrompt.value, "use the newer plan")
+        // The fresh edit typed while the steer was in flight is preserved: the
+        // recovered follow-up is sent without clobbering the visible draft.
         XCTAssertEqual(model.draftText, "visible draft")
         XCTAssertEqual(model.draftAttachments, [preservedAttachment])
     }

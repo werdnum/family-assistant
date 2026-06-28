@@ -430,17 +430,41 @@ private struct ChatComposerView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var importsFiles = false
 
+    // While a turn runs the main composer doubles as the steer input: an empty
+    // box → Stop, text in the box → Steer. When idle it sends a normal message.
+    private var hasComposerText: Bool {
+        !viewModel.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var sendButtonEnabled: Bool {
         viewModel.isStreaming || viewModel.canSendDraft
     }
 
+    private var actionButtonImage: String {
+        guard viewModel.isStreaming else { return "arrow.up" }
+        return hasComposerText ? "arrow.up" : "stop.fill"
+    }
+
+    private var actionButtonIdentifier: String {
+        guard viewModel.isStreaming else { return "chat-send-button" }
+        return hasComposerText ? "chat-steer-button" : "chat-stop-button"
+    }
+
     var body: some View {
         VStack(spacing: 8) {
-            if !viewModel.draftAttachments.isEmpty {
+            // Steering sends text only, so attachments can't ride along on a
+            // steer. Hide the attachment UI while a turn runs to avoid a picked
+            // file being silently dropped from the steer and then sent with the
+            // next normal message.
+            if !viewModel.isStreaming, !viewModel.draftAttachments.isEmpty {
                 DraftAttachmentStrip(viewModel: viewModel)
             }
-            if viewModel.isStreaming {
-                SteerComposerView(viewModel: viewModel)
+            if let steerError = viewModel.steerErrorMessage {
+                Text(steerError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("chat-steer-error")
             }
             if let stopWarning = viewModel.stopWarningMessage {
                 Text(stopWarning)
@@ -450,26 +474,28 @@ private struct ChatComposerView: View {
                     .accessibilityIdentifier("chat-stop-warning")
             }
             HStack(alignment: .bottom, spacing: 4) {
-                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                    Image(systemName: "photo")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 36)
-                }
-                .accessibilityLabel("Add Photo")
+                if !viewModel.isStreaming {
+                    PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                        Image(systemName: "photo")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 36)
+                    }
+                    .accessibilityLabel("Add Photo")
 
-                Button {
-                    importsFiles = true
-                } label: {
-                    Image(systemName: "paperclip")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 36)
+                    Button {
+                        importsFiles = true
+                    } label: {
+                        Image(systemName: "paperclip")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 36)
+                    }
+                    .accessibilityLabel("Add File")
                 }
-                .accessibilityLabel("Add File")
 
                 TextField(
-                    "Message",
+                    viewModel.isStreaming ? "Steer the assistant" : "Message",
                     text: Binding(
                         get: { viewModel.draftText },
                         set: { viewModel.draftText = $0 }
@@ -484,12 +510,16 @@ private struct ChatComposerView: View {
 
                 Button {
                     if viewModel.isStreaming {
-                        Task { await viewModel.stopTurn() }
+                        if hasComposerText {
+                            Task { await viewModel.sendSteerDraft() }
+                        } else {
+                            Task { await viewModel.stopTurn() }
+                        }
                     } else {
                         Task { await viewModel.sendDraft() }
                     }
                 } label: {
-                    Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up")
+                    Image(systemName: actionButtonImage)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(width: 30, height: 30)
@@ -499,7 +529,7 @@ private struct ChatComposerView: View {
                 .buttonStyle(.plain)
                 .disabled(!viewModel.isStreaming && !viewModel.canSendDraft)
                 .padding(.vertical, 3)
-                .accessibilityIdentifier(viewModel.isStreaming ? "chat-stop-button" : "chat-send-button")
+                .accessibilityIdentifier(actionButtonIdentifier)
             }
             .padding(.horizontal, 6)
             .background(
@@ -622,64 +652,6 @@ private struct DraftAttachmentStrip: View {
             "doc.text"
         case .file:
             "paperclip"
-        }
-    }
-}
-
-private struct SteerComposerView: View {
-    var viewModel: ChatViewModel
-
-    private var canSend: Bool {
-        !viewModel.steerDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .bottom, spacing: 6) {
-                Image(systemName: "arrow.triangle.turn.up.right.diamond")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 32)
-                TextField(
-                    "Steer",
-                    text: Binding(
-                        get: { viewModel.steerDraftText },
-                        set: { viewModel.steerDraftText = $0 }
-                    ),
-                    axis: .vertical
-                )
-                .textFieldStyle(.plain)
-                .lineLimit(1...4)
-                .frame(minHeight: 32)
-                .accessibilityIdentifier("chat-steer-composer")
-
-                Button {
-                    Task { await viewModel.sendSteerDraft() }
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 26, height: 26)
-                        .background(canSend ? Color.accentColor : Color.secondary.opacity(0.4))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSend)
-                .accessibilityIdentifier("chat-steer-send-button")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.tertiarySystemBackground))
-            )
-
-            if let steerError = viewModel.steerErrorMessage {
-                Text(steerError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier("chat-steer-error")
-            }
         }
     }
 }
