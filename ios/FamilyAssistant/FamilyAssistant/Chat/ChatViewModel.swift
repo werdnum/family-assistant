@@ -14,7 +14,19 @@ final class ChatViewModel {
     var displayedMessageLimit = ChatViewModel.initialDisplayedMessageCount
     var profiles: [ChatProfile] = []
     var defaultProfileID = "default_assistant"
+    // The profile the active conversation runs under: it drives the picker label
+    // and is sent on every turn. The backend partitions a conversation's history
+    // by `processing_profile_id` (see `get_recent_history`), so a follow-up sent
+    // under a different profile than the thread was built in loads NONE of its
+    // prior history. Opening an existing conversation therefore adopts that
+    // conversation's profile rather than carrying over a stale global selection.
     var selectedProfileID: String
+    // The profile to use for NEW conversations, persisted across launches. Set
+    // when the user picks from the profile picker (which starts a new chat). Kept
+    // separate from `selectedProfileID` so viewing an existing conversation in a
+    // different profile doesn't overwrite the user's preferred profile for new
+    // chats.
+    @ObservationIgnored private var preferredProfileID: String
     var conversationID: String?
     var conversationSelection: String?
     var draftText = ""
@@ -183,7 +195,12 @@ final class ChatViewModel {
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
         apiClient = ChatAPIClient(authManager: authManager)
-        selectedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
+        let storedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
+        preferredProfileID = storedProfileID
+        // Starts at the preferred profile; if launch restores a conversation,
+        // `bootstrap` reopens it via `selectConversation`, which adopts that
+        // conversation's own profile.
+        selectedProfileID = storedProfileID
         if let initialPrompt, !initialPrompt.isEmpty {
             // Launched to start a brand-new chat (share extension / App Intent).
             self.conversationID = Self.generateConversationID()
@@ -346,8 +363,31 @@ final class ChatViewModel {
         // append onto already-loaded history.
         if shouldLoadMessages {
             await loadMessages(conversationID: id)
+            // Adopt the opened conversation's profile so follow-ups continue in
+            // it. Guarded on the id still being active because `loadMessages`
+            // suspends and the user may have switched away meanwhile.
+            if conversationID == id {
+                adoptConversationProfile()
+            }
         }
         startLiveEvents()
+    }
+
+    /// Set the active profile from the conversation just loaded into `messages`.
+    ///
+    /// The backend filters a conversation's LLM history by `processing_profile_id`
+    /// (see `get_recent_history`), so the active profile must match the one the
+    /// thread's turns were sent under or the assistant loads none of the prior
+    /// history. The most recent USER message carries the entry profile the user
+    /// actually selected for the thread (a delegated sub-turn's reply may be
+    /// tagged with the delegate's profile, so user messages are the reliable
+    /// signal). An empty conversation, or one whose messages predate profile
+    /// tagging, falls back to the preferred profile.
+    private func adoptConversationProfile() {
+        let conversationProfile = messages.last {
+            $0.role == .user && $0.processingProfileID != nil
+        }?.processingProfileID
+        selectedProfileID = conversationProfile ?? preferredProfileID
     }
 
     func startNewConversation() {
@@ -365,6 +405,9 @@ final class ChatViewModel {
         draftText = ""
         draftAttachments = []
         mobileShowsConversationList = false
+        // A brand-new conversation runs under the user's preferred profile, not
+        // whatever an existing thread we were viewing was pinned to.
+        selectedProfileID = preferredProfileID
         persistConversationID()
         startLiveEvents()
     }
@@ -385,11 +428,16 @@ final class ChatViewModel {
     }
 
     func changeProfile(to profileID: String) {
-        guard selectedProfileID != profileID else {
+        // Skip only a true no-op: the chosen profile is both the preferred one and
+        // already active. Picking the current preferred while viewing a
+        // conversation pinned to a different profile must still start a fresh chat
+        // in the chosen profile rather than silently doing nothing.
+        guard preferredProfileID != profileID || selectedProfileID != profileID else {
             return
         }
-        selectedProfileID = profileID
+        preferredProfileID = profileID
         UserDefaults.standard.set(profileID, forKey: Keys.selectedProfileID)
+        // startNewConversation sets `selectedProfileID` to the preferred profile.
         startNewConversation()
     }
 
@@ -620,10 +668,13 @@ final class ChatViewModel {
             let response = try await apiClient.listProfiles()
             defaultProfileID = response.defaultProfileID
             profiles = response.profiles.filter { !$0.delegationOnly }
-            if !profiles.contains(where: { $0.id == selectedProfileID }) {
-                selectedProfileID = response.defaultProfileID
-                UserDefaults.standard.set(selectedProfileID, forKey: Keys.selectedProfileID)
-            }
+            // Deliberately do NOT reset the selection when it's absent from the
+            // fetched list. The list is empty during a backend cold start
+            // (`/v1/profiles` returns `{"profiles":[]}` before the registry is
+            // populated), and resetting then would permanently overwrite the
+            // user's persisted choice with the default. The backend already falls
+            // back to its default for an unknown profile id on send, so keeping a
+            // possibly-stale selection is safe. Matches the web frontend.
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

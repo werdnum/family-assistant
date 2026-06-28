@@ -328,6 +328,109 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
     }
 
+    func testOpeningConversationAdoptsItsProfile() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_complex",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Plan my trip","timestamp":"2026-06-08T12:00:00Z","processing_profile_id":"complex_tasks"},
+                        {"internal_id":2,"role":"assistant","content":"On it","timestamp":"2026-06-08T12:00:01Z","processing_profile_id":"engineer"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        XCTAssertEqual(model.selectedProfileID, "default_assistant")
+
+        await model.selectConversation("web_conv_complex")
+
+        // The thread's history is partitioned by profile on the backend, so the
+        // active profile must match the one its turns ran under. The last USER
+        // message carries the entry profile (complex_tasks); the assistant row is
+        // tagged with the delegate it ran (engineer) and must NOT be adopted.
+        XCTAssertEqual(
+            model.selectedProfileID,
+            "complex_tasks",
+            "Opening a conversation must adopt the profile its user turns were sent under."
+        )
+    }
+
+    func testStartingNewConversationUsesPreferredNotAdoptedProfile() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_complex",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Plan my trip","timestamp":"2026-06-08T12:00:00Z","processing_profile_id":"complex_tasks"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        await model.selectConversation("web_conv_complex")
+        XCTAssertEqual(model.selectedProfileID, "complex_tasks")
+
+        model.startNewConversation()
+
+        XCTAssertEqual(
+            model.selectedProfileID,
+            "default_assistant",
+            "A new conversation runs under the preferred profile, not the previously-opened thread's profile."
+        )
+    }
+
+    func testLoadProfilesDoesNotResetSelectionWhenListEmpty() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path == "/api/v1/profiles" {
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        model.selectedProfileID = "complex_tasks"
+
+        await model.loadProfiles()
+
+        // An empty list is what `/v1/profiles` returns during a backend cold
+        // start; resetting then would permanently overwrite the user's choice.
+        XCTAssertEqual(
+            model.selectedProfileID,
+            "complex_tasks",
+            "A transiently empty profiles list must not clobber the active selection."
+        )
+    }
+
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
         var streamedTurnID = "turn-send"
         ChatMockBackendURLProtocol.respond { request in

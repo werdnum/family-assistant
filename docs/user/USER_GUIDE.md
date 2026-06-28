@@ -486,7 +486,9 @@ various tasks with dark mode support and mobile optimization.
   **More**. Chat and Notes are native screens; Documents and the items under More open the
   corresponding pages inside the app. Native Chat shares the same conversation history as the
   browser, streams replies as they are generated, supports stopping or steering a running reply,
-  supports profile switching, shows Markdown and tool calls, handles approve/reject confirmations,
+  supports profile switching (picking a profile starts a fresh conversation in it, and reopening an
+  earlier conversation resumes the profile it was started in so its prior messages stay in the
+  assistant's context), shows Markdown and tool calls, handles approve/reject confirmations,
   and can upload images, PDFs, plain text, and Markdown files up to 100 MB. A very long message (or
   a large tool result) renders a section at a time with a **Show more** control, so the thread stays
   responsive no matter how big the content is. You can search, read, create, edit, and delete notes
