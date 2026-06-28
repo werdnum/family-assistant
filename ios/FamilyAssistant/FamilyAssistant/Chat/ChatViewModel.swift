@@ -71,6 +71,7 @@ final class ChatViewModel {
     // work is gated on this token still matching.
     @ObservationIgnored private var currentStreamToken: UUID?
     @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
+    @ObservationIgnored private var activityStreamTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     @ObservationIgnored private var activeTurn: ActiveChatTurn?
     @ObservationIgnored private var registeredTurnIDs: Set<String> = []
@@ -133,6 +134,11 @@ final class ChatViewModel {
     // layout hang. `showEarlierMessages()` grows the window a page at a time.
     static let initialDisplayedMessageCount = 30
     private static let displayedMessagePageSize = 30
+
+    // Max characters of an optimistic conversation-list preview, matching the
+    // server's `last_message` truncation so the row doesn't jump in length when
+    // the authoritative summary replaces it.
+    private static let conversationPreviewMaxLength = 100
 
     // Page size for incremental `after`-timestamp message loads. The server's
     // paginated path ignores `after` when limit=0, so a bounded page is needed;
@@ -233,6 +239,7 @@ final class ChatViewModel {
     deinit {
         streamTask?.cancel()
         liveEventsTask?.cancel()
+        activityStreamTask?.cancel()
         pendingConfirmationsTask?.cancel()
         textFlushTask?.cancel()
     }
@@ -247,6 +254,7 @@ final class ChatViewModel {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
+        startActivityStream()
         if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
             lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt
@@ -308,6 +316,28 @@ final class ChatViewModel {
             errorMessage = error.localizedDescription
             errorReporter.report(error, component: "Chat.recentConversations")
         }
+    }
+
+    /// Optimistically surface the active conversation in the list the instant the
+    /// user sends, so a brand-new chat appears immediately (and an existing one
+    /// bumps to the top) without waiting for a server round-trip or notification.
+    ///
+    /// The authoritative `refreshRecentConversations` that runs on turn
+    /// completion reconciles this row by `conversationID` — the server summary
+    /// replaces it, so there is no duplication — and if that refresh ever races
+    /// ahead of persistence the optimistic row is preserved as `untouched`, so
+    /// the new chat never flickers out of the list.
+    private func upsertLocalConversationSummary(conversationID: String, lastMessage: String) {
+        let preview = String(lastMessage.prefix(Self.conversationPreviewMaxLength))
+        let existing = conversations.first { $0.conversationID == conversationID }
+        let summary = ChatConversationSummary(
+            conversationID: conversationID,
+            lastMessage: preview,
+            lastTimestamp: Date(),
+            messageCount: (existing?.messageCount ?? 0) + 1
+        )
+        conversations.removeAll { $0.conversationID == conversationID }
+        conversations.insert(summary, at: 0)
     }
 
     /// Drives the conversation list selection binding in the sidebar.
@@ -765,6 +795,10 @@ final class ChatViewModel {
         draftAttachments = []
         isStreaming = true
         persistConversationID()
+        upsertLocalConversationSummary(
+            conversationID: id,
+            lastMessage: prompt.isEmpty ? "Attachment" : prompt
+        )
 
         let streamToken = UUID()
         currentStreamToken = streamToken
@@ -1835,6 +1869,61 @@ final class ChatViewModel {
         // back to disconnected. A successful connect sets it true in
         // `handleLiveReconnect`; a failing one leaves the honest disconnected state.
         startLiveEvents()
+        // The account-global activity stream is torn down with the scene on
+        // background (its Task is suspended/killed by the OS); restart it on the
+        // same foreground transition so list updates for OTHER conversations
+        // resume, and refresh once to close any gap missed while backgrounded.
+        startActivityStream()
+    }
+
+    /// Subscribe to the account-global conversation-activity stream and refresh
+    /// the conversation list whenever any owned conversation changes.
+    ///
+    /// This is what keeps the list fresh for activity OUTSIDE the open thread —
+    /// a brand-new chat, or a delegated/scheduled/background reply landing in a
+    /// conversation the user isn't currently viewing — none of which the
+    /// per-conversation follow stream (`startLiveEvents`) observes. The stream is
+    /// advisory: every ping just triggers an authoritative
+    /// `refreshRecentConversations`, and a (re)connect refreshes once to close
+    /// any gap missed while disconnected. Mirrors `startLiveEvents`' capped
+    /// exponential-backoff reconnect loop and weak-`self` discipline so logout/
+    /// deinit tears the connection down.
+    private func startActivityStream() {
+        activityStreamTask?.cancel()
+        let client = apiClient
+        let initialDelay = liveReconnectInitialDelaySeconds
+        let maxDelay = liveReconnectMaxDelaySeconds
+        activityStreamTask = Task { [weak self] in
+            var delay = initialDelay
+            while !Task.isCancelled {
+                do {
+                    let stream = try await client.connectActivityStream()
+                    // A successful (re)connect resets the backoff and refreshes
+                    // once: pings are ephemeral, so anything that changed while
+                    // we were disconnected is caught by this single pull.
+                    delay = initialDelay
+                    await self?.refreshRecentConversations()
+                    for try await _ in stream {
+                        if Task.isCancelled {
+                            break
+                        }
+                        // `self` deallocated -> deinit already cancelled this
+                        // task; stop instead of spinning reconnects.
+                        guard self != nil else {
+                            return
+                        }
+                        await self?.refreshRecentConversations()
+                    }
+                } catch {
+                    // Connection failed or dropped; fall through to backoff+retry.
+                }
+                if Task.isCancelled {
+                    break
+                }
+                try? await Task.sleep(for: .seconds(delay))
+                delay = min(delay * 2, maxDelay)
+            }
+        }
     }
 
     /// The hub buffer rotated past this client's resume cursor (a 410). Clear it so

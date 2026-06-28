@@ -306,6 +306,90 @@ struct ChatAPIClient {
         )
     }
 
+    /// Connect to the account-global conversation-activity stream for live
+    /// conversation-list updates.
+    ///
+    /// Emits a `ChatConversationActivity` whenever any conversation the caller
+    /// owns changes (a turn starts/ends, a delegated/scheduled reply lands) —
+    /// including conversations other than the one currently open, which the
+    /// per-conversation follow stream never sees. The frame is advisory; the
+    /// caller reacts by re-fetching the authoritative conversation list. Stays
+    /// open with server heartbeats; the caller resubscribes on close/error.
+    func connectActivityStream() async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+        let request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/activity/stream"),
+            method: "GET"
+        )
+        // Validate the response status before returning the stream (see
+        // `streamConversation` for why this matters to the reconnect backoff).
+        let (bytes, response) = try await urlSession.bytes(for: request)
+        try validate(response: response, data: Data())
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await streamActivityEvents(bytes: bytes, continuation: continuation)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    private func streamActivityEvents(
+        bytes: URLSession.AsyncBytes,
+        continuation: AsyncThrowingStream<ChatConversationActivity, Error>.Continuation
+    ) async throws {
+        let parser = SSEParser()
+        var pendingUTF8 = Data()
+        for try await byte in bytes {
+            pendingUTF8.append(byte)
+            guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
+                continue
+            }
+            pendingUTF8.removeAll(keepingCapacity: true)
+            for event in parser.append(chunk) {
+                if let activity = Self.activity(from: event) {
+                    continuation.yield(activity)
+                }
+            }
+        }
+        if !pendingUTF8.isEmpty {
+            for event in parser.append(String(decoding: pendingUTF8, as: UTF8.self)) {
+                if let activity = Self.activity(from: event) {
+                    continuation.yield(activity)
+                }
+            }
+        }
+        for event in parser.flush() {
+            if let activity = Self.activity(from: event) {
+                continuation.yield(activity)
+            }
+        }
+    }
+
+    /// Map a raw SSE frame to a `ChatConversationActivity`, ignoring the
+    /// heartbeat/stream_dropped control frames (a closed stream surfaces as the
+    /// AsyncThrowingStream finishing, which the caller treats as "reconnect").
+    private static func activity(from event: ServerSentEvent) -> ChatConversationActivity? {
+        guard event.event == "conversation_activity" else {
+            return nil
+        }
+        guard let data = event.data.data(using: .utf8),
+              let payload = try? JSONDecoder.chatDecoder.decode([String: JSONValue].self, from: data)
+        else {
+            return ChatConversationActivity(conversationID: nil, reason: nil)
+        }
+        return ChatConversationActivity(
+            conversationID: payload["conversation_id"]?.stringValue,
+            reason: payload["reason"]?.stringValue
+        )
+    }
+
     /// Acknowledge the highest received seq for a conversation so the server
     /// suppresses the "new reply" disconnect push. The server never treats
     /// writing the SSE chunk as delivery — only this explicit ack counts.

@@ -523,6 +523,144 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Persisted reply"])
     }
 
+    func testSendDraftOptimisticallyAddsNewConversationToList() async throws {
+        var streamedTurnID = "turn-optimistic"
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_optimistic","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_optimistic/stream"):
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                // The server has not yet surfaced the brand-new conversation
+                // (race between persistence and the post-turn refresh).
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_optimistic/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_optimistic","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_optimistic")
+        model.draftText = "Plan the trip"
+
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(
+            model.conversations.map(\.conversationID),
+            ["web_conv_optimistic"],
+            "A brand-new conversation must appear in the list on send and survive a server refresh that hasn't caught up."
+        )
+        XCTAssertEqual(model.conversations.first?.lastMessage, "Plan the trip")
+    }
+
+    func testOptimisticConversationReconciledWithoutDuplicate() async throws {
+        var streamedTurnID = "turn-reconcile"
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_reconcile","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_reconcile/stream"):
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(
+                    #"{"conversations":[{"conversation_id":"web_conv_reconcile","last_message":"Persisted reply","last_timestamp":"2026-06-08T12:00:01Z","message_count":2}],"count":1}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_reconcile/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_reconcile","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_reconcile")
+        model.draftText = "Hi"
+
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+        // The authoritative summary replaces the optimistic row, not duplicates it.
+        try await waitUntil { model.conversations.first?.lastMessage == "Persisted reply" }
+
+        XCTAssertEqual(
+            model.conversations.map(\.conversationID),
+            ["web_conv_reconcile"],
+            "The server summary must reconcile the optimistic row in place, with no duplicate."
+        )
+        XCTAssertEqual(model.conversations.first?.messageCount, 2)
+    }
+
+    func testActivityStreamRefreshesConversationList() async throws {
+        let conversationsRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .text(
+                    """
+                    event: conversation_activity
+                    data: {"conversation_id":"web_conv_pinged","reason":"turn_started"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                // The first fetch (bootstrap) sees an empty list; the activity
+                // stream's refresh then surfaces a conversation that changed
+                // elsewhere — proving the list updates without a manual refresh.
+                let count = conversationsRequests.increment()
+                if count <= 1 {
+                    return .json(#"{"conversations":[],"count":0}"#)
+                }
+                return .json(
+                    #"{"conversations":[{"conversation_id":"web_conv_pinged","last_message":"Hi from elsewhere","last_timestamp":"2026-06-08T12:00:01Z","message_count":1}],"count":1}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        await model.bootstrap()
+
+        try await waitUntil {
+            model.conversations.contains { $0.conversationID == "web_conv_pinged" }
+        }
+    }
+
     func testStopTurnCancelsServerTurnAndRendersCancelledResult() async throws {
         let stream = HangingStream()
         let postedTurnID = AtomicString()
