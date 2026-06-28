@@ -942,24 +942,55 @@ class TestResolveServiceProfile:
             == "Config YAML prompt"
         )
 
-    def test_tools_config_replaced_entirely(self) -> None:
-        """Test that tools_config is replaced, not merged."""
+    def test_tools_config_merges_profile_overrides_with_defaults(self) -> None:
+        """Profiles can tune tools_config without dropping inherited lazy tools."""
         default_settings: dict[str, Any] = {
             "processing_config": {},
             "tools_config": {
                 "confirmation_timeout_seconds": 60.0,
                 "on_demand_local_tools": ["lazy_default"],
+                "on_demand_mcp_server_ids": ["vikunja", "trino"],
+                "mcp_initialization_timeout_seconds": 10,
             },
             "chat_id_to_name_map": {},
             "slash_commands": [],
         }
         profile_def = {
             "id": "test_profile",
-            "tools_config": {"on_demand_local_tools": ["specific_tool"]},
+            "tools_config": {
+                "confirmation_timeout_seconds": 120.0,
+                "on_demand_local_tools": ["specific_tool"],
+                "on_demand_mcp_server_ids": ["homeassistant"],
+            },
         }
         result = resolve_service_profile(profile_def, default_settings, {})
-        # tools_config should be completely replaced
-        assert result["tools_config"] == {"on_demand_local_tools": ["specific_tool"]}
+        assert result["tools_config"] == {
+            "confirmation_timeout_seconds": 120.0,
+            "on_demand_local_tools": ["lazy_default", "specific_tool"],
+            "on_demand_mcp_server_ids": ["vikunja", "trino", "homeassistant"],
+            "mcp_initialization_timeout_seconds": 10,
+        }
+
+    def test_tools_config_scalar_override_preserves_on_demand_lists(self) -> None:
+        """Regression test for email_intake timeout overriding all lazy MCP IDs."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {},
+            "tools_config": {
+                "confirmation_timeout_seconds": 60.0,
+                "on_demand_mcp_server_ids": ["vikunja", "code-execution"],
+            },
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "email_intake",
+            "tools_config": {"confirmation_timeout_seconds": 86400.0},
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["tools_config"] == {
+            "confirmation_timeout_seconds": 86400.0,
+            "on_demand_mcp_server_ids": ["vikunja", "code-execution"],
+        }
 
     def test_tools_policy_inherited_from_defaults(self) -> None:
         """Test that tools_policy is inherited when the profile does not override it."""
