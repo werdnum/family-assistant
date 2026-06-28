@@ -379,6 +379,24 @@ final class ChatViewModel {
     /// the failed bump doesn't stay pinned at the top with never-persisted text
     /// (the freshness guard in `refreshRecentConversations` would otherwise keep
     /// the newer optimistic row).
+    /// Roll back the optimistic summary unless a superseding send for the same
+    /// conversation (a different in-flight turn) still owns it — that turn will
+    /// reconcile or roll back its own row. ``turnID`` is the failing turn, whose
+    /// own pending entry is ignored (it is cleared by ``runSendTurn``'s defer).
+    private func rollbackOptimisticSummaryIfUnowned(
+        conversationID: String,
+        turnID: String,
+        to previous: ChatConversationSummary?
+    ) {
+        let ownedByAnotherTurn = optimisticPendingByTurnID.contains {
+            $0.key != turnID && $0.value == conversationID
+        }
+        if ownedByAnotherTurn {
+            return
+        }
+        rollbackOptimisticSummary(conversationID: conversationID, to: previous)
+    }
+
     private func rollbackOptimisticSummary(
         conversationID: String,
         to previous: ChatConversationSummary?
@@ -1156,6 +1174,14 @@ final class ChatViewModel {
             }
         } catch is CancellationError {
             _ = await cancelStopQueuedBeforeRegistration(for: turnID)
+            // A kickoff cancelled before startTurn returned (switch/new chat right
+            // after sending) persisted nothing, so roll back its optimistic row —
+            // unless a superseding send for the same conversation now owns it.
+            if !startSucceeded {
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
+            }
             markStreamStopped(assistantMessageID: assistantMessageID)
         } catch {
             if !(await cancelStopQueuedBeforeRegistration(for: turnID)) {
@@ -1168,7 +1194,9 @@ final class ChatViewModel {
             // so the failed prompt doesn't stay pinned at the top (the freshness
             // guard would otherwise keep the newer optimistic row).
             if !startSucceeded {
-                rollbackOptimisticSummary(conversationID: id, to: previousSummary)
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
             }
             appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
         }

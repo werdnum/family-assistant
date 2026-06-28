@@ -632,7 +632,12 @@ export const useStreamingResponse = ({
         // a local detach (e.g. cancelStream on navigation) where the server turn
         // keeps running. Steer recovery keys off this so a local abort doesn't
         // resend a steer the original turn may still drain.
-        onComplete({ content: currentMessage, toolCalls, completed: turnEnded });
+        onComplete({
+          content: currentMessage,
+          toolCalls,
+          completed: turnEnded,
+          turnId: effectiveTurnId,
+        });
         abortControllerRef.current = null;
         activeTurnRef.current = null;
       }
