@@ -79,13 +79,21 @@ next ping, and on connect the client refreshes once unconditionally.
   `ConversationActivity(conversation_id, reason, timestamp)` to every activity subscriber whose
   `user_id` matches.
 
-The hub emits activity automatically from `start_turn` (new/continued turn — covers a brand-new
-conversation the moment its first turn registers) and `end_turn` (reply finished).
-`publish_activity` is also public so non-turn producers can emit it.
+The hub emits activity automatically from `end_turn` only (the reply is persisted by then).
+`start_turn` deliberately does **not** emit: it runs before the caller persists the user message,
+and the conversation-list endpoint only lists persisted messages — a ping there would make a client
+refetch a list that doesn't yet include the conversation (and clobber an optimistic row). The
+turn-start ping is instead emitted by the `/v1/chat/turns` endpoint via `publish_activity` *after*
+the user-message commit. `publish_activity` is public so endpoints and non-turn producers can emit
+it.
 
 ### Emit sites
 
-- **Web/iOS turns:** automatic via `start_turn` / `end_turn`.
+- **Web/iOS streaming turns (`/v1/chat/turns`):** the endpoint calls `publish_activity` after the
+  user-message commit (start), and the hub auto-emits from `end_turn` (reply persisted).
+- **Non-streaming sends (`/v1/chat/send_message`, e.g. iOS App Intents/Siri):** no turn lifecycle,
+  so the endpoint schedules `publish_activity` from `db_context.on_commit` (its request transaction
+  commits at request end).
 - **Delegation / scheduled completions:** `task_worker._tickle_stream_hub_on_commit` already
   publishes a per-conversation `message` nudge after commit; it additionally calls
   `hub.publish_activity(...)` with the run's `user_id`.
@@ -117,14 +125,19 @@ conversation the moment its first turn registers) and `end_turn` (reply finished
 
 - **iOS unit (`ChatViewModelTests`):** sending in a new conversation optimistically inserts a
   summary at the top before any server response; a later `refreshRecentConversations` reconciles it
-  without duplication; an activity ping triggers a list refresh.
-- **Backend hub tests:** `start_turn`/`end_turn`/`publish_activity` fan out to a matching-user
-  activity subscriber and not to a different user; overflow drops the subscriber.
-- **Backend endpoint test:** `/v1/chat/activity/stream` emits a `conversation_activity` frame when a
-  turn runs.
+  without duplication; a failed turn-start removes the optimistic row (no phantom); an activity ping
+  triggers a list refresh.
+- **Backend hub tests:** `end_turn`/`publish_activity` fan out to a matching-user activity
+  subscriber and not to a different user; `start_turn` does **not** broadcast; overflow drops the
+  subscriber.
+- **Web Playwright (two-tab):** a chat started in one tab appears in a second tab's sidebar live,
+  with no manual refresh — end-to-end coverage of the real endpoint over a real server. (An
+  in-memory ASGI endpoint test was dropped: an always-on SSE stream plus a concurrent request on one
+  httpx client deadlocks; the Playwright test is the better integration check.)
 
 ## Milestones
 
-1. iOS optimistic insert + tests (independent, ships first).
+1. iOS optimistic insert + tests (ships first).
 2. Backend activity channel: hub + endpoint + task_worker hook + tests.
 3. iOS activity subscription + tests.
+4. Web parity: optimistic insert + activity stream + two-tab Playwright test.
