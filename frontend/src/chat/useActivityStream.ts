@@ -21,6 +21,12 @@ export interface UseActivityStreamOptions {
 export function useActivityStream({ enabled = true, onActivity }: UseActivityStreamOptions) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The deferred-connect handles, tracked so cleanup can cancel a connect that
+  // hasn't fired yet — otherwise unmounting/disabling before the ~1.5s delay
+  // elapses leaves a timer that opens an EventSource after cleanup ran, leaking
+  // a connection that nothing closes.
+  const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleCallbackRef = useRef<number | null>(null);
   const callbackRef = useRef(onActivity);
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
 
@@ -36,6 +42,14 @@ export function useActivityStream({ enabled = true, onActivity }: UseActivityStr
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
+    }
+    if (connectTimerRef.current) {
+      clearTimeout(connectTimerRef.current);
+      connectTimerRef.current = null;
+    }
+    if (idleCallbackRef.current !== null && 'cancelIdleCallback' in window) {
+      window.cancelIdleCallback(idleCallbackRef.current);
+      idleCallbackRef.current = null;
     }
   }, []);
 
@@ -86,14 +100,14 @@ export function useActivityStream({ enabled = true, onActivity }: UseActivityStr
     // page is idle so Playwright fixtures can reach "networkidle".
     const scheduleConnect = () => {
       if ('requestIdleCallback' in window) {
-        window.requestIdleCallback(
+        idleCallbackRef.current = window.requestIdleCallback(
           () => {
-            setTimeout(connect, 1500);
+            connectTimerRef.current = setTimeout(connect, 1500);
           },
           { timeout: 500 }
         );
       } else {
-        setTimeout(connect, 1500);
+        connectTimerRef.current = setTimeout(connect, 1500);
       }
     };
 
