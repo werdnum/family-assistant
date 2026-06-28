@@ -22,6 +22,7 @@ from family_assistant.paths import (
     TEMPLATES_DIR,
     get_docs_user_dir,
 )
+from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.web.auth import (
     AUTH_ENABLED,
     PUBLIC_PATHS,
@@ -162,10 +163,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if identity_resolver is None:
             resolver_config = getattr(app.state, "config", None)
             if resolver_config is not None:
-                from family_assistant.services.user_identity import (  # noqa: PLC0415
-                    UserIdentityResolver,
-                )
-
                 identity_resolver = UserIdentityResolver(resolver_config)
                 app.state.user_identity_resolver = identity_resolver
 

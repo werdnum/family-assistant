@@ -518,10 +518,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         }
         const survivors = [...pending.values()];
         const survivorIds = new Set(survivors.map((c) => c.conversation_id));
-        setConversations([
+        // Sort the merged list newest-first: survivors come from Map insertion
+        // order, so multiple optimistic rows (e.g. chat A then a newer chat B
+        // before either is server-confirmed) would otherwise show oldest-first.
+        const merged = [
           ...survivors,
           ...serverList.filter((c) => !survivorIds.has(c.conversation_id)),
-        ]);
+        ].sort((a, b) => Date.parse(b.last_timestamp) - Date.parse(a.last_timestamp));
+        setConversations(merged);
       }
     } catch (error) {
       // Don't log error if request was aborted (component unmounting)
