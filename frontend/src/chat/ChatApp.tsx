@@ -509,10 +509,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // optimistic insert/bump while the turn is in flight, and once it settles
         // the server row is authoritative.
         // pending is keyed by turn id; a conversation is pending if any in-flight
-        // turn holds an optimistic row for it.
+        // turn holds an optimistic row for it. Collapse to one row per
+        // conversation (a superseding re-send can leave two in-flight turns for
+        // the same conversation), keeping the newest — Map.values() is insertion
+        // order, so a later turn overwrites the earlier one.
         const pending = pendingOptimisticConversationsRef.current;
-        const pendingRows = [...pending.values()];
-        const pendingIds = new Set(pendingRows.map((c) => c.conversation_id));
+        const pendingByConversation = new Map<string, Conversation>();
+        for (const row of pending.values()) {
+          pendingByConversation.set(row.conversation_id, row);
+        }
+        const pendingRows = [...pendingByConversation.values()];
+        const pendingIds = new Set(pendingByConversation.keys());
         // Sort newest-first for display order only (not retirement); pending rows
         // otherwise follow Map insertion (oldest-first) order.
         const merged = [
