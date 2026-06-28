@@ -440,6 +440,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
+  // Conversations inserted optimistically on send, kept until a fetch confirms
+  // them on the server. Merged into every fetch result so a list request that
+  // was already in flight when the user sent (and resolves without the new
+  // conversation) can't erase the just-created row. See fetchConversations.
+  const pendingOptimisticConversationsRef = useRef<Map<string, Conversation>>(new Map());
   const resolvedConfirmationIdsRef = useRef<Set<string>>(new Set());
   // Track turn IDs originated by this tab so we can skip the live-update reload
   // when a turn_ended event for our own turn arrives (we already hold the freshest
@@ -493,7 +498,19 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       });
       if (response.ok) {
         const data = await response.json();
-        setConversations(data.conversations);
+        const serverList: Conversation[] = data.conversations;
+        const serverIds = new Set(serverList.map((c) => c.conversation_id));
+        // Drop optimistic rows the server now reports (it's authoritative for
+        // them); keep any not-yet-persisted ones on top so a stale in-flight
+        // fetch can't erase a just-sent conversation.
+        const pending = pendingOptimisticConversationsRef.current;
+        for (const id of [...pending.keys()]) {
+          if (serverIds.has(id)) {
+            pending.delete(id);
+          }
+        }
+        const survivors = [...pending.values()].filter((c) => !serverIds.has(c.conversation_id));
+        setConversations([...survivors, ...serverList]);
       }
     } catch (error) {
       // Don't log error if request was aborted (component unmounting)
@@ -1841,15 +1858,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setConversations((prev) => {
         const existing = prev.find((c) => c.conversation_id === targetConversationId);
         const others = prev.filter((c) => c.conversation_id !== targetConversationId);
-        return [
-          {
-            conversation_id: targetConversationId,
-            last_message: optimisticPreview,
-            last_timestamp: new Date().toISOString(),
-            message_count: (existing?.message_count ?? 0) + 1,
-          },
-          ...others,
-        ];
+        const optimisticRow: Conversation = {
+          conversation_id: targetConversationId,
+          last_message: optimisticPreview,
+          last_timestamp: new Date().toISOString(),
+          message_count: (existing?.message_count ?? 0) + 1,
+        };
+        // Remember it so a list fetch already in flight (which would resolve
+        // without this conversation and replace the array) can't erase it; the
+        // fetch merge prunes it once the server reports the conversation.
+        pendingOptimisticConversationsRef.current.set(targetConversationId, optimisticRow);
+        return [optimisticRow, ...others];
       });
 
       streamingMessageIdRef.current = assistantMessageId;
