@@ -29,6 +29,7 @@ import {
   Message,
   MessageContent,
 } from './types';
+import { useActivityStream } from './useActivityStream';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useNotifications } from './useNotifications';
 import { useStreamingResponse } from './useStreamingResponse';
@@ -1707,6 +1708,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onMessageReceived: handleLiveMessageUpdate,
   });
 
+  // Keep the conversation list fresh for activity OUTSIDE the open thread (a
+  // new chat started in another tab/device, or a delegated/scheduled/background
+  // reply) via the account-global activity stream. The per-conversation stream
+  // above only sees the currently-open thread.
+  useActivityStream({
+    enabled: true,
+    onActivity: fetchConversations,
+  });
+
   // Handle new chat creation
   const handleNewChat = useCallback(() => {
     // Cancel any active streaming before creating a new chat
@@ -1821,6 +1831,27 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
+
+      // Optimistically surface the conversation in the sidebar the instant the
+      // user sends, so a brand-new chat appears immediately (and an existing one
+      // bumps to the top) without waiting for the server round-trip. The
+      // authoritative fetchConversations on stream completion — and the activity
+      // stream — reconcile this row by conversation_id, so there's no duplicate.
+      const optimisticPreview = (message.content[0]?.text ?? '').slice(0, 100);
+      setConversations((prev) => {
+        const existing = prev.find((c) => c.conversation_id === targetConversationId);
+        const others = prev.filter((c) => c.conversation_id !== targetConversationId);
+        return [
+          {
+            conversation_id: targetConversationId,
+            last_message: optimisticPreview,
+            last_timestamp: new Date().toISOString(),
+            message_count: (existing?.message_count ?? 0) + 1,
+          },
+          ...others,
+        ];
+      });
+
       streamingMessageIdRef.current = assistantMessageId;
       activeStreamConversationIdRef.current = targetConversationId;
       activeTurnIdRef.current = turnId;
