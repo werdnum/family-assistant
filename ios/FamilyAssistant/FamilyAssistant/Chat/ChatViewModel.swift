@@ -361,13 +361,25 @@ final class ChatViewModel {
         conversations.insert(summary, at: 0)
     }
 
-    /// Drop a conversation summary from the held list. Used to undo an optimistic
-    /// insert when starting the turn failed before anything was persisted, so a
-    /// brand-new conversation that never reached the server doesn't linger as a
-    /// phantom row (``refreshRecentConversations`` would otherwise preserve it as
-    /// `untouched`).
-    private func removeLocalConversationSummary(conversationID: String) {
+    /// Undo an optimistic summary when starting the turn failed before anything
+    /// was persisted. A brand-new conversation (`previous == nil`) is dropped so
+    /// it doesn't linger as a phantom; an existing conversation is restored to
+    /// its pre-send summary (preview/timestamp), re-inserted in recency order, so
+    /// the failed bump doesn't stay pinned at the top with never-persisted text
+    /// (the freshness guard in `refreshRecentConversations` would otherwise keep
+    /// the newer optimistic row).
+    private func rollbackOptimisticSummary(
+        conversationID: String,
+        to previous: ChatConversationSummary?
+    ) {
         conversations.removeAll { $0.conversationID == conversationID }
+        guard let previous else {
+            return
+        }
+        let insertIndex =
+            conversations.firstIndex { $0.lastTimestamp < previous.lastTimestamp }
+            ?? conversations.endIndex
+        conversations.insert(previous, at: insertIndex)
     }
 
     /// Drives the conversation list selection binding in the sidebar.
@@ -825,10 +837,11 @@ final class ChatViewModel {
         draftAttachments = []
         isStreaming = true
         persistConversationID()
-        // Whether this conversation already had a row before the optimistic
-        // insert below. A brand-new one is removed again if the turn fails to
-        // start (nothing persisted); an existing one is left alone.
-        let conversationExisted = conversations.contains { $0.conversationID == id }
+        // The conversation's summary before the optimistic bump below, so a turn
+        // that fails to start (nothing persisted) can roll back to it: nil for a
+        // brand-new conversation (drop the row), the prior summary for an
+        // existing one (restore preview/position).
+        let previousSummary = conversations.first { $0.conversationID == id }
         upsertLocalConversationSummary(
             conversationID: id,
             lastMessage: prompt.isEmpty ? "Attachment" : prompt
@@ -851,7 +864,7 @@ final class ChatViewModel {
                 attachments: uploadedAttachments,
                 assistantMessageID: assistantMessageID,
                 streamToken: streamToken,
-                isNewConversation: !conversationExisted
+                previousSummary: previousSummary
             )
         }
     }
@@ -894,7 +907,7 @@ final class ChatViewModel {
         attachments: [ChatAttachment],
         assistantMessageID: String,
         streamToken: UUID,
-        isNewConversation: Bool
+        previousSummary: ChatConversationSummary?
     ) async {
         var lastSeq: Int?
         // Becomes true once startTurn returns: the backend persists the user
@@ -1121,11 +1134,12 @@ final class ChatViewModel {
             }
             // Reaching here means starting the turn itself failed — the prompt was
             // never accepted, so there is no durable turn to recover; surface it.
-            // A brand-new conversation never reached the server, so undo its
-            // optimistic list row — otherwise refreshRecentConversations' merge
-            // preserves it as `untouched` and it lingers as a phantom thread.
-            if isNewConversation, !startSucceeded {
-                removeLocalConversationSummary(conversationID: id)
+            // Undo the optimistic list change: drop a brand-new conversation's
+            // phantom row, or restore an existing conversation's pre-send summary
+            // so the failed prompt doesn't stay pinned at the top (the freshness
+            // guard would otherwise keep the newer optimistic row).
+            if !startSucceeded {
+                rollbackOptimisticSummary(conversationID: id, to: previousSummary)
             }
             appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
         }

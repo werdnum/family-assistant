@@ -653,6 +653,36 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testFailedTurnStartRestoresExistingConversationSummary() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(#"{"detail":"temporary failure"}"#, statusCode: 500)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(
+                    #"{"conversations":[{"conversation_id":"web_conv_existfail","last_message":"Earlier message","last_timestamp":"2026-06-01T00:00:00Z","message_count":4}],"count":1}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_existfail")
+        await model.refreshConversations()
+        XCTAssertEqual(model.conversations.first?.lastMessage, "Earlier message")
+
+        model.draftText = "Doomed message"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        let restored = model.conversations.first { $0.conversationID == "web_conv_existfail" }
+        XCTAssertEqual(
+            restored?.lastMessage,
+            "Earlier message",
+            "A failed start in an existing conversation must roll back the optimistic bump, not pin the never-persisted prompt."
+        )
+    }
+
     func testOptimisticBumpSurvivesStaleRefresh() async throws {
         var streamedTurnID = "turn-stalebump"
         ChatMockBackendURLProtocol.respond { request in
