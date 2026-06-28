@@ -17,7 +17,7 @@ from family_assistant.scripting.errors import (
     ScriptSyntaxError,
     ScriptTimeoutError,
 )
-from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -60,6 +60,18 @@ def _extract_ids_from_list(items: list[Any]) -> list[str]:  # noqa: ANN401
             # Handle dicts with attachments field (from tools that return multiple attachments)
             ids.extend(_extract_ids_from_list(item["attachments"]))
     return ids
+
+
+def _prepend_captured_output(error_text: str, output_buffer: ScriptOutputBuffer) -> str:
+    """Prepend any captured print() output to an error message.
+
+    A script that fails partway through may have printed diagnostics before
+    raising. Surfacing them alongside the error helps the LLM debug.
+    """
+    captured = output_buffer.getvalue()
+    if captured.strip():
+        return f"--- Script Output ---\n{captured.rstrip()}\n\n{error_text}"
+    return error_text
 
 
 def _extract_attachment_ids_from_result(result: Any) -> list[str]:  # noqa: ANN401
@@ -138,6 +150,7 @@ async def execute_script_tool(
     Returns:
         ToolResult with text and any attachments returned by the script
     """
+    output_buffer = ScriptOutputBuffer()
     try:
         # Reject ambiguous calls with both script and name
         if name and script:
@@ -294,6 +307,7 @@ async def execute_script_tool(
             execution_context=exec_context
             if (tools_provider or exec_context.attachment_registry)
             else None,  # Pass context if we have tools or attachment registry
+            output_buffer=output_buffer,
         )
 
         # Extract attachment IDs from return value
@@ -304,6 +318,13 @@ async def execute_script_tool(
 
         # Format the response
         response_parts = []
+
+        # Surface anything the script printed so the LLM can read print() output.
+        captured_output = output_buffer.getvalue()
+        if captured_output.strip():
+            response_parts.append(
+                f"--- Script Output ---\n{captured_output.rstrip()}\n"
+            )
 
         # Add the script result (but skip if it's just an attachment dict being propagated)
         if result is None:
@@ -415,7 +436,7 @@ async def execute_script_tool(
         error_msg = f"Script execution timed out after {e.timeout_seconds} seconds"
         logger.error(error_msg)
         return ToolResult(
-            text=f"Error: {error_msg}",
+            text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={
                 "status": "error",
                 "error_type": "timeout_error",
@@ -427,7 +448,7 @@ async def execute_script_tool(
         error_msg = f"Script execution failed: {str(e)}"
         logger.error(error_msg)
         return ToolResult(
-            text=f"Error: {error_msg}",
+            text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={
                 "status": "error",
                 "error_type": "execution_error",
@@ -439,7 +460,7 @@ async def execute_script_tool(
         logger.error(f"Unexpected error executing script: {e}", exc_info=True)
         error_msg = f"Unexpected error executing script: {e}"
         return ToolResult(
-            text=f"Error: {error_msg}",
+            text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={
                 "status": "error",
                 "error_type": "unexpected_error",
@@ -487,7 +508,9 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n"
                 "• Logic: all(), any(), max(), min()\n"
                 "• Object inspection: type(), dir(), getattr(), hasattr()\n"
-                "• Control: print(), fail()\n"
+                "• Control: print(), fail() - print() output is captured and returned to you "
+                "under a '--- Script Output ---' section (use it to surface intermediate values "
+                "without returning them)\n"
                 "• JSON: json_encode(value), json_decode(value)\n"
                 "• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n"
                 "• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n"
@@ -665,9 +688,11 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "This allows the LLM to receive and process wake requests from scripts.\n\n"
                             "**Return Values:**\n"
                             "Returns a string containing the script execution result:\n"
+                            "• Anything printed with print() appears first under a '--- Script Output ---' section\n"
                             "• On success with return value: 'Script result: [value]' or for dict/list: 'Script result:\\n[JSON formatted]'\n"
                             "• On success without return: 'Script executed successfully with no return value.'\n"
                             "• If wake_llm() called: Also includes '--- Wake LLM Contexts ---' section with context details\n"
+                            "• On error: any output printed before the failure is included above the error message\n"
                             "• On syntax error: 'Error: Syntax error in script [at line N]: [details]'\n"
                             "• On timeout: 'Error: Script execution timed out after [N] seconds'\n"
                             "• On execution error: 'Error: Script execution failed: [details]'\n"

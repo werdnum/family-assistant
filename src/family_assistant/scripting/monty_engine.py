@@ -76,6 +76,63 @@ class AttachmentResultWithText(TypedDict):
 logger = logging.getLogger(__name__)
 
 
+class ScriptOutputBuffer:
+    """Bounded accumulator for a single script run's print() output.
+
+    A buffer instance belongs to exactly one ``evaluate_async`` call, so
+    concurrent runs on the same engine never share or clobber each other's
+    output. Retained output is capped at ``max_chars`` so a chatty script
+    (e.g. a loop printing thousands of lines) cannot grow host-process memory
+    for the whole ``execute_script`` timeout; once the cap is hit, further
+    output is dropped and a truncation marker is appended. Logging of each
+    line happens independently in the print callback and is not bounded here.
+
+    The cap is measured in characters rather than bytes so that bounding a
+    chunk never requires UTF-8 encoding the whole thing first (``len(text)``
+    is O(1) and slicing only ever copies a budget-sized prefix). A character
+    budget still bounds memory, since each retained character is at most a few
+    bytes.
+    """
+
+    DEFAULT_MAX_CHARS = 16 * 1024
+    _TRUNCATION_MARKER = "\n... [output truncated] ..."
+
+    def __init__(self, max_chars: int = DEFAULT_MAX_CHARS) -> None:
+        self._max_chars = max_chars
+        self._parts: list[str] = []
+        self._size = 0
+        self._truncated = False
+
+    def append(self, text: str) -> None:
+        """Append a chunk of print output, honouring the character budget."""
+        if self._truncated or not text:
+            # Skip empty chunks (e.g. ``print('', end='')``) so a flood of them
+            # cannot grow ``_parts`` without ever counting toward the cap.
+            return
+        remaining = self._max_chars - self._size
+        if len(text) <= remaining:
+            self._parts.append(text)
+            self._size += len(text)
+            return
+        if remaining > 0:
+            prefix = text[:remaining]
+            self._parts.append(prefix)
+            self._size += len(prefix)
+        self._truncated = True
+
+    @property
+    def truncated(self) -> bool:
+        """Whether output was dropped because the character budget was hit."""
+        return self._truncated
+
+    def getvalue(self) -> str:
+        """Return the captured output, with a truncation marker if clipped."""
+        text = "".join(self._parts)
+        if self._truncated:
+            text = text.rstrip("\n") + self._TRUNCATION_MARKER
+        return text
+
+
 def _safe_json_decode(value: Any) -> Any:  # noqa: ANN401 - JSON decode returns arbitrary types
     """JSON decode that passes through already-decoded Python objects.
 
@@ -141,6 +198,7 @@ class MontyEngine:
         # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
+        output_buffer: ScriptOutputBuffer | None = None,
     ) -> Any:  # noqa: ANN401 # Scripts can return any type
         """
         Evaluate a script asynchronously using Monty's pause/resume model.
@@ -148,6 +206,10 @@ class MontyEngine:
         External function calls (including async tool calls) are handled
         natively without sync/async bridging - async functions are awaited
         directly when Monty pauses at their call sites.
+
+        Pass ``output_buffer`` to capture the script's ``print()`` output. The
+        buffer is owned by the caller and scoped to this single run, so
+        concurrent ``evaluate_async`` calls on one engine never share output.
         """
         # Mark the context as running inside a script so tools that would otherwise
         # defer their result to a later conversation message (e.g.
@@ -159,7 +221,9 @@ class MontyEngine:
             execution_context = replace(execution_context, in_script=True)
         try:
             result = await asyncio.wait_for(
-                self._evaluate_async_impl(script, globals_dict, execution_context),
+                self._evaluate_async_impl(
+                    script, globals_dict, execution_context, output_buffer
+                ),
                 timeout=self.config.max_execution_time,
             )
             return result
@@ -178,6 +242,7 @@ class MontyEngine:
         # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
+        output_buffer: ScriptOutputBuffer | None = None,
     ) -> Any:  # noqa: ANN401
         """Internal async implementation using manual start/resume loop."""
         try:
@@ -194,7 +259,7 @@ class MontyEngine:
             )
 
             limits = self._build_resource_limits()
-            print_cb = self._create_print_callback()
+            print_cb = self._create_print_callback(output_buffer)
             loop = asyncio.get_running_loop()
 
             # Start execution in thread pool (Monty execution is CPU-bound)
@@ -844,8 +909,14 @@ class MontyEngine:
 
     def _create_print_callback(
         self,
+        output_buffer: ScriptOutputBuffer | None,
     ) -> Callable[[str, str], None]:
-        """Create a print callback that logs output.
+        """Create a print callback that captures (optionally) and logs output.
+
+        When ``output_buffer`` is provided, each printed chunk is appended to
+        it so the caller can surface the script's output back to the LLM. Every
+        printed line is also logged for operator visibility, independent of the
+        buffer.
 
         When enable_print is False, the callback raises an error to prevent
         print() usage.
@@ -858,6 +929,8 @@ class MontyEngine:
             return deny_print
 
         def print_callback(stream: str, text: str) -> None:
+            if output_buffer is not None:
+                output_buffer.append(text)
             stripped = text.rstrip("\n")
             if stripped:
                 logger.info("Script output: %s", stripped)

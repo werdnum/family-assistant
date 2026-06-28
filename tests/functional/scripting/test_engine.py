@@ -15,7 +15,7 @@ from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
 )
-from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
 
 
 class TestEngineIntegration:
@@ -77,6 +77,98 @@ class TestEngineIntegration:
         globals_dict = {"x": 5, "y": 10}
         result = await engine.evaluate_async("x * y", globals_dict)
         assert result == 50
+
+    @pytest.mark.asyncio
+    async def test_captured_output_collects_print(self, engine_class: type) -> None:
+        """print() output is captured into the caller-supplied output buffer."""
+        engine = engine_class()
+
+        script = """
+print("hello")
+print("world")
+42
+"""
+        buffer = ScriptOutputBuffer()
+        result = await engine.evaluate_async(script, output_buffer=buffer)
+
+        assert result == 42
+        output = buffer.getvalue()
+        assert "hello" in output
+        assert "world" in output
+        # Output preserves print order and line breaks.
+        assert output.index("hello") < output.index("world")
+
+    @pytest.mark.asyncio
+    async def test_captured_output_empty_without_print(
+        self, engine_class: type
+    ) -> None:
+        """The output buffer stays empty when the script prints nothing."""
+        engine = engine_class()
+
+        buffer = ScriptOutputBuffer()
+        await engine.evaluate_async("1 + 1", output_buffer=buffer)
+
+        assert not buffer.getvalue()
+
+    @pytest.mark.asyncio
+    async def test_captured_output_isolated_across_concurrent_runs(
+        self, engine_class: type
+    ) -> None:
+        """Concurrent runs on one engine capture into their own buffers only."""
+        engine = engine_class()
+
+        buffer_a = ScriptOutputBuffer()
+        buffer_b = ScriptOutputBuffer()
+
+        results = await asyncio.gather(
+            engine.evaluate_async('print("from a")\n1', output_buffer=buffer_a),
+            engine.evaluate_async('print("from b")\n2', output_buffer=buffer_b),
+        )
+
+        assert results == [1, 2]
+        assert "from a" in buffer_a.getvalue()
+        assert "from b" not in buffer_a.getvalue()
+        assert "from b" in buffer_b.getvalue()
+        assert "from a" not in buffer_b.getvalue()
+
+    @pytest.mark.asyncio
+    async def test_captured_output_available_after_failure(
+        self, engine_class: type
+    ) -> None:
+        """Output printed before a runtime failure is still captured."""
+        engine = engine_class()
+
+        script = """
+print("before failure")
+1 / 0
+"""
+        buffer = ScriptOutputBuffer()
+        with pytest.raises(ScriptExecutionError):
+            await engine.evaluate_async(script, output_buffer=buffer)
+
+        assert "before failure" in buffer.getvalue()
+
+    @pytest.mark.asyncio
+    async def test_captured_output_is_bounded(self, engine_class: type) -> None:
+        """A chatty script cannot grow the buffer past its character budget."""
+        engine = engine_class()
+
+        # Print far more than the cap so truncation must kick in.
+        script = """
+i = 0
+while i < 5000:
+    print("0123456789")
+    i = i + 1
+0
+"""
+        buffer = ScriptOutputBuffer(max_chars=1024)
+        await engine.evaluate_async(script, output_buffer=buffer)
+
+        output = buffer.getvalue()
+        assert buffer.truncated
+        assert "... [output truncated] ..." in output
+        # Retained output stays close to the cap (marker adds a little).
+        assert len(output) < 1024 + 64
 
     @pytest.mark.skip(reason="PERMANENTLY DISABLED: Resource-intensive timeout test.")
     @pytest.mark.asyncio
@@ -299,3 +391,47 @@ results
         result = await engine.evaluate_async(script, {"async_flaky_fn": async_flaky_fn})
         assert result == ["error", "async success"]
         assert call_count == 2
+
+
+class TestScriptOutputBuffer:
+    """Unit tests for ScriptOutputBuffer bounding behaviour."""
+
+    def test_skips_empty_chunks(self) -> None:
+        """A flood of empty chunks never grows the buffer or trips the cap."""
+        buffer = ScriptOutputBuffer(max_chars=100)
+
+        for _ in range(10_000):
+            buffer.append("")
+
+        assert not buffer.truncated
+        assert not buffer.getvalue()
+
+        buffer.append("hello")
+        assert buffer.getvalue() == "hello"
+
+    def test_bounds_single_huge_chunk(self) -> None:
+        """A single oversized chunk is clipped to the cap, not retained whole."""
+        buffer = ScriptOutputBuffer(max_chars=100)
+
+        buffer.append("x" * 1_000_000)
+
+        assert buffer.truncated
+        output = buffer.getvalue()
+        assert "... [output truncated] ..." in output
+        # Only a budget-sized prefix is retained, never the full megabyte.
+        assert output.startswith("x" * 100)
+        assert len(output) < 100 + 64
+
+    def test_accumulates_until_cap(self) -> None:
+        """Chunks accumulate in order until the character budget is exceeded."""
+        buffer = ScriptOutputBuffer(max_chars=10)
+
+        buffer.append("abc")
+        buffer.append("def")
+        assert not buffer.truncated
+        assert buffer.getvalue() == "abcdef"
+
+        buffer.append("ghijkl")  # pushes past the 10-char cap
+        assert buffer.truncated
+        assert buffer.getvalue().startswith("abcdefghij")
+        assert "... [output truncated] ..." in buffer.getvalue()
