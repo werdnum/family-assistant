@@ -1037,6 +1037,17 @@ async def api_chat_create_turn(
         )
         raise
 
+    # Now that the user message is committed, ping the owner's activity stream so
+    # the conversation surfaces (or bumps) in their list. Done here rather than in
+    # hub.start_turn because the list endpoint only lists persisted messages — a
+    # ping before this commit would have a client refetch a list that doesn't yet
+    # include the conversation (and clobber any optimistic row).
+    await hub.publish_activity(
+        conversation_id,
+        user_id=user_id,
+        reason="turn_started",
+    )
+
     # If the producer task is cancelled before its coroutine ever runs (a Stop
     # in the window before its first slice), it never persists the stopped
     # assistant marker. The hub's safety net invokes this so a refresh still

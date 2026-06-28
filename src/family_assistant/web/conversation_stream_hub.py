@@ -582,17 +582,13 @@ class ConversationStreamHub:
             state.turns[turn_id] = turn
             self._prune_completed_turns(state)
 
-        # Surface the conversation in the owner's list the moment a turn starts —
-        # this is what makes a brand-new conversation appear without waiting for
-        # the reply. Emitted outside the per-conversation lock (activity
-        # subscribers are global).
-        self._broadcast_activity(
-            conversation_id,
-            user_id=user_id,
-            reason="turn_started",
-            timestamp=started_at,
-        )
-
+        # NB: no activity broadcast here. ``start_turn`` runs before the caller
+        # persists the user message, and the conversation-list endpoint only
+        # lists persisted messages — so a ping now would make a client refetch a
+        # list that doesn't yet include this conversation (and clobber an
+        # optimistic row). The ``/turns`` endpoint emits ``publish_activity``
+        # itself, after the user-message commit. ``end_turn`` (reply persisted)
+        # still broadcasts directly.
         return turn
 
     async def end_turn(

@@ -23,11 +23,6 @@ export function useActivityStream({ enabled = true, onActivity }: UseActivityStr
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const callbackRef = useRef(onActivity);
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
-  // Whether the stream has opened at least once this session. The first `open`
-  // is the initial connect, where ChatApp's mount already fetched the list, so
-  // refreshing again is redundant. Only later opens (genuine reconnects, which
-  // may have missed ephemeral pings while offline) trigger a catch-up refresh.
-  const hasConnectedRef = useRef<boolean>(false);
 
   useEffect(() => {
     callbackRef.current = onActivity;
@@ -59,13 +54,11 @@ export function useActivityStream({ enabled = true, onActivity }: UseActivityStr
       const eventSource = new EventSource('/api/v1/chat/activity/stream');
       eventSourceRef.current = eventSource;
 
-      // Reconnects may have missed ephemeral pings while offline; refresh once
-      // on a genuine reconnect (not the initial connect — see hasConnectedRef).
+      // Refresh on every open, including the first. Activity pings are
+      // ephemeral (no replay), so anything that changed in the gap between
+      // ChatApp's mount fetch and this deferred connect — or while offline
+      // before a reconnect — is only caught by refreshing on open.
       eventSource.addEventListener('open', () => {
-        if (!hasConnectedRef.current) {
-          hasConnectedRef.current = true;
-          return;
-        }
         callbackRef.current?.();
       });
 

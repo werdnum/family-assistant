@@ -551,17 +551,17 @@ async def test_publish_to_turn_updates_latest_seq() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.no_db
-async def test_start_turn_broadcasts_activity_to_matching_user() -> None:
-    """Starting a turn pings the owner's activity subscriber so a brand-new
-    conversation surfaces in the list before the reply lands."""
+async def test_start_turn_does_not_broadcast_activity() -> None:
+    """``start_turn`` must NOT ping the activity stream: it runs before the
+    caller persists the user message, and the list endpoint only lists persisted
+    messages. The ``/turns`` endpoint emits ``publish_activity`` after the
+    commit instead (see chat_api)."""
     hub = ConversationStreamHub()
     handle = hub.subscribe_activity("u1")
 
     await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
 
-    activity = handle.queue.get_nowait()
-    assert activity.conversation_id == "conv"
-    assert activity.reason == "turn_started"
+    assert handle.queue.empty()
 
 
 @pytest.mark.asyncio
@@ -572,7 +572,7 @@ async def test_activity_scoped_to_owning_user() -> None:
     hub = ConversationStreamHub()
     other = hub.subscribe_activity("u2")
 
-    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.publish_activity("conv", user_id="u1", reason="turn_started")
 
     assert other.queue.empty()
 
