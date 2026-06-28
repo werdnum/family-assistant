@@ -548,6 +548,14 @@ async def _post_ucp_rest_call(
     """
     verb, url = _rest_route(base_endpoint, operation, resource_id)
     body = payload if verb in {"POST", "PUT"} else None
+    # The REST OpenAPI marks Request-Id required on every route and
+    # Idempotency-Key required on the write routes (POST/PUT), so a
+    # spec-enforcing merchant would reject a call missing them. Generate both:
+    # the signing helper folds the idempotency key into the signed headers (and
+    # already supplies one for state-changing methods), while Request-Id rides
+    # as an unsigned tracing header on both the signed and unsigned paths.
+    request_id = str(uuid4())
+    idempotency_key = str(uuid4()) if verb in {"POST", "PUT"} else None
 
     if require_signed:
         _require_signing_config(app_config)
@@ -555,14 +563,24 @@ async def _post_ucp_rest_call(
     if has_ucp_signing_key(app_config):
         try:
             signed_request = sign_ucp_request(
-                app_config, method=verb, url=url, body=body
+                app_config,
+                method=verb,
+                url=url,
+                body=body,
+                idempotency_key=idempotency_key,
+                additional_headers={"Request-Id": request_id},
             )
         except UCPConfigurationError as exc:
             raise ValueError(str(exc)) from exc
         request_headers = signed_request.headers
         request_body = signed_request.body
     else:
-        request_headers = {"UCP-Agent": ucp_agent_header(app_config)}
+        request_headers = {
+            "UCP-Agent": ucp_agent_header(app_config),
+            "Request-Id": request_id,
+        }
+        if idempotency_key is not None:
+            request_headers["Idempotency-Key"] = idempotency_key
         request_body = None
         if body is not None:
             request_headers["Content-Type"] = "application/json"

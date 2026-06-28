@@ -19,6 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 import pytest
@@ -250,15 +251,50 @@ _CART_SCHEMA_ID = "https://ucp.dev/2026-04-08/schemas/shopping/cart.json"
 _CHECKOUT_SCHEMA_ID = "https://ucp.dev/2026-04-08/schemas/shopping/checkout.json"
 
 
-def _rest_route(operation: str) -> tuple[str, str]:
-    """The ``(verb, path template)`` the vendored REST OpenAPI defines for an op."""
+def _rest_path_item(operation: str) -> tuple[str, str, dict[str, object]]:
+    """Return ``(verb, path, path_item)`` for a REST operation in the spec."""
     paths = cast("dict[str, dict[str, object]]", _REST_SPEC["paths"])
     for path, item in paths.items():
         for method, op in item.items():
             if isinstance(op, dict) and op.get("operationId") == operation:
-                return method.upper(), path
+                return method.upper(), path, cast("dict[str, object]", item)
     msg = f"operation {operation} is not in the vendored REST OpenAPI document"
     raise AssertionError(msg)
+
+
+def _rest_route(operation: str) -> tuple[str, str]:
+    """The ``(verb, path template)`` the vendored REST OpenAPI defines for an op."""
+    verb, path, _item = _rest_path_item(operation)
+    return verb, path
+
+
+def _rest_required_headers(operation: str) -> set[str]:
+    """Header parameters the vendored REST OpenAPI marks required for an op.
+
+    Path/query/cookie params are excluded; ``$ref``-ed parameter components are
+    resolved so shared headers (``Request-Id``, ``Idempotency-Key``,
+    ``UCP-Agent``) are picked up.
+    """
+    components = cast(
+        "dict[str, dict[str, object]]",
+        cast("dict[str, object]", _REST_SPEC["components"])["parameters"],
+    )
+    _verb, _path, item = _rest_path_item(operation)
+    op = next(
+        value
+        for key, value in item.items()
+        if isinstance(value, dict) and value.get("operationId") == operation
+    )
+    raw_params = cast("list[dict[str, object]]", item.get("parameters", [])) + cast(
+        "list[dict[str, object]]", cast("dict[str, object]", op).get("parameters", [])
+    )
+    required: set[str] = set()
+    for param in raw_params:
+        ref = param.get("$ref")
+        resolved = components[cast("str", ref).split("/")[-1]] if ref else param
+        if resolved.get("in") == "header" and resolved.get("required"):
+            required.add(cast("str", resolved["name"]))
+    return required
 
 
 def _rest_body_schema(
@@ -291,6 +327,17 @@ def _assert_rest_conforms(
     verb, _path = _rest_route(operation)
     assert captured["method"] == verb
     assert captured["url"] == expected_url
+
+    # Every spec-required REST header must be present (case-insensitive). This
+    # binds the test to rest.openapi.json: Request-Id (all routes) and
+    # Idempotency-Key (write routes), plus UCP-Agent.
+    sent_headers = {
+        name.lower(): value
+        for name, value in cast("dict[str, str]", captured["headers"]).items()
+    }
+    for header in _rest_required_headers(operation):
+        assert header.lower() in sent_headers, f"missing required REST header {header}"
+
     body = captured["body"]
     if operation in {"create_cart", "update_cart", "create_checkout"}:
         op = _METHOD_OP[operation]
@@ -372,11 +419,12 @@ class _CapturingClient:
         content: bytes | None,
     ) -> httpx.Response:
         # REST transport calls go through client.request(verb, url, ...). Record
-        # the verb, URL, and decoded body so the contract test can validate the
-        # request the REST path actually emits.
+        # the verb, URL, headers, and decoded body so the contract test can
+        # validate the request the REST path actually emits.
         self.requests.append({
             "method": method,
             "url": url,
+            "headers": dict(headers),
             "body": json.loads(content.decode("utf-8")) if content else None,
         })
         return self.post_responses.pop(0)
@@ -785,3 +833,38 @@ async def test_rest_cart_handoff_create_checkout_request_conforms_to_spec(
         cart_checkout=True,
     )
     assert cast("dict[str, object]", create["body"])["cart_id"] == cart_id
+
+
+def _header(captured: dict[str, object], name: str) -> str | None:
+    for key, value in cast("dict[str, str]", captured["headers"]).items():
+        if key.lower() == name.lower():
+            return value
+    return None
+
+
+async def test_rest_write_request_sends_uuid_request_and_idempotency_headers(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # The REST OpenAPI requires Request-Id (all routes) and Idempotency-Key
+    # (write routes) as UUIDs. The unsigned create_cart path must emit both as
+    # valid UUIDs; a spec-enforcing merchant rejects the call otherwise.
+    _reset_client(
+        monkeypatch,
+        post_responses=[_rest_cart_response()],
+        profile_responses=[_rest_profile()],
+    )
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "gid://shopify/ProductVariant/1", "quantity": 2}],
+    )
+
+    write = _CapturingClient.requests[0]
+    request_id = _header(write, "Request-Id")
+    idempotency_key = _header(write, "Idempotency-Key")
+    assert request_id is not None
+    assert idempotency_key is not None
+    # Parsing as a UUID asserts the spec's `format: uuid` is honoured.
+    assert str(UUID(request_id)) == request_id
+    assert str(UUID(idempotency_key)) == idempotency_key
