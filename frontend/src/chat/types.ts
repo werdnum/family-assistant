@@ -96,6 +96,7 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   metadata?: BackendMessageMetadata;
   tool_calls?: BackendToolCall[];
   tool_call_id?: string;
+  processing_profile_id?: string | null;
 }
 
 export interface ActiveTurnInfo {

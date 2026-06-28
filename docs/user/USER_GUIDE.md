@@ -521,7 +521,10 @@ various tasks with dark mode support and mobile optimization.
   - Real-time streaming responses - see the assistant's replies as they're being generated
   - Stop or steer a running reply from the web chat or native iOS Chat
   - Compact tool usage display - completed tool calls are summarized in collapsible groups
-  - Easy conversation management and switching
+  - Easy conversation management and switching - reopening an existing conversation automatically
+    resumes it under the profile it was started with, so a follow-up message keeps the earlier
+    context. Picking a profile or starting a new chat uses your preferred profile (the last one you
+    selected in the picker).
   - Native iOS conversation list, profile picker, attachment previews, file downloads, and pending
     approval banners
   - Clear message formatting and display

@@ -385,8 +385,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [profilesLoading, setProfilesLoading] = useState<boolean>(true);
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth <= 768);
   const [mobileShowList, setMobileShowList] = useState<boolean>(false);
+  // `currentProfileId` is the *active* profile: it drives the picker and is sent
+  // with every turn. It is distinct from the *preferred* profile persisted in
+  // localStorage ('selectedProfileId'), which seeds new chats. Opening an
+  // existing conversation adopts that conversation's profile into the active
+  // value (without touching the preferred one) so a follow-up turn loads the
+  // matching profile-partitioned history instead of silently dropping context.
   const [currentProfileId, setCurrentProfileId] = useState<string>(() => {
-    // Load saved profile from localStorage, fallback to prop
+    // Seed the active profile from the persisted preferred profile.
     return localStorage.getItem('selectedProfileId') || profileId;
   });
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
@@ -1135,6 +1141,25 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           return 'bailed' as const;
         }
 
+        // A foreground load means the user just opened this conversation (every
+        // background reload passes background=true). Adopt the profile its
+        // history was produced under so the follow-up turn loads the matching
+        // (profile-partitioned) history instead of silently dropping context.
+        // Use the most recent *user* message's profile, not a delegated
+        // assistant row's, so a thread that handed off to another profile (e.g.
+        // complex_tasks delegating to engineer) still resumes as the profile the
+        // user was actually talking to.
+        if (!background) {
+          const adoptedProfileId = [...data.messages]
+            .reverse()
+            .find(
+              (msg) => msg.role === 'user' && typeof msg.processing_profile_id === 'string'
+            )?.processing_profile_id;
+          if (typeof adoptedProfileId === 'string' && adoptedProfileId) {
+            setCurrentProfileId(adoptedProfileId);
+          }
+        }
+
         // Turns the server still reports as running, so the unconfirmed-reply
         // reconcile below can tell an in-flight turn (partial rows, reply still
         // coming) from a finished one whose rows are authoritative.
@@ -1681,13 +1706,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Cancel any active streaming before creating a new chat
     cancelStream();
 
+    // A new chat starts from the user's preferred profile, not whatever profile
+    // an old conversation we were just viewing was adopted into.
+    const preferredProfileId = localStorage.getItem('selectedProfileId') || profileId;
+    setCurrentProfileId(preferredProfileId);
+
     const newConvId = `web_conv_${generateUUID()}`;
     setConversationId(newConvId);
     setMobileShowList(false);
     setMessages([]);
     localStorage.setItem('lastConversationId', newConvId);
     window.history.pushState({}, '', `/chat?conversation_id=${newConvId}`);
-  }, [cancelStream]);
+  }, [cancelStream, profileId]);
 
   // On mobile, navigate back to conversation list
   const handleBackToList = useCallback(() => {
