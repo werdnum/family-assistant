@@ -78,6 +78,65 @@ class TestEngineIntegration:
         result = await engine.evaluate_async("x * y", globals_dict)
         assert result == 50
 
+    @pytest.mark.asyncio
+    async def test_captured_output_collects_print(self, engine_class: type) -> None:
+        """print() output is captured and retrievable via get_captured_output()."""
+        engine = engine_class()
+
+        script = """
+print("hello")
+print("world")
+42
+"""
+        result = await engine.evaluate_async(script)
+
+        assert result == 42
+        output = engine.get_captured_output()
+        assert "hello" in output
+        assert "world" in output
+        # Output preserves print order and line breaks.
+        assert output.index("hello") < output.index("world")
+
+    @pytest.mark.asyncio
+    async def test_captured_output_empty_without_print(
+        self, engine_class: type
+    ) -> None:
+        """get_captured_output() is empty when the script prints nothing."""
+        engine = engine_class()
+
+        await engine.evaluate_async("1 + 1")
+
+        assert not engine.get_captured_output()
+
+    @pytest.mark.asyncio
+    async def test_captured_output_reset_between_runs(self, engine_class: type) -> None:
+        """Captured output from a prior run does not leak into the next run."""
+        engine = engine_class()
+
+        await engine.evaluate_async('print("first run")\n1')
+        assert "first run" in engine.get_captured_output()
+
+        await engine.evaluate_async('print("second run")\n2')
+        output = engine.get_captured_output()
+        assert "second run" in output
+        assert "first run" not in output
+
+    @pytest.mark.asyncio
+    async def test_captured_output_available_after_failure(
+        self, engine_class: type
+    ) -> None:
+        """Output printed before a runtime failure is still captured."""
+        engine = engine_class()
+
+        script = """
+print("before failure")
+1 / 0
+"""
+        with pytest.raises(ScriptExecutionError):
+            await engine.evaluate_async(script)
+
+        assert "before failure" in engine.get_captured_output()
+
     @pytest.mark.skip(reason="PERMANENTLY DISABLED: Resource-intensive timeout test.")
     @pytest.mark.asyncio
     async def test_async_timeout(self, engine_class: type) -> None:

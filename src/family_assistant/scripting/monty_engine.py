@@ -127,6 +127,7 @@ class MontyEngine:
         self.default_timezone = default_timezone
         self._wake_llm_contexts: list[WakeRequest] = []
         self._pending_wake_contexts: list[WakeRequest] = []
+        self._captured_output: list[str] = []
         # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         self._script_globals: dict[str, Any] = {}
 
@@ -182,6 +183,7 @@ class MontyEngine:
         """Internal async implementation using manual start/resume loop."""
         try:
             self._wake_llm_contexts.clear()
+            self._captured_output = []
             self._script_globals = globals_dict or {}
 
             ext_fn_impls, inputs = await self._build_execution_context_async(
@@ -845,7 +847,11 @@ class MontyEngine:
     def _create_print_callback(
         self,
     ) -> Callable[[str, str], None]:
-        """Create a print callback that logs output.
+        """Create a print callback that captures and logs output.
+
+        Captured text is accumulated in ``self._captured_output`` so callers
+        (e.g. the execute_script tool) can surface it back to the LLM via
+        ``get_captured_output()``. It is also logged for operator visibility.
 
         When enable_print is False, the callback raises an error to prevent
         print() usage.
@@ -858,6 +864,7 @@ class MontyEngine:
             return deny_print
 
         def print_callback(stream: str, text: str) -> None:
+            self._captured_output.append(text)
             stripped = text.rstrip("\n")
             if stripped:
                 logger.info("Script output: %s", stripped)
@@ -865,6 +872,15 @@ class MontyEngine:
                     print(f"[SCRIPT] {stripped}")
 
         return print_callback
+
+    def get_captured_output(self) -> str:
+        """Return text printed by the most recent script execution.
+
+        Accumulated across the whole run (including output produced before a
+        failure), concatenated in print order. Empty when the script printed
+        nothing or print() is disabled.
+        """
+        return "".join(self._captured_output)
 
     def _create_wake_llm_function(self) -> Callable[..., None]:
         """Create a wake_llm function for scripts."""

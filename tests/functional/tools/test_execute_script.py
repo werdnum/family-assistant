@@ -491,3 +491,103 @@ chart
         )
         # Should contain indication of success
         assert "Error:" not in result.text or "Script result:" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_script_returns_print_output(db_engine: AsyncEngine) -> None:
+    """print() output is surfaced to the LLM under a Script Output section."""
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            processing_service=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        script = """
+print("step one")
+print("step two")
+42
+"""
+        result = await execute_script_tool(ctx, script)
+
+        assert result.text is not None
+        assert "--- Script Output ---" in result.text
+        assert "step one" in result.text
+        assert "step two" in result.text
+        # Both the printed output and the return value are present.
+        assert "Script result: 42" in result.text
+        # Printed output appears ahead of the return value.
+        assert result.text.index("step one") < result.text.index("Script result: 42")
+        # The structured data still holds the script's return value, not the output.
+        assert result.data == 42
+
+
+@pytest.mark.asyncio
+async def test_execute_script_no_output_section_without_print(
+    db_engine: AsyncEngine,
+) -> None:
+    """Scripts that print nothing do not get a Script Output section."""
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            processing_service=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        result = await execute_script_tool(ctx, "1 + 1")
+
+        assert result.text is not None
+        assert "--- Script Output ---" not in result.text
+        assert "Script result: 2" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_script_includes_output_on_failure(
+    db_engine: AsyncEngine,
+) -> None:
+    """Output printed before a runtime failure is included with the error."""
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            processing_service=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        script = """
+print("printed before crash")
+1 / 0
+"""
+        result = await execute_script_tool(ctx, script)
+
+        assert result.text is not None
+        assert "printed before crash" in result.text
+        assert "Error:" in result.text
+        assert isinstance(result.data, dict)
+        assert result.data["status"] == "error"

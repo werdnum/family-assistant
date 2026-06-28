@@ -151,6 +151,41 @@ finally:
 
 ## Available APIs
 
+### Script Output (`print`)
+
+A script returns its **last expression** to the assistant. In addition, anything written with
+`print()` is captured during execution and returned under a `--- Script Output ---` section, ahead
+of the `Script result:` line:
+
+```python
+notes = search_notes(query="TODO")
+print("Found", len(notes), "notes")
+for note in notes:
+    print("-", note["title"])
+
+len(notes)  # last expression -> "Script result: 3"
+```
+
+The assistant receives:
+
+```
+--- Script Output ---
+Found 3 notes
+- Buy milk
+- Call dentist
+- Renew passport
+
+Script result: 3
+```
+
+Notes:
+
+- `print()` is the easiest way to surface several intermediate values without packing them into the
+  return value.
+- If the script raises an error partway through, any output printed before the failure is still
+  returned, above the error message — useful for debugging.
+- Output is also written to the server logs for operators.
+
 ### Tools API
 
 **Note**: The available tools depend on your profile's permissions. To see all available tools and
@@ -1187,7 +1222,10 @@ Use scripts when users request:
 2. **Check available tools**: Use `tools_list()` if unsure what's available
 3. **Handle edge cases**: Check for empty results, invalid data
 4. **Test first**: For complex scripts, test key operations separately
-5. **Provide feedback**: Use print() to show progress for long operations
+5. **Provide feedback**: Use print() to show progress for long operations. Printed output is
+   captured and returned to the assistant under a `--- Script Output ---` section (and included
+   above the error message if the script fails partway through), so it's a convenient way to surface
+   intermediate values without returning them.
 
 ### Common User Requests and Script Patterns
 
