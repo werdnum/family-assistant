@@ -703,6 +703,58 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testNewConversationStaysOnTopAboveExistingOnStaleRefresh() async throws {
+        var streamedTurnID = "turn-newtop"
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_new2","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_new2/stream"):
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                // An existing older conversation; the new one isn't persisted yet,
+                // so the page omits it (stale relative to the optimistic insert).
+                return .json(
+                    #"{"conversations":[{"conversation_id":"web_conv_existing","last_message":"Earlier chat","last_timestamp":"2026-06-01T00:00:00Z","message_count":4}],"count":1}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_new2/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_new2","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_new2")
+        // Seed the existing conversation so the account isn't empty.
+        await model.refreshConversations()
+        XCTAssertEqual(model.conversations.map(\.conversationID), ["web_conv_existing"])
+
+        model.draftText = "Brand new chat"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(
+            model.conversations.first?.conversationID,
+            "web_conv_new2",
+            "A brand-new conversation must stay most-recent-first above existing ones even when a stale refresh omits it."
+        )
+    }
+
     func testActivityStreamRefreshesConversationList() async throws {
         let conversationsRequests = AtomicCounter()
         ChatMockBackendURLProtocol.respond { request in

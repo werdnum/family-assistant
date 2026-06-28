@@ -310,8 +310,10 @@ final class ChatViewModel {
     /// (an optimistic insert/bump the server hasn't caught up to yet), keep the
     /// held one so a stale in-flight refresh — which still carries the old
     /// timestamp/preview for an existing thread — can't undo the optimistic bump.
-    /// The recent page is then re-sorted most-recent-first so a kept optimistic
-    /// row floats back to the top.
+    /// The whole list (server page plus preserved older summaries) is then sorted
+    /// most-recent-first, so a kept optimistic row — including a brand-new
+    /// conversation the stale page omitted entirely — stays at the top instead of
+    /// sinking below the server page.
     private func refreshRecentConversations() async {
         do {
             let recent = try await apiClient.listRecentConversations()
@@ -328,9 +330,8 @@ final class ChatViewModel {
                 }
                 return serverRow
             }
-            .sorted { $0.lastTimestamp > $1.lastTimestamp }
             let untouched = conversations.filter { !recentIDs.contains($0.conversationID) }
-            conversations = merged + untouched
+            conversations = (merged + untouched).sorted { $0.lastTimestamp > $1.lastTimestamp }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
