@@ -74,12 +74,15 @@ final class ChatViewModel {
     @ObservationIgnored private var activityStreamTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     @ObservationIgnored private var activeTurn: ActiveChatTurn?
-    // Conversation ids with an in-flight optimistic summary (their send hasn't
-    // settled). While pending, `refreshRecentConversations` keeps the held
-    // optimistic row over a stale server summary; cleared when the turn settles
-    // so the server becomes authoritative — a lifecycle signal, not a wall-clock
-    // comparison (a skewed client clock can't pin a stale row).
-    @ObservationIgnored private var optimisticPendingConversationIDs: Set<String> = []
+    // In-flight optimistic summaries, keyed by the owning turn id (value is the
+    // conversation id). While a conversation has any pending turn,
+    // `refreshRecentConversations` keeps its held optimistic row over a stale
+    // server summary; the entry is cleared when that turn settles via any path
+    // (a lifecycle signal, not a wall-clock comparison a skewed client clock
+    // could keep "newer" forever). Keying by turn id means a superseding re-send
+    // to the same conversation doesn't clobber the new turn's mark when the old
+    // turn unwinds.
+    @ObservationIgnored private var optimisticPendingByTurnID: [String: String] = [:]
     @ObservationIgnored private var registeredTurnIDs: Set<String> = []
     @ObservationIgnored private var pendingStopTurnIDs: Set<String> = []
     @ObservationIgnored private var stopAfterRegistrationByTurnID: [String: String] = [:]
@@ -329,8 +332,9 @@ final class ChatViewModel {
                 conversations.map { ($0.conversationID, $0) },
                 uniquingKeysWith: { first, _ in first }
             )
+            let pendingIDs = Set(optimisticPendingByTurnID.values)
             let merged = recent.map { serverRow -> ChatConversationSummary in
-                if optimisticPendingConversationIDs.contains(serverRow.conversationID),
+                if pendingIDs.contains(serverRow.conversationID),
                    let held = heldByID[serverRow.conversationID]
                 {
                     return held
@@ -366,8 +370,6 @@ final class ChatViewModel {
         )
         conversations.removeAll { $0.conversationID == conversationID }
         conversations.insert(summary, at: 0)
-        // Mark pending so a stale refresh keeps this row until the turn settles.
-        optimisticPendingConversationIDs.insert(conversationID)
     }
 
     /// Undo an optimistic summary when starting the turn failed before anything
@@ -381,7 +383,6 @@ final class ChatViewModel {
         conversationID: String,
         to previous: ChatConversationSummary?
     ) {
-        optimisticPendingConversationIDs.remove(conversationID)
         conversations.removeAll { $0.conversationID == conversationID }
         guard let previous else {
             return
@@ -856,6 +857,10 @@ final class ChatViewModel {
             conversationID: id,
             lastMessage: prompt.isEmpty ? "Attachment" : prompt
         )
+        // Mark this conversation optimistically pending for this turn so a stale
+        // refresh keeps the row until the turn settles (cleared on every
+        // runSendTurn return path, see its `defer`).
+        optimisticPendingByTurnID[turnID] = id
 
         let streamToken = UUID()
         currentStreamToken = streamToken
@@ -919,6 +924,13 @@ final class ChatViewModel {
         streamToken: UUID,
         previousSummary: ChatConversationSummary?
     ) async {
+        // Retire this turn's optimistic pending mark on EVERY return path —
+        // completion, recovery, failure, cancellation, and the superseded early
+        // returns below — so a row can never stay pending (and pinned over the
+        // server summary) forever. The explicit removals on the completed/
+        // recovered paths run earlier so their refresh already uses the server;
+        // this is the catch-all and is idempotent.
+        defer { optimisticPendingByTurnID.removeValue(forKey: turnID) }
         var lastSeq: Int?
         // Becomes true once startTurn returns: the backend persists the user
         // message inside start_turn, so a successful return means the
@@ -1100,7 +1112,7 @@ final class ChatViewModel {
                 // Turn settled: the server reflects this send, so retire the
                 // optimistic mark before refreshing so the authoritative summary
                 // (with the reply preview) replaces the held row.
-                optimisticPendingConversationIDs.remove(id)
+                optimisticPendingByTurnID.removeValue(forKey: turnID)
                 await refreshRecentConversations()
                 await mergeNewMessages(conversationID: id)
                 if status == "cancelled" || status == "failed" || stopRequestedTurnIDs.contains(turnID) {
@@ -1123,6 +1135,9 @@ final class ChatViewModel {
                 // row. Suppressing the live re-render lets the durable reply land
                 // through history catch-up (and the completion push) instead.
                 markTurnEnded(turnID, status: nil)
+                // The durable turn has settled; retire the optimistic mark so the
+                // reload below surfaces the authoritative server summary.
+                optimisticPendingByTurnID.removeValue(forKey: turnID)
                 // Reload persisted history silently. Don't write to `errorMessage`:
                 // that drives a modal "Chat Error" alert, which would be spurious
                 // for a reply that actually succeeded. The disconnected indicator
@@ -1333,9 +1348,6 @@ final class ChatViewModel {
         assistantMessageID: String
     ) async {
         removeLocalAssistantPlaceholder(assistantMessageID)
-        // The durable turn has settled (recovered via history reload), so retire
-        // the optimistic mark and let the server summary become authoritative.
-        optimisticPendingConversationIDs.remove(id)
         await refreshRecentConversations()
         await mergeNewMessages(conversationID: id)
     }
