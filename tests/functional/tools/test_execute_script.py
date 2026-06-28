@@ -591,3 +591,38 @@ print("printed before crash")
         assert "Error:" in result.text
         assert isinstance(result.data, dict)
         assert result.data["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_execute_script_truncates_huge_output(db_engine: AsyncEngine) -> None:
+    """A script printing far too much has its output truncated, not unbounded."""
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-conv",
+            user_name="test",
+            turn_id=None,
+            db_context=db,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            processing_service=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        # Print well beyond the 16 KiB default cap.
+        script = """
+i = 0
+while i < 5000:
+    print("0123456789ABCDEF")
+    i = i + 1
+0
+"""
+        result = await execute_script_tool(ctx, script)
+
+        assert result.text is not None
+        assert "... [output truncated] ..." in result.text
+        # The surfaced text stays bounded rather than echoing all 5000 lines.
+        assert len(result.text) < 32 * 1024

@@ -15,7 +15,7 @@ from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
 )
-from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
 
 
 class TestEngineIntegration:
@@ -80,7 +80,7 @@ class TestEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_captured_output_collects_print(self, engine_class: type) -> None:
-        """print() output is captured and retrievable via get_captured_output()."""
+        """print() output is captured into the caller-supplied output buffer."""
         engine = engine_class()
 
         script = """
@@ -88,10 +88,11 @@ print("hello")
 print("world")
 42
 """
-        result = await engine.evaluate_async(script)
+        buffer = ScriptOutputBuffer()
+        result = await engine.evaluate_async(script, output_buffer=buffer)
 
         assert result == 42
-        output = engine.get_captured_output()
+        output = buffer.getvalue()
         assert "hello" in output
         assert "world" in output
         # Output preserves print order and line breaks.
@@ -101,25 +102,34 @@ print("world")
     async def test_captured_output_empty_without_print(
         self, engine_class: type
     ) -> None:
-        """get_captured_output() is empty when the script prints nothing."""
+        """The output buffer stays empty when the script prints nothing."""
         engine = engine_class()
 
-        await engine.evaluate_async("1 + 1")
+        buffer = ScriptOutputBuffer()
+        await engine.evaluate_async("1 + 1", output_buffer=buffer)
 
-        assert not engine.get_captured_output()
+        assert not buffer.getvalue()
 
     @pytest.mark.asyncio
-    async def test_captured_output_reset_between_runs(self, engine_class: type) -> None:
-        """Captured output from a prior run does not leak into the next run."""
+    async def test_captured_output_isolated_across_concurrent_runs(
+        self, engine_class: type
+    ) -> None:
+        """Concurrent runs on one engine capture into their own buffers only."""
         engine = engine_class()
 
-        await engine.evaluate_async('print("first run")\n1')
-        assert "first run" in engine.get_captured_output()
+        buffer_a = ScriptOutputBuffer()
+        buffer_b = ScriptOutputBuffer()
 
-        await engine.evaluate_async('print("second run")\n2')
-        output = engine.get_captured_output()
-        assert "second run" in output
-        assert "first run" not in output
+        results = await asyncio.gather(
+            engine.evaluate_async('print("from a")\n1', output_buffer=buffer_a),
+            engine.evaluate_async('print("from b")\n2', output_buffer=buffer_b),
+        )
+
+        assert results == [1, 2]
+        assert "from a" in buffer_a.getvalue()
+        assert "from b" not in buffer_a.getvalue()
+        assert "from b" in buffer_b.getvalue()
+        assert "from a" not in buffer_b.getvalue()
 
     @pytest.mark.asyncio
     async def test_captured_output_available_after_failure(
@@ -132,10 +142,33 @@ print("world")
 print("before failure")
 1 / 0
 """
+        buffer = ScriptOutputBuffer()
         with pytest.raises(ScriptExecutionError):
-            await engine.evaluate_async(script)
+            await engine.evaluate_async(script, output_buffer=buffer)
 
-        assert "before failure" in engine.get_captured_output()
+        assert "before failure" in buffer.getvalue()
+
+    @pytest.mark.asyncio
+    async def test_captured_output_is_bounded(self, engine_class: type) -> None:
+        """A chatty script cannot grow the buffer past its byte budget."""
+        engine = engine_class()
+
+        # Print far more than the cap so truncation must kick in.
+        script = """
+i = 0
+while i < 5000:
+    print("0123456789")
+    i = i + 1
+0
+"""
+        buffer = ScriptOutputBuffer(max_bytes=1024)
+        await engine.evaluate_async(script, output_buffer=buffer)
+
+        output = buffer.getvalue()
+        assert buffer.truncated
+        assert "... [output truncated] ..." in output
+        # Retained output stays close to the cap (marker adds a little).
+        assert len(output.encode("utf-8")) < 1024 + 64
 
     @pytest.mark.skip(reason="PERMANENTLY DISABLED: Resource-intensive timeout test.")
     @pytest.mark.asyncio

@@ -17,7 +17,7 @@ from family_assistant.scripting.errors import (
     ScriptSyntaxError,
     ScriptTimeoutError,
 )
-from family_assistant.scripting.monty_engine import MontyEngine
+from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -62,15 +62,13 @@ def _extract_ids_from_list(items: list[Any]) -> list[str]:  # noqa: ANN401
     return ids
 
 
-def _prepend_captured_output(error_text: str, engine: MontyEngine | None) -> str:
+def _prepend_captured_output(error_text: str, output_buffer: ScriptOutputBuffer) -> str:
     """Prepend any captured print() output to an error message.
 
     A script that fails partway through may have printed diagnostics before
     raising. Surfacing them alongside the error helps the LLM debug.
     """
-    if engine is None:
-        return error_text
-    captured = engine.get_captured_output()
+    captured = output_buffer.getvalue()
     if captured.strip():
         return f"--- Script Output ---\n{captured.rstrip()}\n\n{error_text}"
     return error_text
@@ -152,7 +150,7 @@ async def execute_script_tool(
     Returns:
         ToolResult with text and any attachments returned by the script
     """
-    engine: MontyEngine | None = None
+    output_buffer = ScriptOutputBuffer()
     try:
         # Reject ambiguous calls with both script and name
         if name and script:
@@ -309,6 +307,7 @@ async def execute_script_tool(
             execution_context=exec_context
             if (tools_provider or exec_context.attachment_registry)
             else None,  # Pass context if we have tools or attachment registry
+            output_buffer=output_buffer,
         )
 
         # Extract attachment IDs from return value
@@ -321,7 +320,7 @@ async def execute_script_tool(
         response_parts = []
 
         # Surface anything the script printed so the LLM can read print() output.
-        captured_output = engine.get_captured_output()
+        captured_output = output_buffer.getvalue()
         if captured_output.strip():
             response_parts.append(
                 f"--- Script Output ---\n{captured_output.rstrip()}\n"
@@ -437,7 +436,7 @@ async def execute_script_tool(
         error_msg = f"Script execution timed out after {e.timeout_seconds} seconds"
         logger.error(error_msg)
         return ToolResult(
-            text=_prepend_captured_output(f"Error: {error_msg}", engine),
+            text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={
                 "status": "error",
                 "error_type": "timeout_error",
@@ -449,7 +448,7 @@ async def execute_script_tool(
         error_msg = f"Script execution failed: {str(e)}"
         logger.error(error_msg)
         return ToolResult(
-            text=_prepend_captured_output(f"Error: {error_msg}", engine),
+            text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={
                 "status": "error",
                 "error_type": "execution_error",
@@ -461,7 +460,7 @@ async def execute_script_tool(
         logger.error(f"Unexpected error executing script: {e}", exc_info=True)
         error_msg = f"Unexpected error executing script: {e}"
         return ToolResult(
-            text=_prepend_captured_output(f"Error: {error_msg}", engine),
+            text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
             data={
                 "status": "error",
                 "error_type": "unexpected_error",

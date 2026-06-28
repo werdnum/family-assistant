@@ -184,6 +184,9 @@ Notes:
   return value.
 - If the script raises an error partway through, any output printed before the failure is still
   returned, above the error message — useful for debugging.
+- Captured output is capped (16 KiB by default); a very chatty script has its returned output
+  truncated with a `... [output truncated] ...` marker. Every line is still written to the server
+  logs in full.
 - Output is also written to the server logs for operators.
 
 ### Tools API

@@ -76,6 +76,58 @@ class AttachmentResultWithText(TypedDict):
 logger = logging.getLogger(__name__)
 
 
+class ScriptOutputBuffer:
+    """Bounded accumulator for a single script run's print() output.
+
+    A buffer instance belongs to exactly one ``evaluate_async`` call, so
+    concurrent runs on the same engine never share or clobber each other's
+    output. Retained output is capped at ``max_bytes`` so a chatty script
+    (e.g. a loop printing thousands of lines) cannot grow host-process memory
+    for the whole ``execute_script`` timeout; once the cap is hit, further
+    output is dropped and a truncation marker is appended. Logging of each
+    line happens independently in the print callback and is not bounded here.
+    """
+
+    DEFAULT_MAX_BYTES = 16 * 1024
+    _TRUNCATION_MARKER = "\n... [output truncated] ..."
+
+    def __init__(self, max_bytes: int = DEFAULT_MAX_BYTES) -> None:
+        self._max_bytes = max_bytes
+        self._parts: list[str] = []
+        self._size = 0
+        self._truncated = False
+
+    def append(self, text: str) -> None:
+        """Append a chunk of print output, honouring the byte budget."""
+        if self._truncated:
+            return
+        encoded_len = len(text.encode("utf-8"))
+        if self._size + encoded_len <= self._max_bytes:
+            self._parts.append(text)
+            self._size += encoded_len
+            return
+        remaining = self._max_bytes - self._size
+        if remaining > 0:
+            # Keep a byte-bounded prefix without splitting a multibyte char.
+            prefix = text.encode("utf-8")[:remaining].decode("utf-8", "ignore")
+            if prefix:
+                self._parts.append(prefix)
+                self._size += len(prefix.encode("utf-8"))
+        self._truncated = True
+
+    @property
+    def truncated(self) -> bool:
+        """Whether output was dropped because the byte budget was exceeded."""
+        return self._truncated
+
+    def getvalue(self) -> str:
+        """Return the captured output, with a truncation marker if clipped."""
+        text = "".join(self._parts)
+        if self._truncated:
+            text = text.rstrip("\n") + self._TRUNCATION_MARKER
+        return text
+
+
 def _safe_json_decode(value: Any) -> Any:  # noqa: ANN401 - JSON decode returns arbitrary types
     """JSON decode that passes through already-decoded Python objects.
 
@@ -127,7 +179,6 @@ class MontyEngine:
         self.default_timezone = default_timezone
         self._wake_llm_contexts: list[WakeRequest] = []
         self._pending_wake_contexts: list[WakeRequest] = []
-        self._captured_output: list[str] = []
         # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         self._script_globals: dict[str, Any] = {}
 
@@ -142,6 +193,7 @@ class MontyEngine:
         # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
+        output_buffer: ScriptOutputBuffer | None = None,
     ) -> Any:  # noqa: ANN401 # Scripts can return any type
         """
         Evaluate a script asynchronously using Monty's pause/resume model.
@@ -149,6 +201,10 @@ class MontyEngine:
         External function calls (including async tool calls) are handled
         natively without sync/async bridging - async functions are awaited
         directly when Monty pauses at their call sites.
+
+        Pass ``output_buffer`` to capture the script's ``print()`` output. The
+        buffer is owned by the caller and scoped to this single run, so
+        concurrent ``evaluate_async`` calls on one engine never share output.
         """
         # Mark the context as running inside a script so tools that would otherwise
         # defer their result to a later conversation message (e.g.
@@ -160,7 +216,9 @@ class MontyEngine:
             execution_context = replace(execution_context, in_script=True)
         try:
             result = await asyncio.wait_for(
-                self._evaluate_async_impl(script, globals_dict, execution_context),
+                self._evaluate_async_impl(
+                    script, globals_dict, execution_context, output_buffer
+                ),
                 timeout=self.config.max_execution_time,
             )
             return result
@@ -179,11 +237,11 @@ class MontyEngine:
         # ast-grep-ignore: no-dict-any - Script globals are user-provided Python values keyed by name
         globals_dict: dict[str, Any] | None = None,
         execution_context: "ToolExecutionContext | None" = None,
+        output_buffer: ScriptOutputBuffer | None = None,
     ) -> Any:  # noqa: ANN401
         """Internal async implementation using manual start/resume loop."""
         try:
             self._wake_llm_contexts.clear()
-            self._captured_output = []
             self._script_globals = globals_dict or {}
 
             ext_fn_impls, inputs = await self._build_execution_context_async(
@@ -196,7 +254,7 @@ class MontyEngine:
             )
 
             limits = self._build_resource_limits()
-            print_cb = self._create_print_callback()
+            print_cb = self._create_print_callback(output_buffer)
             loop = asyncio.get_running_loop()
 
             # Start execution in thread pool (Monty execution is CPU-bound)
@@ -846,12 +904,14 @@ class MontyEngine:
 
     def _create_print_callback(
         self,
+        output_buffer: ScriptOutputBuffer | None,
     ) -> Callable[[str, str], None]:
-        """Create a print callback that captures and logs output.
+        """Create a print callback that captures (optionally) and logs output.
 
-        Captured text is accumulated in ``self._captured_output`` so callers
-        (e.g. the execute_script tool) can surface it back to the LLM via
-        ``get_captured_output()``. It is also logged for operator visibility.
+        When ``output_buffer`` is provided, each printed chunk is appended to
+        it so the caller can surface the script's output back to the LLM. Every
+        printed line is also logged for operator visibility, independent of the
+        buffer.
 
         When enable_print is False, the callback raises an error to prevent
         print() usage.
@@ -864,7 +924,8 @@ class MontyEngine:
             return deny_print
 
         def print_callback(stream: str, text: str) -> None:
-            self._captured_output.append(text)
+            if output_buffer is not None:
+                output_buffer.append(text)
             stripped = text.rstrip("\n")
             if stripped:
                 logger.info("Script output: %s", stripped)
@@ -872,15 +933,6 @@ class MontyEngine:
                     print(f"[SCRIPT] {stripped}")
 
         return print_callback
-
-    def get_captured_output(self) -> str:
-        """Return text printed by the most recent script execution.
-
-        Accumulated across the whole run (including output produced before a
-        failure), concatenated in print order. Empty when the script printed
-        nothing or print() is disabled.
-        """
-        return "".join(self._captured_output)
 
     def _create_wake_llm_function(self) -> Callable[..., None]:
         """Create a wake_llm function for scripts."""
