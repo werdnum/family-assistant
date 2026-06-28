@@ -295,7 +295,8 @@ async def _probe_ucp_support(
     trusted_suffixes = _trusted_endpoint_suffixes(exec_context)
     if (
         profile is not None
-        and profile.usable_mcp_endpoint(trusted_suffixes=trusted_suffixes) is not None
+        and profile.usable_shopping_endpoint(trusted_suffixes=trusted_suffixes)
+        is not None
     ):
         return _format_ucp_hint(profile)
     return None

@@ -74,9 +74,28 @@ prior same-origin path posted to the attacker-influenced storefront origin too) 
 in this change. A private-IP/internal-host guard on the shopping POST path remains possible future
 hardening.
 
-## Follow-up: REST transport
+## Follow-up: REST transport (done)
 
-THE ICONIC and Adore Beauty advertise `transport: "rest"`, not `mcp`. The client only speaks the MCP
-JSON-RPC transport, so those merchants still fall back to a non-existent `/api/ucp/mcp` path and
-fail. Adding a REST-transport client (the `dev.ucp.shopping` `rest` binding /
-`rest.openapi.json`) is the unlock for REST-only merchants and is tracked separately.
+THE ICONIC and Adore Beauty advertise `transport: "rest"`, not `mcp`. The client originally only
+spoke the MCP JSON-RPC transport, so those merchants fell back to a non-existent `/api/ucp/mcp` path
+and failed (surfacing as `UCP response was not JSON`). REST-transport support has since been added
+so those merchants are reachable:
+
+- **Discovery** now surfaces `rest` bindings alongside `mcp` ones
+  (`MerchantUCPProfile.rest_endpoints`), and `usable_shopping_endpoint(...)` selects the safest
+  endpoint across both transports using the unchanged trust ranking (same-origin → same-site →
+  trusted suffix), preferring MCP within a trust class. The resolved transport is threaded through
+  `_ResolvedMerchant`.
+- **The tools branch on transport.** `_ucp_call` dispatches each UCP operation
+  (`create_cart`/`get_cart`/`update_cart`/`create_checkout`) to either the MCP `tools/call` body or
+  the REST verb/path from `rest.openapi.json` (`POST /carts`, `GET|PUT /carts/{id}`,
+  `POST /checkout-sessions`). The cart/checkout object is the REST request body directly (not
+  wrapped under a key) and the resource id is URL-encoded into the path. RFC 9421 signing
+  (`sign_ucp_request`) is reused unchanged. A REST response is the cart/checkout object itself,
+  re-nested under the MCP `result.structuredContent` shape so
+  `_cart_from_response`/`_checkout_from_response` work as-is.
+- **Adore Beauty** is checkout-only (advertises checkout but not `dev.ucp.shopping.cart`), so it
+  exercises the signed REST checkout handoff; its checkout path requires signing to be configured.
+- **Coverage:** `rest.openapi.json` is vendored into `tests/data/ucp/2026-04-08/`, and the contract
+  test (`tests/unit/tools/test_shopping_ucp_contract.py`) validates the REST request bodies and
+  verb/path against it the same way it validates the MCP `tools/call` bodies.

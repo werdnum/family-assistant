@@ -206,12 +206,15 @@ You can ask the assistant a wide variety of things:
   `/.well-known/ucp` profile (following any redirect the merchant serves there), and while browsing
   it automatically notices when a site supports UCP shopping. This includes Shopify stores on their
   own custom domain, whose commerce endpoint lives on a `*.myshopify.com` host — you can just give
-  the assistant the storefront you browsed. Some merchants are checkout-only (they support checkout
-  but not a cart); for these the assistant opens a checkout session directly from the selected items
-  instead of building a cart first. The server also publishes its own public UCP platform profile at
-  `/.well-known/ucp`. Checkout handoff requires signed UCP requests; configure `UCP_SIGNING_KEY_ID`
-  and either `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384
-  private key. The assistant does not complete checkout or collect payment credentials in chat.
+  the assistant the storefront you browsed. The assistant speaks both UCP transports — the MCP
+  JSON-RPC transport that Shopify stores use and the REST transport that merchants such as THE
+  ICONIC and Adore Beauty advertise — so a merchant's choice of transport is transparent to you.
+  Some merchants are checkout-only (they support checkout but not a cart); for these the assistant
+  opens a checkout session directly from the selected items instead of building a cart first. The
+  server also publishes its own public UCP platform profile at `/.well-known/ucp`. Checkout handoff
+  requires signed UCP requests; configure `UCP_SIGNING_KEY_ID` and either `UCP_SIGNING_PRIVATE_KEY`
+  or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key. The assistant does not
+  complete checkout or collect payment credentials in chat.
 
 - **Ingest Documents (Files and URLs):**
 
