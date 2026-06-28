@@ -33,6 +33,10 @@ from .config_sources import deep_merge_dicts, load_yaml_file
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_DOCS_KEY = "system_prompt_docs"
+ADDITIVE_TOOLS_CONFIG_LIST_KEYS = frozenset({
+    "on_demand_local_tools",
+    "on_demand_mcp_server_ids",
+})
 
 # Default paths
 # defaults.yaml: Shipped with the application, contains default configuration
@@ -209,6 +213,34 @@ def get_nested_value(
             return default
         current = current[key]
     return current
+
+
+def merge_profile_tools_config(
+    default_tools_config: dict[str, Any],
+    profile_tools_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge profile tool settings with defaults.
+
+    Most ``tools_config`` values are operational scalars where the profile value
+    should replace the inherited default. On-demand declarations are different:
+    they describe tools and MCP servers that should be lazy in this profile.
+    Making an inherited tool eager because a profile adds one local override is
+    surprising and expensive, so those lists are additive.
+    """
+    merged = deep_merge_dicts(default_tools_config, profile_tools_config)
+
+    for key in ADDITIVE_TOOLS_CONFIG_LIST_KEYS:
+        if key not in profile_tools_config:
+            continue
+
+        inherited_items = default_tools_config.get(key, [])
+        profile_items = profile_tools_config.get(key, [])
+        if not isinstance(inherited_items, list) or not isinstance(profile_items, list):
+            continue
+
+        merged[key] = list(dict.fromkeys([*inherited_items, *profile_items]))
+
+    return merged
 
 
 def parse_env_value(
@@ -749,9 +781,13 @@ def resolve_service_profile(
                         SYSTEM_PROMPT_DOCS_KEY,
                     )
 
-    # Replace tools_config entirely if defined.
+    # Merge tools_config so profiles can tune one operational setting without
+    # accidentally making inherited on-demand tools eager.
     if "tools_config" in profile_def and isinstance(profile_def["tools_config"], dict):
-        resolved["tools_config"] = copy.deepcopy(profile_def["tools_config"])
+        resolved["tools_config"] = merge_profile_tools_config(
+            resolved.get("tools_config", {}),
+            profile_def["tools_config"],
+        )
 
     # Replace tools_policy entirely if defined (operator layer is preserved
     # separately so it still applies via PolicyEngine.from_layers)
