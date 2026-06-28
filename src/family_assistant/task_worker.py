@@ -1840,6 +1840,7 @@ class TaskWorker:
                 self._tickle_stream_hub_on_commit(
                     isolated_db,
                     run["conversation_id"],
+                    user_id=run["user_id"],
                 )
             else:
                 chat_interface = self._chat_interface_for_interface(
@@ -2058,6 +2059,7 @@ class TaskWorker:
             self._tickle_stream_hub_on_commit(
                 db_context,
                 run["conversation_id"],
+                user_id=run["user_id"],
             )
             return visible_message_internal_id
 
@@ -2217,19 +2219,22 @@ class TaskWorker:
         self,
         db_context: DatabaseContext,
         conversation_id: str,
+        user_id: str | None = None,
     ) -> None:
-        """Nudge open web follow-streams to reload once the message commits.
+        """Nudge open web streams to reload once the message commits.
 
-        The delegation completion message is saved inside the task worker's
-        transaction; web clients with an open conversation stream learn about
-        it via a content-free ``message`` event on the ConversationStreamHub
-        (they then refetch history). This mirrors WebChatInterface's post-commit
-        hub tickle for messages written outside the streaming turn path.
+        Two nudges fire, both scheduled from an ``on_commit`` hook so they only
+        run after the surrounding transaction commits (the new row must be
+        visible to a refetch). Strong references are held until they complete.
 
-        ``hub.publish`` is async but must run only after the surrounding
-        transaction commits, so the new row is visible to a refetch. It is
-        scheduled from an ``on_commit`` hook onto the running loop; a strong
-        reference is held until the publish completes.
+        * A content-free ``message`` event on the conversation's own stream, so
+          a client with that thread open refetches its history. This mirrors
+          WebChatInterface's post-commit tickle for messages written outside the
+          streaming turn path.
+        * A ``conversation_activity`` ping on the account-global activity stream
+          (when ``user_id`` is known), so a client looking at a *different*
+          thread — or the conversation list — refreshes the list and sees the
+          delegated/scheduled reply land without a manual pull-to-refresh.
         """
         if self.stream_hub is None:
             return
@@ -2250,6 +2255,17 @@ class TaskWorker:
             )
             self._hub_publish_tasks.add(task)
             task.add_done_callback(self._hub_publish_tasks.discard)
+
+            if user_id:
+                activity_task = loop.create_task(
+                    hub.publish_activity(
+                        conversation_id,
+                        user_id=user_id,
+                        reason="delegation",
+                    )
+                )
+                self._hub_publish_tasks.add(activity_task)
+                activity_task.add_done_callback(self._hub_publish_tasks.discard)
 
         db_context.on_commit(_schedule_publish)
 

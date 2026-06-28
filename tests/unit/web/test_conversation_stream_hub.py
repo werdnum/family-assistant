@@ -542,3 +542,95 @@ async def test_publish_to_turn_updates_latest_seq() -> None:
 
     await hub.publish("conv", "text", turn_id="t1", payload={"content": "b"})
     assert turn.latest_seq == 2
+
+
+# ---------------------------------------------------------------------------- #
+# Account-global activity channel
+# ---------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_start_turn_broadcasts_activity_to_matching_user() -> None:
+    """Starting a turn pings the owner's activity subscriber so a brand-new
+    conversation surfaces in the list before the reply lands."""
+    hub = ConversationStreamHub()
+    handle = hub.subscribe_activity("u1")
+
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    activity = handle.queue.get_nowait()
+    assert activity.conversation_id == "conv"
+    assert activity.reason == "turn_started"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_activity_scoped_to_owning_user() -> None:
+    """Activity for one user's conversation is not delivered to another user's
+    subscriber (no cross-user conversation-id leak)."""
+    hub = ConversationStreamHub()
+    other = hub.subscribe_activity("u2")
+
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    assert other.queue.empty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_end_turn_broadcasts_activity() -> None:
+    """Ending a turn pings the owner's activity subscriber so a reply that
+    finished on another thread refreshes the list."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    handle = hub.subscribe_activity("u1")
+
+    await hub.end_turn("conv", turn_id="t1", status="complete")
+
+    activity = handle.queue.get_nowait()
+    assert activity.conversation_id == "conv"
+    assert activity.reason == "turn_ended"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_publish_activity_broadcasts_to_matching_user() -> None:
+    """The public publish_activity entry point (used by the task worker for
+    delegated/scheduled replies) reaches the owner's subscriber."""
+    hub = ConversationStreamHub()
+    handle = hub.subscribe_activity("u1")
+
+    await hub.publish_activity("conv", user_id="u1", reason="delegation")
+
+    activity = handle.queue.get_nowait()
+    assert activity.conversation_id == "conv"
+    assert activity.reason == "delegation"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_unsubscribe_activity_stops_delivery() -> None:
+    """An unsubscribed activity subscriber receives no further pings."""
+    hub = ConversationStreamHub()
+    handle = hub.subscribe_activity("u1")
+    hub.unsubscribe_activity(handle.queue)
+
+    await hub.publish_activity("conv", user_id="u1", reason="delegation")
+
+    assert handle.queue.empty()
+    assert not hub.is_activity_subscribed(handle.queue)
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_activity_overflow_drops_subscriber() -> None:
+    """A subscriber whose queue overflows is dropped (it reconnects), rather
+    than blocking the broadcast for everyone else."""
+    hub = ConversationStreamHub(subscriber_queue_max=2)
+    handle = hub.subscribe_activity("u1")
+
+    for _ in range(3):
+        await hub.publish_activity("conv", user_id="u1", reason="delegation")
+
+    assert not hub.is_activity_subscribed(handle.queue)

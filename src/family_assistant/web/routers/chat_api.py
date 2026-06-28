@@ -1264,6 +1264,95 @@ async def api_chat_conversation_stream(
     )
 
 
+@chat_api_router.get("/v1/chat/activity/stream", response_model=None)
+async def api_chat_activity_stream(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Account-global stream of conversation-list change pings.
+
+    Emits a compact ``conversation_activity`` frame whenever a conversation the
+    caller owns gains new visible activity (a turn starts or ends, or a
+    delegated/scheduled reply lands). The payload carries no message content —
+    only the conversation id, a coarse reason, and a timestamp — so the client
+    reacts by re-fetching the authoritative, ownership-filtered conversation
+    list (``GET /v1/chat/conversations``). It is the live counterpart to
+    pull-to-refresh: it keeps the list fresh for activity happening outside
+    whichever thread the user currently has open.
+
+    Always-on: stays open with 30s heartbeats and is resumed by the client on
+    disconnect. Scoped to the caller by an exact ``user_identifier`` match; a
+    missed or mis-scoped ping is harmless because the authoritative list fetch
+    does the real ownership filtering.
+    """
+    raw_user_id = current_user.get("user_identifier")
+    if not isinstance(raw_user_id, str) or not raw_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    hub = _get_hub(request)
+    shutdown_event = _get_shutdown_event(request)
+    handle = hub.subscribe_activity(raw_user_id)
+
+    async def event_generator() -> AsyncGenerator[str]:
+        try:
+            while True:
+                queue_get = asyncio.ensure_future(handle.queue.get())
+                shutdown_wait = asyncio.ensure_future(shutdown_event.wait())
+                try:
+                    done, _pending = await asyncio.wait(
+                        {queue_get, shutdown_wait},
+                        timeout=30.0,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    if not queue_get.done():
+                        queue_get.cancel()
+                    shutdown_wait.cancel()
+
+                if shutdown_event.is_set():
+                    yield (
+                        'event: stream_dropped\ndata: {"reason": "server_shutdown"}\n\n'
+                    )
+                    return
+
+                if queue_get not in done:
+                    # Heartbeat tick. If the hub dropped this subscriber (its
+                    # queue overflowed), tell the client to reconnect instead of
+                    # heartbeating into a discarded subscription.
+                    if not hub.is_activity_subscribed(handle.queue):
+                        yield (
+                            "event: stream_dropped\n"
+                            'data: {"reason": "queue_overflow"}\n\n'
+                        )
+                        return
+                    yield "event: heartbeat\ndata: {}\n\n"
+                    continue
+
+                activity = queue_get.result()
+                payload = json.dumps({
+                    "conversation_id": activity.conversation_id,
+                    "reason": activity.reason,
+                    "timestamp": activity.timestamp.isoformat(),
+                })
+                yield f"event: conversation_activity\ndata: {payload}\n\n"
+        except asyncio.CancelledError:
+            raise
+        finally:
+            # Synchronous + lock-free so it still runs when the ASGI server
+            # cancels this generator on client disconnect.
+            hub.unsubscribe_activity(handle.queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @chat_api_router.post("/v1/chat/ack")
 async def api_chat_ack(
     payload: AckRequest,
