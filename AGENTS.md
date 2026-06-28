@@ -344,7 +344,9 @@ profile's tool-policy engine, regardless of the profile's own `tools_policy` (wh
 replaces the shipped defaults wholesale). Use it for tools that must be available in all contexts.
 Operator policy still overrides global rules. The shipped default uses it to make
 `report_technical_problem` available in every profile so the assistant can always report bugs (they
-surface in the error-log and diagnostics endpoints above).
+surface in the error-log and diagnostics endpoints above), and to make `read_text_attachment` and
+`jq_query` available in every profile so the assistant can always read back tool results that
+exceeded the large-result threshold and were auto-converted to attachments.
 
 ### Embedding Providers
 
