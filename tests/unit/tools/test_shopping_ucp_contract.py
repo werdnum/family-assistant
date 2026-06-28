@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -244,6 +245,62 @@ def _assert_conforms(
     ).validate(arguments)
 
 
+_REST_SPEC = _load_schema("rest.openapi.json")
+_CART_SCHEMA_ID = "https://ucp.dev/2026-04-08/schemas/shopping/cart.json"
+_CHECKOUT_SCHEMA_ID = "https://ucp.dev/2026-04-08/schemas/shopping/checkout.json"
+
+
+def _rest_route(operation: str) -> tuple[str, str]:
+    """The ``(verb, path template)`` the vendored REST OpenAPI defines for an op."""
+    paths = cast("dict[str, dict[str, object]]", _REST_SPEC["paths"])
+    for path, item in paths.items():
+        for method, op in item.items():
+            if isinstance(op, dict) and op.get("operationId") == operation:
+                return method.upper(), path
+    msg = f"operation {operation} is not in the vendored REST OpenAPI document"
+    raise AssertionError(msg)
+
+
+def _rest_body_schema(
+    operation: str, op: str, *, cart_checkout: bool = False
+) -> dict[str, object]:
+    """The request-body schema a REST operation must conform to.
+
+    A REST cart/checkout request body is the object itself (not wrapped under a
+    ``cart``/``checkout`` key the way the MCP ``tools/call`` arguments are), and
+    the resource id travels in the path, never the body.
+    """
+    object_schema = {
+        "create_cart": _SCHEMAS_BY_ID[_CART_SCHEMA_ID],
+        "update_cart": _SCHEMAS_BY_ID[_CART_SCHEMA_ID],
+        "create_checkout": _CART_CHECKOUT_SCHEMA
+        if cart_checkout
+        else _SCHEMAS_BY_ID[_CHECKOUT_SCHEMA_ID],
+    }[operation]
+    return _request_object_schema(object_schema, op, provided_params=frozenset({"id"}))
+
+
+def _assert_rest_conforms(
+    operation: str,
+    captured: dict[str, object],
+    *,
+    expected_url: str,
+    cart_checkout: bool = False,
+) -> None:
+    """Validate a captured REST request's verb, URL, and body against the spec."""
+    verb, _path = _rest_route(operation)
+    assert captured["method"] == verb
+    assert captured["url"] == expected_url
+    body = captured["body"]
+    if operation in {"create_cart", "update_cart", "create_checkout"}:
+        op = _METHOD_OP[operation]
+        Draft202012Validator(
+            _rest_body_schema(operation, op, cart_checkout=cart_checkout)
+        ).validate(body)
+    else:
+        assert body is None
+
+
 def _private_key_pem() -> str:
     private_key = ec.generate_private_key(ec.SECP256R1())
     return private_key.private_bytes(
@@ -272,6 +329,7 @@ def _context(app_config: AppConfig) -> ToolExecutionContext:
 
 class _CapturingClient:
     posts: list[dict[str, object]] = []
+    requests: list[dict[str, object]] = []
     post_responses: list[httpx.Response] = []
     profile_responses: list[httpx.Response] = []
 
@@ -305,6 +363,24 @@ class _CapturingClient:
         self.posts.append(json.loads((content or b"{}").decode("utf-8")))
         return self.post_responses.pop(0)
 
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        content: bytes | None,
+    ) -> httpx.Response:
+        # REST transport calls go through client.request(verb, url, ...). Record
+        # the verb, URL, and decoded body so the contract test can validate the
+        # request the REST path actually emits.
+        self.requests.append({
+            "method": method,
+            "url": url,
+            "body": json.loads(content.decode("utf-8")) if content else None,
+        })
+        return self.post_responses.pop(0)
+
 
 def _reset_client(
     monkeypatch: MonkeyPatch,
@@ -314,6 +390,7 @@ def _reset_client(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _CapturingClient)
     _CapturingClient.posts = []
+    _CapturingClient.requests = []
     _CapturingClient.post_responses = post_responses
     _CapturingClient.profile_responses = profile_responses or []
 
@@ -410,6 +487,42 @@ def _checkout_only_profile() -> httpx.Response:
             }
         },
     )
+
+
+def _rest_profile(*, checkout_only: bool = False) -> httpx.Response:
+    # THE ICONIC / Adore Beauty advertise a same-origin/same-site REST binding
+    # instead of MCP. Adore is checkout-only (no cart capability).
+    capabilities: dict[str, object] = {"dev.ucp.shopping.checkout": [{}]}
+    if not checkout_only:
+        capabilities["dev.ucp.shopping.cart"] = [{}]
+    return httpx.Response(
+        200,
+        json={
+            "ucp": {
+                "services": {
+                    "dev.ucp.shopping": [
+                        {
+                            "transport": "rest",
+                            "endpoint": "https://shop.example.com/ucp/v1",
+                        }
+                    ]
+                },
+                "capabilities": capabilities,
+            }
+        },
+    )
+
+
+def _rest_cart_response(
+    *, line_items: list[dict[str, object]] | None = None
+) -> httpx.Response:
+    # A REST cart response IS the cart object itself (cart_result =
+    # oneOf[cart, error_response]) — no JSON-RPC envelope, no structuredContent.
+    return httpx.Response(200, json=_spec_cart(line_items=line_items))
+
+
+def _rest_checkout_response() -> httpx.Response:
+    return httpx.Response(200, json=_spec_checkout())
 
 
 async def test_create_cart_request_conforms_to_spec(monkeypatch: MonkeyPatch) -> None:
@@ -552,3 +665,123 @@ def test_cart_parser_reads_spec_shaped_response_and_rejects_legacy_wrapper() -> 
     with pytest.raises(ValueError, match="did not include a cart"):
         # SLF001: same rationale — exercise the private parser directly.
         shopping._cart_from_response(wrapped)  # noqa: SLF001
+
+
+async def test_rest_create_cart_request_conforms_to_spec(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    _reset_client(
+        monkeypatch,
+        post_responses=[_rest_cart_response()],
+        profile_responses=[_rest_profile()],
+    )
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com/products/sweater",
+        line_items=[{"variant_id": "gid://shopify/ProductVariant/1", "quantity": 2}],
+    )
+
+    _assert_rest_conforms(
+        "create_cart",
+        _CapturingClient.requests[0],
+        expected_url="https://shop.example.com/ucp/v1/carts",
+    )
+
+
+async def test_rest_update_cart_requests_conform_to_spec(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    existing = [{"quantity": 1, "item": {"id": "gid://shopify/ProductVariant/1"}}]
+    cart_id = "gid://shopify/Cart/cart_abc123"
+    _reset_client(
+        monkeypatch,
+        post_responses=[
+            _rest_cart_response(line_items=existing),
+            _rest_cart_response(),
+        ],
+        profile_responses=[_rest_profile()],
+    )
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(AppConfig(server_url="https://assistant.example")),
+        business_url="https://shop.example.com",
+        cart_id=cart_id,
+        line_items=[{"variant_id": "gid://shopify/ProductVariant/2", "quantity": 1}],
+    )
+
+    quoted = quote(cart_id, safe="")
+    # The opaque cart id is URL-encoded into the path so its slashes/colons
+    # cannot escape the segment.
+    assert "%2F" in quoted
+    _assert_rest_conforms(
+        "get_cart",
+        _CapturingClient.requests[0],
+        expected_url=f"https://shop.example.com/ucp/v1/carts/{quoted}",
+    )
+    _assert_rest_conforms(
+        "update_cart",
+        _CapturingClient.requests[1],
+        expected_url=f"https://shop.example.com/ucp/v1/carts/{quoted}",
+    )
+
+
+async def test_rest_checkout_only_create_checkout_request_conforms_to_spec(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    _reset_client(
+        monkeypatch,
+        post_responses=[_rest_checkout_response()],
+        profile_responses=[_rest_profile(checkout_only=True)],
+    )
+
+    await shopping.ucp_add_to_cart_tool(
+        _context(_signed_config()),
+        business_url="https://shop.example.com/products/serum",
+        line_items=[{"variant_id": "gid://shopify/ProductVariant/1", "quantity": 2}],
+        context={"address_country": "AU"},
+    )
+
+    _assert_rest_conforms(
+        "create_checkout",
+        _CapturingClient.requests[0],
+        expected_url="https://shop.example.com/ucp/v1/checkout-sessions",
+    )
+
+
+async def test_rest_cart_handoff_create_checkout_request_conforms_to_spec(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    existing = [{"quantity": 1, "item": {"id": "gid://shopify/ProductVariant/1"}}]
+    cart_id = "gid://shopify/Cart/cart_abc123"
+    _reset_client(
+        monkeypatch,
+        post_responses=[
+            _rest_cart_response(line_items=existing),
+            _rest_checkout_response(),
+        ],
+        profile_responses=[_rest_profile()],
+    )
+
+    await shopping.ucp_transfer_checkout_to_human_tool(
+        _context(_signed_config()),
+        business_url="https://shop.example.com",
+        cart_id=cart_id,
+    )
+
+    quoted = quote(cart_id, safe="")
+    _assert_rest_conforms(
+        "get_cart",
+        _CapturingClient.requests[0],
+        expected_url=f"https://shop.example.com/ucp/v1/carts/{quoted}",
+    )
+    create = _CapturingClient.requests[1]
+    # The cart handoff converts via cart_id inside the checkout object, valid
+    # under the cart-capability "Checkout with Cart" extension.
+    _assert_rest_conforms(
+        "create_checkout",
+        create,
+        expected_url="https://shop.example.com/ucp/v1/checkout-sessions",
+        cart_checkout=True,
+    )
+    assert cast("dict[str, object]", create["body"])["cart_id"] == cart_id

@@ -1,9 +1,10 @@
-"""Shopping tools backed by UCP merchant MCP endpoints.
+"""Shopping tools backed by UCP merchant shopping endpoints.
 
 These tools work with any merchant that advertises a Universal Commerce Protocol
-(UCP) profile at ``/.well-known/ucp``. The merchant's shopping MCP endpoint is
-discovered from that profile; when a merchant does not advertise one, the tools
-fall back to the Shopify convention (``/api/ucp/mcp``).
+(UCP) profile at ``/.well-known/ucp``. The merchant's shopping endpoint and its
+transport (MCP JSON-RPC or REST) are discovered from that profile; when a
+merchant does not advertise a usable binding, the tools fall back to the Shopify
+MCP convention (``/api/ucp/mcp``).
 """
 
 from __future__ import annotations
@@ -12,11 +13,14 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
 
 from family_assistant.services.ucp import (
+    MCP_TRANSPORT,
+    REST_TRANSPORT,
     UCPConfigurationError,
     discover_merchant_ucp_profile,
     has_ucp_signing_key,
@@ -47,14 +51,19 @@ CHECKOUT_CAPABILITY = "dev.ucp.shopping.checkout"
 
 @dataclass(frozen=True, slots=True)
 class _ResolvedMerchant:
-    """The endpoint to use for a merchant plus its cart/checkout shape.
+    """The endpoint to use for a merchant, its transport, and cart/checkout shape.
+
+    ``transport`` is ``MCP_TRANSPORT`` or ``REST_TRANSPORT`` and selects whether
+    operations are driven over the MCP JSON-RPC ``tools/call`` body or the REST
+    verbs/paths from ``rest.openapi.json``.
 
     ``checkout_only`` is True when the merchant advertises the checkout
-    capability but not the cart capability, meaning its MCP endpoint has no
-    cart methods and a cart must be skipped in favour of a direct checkout.
+    capability but not the cart capability, meaning its endpoint has no cart
+    methods and a cart must be skipped in favour of a direct checkout.
     """
 
     endpoint: str
+    transport: str
     checkout_only: bool
 
 
@@ -203,26 +212,28 @@ async def _resolve_ucp_endpoint(
     client: httpx.AsyncClient,
     trusted_suffixes: tuple[str, ...] = (),
 ) -> _ResolvedMerchant:
-    """Resolve the merchant's shopping MCP endpoint for ``business_url``.
+    """Resolve the merchant's shopping endpoint and transport for ``business_url``.
 
     Discovers the endpoints from the merchant's ``/.well-known/ucp`` profile and
-    falls back to the Shopify convention (``/api/ucp/mcp``) when the merchant
-    advertises no usable shopping MCP binding. The returned ``checkout_only``
-    flag reflects the discovered capabilities so callers can bypass the cart for
-    checkout-only merchants — but only when the profile's own endpoint is used;
-    on fallback the flag is cleared, since the capability described a binding
-    that was not adopted.
+    falls back to the Shopify MCP convention (``/api/ucp/mcp``) when the merchant
+    advertises no usable shopping binding. The returned ``transport`` (MCP or
+    REST) selects how the endpoint is driven. The ``checkout_only`` flag reflects
+    the discovered capabilities so callers can bypass the cart for checkout-only
+    merchants — but only when the profile's own endpoint is used; on fallback the
+    flag is cleared, since the capability described a binding that was not
+    adopted.
 
     A binding is usable when it is same-origin, same-site (a sibling subdomain of
     ``business_url``'s registrable domain), or hosted on a configured trusted
     platform suffix (``trusted_suffixes``, e.g. ``myshopify.com`` for Shopify
-    storefronts on custom domains). Every advertised binding is considered, so a
-    usable one is still selected when an unusable binding is listed ahead of it.
-    Anything else is ignored: the profile is untrusted merchant-controlled
-    metadata, so an arbitrary cross-host endpoint could otherwise redirect the
-    signed POST at an unrelated/internal host — an SSRF vector. Discovery is also
-    given a short timeout so a store that does not publish a profile (and may
-    tarpit the well-known path) falls back promptly instead of stalling the POST.
+    storefronts on custom domains). Every advertised binding — MCP or REST — is
+    considered, so a usable one is still selected when an unusable binding is
+    listed ahead of it. Anything else is ignored: the profile is untrusted
+    merchant-controlled metadata, so an arbitrary cross-host endpoint could
+    otherwise redirect the signed request at an unrelated/internal host — an SSRF
+    vector. Discovery is also given a short timeout so a store that does not
+    publish a profile (and may tarpit the well-known path) falls back promptly
+    instead of stalling the request.
     """
     origin = merchant_origin(business_url)
     if origin is None:
@@ -232,24 +243,27 @@ async def _resolve_ucp_endpoint(
         business_url, client=client, timeout=UCP_DISCOVERY_TIMEOUT_SECONDS
     )
     if profile is not None:
-        usable_endpoint = profile.usable_mcp_endpoint(trusted_suffixes=trusted_suffixes)
-        if usable_endpoint is not None:
+        usable = profile.usable_shopping_endpoint(trusted_suffixes=trusted_suffixes)
+        if usable is not None:
             return _ResolvedMerchant(
-                endpoint=usable_endpoint,
+                endpoint=usable.endpoint,
+                transport=usable.transport,
                 checkout_only=_is_checkout_only(profile),
             )
-        if profile.mcp_endpoints:
+        if profile.mcp_endpoints or profile.rest_endpoints:
             logger.warning(
                 "Ignoring %d untrusted cross-host UCP endpoint(s) advertised by %s",
-                len(profile.mcp_endpoints),
+                len(profile.mcp_endpoints) + len(profile.rest_endpoints),
                 origin,
             )
     # No profile, or only unusable (untrusted cross-host) bindings: fall back to
-    # the Shopify convention. That endpoint supports carts, so the profile's
+    # the Shopify MCP convention. That endpoint supports carts, so the profile's
     # checkout-only capability — which described the binding we just refused —
     # must not carry over and make the caller skip the cart here.
     return _ResolvedMerchant(
-        endpoint=f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}", checkout_only=False
+        endpoint=f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}",
+        transport=MCP_TRANSPORT,
+        checkout_only=False,
     )
 
 
@@ -431,6 +445,191 @@ async def _post_ucp_tool_call(
     }
 
 
+# REST transport: each UCP operation maps to a verb + path template from the
+# shopping ``rest.openapi.json``. The object body (cart/checkout) is sent
+# directly — REST does not wrap it under a key the way the MCP tools/call
+# arguments do — and the resource id travels in the path, not the body.
+_REST_ROUTES: dict[str, tuple[str, str]] = {
+    "create_cart": ("POST", "/carts"),
+    "get_cart": ("GET", "/carts/{id}"),
+    "update_cart": ("PUT", "/carts/{id}"),
+    "create_checkout": ("POST", "/checkout-sessions"),
+}
+
+# Which tools/call argument key wraps the object payload for each MCP method; the
+# resource id (when present) is a sibling top-level argument, not nested.
+_MCP_OBJECT_KEY: dict[str, str | None] = {
+    "create_cart": "cart",
+    "get_cart": None,
+    "update_cart": "cart",
+    "create_checkout": "checkout",
+}
+
+
+def _mcp_arguments(
+    operation: str, resource_id: str | None, payload: dict[str, object] | None
+) -> dict[str, object]:
+    """Build the MCP ``tools/call`` arguments for a UCP operation.
+
+    Re-creates the transport-specific shape the merchant's MCP endpoint expects:
+    the id as a top-level ``id`` argument and the object payload wrapped under
+    its ``cart``/``checkout`` key.
+    """
+    arguments: dict[str, object] = {}
+    if resource_id is not None:
+        arguments["id"] = resource_id
+    object_key = _MCP_OBJECT_KEY[operation]
+    if object_key is not None and payload is not None:
+        arguments[object_key] = payload
+    return arguments
+
+
+def _rest_route(
+    base_endpoint: str, operation: str, resource_id: str | None
+) -> tuple[str, str]:
+    """Return the ``(verb, url)`` for a UCP operation on a REST endpoint.
+
+    The resource id is URL-encoded into the path (cart/checkout ids are opaque
+    and may contain ``/`` and ``:``) so it cannot escape its path segment.
+    """
+    verb, path_template = _REST_ROUTES[operation]
+    if "{id}" in path_template:
+        if not resource_id:
+            msg = f"UCP REST {operation} requires a resource id."
+            raise ValueError(msg)
+        path = path_template.replace("{id}", quote(resource_id, safe=""))
+    else:
+        path = path_template
+    return verb, f"{base_endpoint.rstrip('/')}{path}"
+
+
+def _rest_error_text(body: dict[str, object]) -> str | None:
+    """First message text from a UCP REST ``error_response`` body, if any."""
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if isinstance(message, dict):
+                return _message_text(message)
+    return None
+
+
+def _raise_for_rest_failure(
+    response: httpx.Response, response_data: dict[str, object]
+) -> None:
+    """Raise on a hard REST failure (HTTP error status).
+
+    A non-2xx response carries an ``error_response`` body (``cart_result =
+    oneOf[cart, error_response]``), so its first message gives a clearer reason
+    than the bare status. Recoverable, in-resource failures (a 2xx cart/checkout
+    carrying error messages) are left for the shared cart/checkout parsers.
+    """
+    if response.is_error:
+        msg = (
+            _rest_error_text(response_data) or f"UCP HTTP error {response.status_code}."
+        )
+        raise ValueError(msg)
+
+
+async def _post_ucp_rest_call(
+    app_config: AppConfig,
+    *,
+    base_endpoint: str,
+    operation: str,
+    resource_id: str | None = None,
+    payload: dict[str, object] | None = None,
+    require_signed: bool = False,
+) -> dict[str, object]:
+    """Drive a UCP operation over the REST transport and normalize the response.
+
+    Signs the request with the same RFC 9421 helper as the MCP path (when a
+    signing key is configured), then re-nests the REST resource under the MCP
+    ``result.structuredContent`` shape so the shared cart/checkout parsers work
+    unchanged — a REST cart/checkout response IS the resource object.
+    """
+    verb, url = _rest_route(base_endpoint, operation, resource_id)
+    body = payload if verb in {"POST", "PUT"} else None
+
+    if require_signed:
+        _require_signing_config(app_config)
+
+    if has_ucp_signing_key(app_config):
+        try:
+            signed_request = sign_ucp_request(
+                app_config, method=verb, url=url, body=body
+            )
+        except UCPConfigurationError as exc:
+            raise ValueError(str(exc)) from exc
+        request_headers = signed_request.headers
+        request_body = signed_request.body
+    else:
+        request_headers = {"UCP-Agent": ucp_agent_header(app_config)}
+        request_body = None
+        if body is not None:
+            request_headers["Content-Type"] = "application/json"
+            request_body = _json_bytes(body)
+
+    logger.info("Calling UCP REST %s %s", verb, url)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.request(
+            verb, url, headers=request_headers, content=request_body
+        )
+
+    try:
+        response_data = response.json()
+    except json.JSONDecodeError as exc:
+        msg = f"UCP response was not JSON: HTTP {response.status_code}"
+        raise ValueError(msg) from exc
+
+    if not isinstance(response_data, dict):
+        msg = "UCP response JSON must be an object."
+        raise ValueError(msg)
+    _raise_for_rest_failure(response, response_data)
+
+    return {
+        "status_code": response.status_code,
+        "response": {"result": {"structuredContent": response_data}},
+        "request": {
+            "url": url,
+            "tool_name": operation,
+            "signed": has_ucp_signing_key(app_config),
+        },
+    }
+
+
+async def _ucp_call(
+    app_config: AppConfig,
+    *,
+    resolved: _ResolvedMerchant,
+    operation: str,
+    resource_id: str | None = None,
+    payload: dict[str, object] | None = None,
+    require_signed: bool = False,
+) -> dict[str, object]:
+    """Dispatch a UCP operation over the merchant's resolved transport.
+
+    The same semantic operation (``create_cart``/``get_cart``/``update_cart``/
+    ``create_checkout``) is mapped to a JSON-RPC ``tools/call`` body for an MCP
+    endpoint or to a REST verb/path for a REST endpoint; both return the shared
+    normalized response shape the cart/checkout parsers consume.
+    """
+    if resolved.transport == REST_TRANSPORT:
+        return await _post_ucp_rest_call(
+            app_config,
+            base_endpoint=resolved.endpoint,
+            operation=operation,
+            resource_id=resource_id,
+            payload=payload,
+            require_signed=require_signed,
+        )
+    return await _post_ucp_tool_call(
+        app_config,
+        endpoint=resolved.endpoint,
+        tool_name=operation,
+        arguments=_mcp_arguments(operation, resource_id, payload),
+        require_signed=require_signed,
+    )
+
+
 def _structured_content(response_data: dict[str, object]) -> dict[str, object]:
     response = response_data.get("response")
     if not isinstance(response, dict):
@@ -607,20 +806,20 @@ def _cart_result_text(cart: dict[str, object]) -> str:
 async def _create_checkout_session(
     app_config: AppConfig,
     *,
-    endpoint: str,
-    arguments: dict[str, object],
+    resolved: _ResolvedMerchant,
+    checkout_payload: dict[str, object],
 ) -> ToolResult:
-    """Post a signed ``create_checkout`` call and render the handoff result.
+    """Make a signed ``create_checkout`` call and render the handoff result.
 
     Shared by the cart-based checkout handoff and the checkout-only add-to-cart
-    path; ``arguments`` carries the ``meta``/``checkout`` params the UCP
-    create_checkout binding expects (the ``checkout`` object holding line items).
+    path; ``checkout_payload`` is the ``checkout`` object (holding line items and
+    any supported checkout fields) the UCP create_checkout binding expects.
     """
-    response_data = await _post_ucp_tool_call(
+    response_data = await _ucp_call(
         app_config,
-        endpoint=endpoint,
-        tool_name="create_checkout",
-        arguments=arguments,
+        resolved=resolved,
+        operation="create_checkout",
+        payload=checkout_payload,
         require_signed=True,
     )
     checkout = _checkout_from_response(response_data)
@@ -652,7 +851,7 @@ async def _create_checkout_session(
 async def _add_to_cart_checkout_only(
     app_config: AppConfig,
     *,
-    endpoint: str,
+    resolved: _ResolvedMerchant,
     normalized_items: list[dict[str, object]],
     cart_id: str | None,
     context: dict[str, object] | None,
@@ -670,14 +869,14 @@ async def _add_to_cart_checkout_only(
             "the line items."
         )
         raise ValueError(msg)
-    # The UCP create_checkout binding takes a top-level `checkout` object with
-    # line items (and any supported checkout fields) nested inside it, mirroring
-    # how create_cart nests its payload under `cart`.
+    # The UCP create_checkout binding takes a `checkout` object with line items
+    # (and any supported checkout fields) inside it, mirroring how create_cart
+    # carries its payload as the cart object.
     checkout_payload: dict[str, object] = {"line_items": normalized_items}
     if context is not None:
         checkout_payload["context"] = context
     return await _create_checkout_session(
-        app_config, endpoint=endpoint, arguments={"checkout": checkout_payload}
+        app_config, resolved=resolved, checkout_payload=checkout_payload
     )
 
 
@@ -727,36 +926,37 @@ async def ucp_add_to_cart_tool(
     if resolved.checkout_only:
         return await _add_to_cart_checkout_only(
             app_config,
-            endpoint=resolved.endpoint,
+            resolved=resolved,
             normalized_items=normalized_items,
             cart_id=cart_id,
             context=context,
         )
 
     if cart_id:
-        current = await _post_ucp_tool_call(
+        current = await _ucp_call(
             app_config,
-            endpoint=resolved.endpoint,
-            tool_name="get_cart",
-            arguments={"id": cart_id},
+            resolved=resolved,
+            operation="get_cart",
+            resource_id=cart_id,
         )
         existing_cart = _cart_from_response(current)
         cart_payload = _cart_update_payload(existing_cart, normalized_items, context)
-        response_data = await _post_ucp_tool_call(
+        response_data = await _ucp_call(
             app_config,
-            endpoint=resolved.endpoint,
-            tool_name="update_cart",
-            arguments={"id": cart_id, "cart": cart_payload},
+            resolved=resolved,
+            operation="update_cart",
+            resource_id=cart_id,
+            payload=cart_payload,
         )
     else:
         cart_payload: dict[str, object] = {"line_items": normalized_items}
         if context is not None:
             cart_payload["context"] = context
-        response_data = await _post_ucp_tool_call(
+        response_data = await _ucp_call(
             app_config,
-            endpoint=resolved.endpoint,
-            tool_name="create_cart",
-            arguments={"cart": cart_payload},
+            resolved=resolved,
+            operation="create_cart",
+            payload=cart_payload,
         )
 
     cart = _cart_from_response(response_data)
@@ -773,11 +973,11 @@ async def ucp_get_cart_tool(
     resolved = await _resolve_endpoint_for(
         business_url, trusted_suffixes=_trusted_endpoint_suffixes(app_config)
     )
-    response_data = await _post_ucp_tool_call(
+    response_data = await _ucp_call(
         app_config,
-        endpoint=resolved.endpoint,
-        tool_name="get_cart",
-        arguments={"id": cart_id},
+        resolved=resolved,
+        operation="get_cart",
+        resource_id=cart_id,
     )
     cart = _cart_from_response(response_data)
     return ToolResult(text=_cart_result_text(cart), data=response_data)
@@ -800,15 +1000,15 @@ async def ucp_transfer_checkout_to_human_tool(
     # The cart capability extends create_checkout with cart_id for
     # cart-to-checkout conversion, so read the cart and hand off its cart_id
     # (plus its contents) inside the checkout object.
-    cart_response = await _post_ucp_tool_call(
+    cart_response = await _ucp_call(
         app_config,
-        endpoint=resolved.endpoint,
-        tool_name="get_cart",
-        arguments={"id": cart_id},
+        resolved=resolved,
+        operation="get_cart",
+        resource_id=cart_id,
     )
     cart = _cart_from_response(cart_response)
     return await _create_checkout_session(
         app_config,
-        endpoint=resolved.endpoint,
-        arguments={"checkout": _checkout_input_from_cart(cart, cart_id)},
+        resolved=resolved,
+        checkout_payload=_checkout_input_from_cart(cart, cart_id),
     )

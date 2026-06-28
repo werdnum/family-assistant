@@ -30,7 +30,21 @@ logger = logging.getLogger(__name__)
 UCP_PROFILE_PATH = "/.well-known/ucp"
 SHOPPING_SERVICE_NAME = "dev.ucp.shopping"
 MCP_TRANSPORT = "mcp"
+REST_TRANSPORT = "rest"
 STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@dataclass(frozen=True, slots=True)
+class ShoppingEndpoint:
+    """A usable shopping endpoint plus the transport the merchant speaks there.
+
+    ``transport`` is one of ``MCP_TRANSPORT`` / ``REST_TRANSPORT`` so the caller
+    knows whether to drive the endpoint with the MCP JSON-RPC body or the REST
+    verbs/paths from ``rest.openapi.json``.
+    """
+
+    transport: str
+    endpoint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,46 +70,57 @@ class MerchantUCPProfile:
     service_names: tuple[str, ...]
     capability_names: tuple[str, ...]
     version: str | None
+    rest_endpoints: tuple[str, ...] = ()
 
     @property
     def supports_shopping(self) -> bool:
-        """Whether the merchant advertises any shopping MCP endpoint."""
-        return bool(self.mcp_endpoints)
+        """Whether the merchant advertises any shopping endpoint (MCP or REST)."""
+        return bool(self.mcp_endpoints or self.rest_endpoints)
 
     @property
     def mcp_endpoint(self) -> str | None:
         """The first advertised shopping MCP endpoint, if any."""
         return self.mcp_endpoints[0] if self.mcp_endpoints else None
 
-    def usable_mcp_endpoint(
+    def usable_shopping_endpoint(
         self, *, trusted_suffixes: tuple[str, ...] = ()
-    ) -> str | None:
-        """The first advertised endpoint safe to post to for this merchant.
+    ) -> ShoppingEndpoint | None:
+        """The first advertised endpoint safe to call for this merchant.
 
         The profile is untrusted merchant-controlled metadata, so the signed
-        POST must not be redirected to an arbitrary host. An endpoint is usable
-        when it is same-origin as the merchant, same-site as the merchant (a
-        sibling subdomain of the same registrable domain — still the merchant's
-        own site, e.g. ``eve.theiconic.com.au`` for ``www.theiconic.com.au``),
-        or hosted on a configured trusted commerce-platform suffix
-        (``myshopify.com`` covers Shopify storefronts on custom domains, whose
-        UCP endpoint lives on the ``*.myshopify.com`` shop host). Anything else
-        is ignored so the caller falls back rather than posting to an unrelated
-        host. This is also what the browser shopping hint gates on.
+        request must not be redirected to an arbitrary host. An endpoint is
+        usable when it is same-origin as the merchant, same-site as the merchant
+        (a sibling subdomain of the same registrable domain — still the
+        merchant's own site, e.g. ``eve.theiconic.com.au`` for
+        ``www.theiconic.com.au``), or hosted on a configured trusted
+        commerce-platform suffix (``myshopify.com`` covers Shopify storefronts
+        on custom domains, whose UCP endpoint lives on the ``*.myshopify.com``
+        shop host). Anything else is ignored so the caller falls back rather than
+        calling an unrelated host. This is also what the browser shopping hint
+        gates on.
 
-        Candidates are ranked by trust class — same-origin first, then
-        same-site, then trusted suffix — so a profile that lists a platform or
-        same-site binding ahead of the merchant-local one still resolves to the
-        safest available endpoint rather than the first broad match.
+        Both transports are considered. Candidates are ranked by trust class —
+        same-origin first, then same-site, then trusted suffix — so a profile
+        that lists a platform or same-site binding ahead of the merchant-local
+        one still resolves to the safest available endpoint rather than the first
+        broad match. Within a trust class the MCP binding is preferred over a
+        REST one (it is the richer transport), so a merchant advertising both is
+        driven over MCP.
         """
+        candidates: tuple[ShoppingEndpoint, ...] = tuple(
+            ShoppingEndpoint(MCP_TRANSPORT, endpoint) for endpoint in self.mcp_endpoints
+        ) + tuple(
+            ShoppingEndpoint(REST_TRANSPORT, endpoint)
+            for endpoint in self.rest_endpoints
+        )
         for predicate in (
             lambda endpoint: same_origin(endpoint, self.origin),
             lambda endpoint: same_site(endpoint, self.origin),
             lambda endpoint: host_matches_trusted_suffix(endpoint, trusted_suffixes),
         ):
-            for endpoint in self.mcp_endpoints:
-                if predicate(endpoint):
-                    return endpoint
+            for candidate in candidates:
+                if predicate(candidate.endpoint):
+                    return candidate
         return None
 
 
@@ -229,10 +254,10 @@ def merchant_origin(url: str) -> str | None:
     return f"https://{netloc}"
 
 
-def _shopping_mcp_endpoints(
-    origin: str, services: Mapping[str, object]
+def _shopping_endpoints(
+    origin: str, services: Mapping[str, object], transport: str
 ) -> tuple[str, ...]:
-    """Return every advertised HTTPS shopping MCP endpoint, in profile order.
+    """Return every advertised HTTPS shopping endpoint for ``transport``.
 
     All candidates are returned (not just the first) so callers can apply their
     own selection policy — e.g. the shopping tools prefer a same-origin binding
@@ -247,7 +272,7 @@ def _shopping_mcp_endpoints(
     for binding in bindings:
         if not isinstance(binding, dict):
             continue
-        if binding.get("transport") != MCP_TRANSPORT:
+        if binding.get("transport") != transport:
             continue
         endpoint = binding.get("endpoint")
         if not isinstance(endpoint, str) or not endpoint:
@@ -279,7 +304,8 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
     version = ucp.get("version")
     return MerchantUCPProfile(
         origin=origin,
-        mcp_endpoints=_shopping_mcp_endpoints(origin, services),
+        mcp_endpoints=_shopping_endpoints(origin, services, MCP_TRANSPORT),
+        rest_endpoints=_shopping_endpoints(origin, services, REST_TRANSPORT),
         service_names=tuple(services.keys()),
         capability_names=tuple(capabilities.keys()),
         version=version if isinstance(version, str) else None,

@@ -322,11 +322,13 @@ async def test_discover_merchant_ucp_profile_collects_all_endpoints() -> None:
         )
 
     assert profile is not None
-    # Only MCP bindings, in profile order; the first is exposed as mcp_endpoint.
+    # MCP and REST bindings are each surfaced, in profile order; the first MCP
+    # binding is exposed as mcp_endpoint.
     assert profile.mcp_endpoints == (
         "https://a.example/mcp",
         "https://b.example/mcp",
     )
+    assert profile.rest_endpoints == ("https://a.example/rest",)
     assert profile.mcp_endpoint == "https://a.example/mcp"
 
 
@@ -380,7 +382,7 @@ async def test_discover_merchant_ucp_profile_returns_none_on_undecodable_body() 
     assert profile is None
 
 
-def test_usable_mcp_endpoint_prefers_same_origin_binding() -> None:
+def test_usable_shopping_endpoint_prefers_same_origin_binding() -> None:
     profile = MerchantUCPProfile(
         origin="https://shop.example.com",
         mcp_endpoints=(
@@ -393,10 +395,13 @@ def test_usable_mcp_endpoint_prefers_same_origin_binding() -> None:
     )
 
     # Skips the untrusted cross-host binding; matches the same-origin one.
-    assert profile.usable_mcp_endpoint() == "https://shop.example.com:443/ucp/rpc"
+    usable = profile.usable_shopping_endpoint()
+    assert usable is not None
+    assert usable.endpoint == "https://shop.example.com:443/ucp/rpc"
+    assert usable.transport == "mcp"
 
 
-def test_usable_mcp_endpoint_none_when_only_untrusted_cross_host() -> None:
+def test_usable_shopping_endpoint_none_when_only_untrusted_cross_host() -> None:
     profile = MerchantUCPProfile(
         origin="https://shop.example.com",
         mcp_endpoints=("https://other.unrelated.com/mcp",),
@@ -405,11 +410,11 @@ def test_usable_mcp_endpoint_none_when_only_untrusted_cross_host() -> None:
         version=None,
     )
 
-    assert profile.usable_mcp_endpoint() is None
+    assert profile.usable_shopping_endpoint() is None
     assert profile.supports_shopping is True
 
 
-def test_usable_mcp_endpoint_accepts_same_site_subdomain() -> None:
+def test_usable_shopping_endpoint_accepts_same_site_subdomain() -> None:
     # THE ICONIC serves its endpoint from a sibling subdomain of the storefront.
     profile = MerchantUCPProfile(
         origin="https://www.theiconic.com.au",
@@ -419,10 +424,48 @@ def test_usable_mcp_endpoint_accepts_same_site_subdomain() -> None:
         version=None,
     )
 
-    assert profile.usable_mcp_endpoint() == "https://eve.theiconic.com.au/ucp/v1"
+    usable = profile.usable_shopping_endpoint()
+    assert usable is not None
+    assert usable.endpoint == "https://eve.theiconic.com.au/ucp/v1"
 
 
-def test_usable_mcp_endpoint_accepts_trusted_suffix_only_when_configured() -> None:
+def test_usable_shopping_endpoint_selects_rest_binding() -> None:
+    # THE ICONIC and Adore Beauty advertise a same-site/same-origin REST binding
+    # rather than MCP; it must be selected and tagged with the rest transport.
+    profile = MerchantUCPProfile(
+        origin="https://www.theiconic.com.au",
+        mcp_endpoints=(),
+        rest_endpoints=("https://eve.theiconic.com.au/ucp/v1",),
+        service_names=("dev.ucp.shopping",),
+        capability_names=(),
+        version=None,
+    )
+
+    usable = profile.usable_shopping_endpoint()
+    assert usable is not None
+    assert usable.endpoint == "https://eve.theiconic.com.au/ucp/v1"
+    assert usable.transport == "rest"
+
+
+def test_usable_shopping_endpoint_prefers_mcp_over_rest_in_same_trust_class() -> None:
+    # A merchant advertising both transports same-origin is driven over MCP, the
+    # richer transport, regardless of profile order.
+    profile = MerchantUCPProfile(
+        origin="https://shop.example.com",
+        mcp_endpoints=("https://shop.example.com/ucp/rpc",),
+        rest_endpoints=("https://shop.example.com/ucp/v1",),
+        service_names=("dev.ucp.shopping",),
+        capability_names=(),
+        version=None,
+    )
+
+    usable = profile.usable_shopping_endpoint()
+    assert usable is not None
+    assert usable.transport == "mcp"
+    assert usable.endpoint == "https://shop.example.com/ucp/rpc"
+
+
+def test_usable_shopping_endpoint_accepts_trusted_suffix_only_when_configured() -> None:
     # A Shopify storefront on a custom domain advertises its *.myshopify.com host.
     profile = MerchantUCPProfile(
         origin="https://statusanxiety.com.au",
@@ -432,10 +475,10 @@ def test_usable_mcp_endpoint_accepts_trusted_suffix_only_when_configured() -> No
         version=None,
     )
 
-    assert profile.usable_mcp_endpoint() is None
-    assert profile.usable_mcp_endpoint(trusted_suffixes=("myshopify.com",)) == (
-        "https://status-anxiety-2.myshopify.com/api/ucp/mcp"
-    )
+    assert profile.usable_shopping_endpoint() is None
+    usable = profile.usable_shopping_endpoint(trusted_suffixes=("myshopify.com",))
+    assert usable is not None
+    assert usable.endpoint == "https://status-anxiety-2.myshopify.com/api/ucp/mcp"
 
 
 def test_same_site_uses_registrable_domain() -> None:
@@ -458,7 +501,7 @@ def test_host_matches_trusted_suffix_is_label_anchored() -> None:
     assert not host_matches_trusted_suffix("http://shop.myshopify.com/api", suffixes)
 
 
-def test_usable_mcp_endpoint_prefers_same_origin_over_broader_trust() -> None:
+def test_usable_shopping_endpoint_prefers_same_origin_over_broader_trust() -> None:
     # A same-origin binding listed after a trusted-suffix and a same-site one is
     # still chosen — the safest merchant-local endpoint wins over platform/
     # same-site fallbacks regardless of profile order.
@@ -474,9 +517,9 @@ def test_usable_mcp_endpoint_prefers_same_origin_over_broader_trust() -> None:
         version=None,
     )
 
-    assert profile.usable_mcp_endpoint(trusted_suffixes=("myshopify.com",)) == (
-        "https://shop.example.com/ucp/rpc"
-    )
+    usable = profile.usable_shopping_endpoint(trusted_suffixes=("myshopify.com",))
+    assert usable is not None
+    assert usable.endpoint == "https://shop.example.com/ucp/rpc"
 
 
 def test_same_site_rejects_ip_and_internal_hosts() -> None:
