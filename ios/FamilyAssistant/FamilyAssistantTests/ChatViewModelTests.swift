@@ -431,6 +431,21 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testCannotSendWhileConversationMessagesAreLoading() {
+        let model = makeViewModel(conversationID: "web_conv_loading")
+        model.draftText = "follow up"
+        XCTAssertTrue(model.canSendDraft)
+
+        // While a switched-to conversation's history is still loading its profile
+        // has not been adopted yet, so sending must be blocked to avoid posting
+        // under the previous profile (which the backend would filter history by).
+        model.isLoadingMessages = true
+        XCTAssertFalse(
+            model.canSendDraft,
+            "Sending must be blocked until the conversation's history loads and its profile is adopted."
+        )
+    }
+
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
         var streamedTurnID = "turn-send"
         ChatMockBackendURLProtocol.respond { request in

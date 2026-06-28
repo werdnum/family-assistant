@@ -46,7 +46,11 @@ final class ChatViewModel {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !prompt.isEmpty || !draftAttachments.isEmpty
         let attachmentsReady = draftAttachments.allSatisfy { $0.uploadState == .uploaded }
-        return hasContent && attachmentsReady
+        // Block sending while a conversation's history is loading: until it
+        // completes, `selectConversation` hasn't adopted the thread's profile yet,
+        // so a send would post under the previous profile and the backend would
+        // filter this thread's history out of the turn's context.
+        return hasContent && attachmentsReady && !isLoadingMessages
     }
 
     @ObservationIgnored private let apiClient: ChatAPIClient
@@ -352,6 +356,14 @@ final class ChatViewModel {
         conversationSelection = id
         persistConversationID()
         mobileShowsConversationList = false
+        // Mark loading synchronously, before the first suspension below, so the
+        // composer is gated (see `canSendDraft`) for the entire switch — the
+        // thread's profile isn't adopted until `loadMessages` returns, and a send
+        // before then would go out under the previous profile. `loadMessages`
+        // clears this flag when it finishes.
+        if shouldLoadMessages {
+            isLoadingMessages = true
+        }
         if let queuedStopTurnID {
             _ = await cancelStopQueuedBeforeRegistration(for: queuedStopTurnID)
         }
@@ -686,6 +698,11 @@ final class ChatViewModel {
     func sendDraft() async {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty || !draftAttachments.isEmpty else {
+            return
+        }
+        // Defensive: the send button is disabled while a conversation loads, but
+        // never post a turn before its profile is adopted (see `canSendDraft`).
+        guard !isLoadingMessages else {
             return
         }
         guard draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
