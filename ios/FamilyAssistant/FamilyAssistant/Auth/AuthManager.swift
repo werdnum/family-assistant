@@ -16,6 +16,17 @@ final class AuthManager {
     var isLoading = false
     var errorMessage: String?
 
+    /// Wall-clock budget for ``bootstrapSession()``. If the refresh + session-bridge
+    /// work (notably the `WKWebsiteDataStore` cookie hand-off, whose first access
+    /// can stall on WebKit-process spin-up) exceeds this, the watchdog abandons it
+    /// and lets the app proceed with the stored token rather than pinning the
+    /// "Signing in…" screen indefinitely. `var` so tests can shorten it.
+    var bootstrapWatchdogSeconds: Double = 15
+
+    /// Per-request timeout for the bootstrap auth calls, kept below the watchdog so
+    /// a dead network surfaces as a transient failure before the watchdog trips.
+    private let authRequestTimeoutSeconds: TimeInterval = 10
+
     private var codeVerifier: String?
     private var authSession: ASWebAuthenticationSession?
     private var contextProvider: PresentationContextProvider?
@@ -173,6 +184,33 @@ final class AuthManager {
     func bootstrapSession() async {
         defer { isBootstrapping = false }
 
+        guard KeychainHelper.readString(key: Keys.apiToken) != nil else {
+            clearLocalAuthState()
+            return
+        }
+
+        let completed = await runWithWatchdog(seconds: bootstrapWatchdogSeconds) { [weak self] in
+            await self?.performBootstrap()
+        }
+
+        if !completed {
+            logger.error(
+                "Sign-in bootstrap exceeded \(self.bootstrapWatchdogSeconds, privacy: .public)s watchdog; proceeding with stored credentials"
+            )
+            ErrorReporter.shared.report(
+                message: "Sign-in bootstrap exceeded "
+                    + "\(Int(bootstrapWatchdogSeconds))s watchdog; proceeded with stored credentials",
+                component: "Auth.bootstrap",
+                errorType: .component,
+                extraData: ["watchdog_seconds": String(Int(bootstrapWatchdogSeconds))]
+            )
+        }
+    }
+
+    /// The refresh + session-bridge work run under ``bootstrapSession()``'s watchdog.
+    /// Handles its own errors so the watchdog only needs to observe completion.
+    @MainActor
+    private func performBootstrap() async {
         guard let token = KeychainHelper.readString(key: Keys.apiToken) else {
             clearLocalAuthState()
             return
@@ -182,6 +220,8 @@ final class AuthManager {
             try await refreshIfNeeded()
         } catch AuthError.authRejected, AuthError.noCredentials {
             clearLocalAuthState()
+            return
+        } catch is CancellationError {
             return
         } catch {
             logger.warning(
@@ -195,10 +235,38 @@ final class AuthManager {
             try await establishSession(apiToken: activeToken)
         } catch AuthError.authRejected {
             clearLocalAuthState()
+        } catch is CancellationError {
+            return
         } catch {
             logger.warning(
                 "Session bridge failed transiently; keeping local auth state: \(error.localizedDescription, privacy: .public)"
             )
+        }
+    }
+
+    /// Runs `operation`, returning `true` when it finishes, or `false` if it does
+    /// not complete within `seconds`. On timeout the operation is cancelled and
+    /// abandoned (not awaited), so a non-cancellable stall (e.g. a stuck
+    /// `WKWebsiteDataStore`) cannot pin the caller. Both children run on the main
+    /// actor, matching the isolation of `operation` and the auth state it mutates.
+    @MainActor
+    private func runWithWatchdog(
+        seconds: Double,
+        operation: @escaping @MainActor () async -> Void
+    ) async -> Bool {
+        let race = WatchdogRaceState()
+        return await withCheckedContinuation { continuation in
+            let work = Task { @MainActor in
+                await operation()
+                if race.tryFinish() { continuation.resume(returning: true) }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                if race.tryFinish() {
+                    work.cancel()
+                    continuation.resume(returning: false)
+                }
+            }
         }
     }
 
@@ -233,6 +301,7 @@ final class AuthManager {
         let url = baseURL.appendingPathComponent("api/auth/refresh")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = authRequestTimeoutSeconds
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["refresh_token": refreshToken])
 
@@ -273,6 +342,7 @@ final class AuthManager {
         let url = baseURL.appendingPathComponent("api/auth/token-session")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = authRequestTimeoutSeconds
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
 
         let response: URLResponse
@@ -395,6 +465,22 @@ struct TokenResponse: Decodable {
         case apiToken = "api_token"
         case refreshToken = "refresh_token"
         case expiresIn = "expires_in"
+    }
+}
+
+/// One-shot, thread-safe "who finished first" flag shared by the two racers in
+/// ``AuthManager/runWithWatchdog(seconds:operation:)`` so the continuation is
+/// resumed exactly once.
+private final class WatchdogRaceState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished = false
+
+    func tryFinish() -> Bool {
+        lock.withLock {
+            if finished { return false }
+            finished = true
+            return true
+        }
     }
 }
 
