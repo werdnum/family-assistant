@@ -88,9 +88,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
 
-# Strong references to fire-and-forget post-commit activity publishes so the
-# event loop doesn't garbage-collect them before they run.
-_ACTIVITY_PUBLISH_TASKS: set[asyncio.Task[None]] = set()
+# Strong references to fire-and-forget post-commit hub publishes (activity ping
+# + per-conversation message tickle) so the event loop doesn't garbage-collect
+# them before they run. Heterogeneous result types (publish -> StreamEvent,
+# publish_activity -> None), so the element type is Task[Any].
+_ACTIVITY_PUBLISH_TASKS: set[asyncio.Task[Any]] = set()
 
 
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
@@ -1905,32 +1907,40 @@ async def api_chat_send_message(
     # so a second device of the same user with an open follow-stream wouldn't
     # reload. Publish a content-free `message` event (the same nudge
     # WebChatInterface uses) so open follow-streams refetch history.
+    # Nudge other clients once this request's writes commit. ``get_db`` runs the
+    # whole request inside one ``engine.begin()`` transaction that commits at
+    # request end, so both nudges must be scheduled from ``on_commit`` — emitting
+    # them now would have a follower refetch /messages (and the activity stream
+    # refetch the list) before the reply is visible, leaving them stale with no
+    # later event. Two nudges: a per-conversation ``message`` event so a client
+    # already following THIS thread reloads its history, and an account-global
+    # activity ping so the conversation surfaces/bumps in the owner's list on a
+    # second tab/device (this non-streaming path has no start_turn/end_turn
+    # lifecycle of its own).
     send_hub = _get_hub(request)
-    await send_hub.publish(
-        conversation_id,
-        "message",
-        turn_id=None,
-        payload={"conversation_id": conversation_id, "new_messages": True},
-    )
-
-    # Also ping the account-global activity stream so the conversation surfaces
-    # (or bumps) in the owner's list on a second tab/device — the per-conversation
-    # tickle above only helps a client already following this exact thread. The
-    # non-streaming path has no start_turn/end_turn activity. Scheduled on commit
-    # because this request's writes commit at request end (engine.begin txn), so
-    # the conversation isn't listable until then.
     activity_loop = asyncio.get_running_loop()
 
-    def _publish_send_activity() -> None:
-        task = activity_loop.create_task(
+    def _publish_send_nudges() -> None:
+        message_task = activity_loop.create_task(
+            send_hub.publish(
+                conversation_id,
+                "message",
+                turn_id=None,
+                payload={"conversation_id": conversation_id, "new_messages": True},
+            )
+        )
+        _ACTIVITY_PUBLISH_TASKS.add(message_task)
+        message_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
+
+        activity_task = activity_loop.create_task(
             send_hub.publish_activity(
                 conversation_id, user_id=user_id, reason="message"
             )
         )
-        _ACTIVITY_PUBLISH_TASKS.add(task)
-        task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
+        _ACTIVITY_PUBLISH_TASKS.add(activity_task)
+        activity_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
 
-    db_context.on_commit(_publish_send_activity)
+    db_context.on_commit(_publish_send_nudges)
 
     return ChatMessageResponse(
         reply=final_reply_content,  # Back to original field name

@@ -705,6 +705,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Store the error but don't treat it as terminal — the stream may recover
     // with subsequent tool results or text content
     lastStreamingErrorRef.current = typeof error === 'string' ? error : error.message;
+    // Stop protecting this conversation's optimistic sidebar row. If the send
+    // failed before any row was persisted (e.g. POST /turns itself rejected),
+    // the server will never report the id, so without this the merge in
+    // fetchConversations would keep re-adding a phantom conversation on every
+    // refresh. If the message did persist, the server reports the conversation
+    // anyway, so dropping the optimistic copy is harmless.
+    const erroredConversationId = activeStreamConversationIdRef.current;
+    if (erroredConversationId) {
+      pendingOptimisticConversationsRef.current.delete(erroredConversationId);
+    }
   }, []);
 
   const handleStreamingComplete = useCallback(
