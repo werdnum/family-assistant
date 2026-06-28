@@ -37,6 +37,21 @@ class MockEventSource {
   }
 }
 
+// ChatApp opens two EventSources: the per-conversation follow stream
+// (`/conversations/{id}/stream`) and the account-global activity stream
+// (`/chat/activity/stream`). turn_ended lives on the follow stream, so select it
+// by URL rather than assuming a particular instantiation order.
+function latestFollowStream(): MockEventSource {
+  const followStreams = MockEventSource.instances.filter((es) =>
+    es.url.includes('/conversations/')
+  );
+  const stream = followStreams[followStreams.length - 1];
+  if (!stream) {
+    throw new Error('No conversation follow stream EventSource was opened');
+  }
+  return stream;
+}
+
 describe('In-app notification restore', () => {
   let originalEventSource: typeof EventSource;
   let originalBroadcastChannel: typeof BroadcastChannel;
@@ -129,7 +144,9 @@ describe('In-app notification restore', () => {
 
     await waitFor(
       () => {
-        expect(MockEventSource.instances.length).toBeGreaterThan(0);
+        expect(MockEventSource.instances.some((es) => es.url.includes('/conversations/'))).toBe(
+          true
+        );
       },
       { timeout: 3000 }
     );
@@ -138,7 +155,7 @@ describe('In-app notification restore', () => {
     // it, and the follow stream's content-free turn_ended drives a background
     // reload that should fire the notification.
     assistantTurns = 2;
-    MockEventSource.instances[MockEventSource.instances.length - 1].emit('turn_ended', {
+    latestFollowStream().emit('turn_ended', {
       seq: 1,
       status: 'complete',
     });

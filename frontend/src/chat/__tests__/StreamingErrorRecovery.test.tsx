@@ -66,6 +66,17 @@ class MockEventSource {
   }
 }
 
+// ChatApp opens both a per-conversation follow stream
+// (`/conversations/{id}/stream`) and the account-global activity stream
+// (`/chat/activity/stream`). Live `message`/`turn_ended` frames belong to the
+// follow stream, so select it by URL rather than by instantiation order.
+function latestFollowStream(): MockEventSource | undefined {
+  const followStreams = MockEventSource.instances.filter((es) =>
+    es.url.includes('/conversations/')
+  );
+  return followStreams[followStreams.length - 1];
+}
+
 // Run sequentially to avoid MSW handler conflicts with parallel tests
 describe.sequential('Streaming Error Recovery', () => {
   beforeEach(() => {
@@ -434,7 +445,7 @@ describe.sequential('Streaming Error Recovery', () => {
                 );
 
                 shouldReturnTruncatedHistory = true;
-                MockEventSource.instances[MockEventSource.instances.length - 1]?.emit('message', {
+                latestFollowStream()?.emit('message', {
                   internal_id: '302',
                   timestamp: '2026-06-04T12:29:02Z',
                   new_messages: true,
