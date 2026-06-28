@@ -81,43 +81,48 @@ class ScriptOutputBuffer:
 
     A buffer instance belongs to exactly one ``evaluate_async`` call, so
     concurrent runs on the same engine never share or clobber each other's
-    output. Retained output is capped at ``max_bytes`` so a chatty script
+    output. Retained output is capped at ``max_chars`` so a chatty script
     (e.g. a loop printing thousands of lines) cannot grow host-process memory
     for the whole ``execute_script`` timeout; once the cap is hit, further
     output is dropped and a truncation marker is appended. Logging of each
     line happens independently in the print callback and is not bounded here.
+
+    The cap is measured in characters rather than bytes so that bounding a
+    chunk never requires UTF-8 encoding the whole thing first (``len(text)``
+    is O(1) and slicing only ever copies a budget-sized prefix). A character
+    budget still bounds memory, since each retained character is at most a few
+    bytes.
     """
 
-    DEFAULT_MAX_BYTES = 16 * 1024
+    DEFAULT_MAX_CHARS = 16 * 1024
     _TRUNCATION_MARKER = "\n... [output truncated] ..."
 
-    def __init__(self, max_bytes: int = DEFAULT_MAX_BYTES) -> None:
-        self._max_bytes = max_bytes
+    def __init__(self, max_chars: int = DEFAULT_MAX_CHARS) -> None:
+        self._max_chars = max_chars
         self._parts: list[str] = []
         self._size = 0
         self._truncated = False
 
     def append(self, text: str) -> None:
-        """Append a chunk of print output, honouring the byte budget."""
-        if self._truncated:
+        """Append a chunk of print output, honouring the character budget."""
+        if self._truncated or not text:
+            # Skip empty chunks (e.g. ``print('', end='')``) so a flood of them
+            # cannot grow ``_parts`` without ever counting toward the cap.
             return
-        encoded_len = len(text.encode("utf-8"))
-        if self._size + encoded_len <= self._max_bytes:
+        remaining = self._max_chars - self._size
+        if len(text) <= remaining:
             self._parts.append(text)
-            self._size += encoded_len
+            self._size += len(text)
             return
-        remaining = self._max_bytes - self._size
         if remaining > 0:
-            # Keep a byte-bounded prefix without splitting a multibyte char.
-            prefix = text.encode("utf-8")[:remaining].decode("utf-8", "ignore")
-            if prefix:
-                self._parts.append(prefix)
-                self._size += len(prefix.encode("utf-8"))
+            prefix = text[:remaining]
+            self._parts.append(prefix)
+            self._size += len(prefix)
         self._truncated = True
 
     @property
     def truncated(self) -> bool:
-        """Whether output was dropped because the byte budget was exceeded."""
+        """Whether output was dropped because the character budget was hit."""
         return self._truncated
 
     def getvalue(self) -> str:

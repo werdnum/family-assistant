@@ -150,7 +150,7 @@ print("before failure")
 
     @pytest.mark.asyncio
     async def test_captured_output_is_bounded(self, engine_class: type) -> None:
-        """A chatty script cannot grow the buffer past its byte budget."""
+        """A chatty script cannot grow the buffer past its character budget."""
         engine = engine_class()
 
         # Print far more than the cap so truncation must kick in.
@@ -161,14 +161,14 @@ while i < 5000:
     i = i + 1
 0
 """
-        buffer = ScriptOutputBuffer(max_bytes=1024)
+        buffer = ScriptOutputBuffer(max_chars=1024)
         await engine.evaluate_async(script, output_buffer=buffer)
 
         output = buffer.getvalue()
         assert buffer.truncated
         assert "... [output truncated] ..." in output
         # Retained output stays close to the cap (marker adds a little).
-        assert len(output.encode("utf-8")) < 1024 + 64
+        assert len(output) < 1024 + 64
 
     @pytest.mark.skip(reason="PERMANENTLY DISABLED: Resource-intensive timeout test.")
     @pytest.mark.asyncio
@@ -391,3 +391,47 @@ results
         result = await engine.evaluate_async(script, {"async_flaky_fn": async_flaky_fn})
         assert result == ["error", "async success"]
         assert call_count == 2
+
+
+class TestScriptOutputBuffer:
+    """Unit tests for ScriptOutputBuffer bounding behaviour."""
+
+    def test_skips_empty_chunks(self) -> None:
+        """A flood of empty chunks never grows the buffer or trips the cap."""
+        buffer = ScriptOutputBuffer(max_chars=100)
+
+        for _ in range(10_000):
+            buffer.append("")
+
+        assert not buffer.truncated
+        assert not buffer.getvalue()
+
+        buffer.append("hello")
+        assert buffer.getvalue() == "hello"
+
+    def test_bounds_single_huge_chunk(self) -> None:
+        """A single oversized chunk is clipped to the cap, not retained whole."""
+        buffer = ScriptOutputBuffer(max_chars=100)
+
+        buffer.append("x" * 1_000_000)
+
+        assert buffer.truncated
+        output = buffer.getvalue()
+        assert "... [output truncated] ..." in output
+        # Only a budget-sized prefix is retained, never the full megabyte.
+        assert output.startswith("x" * 100)
+        assert len(output) < 100 + 64
+
+    def test_accumulates_until_cap(self) -> None:
+        """Chunks accumulate in order until the character budget is exceeded."""
+        buffer = ScriptOutputBuffer(max_chars=10)
+
+        buffer.append("abc")
+        buffer.append("def")
+        assert not buffer.truncated
+        assert buffer.getvalue() == "abcdef"
+
+        buffer.append("ghijkl")  # pushes past the 10-char cap
+        assert buffer.truncated
+        assert buffer.getvalue().startswith("abcdefghij")
+        assert "... [output truncated] ..." in buffer.getvalue()
