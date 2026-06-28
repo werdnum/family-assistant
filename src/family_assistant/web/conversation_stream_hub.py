@@ -21,7 +21,7 @@ import asyncio
 import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -81,6 +81,43 @@ class StreamEvent:
     turn_id: str | None
     # ast-grep-ignore: no-dict-any - StreamEvent payloads are heterogeneous across event types (text/tool/confirmation/etc.) and serialized verbatim to the SSE wire format
     payload: dict[str, Any]
+
+
+@dataclass(slots=True, frozen=True)
+class ConversationActivity:
+    """A lightweight "a conversation changed" ping for the account-global
+    activity stream.
+
+    Carries no message content — only the conversation id, a coarse reason, and
+    a timestamp. Clients react by re-fetching the authoritative,
+    ownership-filtered conversation list, so the ping is purely a refresh nudge
+    (a missed one degrades to the client's other refresh triggers; a spurious
+    one only costs a redundant list fetch).
+    """
+
+    conversation_id: str
+    reason: str
+    timestamp: datetime
+
+
+@dataclass(slots=True)
+class _ActivitySubscription:
+    """A live account-global activity subscriber's queue plus its user filter."""
+
+    queue: asyncio.Queue[ConversationActivity]
+    user_id: str
+
+
+@dataclass(slots=True, frozen=True)
+class ActivitySubscriptionHandle:
+    """Returned by ``subscribe_activity``. The caller drains ``queue`` and must
+    call ``hub.unsubscribe_activity(queue)`` when done (try/finally).
+
+    Unlike per-conversation subscriptions there is no replay: activity pings are
+    ephemeral, and a client refreshes the whole list once on connect anyway.
+    """
+
+    queue: asyncio.Queue[ConversationActivity]
 
 
 @dataclass(slots=True)
@@ -193,6 +230,13 @@ class ConversationStreamHub:
         max_conversations: int = DEFAULT_MAX_CONVERSATIONS,
     ) -> None:
         self._conversations: OrderedDict[str, _ConversationState] = OrderedDict()
+        # Account-global activity subscribers (one per open
+        # /v1/chat/activity/stream connection). Keyed by queue; mutated only on
+        # the event loop thread (subscribe/unsubscribe/fan-out), so no lock —
+        # mirroring per-conversation ``subscribers``.
+        self._activity_subscribers: dict[
+            asyncio.Queue[ConversationActivity], _ActivitySubscription
+        ] = {}
         # Guards self._conversations dict mutations (registering a new
         # conversation). Per-conversation locks guard everything inside.
         self._registry_lock = asyncio.Lock()
@@ -397,6 +441,99 @@ class ConversationStreamHub:
         for queue in dead:
             state.subscribers.pop(queue, None)
 
+    # ------------------------------------------------------------------ #
+    # Account-global activity channel
+    # ------------------------------------------------------------------ #
+
+    def subscribe_activity(self, user_id: str) -> ActivitySubscriptionHandle:
+        """Register an account-global activity subscriber for ``user_id``.
+
+        The returned handle's queue receives a ``ConversationActivity`` every
+        time a conversation owned by ``user_id`` changes. There is no replay
+        (activity pings are ephemeral); the caller refreshes the conversation
+        list once on connect and then on each ping. Synchronous + lock-free to
+        match ``subscribe``'s queue handout / ``unsubscribe``'s teardown.
+        """
+        queue: asyncio.Queue[ConversationActivity] = asyncio.Queue(
+            maxsize=self._subscriber_queue_max
+        )
+        self._activity_subscribers[queue] = _ActivitySubscription(
+            queue=queue, user_id=user_id
+        )
+        return ActivitySubscriptionHandle(queue=queue)
+
+    def unsubscribe_activity(self, queue: asyncio.Queue[ConversationActivity]) -> None:
+        """Remove an activity subscriber. Idempotent; synchronous + lock-free so
+        it runs from a generator ``finally`` during cancellation (see
+        ``unsubscribe``)."""
+        self._activity_subscribers.pop(queue, None)
+
+    def is_activity_subscribed(
+        self, queue: asyncio.Queue[ConversationActivity]
+    ) -> bool:
+        """Return True if ``queue`` is still a registered activity subscriber.
+
+        Fan-out drops a subscriber whose queue overflowed; the SSE generator
+        polls this so it can emit ``stream_dropped`` and close instead of
+        heartbeating into a discarded subscription."""
+        return queue in self._activity_subscribers
+
+    async def publish_activity(
+        self,
+        conversation_id: str,
+        *,
+        user_id: str,
+        reason: str,
+        timestamp: datetime | None = None,
+    ) -> None:
+        """Broadcast a conversation-list change for ``user_id``.
+
+        Public entry point for producers that change a conversation outside the
+        turn lifecycle (e.g. a delegated/scheduled completion persisted by the
+        task worker). Turn-driven activity is emitted automatically by
+        ``start_turn``/``end_turn``.
+        """
+        self._broadcast_activity(
+            conversation_id,
+            user_id=user_id,
+            reason=reason,
+            timestamp=timestamp or datetime.now(UTC),
+        )
+
+    def _broadcast_activity(
+        self,
+        conversation_id: str,
+        *,
+        user_id: str,
+        reason: str,
+        timestamp: datetime,
+    ) -> None:
+        """Fan a ``ConversationActivity`` out to every activity subscriber whose
+        ``user_id`` matches. Synchronous + lock-free (event-loop thread only),
+        iterating a snapshot so a concurrent unsubscribe can't corrupt it. A
+        subscriber whose queue is full is dropped (it reconnects)."""
+        if not self._activity_subscribers:
+            return
+        activity = ConversationActivity(
+            conversation_id=conversation_id,
+            reason=reason,
+            timestamp=timestamp,
+        )
+        dead: list[asyncio.Queue[ConversationActivity]] = []
+        for queue, sub in list(self._activity_subscribers.items()):
+            if sub.user_id != user_id:
+                continue
+            try:
+                queue.put_nowait(activity)
+            except asyncio.QueueFull:
+                logger.warning(
+                    "Activity subscriber queue full for user=%s; dropping",
+                    user_id,
+                )
+                dead.append(queue)
+        for queue in dead:
+            self._activity_subscribers.pop(queue, None)
+
     async def start_turn(
         self,
         conversation_id: str,
@@ -445,6 +582,13 @@ class ConversationStreamHub:
             state.turns[turn_id] = turn
             self._prune_completed_turns(state)
 
+        # NB: no activity broadcast here. ``start_turn`` runs before the caller
+        # persists the user message, and the conversation-list endpoint only
+        # lists persisted messages — so a ping now would make a client refetch a
+        # list that doesn't yet include this conversation (and clobber an
+        # optimistic row). The ``/turns`` endpoint emits ``publish_activity``
+        # itself, after the user-message commit. ``end_turn`` (reply persisted)
+        # still broadcasts directly.
         return turn
 
     async def end_turn(
@@ -524,6 +668,19 @@ class ConversationStreamHub:
                 default=-1,
             )
             self._refresh_delivered_under_lock(state, ack_seq=max_ack)
+
+        # Nudge the owner's conversation list to refresh now the reply landed
+        # (e.g. a turn that finished while the user was on another thread). Only
+        # when the turn is known — an unknown-turn defensive end has no user to
+        # scope the activity to. The idempotent already-ended path returns above
+        # without reaching here, so this fires once per turn.
+        if turn is not None:
+            self._broadcast_activity(
+                conversation_id,
+                user_id=turn.user_id,
+                reason="turn_ended",
+                timestamp=datetime.now(UTC),
+            )
 
         return event
 

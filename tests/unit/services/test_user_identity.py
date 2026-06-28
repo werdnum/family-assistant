@@ -66,6 +66,45 @@ def test_resolved_identities_carry_configured_label() -> None:
     assert resolver.get_user_label("andrew@example.com") == "Andrew"
 
 
+def test_canonicalize_owner_id_maps_aliases_to_canonical_user() -> None:
+    resolver = UserIdentityResolver(_config_with_user())
+
+    # A Telegram numeric owner id resolves to the same canonical user as the
+    # web/OIDC session, so an activity ping scoped to it reaches the web
+    # subscriber.
+    assert resolver.canonicalize_owner_id("123456789") == "andrew@example.com"
+    # The canonical id is its own canonical form.
+    assert resolver.canonicalize_owner_id("andrew@example.com") == "andrew@example.com"
+    # Unresolvable ids are returned unchanged so distinct unknown owners stay
+    # distinct.
+    assert resolver.canonicalize_owner_id("999") == "999"
+    assert (
+        resolver.canonicalize_owner_id("stranger@example.com") == "stranger@example.com"
+    )
+
+
+def test_canonicalize_owner_id_resolves_numeric_oidc_subject() -> None:
+    # A numeric id that is NOT a configured Telegram id may still be a numeric
+    # OIDC subject: canonicalization must fall through to the API/OIDC lookup
+    # rather than returning the raw numeric id.
+    config = AppConfig.model_validate({
+        "users": [
+            {
+                "id": "andrew@example.com",
+                "oidc": {"subjects": ["100200300"]},
+                "telegram": {"user_ids": [123456789]},
+            }
+        ]
+    })
+    resolver = UserIdentityResolver(config)
+
+    assert resolver.canonicalize_owner_id("100200300") == "andrew@example.com"
+    # Still a configured Telegram id where applicable.
+    assert resolver.canonicalize_owner_id("123456789") == "andrew@example.com"
+    # An unknown numeric id stays raw.
+    assert resolver.canonicalize_owner_id("555") == "555"
+
+
 def test_label_is_none_when_not_configured() -> None:
     config = AppConfig.model_validate({
         "users": [

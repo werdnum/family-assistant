@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.services.notifier import Notifier
+    from family_assistant.services.user_identity import UserIdentityResolver
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class WebChatInterface(ChatInterface):
         database_engine: "AsyncEngine",
         notifier: "Notifier | None" = None,
         stream_hub: "ConversationStreamHub | None" = None,
+        identity_resolver: "UserIdentityResolver | None" = None,
     ) -> None:
         """
         Initialize the WebChatInterface.
@@ -51,10 +53,15 @@ class WebChatInterface(ChatInterface):
             stream_hub: Optional ConversationStreamHub. When set, a ``message``
                 event is published after a successful save so open follow-streams
                 reload for messages sent outside the streaming turn path.
+            identity_resolver: Optional resolver used to canonicalize conversation
+                owner ids before scoping the account-global activity ping, so a
+                conversation stored under an alias (e.g. a Telegram numeric id)
+                still reaches the canonical web/iOS subscriber.
         """
         self.database_engine = database_engine
         self.notifier = notifier
         self.stream_hub = stream_hub
+        self.identity_resolver = identity_resolver
 
     async def send_message(
         self,
@@ -88,6 +95,10 @@ class WebChatInterface(ChatInterface):
         # saved message look like a failed send — callers would then resend or
         # retry an already-approved confirmation, causing duplicate side
         # effects. A publish failure is a programming error; let it propagate.
+        # Owner ids of the conversation, resolved while the save transaction is
+        # open so the post-commit activity ping can be scoped to them (the
+        # account-global activity channel filters subscribers by user_id).
+        owner_ids: set[str] = set()
         try:
             clock = SystemClock()
 
@@ -111,6 +122,16 @@ class WebChatInterface(ChatInterface):
                     timestamp=clock.now(),
                     attachments=attachments,
                 )
+
+                # Resolve owners now (inside the txn) for the post-commit activity
+                # ping. This save carries no user_id of its own, so ownership comes
+                # from the conversation's existing user messages.
+                if saved_message is not None and self.stream_hub is not None:
+                    owner_ids = (
+                        await db_context.message_history.get_conversation_owner_ids(
+                            conversation_id
+                        )
+                    )
 
                 # Notify the conversation owner about the new assistant reply.
                 if saved_message is not None and self.notifier is not None:
@@ -169,6 +190,26 @@ class WebChatInterface(ChatInterface):
                     "new_messages": True,
                 },
             )
+            # Also ping the account-global activity stream so this out-of-band
+            # reply (scheduled/reminder callback, tool-initiated message) surfaces
+            # and bumps the conversation in the owner's list on a client sitting
+            # on another thread — the per-conversation tickle above only reaches a
+            # client already following THIS conversation. Canonicalize owner ids
+            # first: the activity stream subscribes under the caller's canonical
+            # id, so a conversation stored under an alias (e.g. a Telegram numeric
+            # id) would otherwise ping an id no subscriber matches.
+            activity_user_ids = {
+                self.identity_resolver.canonicalize_owner_id(owner_id)
+                if self.identity_resolver is not None
+                else owner_id
+                for owner_id in owner_ids
+            }
+            for user_id in activity_user_ids:
+                await self.stream_hub.publish_activity(
+                    conversation_id,
+                    user_id=user_id,
+                    reason="message",
+                )
 
         logger.info(
             f"WebChatInterface: Saved message to conversation {conversation_id}, "

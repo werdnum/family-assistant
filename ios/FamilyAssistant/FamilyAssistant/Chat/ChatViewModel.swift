@@ -71,8 +71,18 @@ final class ChatViewModel {
     // work is gated on this token still matching.
     @ObservationIgnored private var currentStreamToken: UUID?
     @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
+    @ObservationIgnored private var activityStreamTask: Task<Void, Never>?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     @ObservationIgnored private var activeTurn: ActiveChatTurn?
+    // In-flight optimistic summaries, keyed by the owning turn id (value is the
+    // conversation id). While a conversation has any pending turn,
+    // `refreshRecentConversations` keeps its held optimistic row over a stale
+    // server summary; the entry is cleared when that turn settles via any path
+    // (a lifecycle signal, not a wall-clock comparison a skewed client clock
+    // could keep "newer" forever). Keying by turn id means a superseding re-send
+    // to the same conversation doesn't clobber the new turn's mark when the old
+    // turn unwinds.
+    @ObservationIgnored private var optimisticPendingByTurnID: [String: String] = [:]
     @ObservationIgnored private var registeredTurnIDs: Set<String> = []
     @ObservationIgnored private var pendingStopTurnIDs: Set<String> = []
     @ObservationIgnored private var stopAfterRegistrationByTurnID: [String: String] = [:]
@@ -133,6 +143,11 @@ final class ChatViewModel {
     // layout hang. `showEarlierMessages()` grows the window a page at a time.
     static let initialDisplayedMessageCount = 30
     private static let displayedMessagePageSize = 30
+
+    // Max characters of an optimistic conversation-list preview, matching the
+    // server's `last_message` truncation so the row doesn't jump in length when
+    // the authoritative summary replaces it.
+    private static let conversationPreviewMaxLength = 100
 
     // Page size for incremental `after`-timestamp message loads. The server's
     // paginated path ignores `after` when limit=0, so a bounded page is needed;
@@ -233,6 +248,7 @@ final class ChatViewModel {
     deinit {
         streamTask?.cancel()
         liveEventsTask?.cancel()
+        activityStreamTask?.cancel()
         pendingConfirmationsTask?.cancel()
         textFlushTask?.cancel()
     }
@@ -247,6 +263,7 @@ final class ChatViewModel {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
+        startActivityStream()
         if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
             lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt
@@ -297,17 +314,101 @@ final class ChatViewModel {
     /// first (most-recent-first) page, so paging the entire history each time is
     /// wasteful. Merges the page over the held list, preserving older summaries
     /// the page didn't include.
+    ///
+    /// Lifecycle guard: for a conversation whose send is still in flight (in
+    /// ``optimisticPendingConversationIDs``), keep the held optimistic row over
+    /// the server's summary, so a stale in-flight refresh — which still carries
+    /// the old preview/position for an existing thread, or omits a brand-new one
+    /// entirely — can't undo the optimistic insert/bump. The pending mark is
+    /// cleared when the turn settles (not by a client/server timestamp compare,
+    /// which a skewed clock could keep "newer" forever), after which the server
+    /// row is authoritative. The whole list is sorted most-recent-first so a kept
+    /// optimistic row stays at the top.
     private func refreshRecentConversations() async {
         do {
             let recent = try await apiClient.listRecentConversations()
             let recentIDs = Set(recent.map(\.conversationID))
+            let heldByID = Dictionary(
+                conversations.map { ($0.conversationID, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let pendingIDs = Set(optimisticPendingByTurnID.values)
+            let merged = recent.map { serverRow -> ChatConversationSummary in
+                if pendingIDs.contains(serverRow.conversationID),
+                   let held = heldByID[serverRow.conversationID]
+                {
+                    return held
+                }
+                return serverRow
+            }
             let untouched = conversations.filter { !recentIDs.contains($0.conversationID) }
-            conversations = recent + untouched
+            conversations = (merged + untouched).sorted { $0.lastTimestamp > $1.lastTimestamp }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
             errorReporter.report(error, component: "Chat.recentConversations")
         }
+    }
+
+    /// Optimistically surface the active conversation in the list the instant the
+    /// user sends, so a brand-new chat appears immediately (and an existing one
+    /// bumps to the top) without waiting for a server round-trip or notification.
+    ///
+    /// The authoritative `refreshRecentConversations` that runs on turn
+    /// completion reconciles this row by `conversationID` — the server summary
+    /// replaces it, so there is no duplication — and if that refresh ever races
+    /// ahead of persistence the optimistic row is preserved as `untouched`, so
+    /// the new chat never flickers out of the list.
+    private func upsertLocalConversationSummary(conversationID: String, lastMessage: String) {
+        let preview = String(lastMessage.prefix(Self.conversationPreviewMaxLength))
+        let existing = conversations.first { $0.conversationID == conversationID }
+        let summary = ChatConversationSummary(
+            conversationID: conversationID,
+            lastMessage: preview,
+            lastTimestamp: Date(),
+            messageCount: (existing?.messageCount ?? 0) + 1
+        )
+        conversations.removeAll { $0.conversationID == conversationID }
+        conversations.insert(summary, at: 0)
+    }
+
+    /// Undo an optimistic summary when starting the turn failed before anything
+    /// was persisted. A brand-new conversation (`previous == nil`) is dropped so
+    /// it doesn't linger as a phantom; an existing conversation is restored to
+    /// its pre-send summary (preview/timestamp), re-inserted in recency order, so
+    /// the failed bump doesn't stay pinned at the top with never-persisted text
+    /// (the freshness guard in `refreshRecentConversations` would otherwise keep
+    /// the newer optimistic row).
+    /// Roll back the optimistic summary unless a superseding send for the same
+    /// conversation (a different in-flight turn) still owns it — that turn will
+    /// reconcile or roll back its own row. ``turnID`` is the failing turn, whose
+    /// own pending entry is ignored (it is cleared by ``runSendTurn``'s defer).
+    private func rollbackOptimisticSummaryIfUnowned(
+        conversationID: String,
+        turnID: String,
+        to previous: ChatConversationSummary?
+    ) {
+        let ownedByAnotherTurn = optimisticPendingByTurnID.contains {
+            $0.key != turnID && $0.value == conversationID
+        }
+        if ownedByAnotherTurn {
+            return
+        }
+        rollbackOptimisticSummary(conversationID: conversationID, to: previous)
+    }
+
+    private func rollbackOptimisticSummary(
+        conversationID: String,
+        to previous: ChatConversationSummary?
+    ) {
+        conversations.removeAll { $0.conversationID == conversationID }
+        guard let previous else {
+            return
+        }
+        let insertIndex =
+            conversations.firstIndex { $0.lastTimestamp < previous.lastTimestamp }
+            ?? conversations.endIndex
+        conversations.insert(previous, at: insertIndex)
     }
 
     /// Drives the conversation list selection binding in the sidebar.
@@ -765,6 +866,19 @@ final class ChatViewModel {
         draftAttachments = []
         isStreaming = true
         persistConversationID()
+        // The conversation's summary before the optimistic bump below, so a turn
+        // that fails to start (nothing persisted) can roll back to it: nil for a
+        // brand-new conversation (drop the row), the prior summary for an
+        // existing one (restore preview/position).
+        let previousSummary = conversations.first { $0.conversationID == id }
+        upsertLocalConversationSummary(
+            conversationID: id,
+            lastMessage: prompt.isEmpty ? "Attachment" : prompt
+        )
+        // Mark this conversation optimistically pending for this turn so a stale
+        // refresh keeps the row until the turn settles (cleared on every
+        // runSendTurn return path, see its `defer`).
+        optimisticPendingByTurnID[turnID] = id
 
         let streamToken = UUID()
         currentStreamToken = streamToken
@@ -782,7 +896,8 @@ final class ChatViewModel {
                 conversationID: id,
                 attachments: uploadedAttachments,
                 assistantMessageID: assistantMessageID,
-                streamToken: streamToken
+                streamToken: streamToken,
+                previousSummary: previousSummary
             )
         }
     }
@@ -824,9 +939,22 @@ final class ChatViewModel {
         conversationID id: String,
         attachments: [ChatAttachment],
         assistantMessageID: String,
-        streamToken: UUID
+        streamToken: UUID,
+        previousSummary: ChatConversationSummary?
     ) async {
+        // Retire this turn's optimistic pending mark on EVERY return path —
+        // completion, recovery, failure, cancellation, and the superseded early
+        // returns below — so a row can never stay pending (and pinned over the
+        // server summary) forever. The explicit removals on the completed/
+        // recovered paths run earlier so their refresh already uses the server;
+        // this is the catch-all and is idempotent.
+        defer { optimisticPendingByTurnID.removeValue(forKey: turnID) }
         var lastSeq: Int?
+        // Becomes true once startTurn returns: the backend persists the user
+        // message inside start_turn, so a successful return means the
+        // conversation is now server-backed and its optimistic row must NOT be
+        // removed on a later failure.
+        var startSucceeded = false
         do {
             let start = try await apiClient.startTurn(
                 turnID: turnID,
@@ -835,6 +963,7 @@ final class ChatViewModel {
                 profileID: selectedProfileID,
                 attachments: attachments
             )
+            startSucceeded = true
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
                 if let stopConversationID = stopAfterRegistrationConversationID {
@@ -871,6 +1000,10 @@ final class ChatViewModel {
                         assistantMessageID: assistantMessageID
                     )
                 } else {
+                    // Turn settled (durably complete): retire the optimistic mark
+                    // before the recovery refresh so it surfaces the authoritative
+                    // server summary, matching the completed/410 paths.
+                    optimisticPendingByTurnID.removeValue(forKey: turnID)
                     await recoverByReloadingHistory(
                         conversationID: id,
                         assistantMessageID: assistantMessageID
@@ -998,6 +1131,10 @@ final class ChatViewModel {
                     Task { try? await ackClient.acknowledge(conversationID: id, ackSeq: lastSeq) }
                 }
                 completeStream(assistantMessageID: assistantMessageID)
+                // Turn settled: the server reflects this send, so retire the
+                // optimistic mark before refreshing so the authoritative summary
+                // (with the reply preview) replaces the held row.
+                optimisticPendingByTurnID.removeValue(forKey: turnID)
                 await refreshRecentConversations()
                 await mergeNewMessages(conversationID: id)
                 if status == "cancelled" || status == "failed" || stopRequestedTurnIDs.contains(turnID) {
@@ -1020,6 +1157,9 @@ final class ChatViewModel {
                 // row. Suppressing the live re-render lets the durable reply land
                 // through history catch-up (and the completion push) instead.
                 markTurnEnded(turnID, status: nil)
+                // The durable turn has settled; retire the optimistic mark so the
+                // reload below surfaces the authoritative server summary.
+                optimisticPendingByTurnID.removeValue(forKey: turnID)
                 // Reload persisted history silently. Don't write to `errorMessage`:
                 // that drives a modal "Chat Error" alert, which would be spurious
                 // for a reply that actually succeeded. The disconnected indicator
@@ -1038,6 +1178,14 @@ final class ChatViewModel {
             }
         } catch is CancellationError {
             _ = await cancelStopQueuedBeforeRegistration(for: turnID)
+            // A kickoff cancelled before startTurn returned (switch/new chat right
+            // after sending) persisted nothing, so roll back its optimistic row —
+            // unless a superseding send for the same conversation now owns it.
+            if !startSucceeded {
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
+            }
             markStreamStopped(assistantMessageID: assistantMessageID)
         } catch {
             if !(await cancelStopQueuedBeforeRegistration(for: turnID)) {
@@ -1045,6 +1193,15 @@ final class ChatViewModel {
             }
             // Reaching here means starting the turn itself failed — the prompt was
             // never accepted, so there is no durable turn to recover; surface it.
+            // Undo the optimistic list change: drop a brand-new conversation's
+            // phantom row, or restore an existing conversation's pre-send summary
+            // so the failed prompt doesn't stay pinned at the top (the freshness
+            // guard would otherwise keep the newer optimistic row).
+            if !startSucceeded {
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
+            }
             appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
         }
         finishStreaming(streamToken)
@@ -1835,6 +1992,61 @@ final class ChatViewModel {
         // back to disconnected. A successful connect sets it true in
         // `handleLiveReconnect`; a failing one leaves the honest disconnected state.
         startLiveEvents()
+        // The account-global activity stream is torn down with the scene on
+        // background (its Task is suspended/killed by the OS); restart it on the
+        // same foreground transition so list updates for OTHER conversations
+        // resume, and refresh once to close any gap missed while backgrounded.
+        startActivityStream()
+    }
+
+    /// Subscribe to the account-global conversation-activity stream and refresh
+    /// the conversation list whenever any owned conversation changes.
+    ///
+    /// This is what keeps the list fresh for activity OUTSIDE the open thread —
+    /// a brand-new chat, or a delegated/scheduled/background reply landing in a
+    /// conversation the user isn't currently viewing — none of which the
+    /// per-conversation follow stream (`startLiveEvents`) observes. The stream is
+    /// advisory: every ping just triggers an authoritative
+    /// `refreshRecentConversations`, and a (re)connect refreshes once to close
+    /// any gap missed while disconnected. Mirrors `startLiveEvents`' capped
+    /// exponential-backoff reconnect loop and weak-`self` discipline so logout/
+    /// deinit tears the connection down.
+    private func startActivityStream() {
+        activityStreamTask?.cancel()
+        let client = apiClient
+        let initialDelay = liveReconnectInitialDelaySeconds
+        let maxDelay = liveReconnectMaxDelaySeconds
+        activityStreamTask = Task { [weak self] in
+            var delay = initialDelay
+            while !Task.isCancelled {
+                do {
+                    let stream = try await client.connectActivityStream()
+                    // A successful (re)connect resets the backoff and refreshes
+                    // once: pings are ephemeral, so anything that changed while
+                    // we were disconnected is caught by this single pull.
+                    delay = initialDelay
+                    await self?.refreshRecentConversations()
+                    for try await _ in stream {
+                        if Task.isCancelled {
+                            break
+                        }
+                        // `self` deallocated -> deinit already cancelled this
+                        // task; stop instead of spinning reconnects.
+                        guard self != nil else {
+                            return
+                        }
+                        await self?.refreshRecentConversations()
+                    }
+                } catch {
+                    // Connection failed or dropped; fall through to backoff+retry.
+                }
+                if Task.isCancelled {
+                    break
+                }
+                try? await Task.sleep(for: .seconds(delay))
+                delay = min(delay * 2, maxDelay)
+            }
+        }
     }
 
     /// The hub buffer rotated past this client's resume cursor (a 410). Clear it so

@@ -50,6 +50,15 @@ struct ChatConversationListResponse: Decodable {
     let count: Int
 }
 
+/// One frame from the account-global conversation-activity stream
+/// (`GET /api/v1/chat/activity/stream`). Advisory only: the fields are not
+/// required to act on — any frame means "some conversation you own changed, go
+/// refresh the list" — but the id/reason are carried for logging and tests.
+struct ChatConversationActivity: Equatable {
+    let conversationID: String?
+    let reason: String?
+}
+
 struct ChatProfile: Codable, Equatable, Identifiable {
     let id: String
     let description: String

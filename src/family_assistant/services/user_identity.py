@@ -177,6 +177,29 @@ class UserIdentityResolver:
             source_identifier=str(telegram_user_id),
         )
 
+    def canonicalize_owner_id(self, raw_owner_id: str) -> str:
+        """Map a stored ``user_id`` to its canonical application user id.
+
+        Conversation owner ids come from the raw ``user_id`` persisted on each
+        user message. Most interfaces already store the canonical id, but a
+        Telegram conversation may be stored under the numeric Telegram user id,
+        which must map to the same canonical id a web/API session resolves to.
+        Unresolvable ids are returned unchanged so distinct unknown owners stay
+        distinct (rather than collapsing together).
+        """
+        if raw_owner_id.isdigit():
+            try:
+                return self.resolve_telegram_user(int(raw_owner_id)).user_id
+            except UserIdentityResolutionError:
+                # Not a configured Telegram id — it may still be a numeric OIDC
+                # subject or API-token owner id, so fall through to that lookup
+                # rather than giving up here.
+                pass
+        try:
+            return self.resolve_api_token_user(raw_owner_id).user_id
+        except UserIdentityResolutionError:
+            return raw_owner_id
+
     def is_telegram_user_allowed(self, telegram_user_id: int) -> bool:
         try:
             self.resolve_telegram_user(telegram_user_id)

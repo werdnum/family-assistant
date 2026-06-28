@@ -39,7 +39,6 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.user_identity import (
-    UserIdentityResolutionError,
     UserIdentityResolver,
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -87,6 +86,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
+
+# Strong references to fire-and-forget post-commit hub publishes (activity ping
+# + per-conversation message tickle) so the event loop doesn't garbage-collect
+# them before they run. Heterogeneous result types (publish -> StreamEvent,
+# publish_activity -> None), so the element type is Task[Any].
+_ACTIVITY_PUBLISH_TASKS: set[asyncio.Task[Any]] = set()
 
 
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
@@ -737,15 +742,7 @@ def _canonicalize_owner_id(
     """
     if resolver is None:
         return raw_owner_id
-    if raw_owner_id.isdigit():
-        try:
-            return resolver.resolve_telegram_user(int(raw_owner_id)).user_id
-        except UserIdentityResolutionError:
-            return raw_owner_id
-    try:
-        return resolver.resolve_api_token_user(raw_owner_id).user_id
-    except UserIdentityResolutionError:
-        return raw_owner_id
+    return resolver.canonicalize_owner_id(raw_owner_id)
 
 
 def _canonical_owners(
@@ -1037,6 +1034,17 @@ async def api_chat_create_turn(
         )
         raise
 
+    # Now that the user message is committed, ping the owner's activity stream so
+    # the conversation surfaces (or bumps) in their list. Done here rather than in
+    # hub.start_turn because the list endpoint only lists persisted messages — a
+    # ping before this commit would have a client refetch a list that doesn't yet
+    # include the conversation (and clobber any optimistic row).
+    await hub.publish_activity(
+        conversation_id,
+        user_id=user_id,
+        reason="turn_started",
+    )
+
     # If the producer task is cancelled before its coroutine ever runs (a Stop
     # in the window before its first slice), it never persists the stopped
     # assistant marker. The hub's safety net invokes this so a refresh still
@@ -1252,6 +1260,95 @@ async def api_chat_conversation_stream(
             # cancels this generator on client disconnect (an await here would
             # re-raise CancelledError and leak the subscriber queue).
             hub.unsubscribe(conversation_id, handle.queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@chat_api_router.get("/v1/chat/activity/stream", response_model=None)
+async def api_chat_activity_stream(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> StreamingResponse:
+    """Account-global stream of conversation-list change pings.
+
+    Emits a compact ``conversation_activity`` frame whenever a conversation the
+    caller owns gains new visible activity (a turn starts or ends, or a
+    delegated/scheduled reply lands). The payload carries no message content —
+    only the conversation id, a coarse reason, and a timestamp — so the client
+    reacts by re-fetching the authoritative, ownership-filtered conversation
+    list (``GET /v1/chat/conversations``). It is the live counterpart to
+    pull-to-refresh: it keeps the list fresh for activity happening outside
+    whichever thread the user currently has open.
+
+    Always-on: stays open with 30s heartbeats and is resumed by the client on
+    disconnect. Scoped to the caller by an exact ``user_identifier`` match; a
+    missed or mis-scoped ping is harmless because the authoritative list fetch
+    does the real ownership filtering.
+    """
+    raw_user_id = current_user.get("user_identifier")
+    if not isinstance(raw_user_id, str) or not raw_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    hub = _get_hub(request)
+    shutdown_event = _get_shutdown_event(request)
+    handle = hub.subscribe_activity(raw_user_id)
+
+    async def event_generator() -> AsyncGenerator[str]:
+        try:
+            while True:
+                queue_get = asyncio.ensure_future(handle.queue.get())
+                shutdown_wait = asyncio.ensure_future(shutdown_event.wait())
+                try:
+                    done, _pending = await asyncio.wait(
+                        {queue_get, shutdown_wait},
+                        timeout=30.0,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    if not queue_get.done():
+                        queue_get.cancel()
+                    shutdown_wait.cancel()
+
+                if shutdown_event.is_set():
+                    yield (
+                        'event: stream_dropped\ndata: {"reason": "server_shutdown"}\n\n'
+                    )
+                    return
+
+                if queue_get not in done:
+                    # Heartbeat tick. If the hub dropped this subscriber (its
+                    # queue overflowed), tell the client to reconnect instead of
+                    # heartbeating into a discarded subscription.
+                    if not hub.is_activity_subscribed(handle.queue):
+                        yield (
+                            "event: stream_dropped\n"
+                            'data: {"reason": "queue_overflow"}\n\n'
+                        )
+                        return
+                    yield "event: heartbeat\ndata: {}\n\n"
+                    continue
+
+                activity = queue_get.result()
+                payload = json.dumps({
+                    "conversation_id": activity.conversation_id,
+                    "reason": activity.reason,
+                    "timestamp": activity.timestamp.isoformat(),
+                })
+                yield f"event: conversation_activity\ndata: {payload}\n\n"
+        except asyncio.CancelledError:
+            raise
+        finally:
+            # Synchronous + lock-free so it still runs when the ASGI server
+            # cancels this generator on client disconnect.
+            hub.unsubscribe_activity(handle.queue)
 
     return StreamingResponse(
         event_generator(),
@@ -1801,12 +1898,40 @@ async def api_chat_send_message(
     # so a second device of the same user with an open follow-stream wouldn't
     # reload. Publish a content-free `message` event (the same nudge
     # WebChatInterface uses) so open follow-streams refetch history.
-    await _get_hub(request).publish(
-        conversation_id,
-        "message",
-        turn_id=None,
-        payload={"conversation_id": conversation_id, "new_messages": True},
-    )
+    # Nudge other clients once this request's writes commit. ``get_db`` runs the
+    # whole request inside one ``engine.begin()`` transaction that commits at
+    # request end, so both nudges must be scheduled from ``on_commit`` — emitting
+    # them now would have a follower refetch /messages (and the activity stream
+    # refetch the list) before the reply is visible, leaving them stale with no
+    # later event. Two nudges: a per-conversation ``message`` event so a client
+    # already following THIS thread reloads its history, and an account-global
+    # activity ping so the conversation surfaces/bumps in the owner's list on a
+    # second tab/device (this non-streaming path has no start_turn/end_turn
+    # lifecycle of its own).
+    send_hub = _get_hub(request)
+    activity_loop = asyncio.get_running_loop()
+
+    def _publish_send_nudges() -> None:
+        message_task = activity_loop.create_task(
+            send_hub.publish(
+                conversation_id,
+                "message",
+                turn_id=None,
+                payload={"conversation_id": conversation_id, "new_messages": True},
+            )
+        )
+        _ACTIVITY_PUBLISH_TASKS.add(message_task)
+        message_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
+
+        activity_task = activity_loop.create_task(
+            send_hub.publish_activity(
+                conversation_id, user_id=user_id, reason="message"
+            )
+        )
+        _ACTIVITY_PUBLISH_TASKS.add(activity_task)
+        activity_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
+
+    db_context.on_commit(_publish_send_nudges)
 
     return ChatMessageResponse(
         reply=final_reply_content,  # Back to original field name

@@ -29,6 +29,7 @@ import {
   Message,
   MessageContent,
 } from './types';
+import { useActivityStream } from './useActivityStream';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useNotifications } from './useNotifications';
 import { useStreamingResponse } from './useStreamingResponse';
@@ -439,6 +440,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const initialPromptProcessedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesAbortControllerRef = useRef<AbortController | null>(null);
+  // Optimistic conversation rows inserted on send, keyed by the owning turn id,
+  // kept until that turn settles (handleStreamingComplete). Merged into every
+  // fetch result so a list request already in flight when the user sent can't
+  // erase the row; turn-keying stops an aborted older turn from retiring a newer
+  // turn's row for the same conversation. See fetchConversations.
+  const pendingOptimisticConversationsRef = useRef<Map<string, Conversation>>(new Map());
   const resolvedConfirmationIdsRef = useRef<Set<string>>(new Set());
   // Track turn IDs originated by this tab so we can skip the live-update reload
   // when a turn_ended event for our own turn arrives (we already hold the freshest
@@ -492,7 +499,34 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       });
       if (response.ok) {
         const data = await response.json();
-        setConversations(data.conversations);
+        const serverList: Conversation[] = data.conversations;
+        // Prefer optimistic rows that are still pending (their send hasn't
+        // settled). Pending is keyed off the turn lifecycle — set on send,
+        // cleared when the turn completes/fails (see handleStreamingComplete /
+        // handleStreamingError) — NOT off a client/server timestamp comparison,
+        // which a skewed client clock could keep "newest" forever and so pin a
+        // stale preview indefinitely. So a stale in-flight fetch can't undo an
+        // optimistic insert/bump while the turn is in flight, and once it settles
+        // the server row is authoritative.
+        // pending is keyed by turn id; a conversation is pending if any in-flight
+        // turn holds an optimistic row for it. Collapse to one row per
+        // conversation (a superseding re-send can leave two in-flight turns for
+        // the same conversation), keeping the newest — Map.values() is insertion
+        // order, so a later turn overwrites the earlier one.
+        const pending = pendingOptimisticConversationsRef.current;
+        const pendingByConversation = new Map<string, Conversation>();
+        for (const row of pending.values()) {
+          pendingByConversation.set(row.conversation_id, row);
+        }
+        const pendingRows = [...pendingByConversation.values()];
+        const pendingIds = new Set(pendingByConversation.keys());
+        // Sort newest-first for display order only (not retirement); pending rows
+        // otherwise follow Map insertion (oldest-first) order.
+        const merged = [
+          ...pendingRows,
+          ...serverList.filter((c) => !pendingIds.has(c.conversation_id)),
+        ].sort((a, b) => Date.parse(b.last_timestamp) - Date.parse(a.last_timestamp));
+        setConversations(merged);
       }
     } catch (error) {
       // Don't log error if request was aborted (component unmounting)
@@ -687,6 +721,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Store the error but don't treat it as terminal — the stream may recover
     // with subsequent tool results or text content
     lastStreamingErrorRef.current = typeof error === 'string' ? error : error.message;
+    // The optimistic row is retired in handleStreamingComplete (always called
+    // from the hook's finally, keyed by the completing turn id) — including the
+    // failed-POST case — so nothing to do here.
   }, []);
 
   const handleStreamingComplete = useCallback(
@@ -694,10 +731,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       content,
       toolCalls: _toolCalls,
       completed = true,
+      turnId,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
       completed?: boolean;
+      turnId?: string;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
@@ -705,6 +744,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const lastError = lastStreamingErrorRef.current;
       const wasStopped = turnStoppedRef.current;
       turnStoppedRef.current = false;
+
+      // Retire this turn's optimistic row now it has settled: the server
+      // reflects the send, so the fetchConversations below (and later refreshes)
+      // should use the authoritative summary. Keyed by the COMPLETING turn id —
+      // not activeStreamConversationIdRef, which a superseding send may have
+      // already repointed — so an aborted older turn can't retire a newer turn's
+      // pending row. Cleared on settle, not by a timestamp compare, so a skewed
+      // clock can't pin it.
+      if (turnId) {
+        pendingOptimisticConversationsRef.current.delete(turnId);
+      }
 
       if (messageId) {
         const hasContent = Boolean(content);
@@ -1707,6 +1757,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     onMessageReceived: handleLiveMessageUpdate,
   });
 
+  // Keep the conversation list fresh for activity OUTSIDE the open thread (a
+  // new chat started in another tab/device, or a delegated/scheduled/background
+  // reply) via the account-global activity stream. The per-conversation stream
+  // above only sees the currently-open thread.
+  useActivityStream({
+    enabled: true,
+    onActivity: fetchConversations,
+  });
+
   // Handle new chat creation
   const handleNewChat = useCallback(() => {
     // Cancel any active streaming before creating a new chat
@@ -1821,6 +1880,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
 
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
+
+      // Optimistically surface the conversation in the sidebar the instant the
+      // user sends, so a brand-new chat appears immediately (and an existing one
+      // bumps to the top) without waiting for the server round-trip. The
+      // authoritative fetchConversations on stream completion — and the activity
+      // stream — reconcile this row by conversation_id, so there's no duplicate.
+      const optimisticPreview = (message.content[0]?.text ?? '').slice(0, 100);
+      setConversations((prev) => {
+        const existing = prev.find((c) => c.conversation_id === targetConversationId);
+        const others = prev.filter((c) => c.conversation_id !== targetConversationId);
+        const optimisticRow: Conversation = {
+          conversation_id: targetConversationId,
+          last_message: optimisticPreview,
+          last_timestamp: new Date().toISOString(),
+          message_count: (existing?.message_count ?? 0) + 1,
+        };
+        // Remember it (keyed by THIS turn) so a list fetch already in flight
+        // can't erase it; retired when this turn settles (see
+        // handleStreamingComplete). Keying by turn id means an aborted older turn
+        // can't retire a newer turn's pending row for the same conversation.
+        pendingOptimisticConversationsRef.current.set(turnId, optimisticRow);
+        return [optimisticRow, ...others];
+      });
+
       streamingMessageIdRef.current = assistantMessageId;
       activeStreamConversationIdRef.current = targetConversationId;
       activeTurnIdRef.current = turnId;
