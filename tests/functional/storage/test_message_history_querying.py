@@ -322,6 +322,75 @@ async def test_same_user_scope_keeps_user_filter_when_conversation_id_is_supplie
 
 
 @pytest.mark.asyncio
+async def test_get_latest_user_profile_id_follows_most_recent_user_message(
+    db_engine: AsyncEngine,
+) -> None:
+    """Adoption uses the most recent *user* message's profile, not a delegated row."""
+    async with DatabaseContext(engine=db_engine) as db:
+        now = datetime.now(UTC)
+        await db.message_history.add_message(
+            UserMessage(content="Research and book it"),
+            interface_type="test",
+            conversation_id="conv-adopt",
+            timestamp=now,
+            turn_id="turn-1",
+            user_id="user-a",
+            processing_profile_id="complex_tasks",
+        )
+        # A later delegated assistant row tagged with a different profile must not
+        # win — adoption follows the profile the user was actually talking to.
+        await db.message_history.add_message(
+            AssistantMessage(content="Handing off to the engineer."),
+            interface_type="test",
+            conversation_id="conv-adopt",
+            timestamp=now + timedelta(seconds=1),
+            turn_id="turn-1",
+            user_id="user-a",
+            processing_profile_id="engineer",
+        )
+
+        latest = await db.message_history.get_latest_user_profile_id("conv-adopt")
+
+    assert latest == "complex_tasks"
+
+
+@pytest.mark.asyncio
+async def test_get_latest_user_profile_id_ignores_subconversations_and_empty(
+    db_engine: AsyncEngine,
+) -> None:
+    """Subconversation rows are excluded by default; no user rows yields None."""
+    async with DatabaseContext(engine=db_engine) as db:
+        now = datetime.now(UTC)
+        # The newest user row lives in a delegated subconversation under a
+        # different profile; the foreground page omits it, so adoption must too.
+        await db.message_history.add_message(
+            UserMessage(content="Top-level question"),
+            interface_type="test",
+            conversation_id="conv-sub",
+            timestamp=now,
+            turn_id="turn-1",
+            user_id="user-a",
+            processing_profile_id="default_assistant",
+        )
+        await db.message_history.add_message(
+            UserMessage(content="Delegated sub-question"),
+            interface_type="test",
+            conversation_id="conv-sub",
+            timestamp=now + timedelta(seconds=5),
+            turn_id="turn-2",
+            user_id="user-a",
+            processing_profile_id="engineer",
+            subconversation_id="sub-1",
+        )
+
+        latest = await db.message_history.get_latest_user_profile_id("conv-sub")
+        empty = await db.message_history.get_latest_user_profile_id("conv-missing")
+
+    assert latest == "default_assistant"
+    assert empty is None
+
+
+@pytest.mark.asyncio
 async def test_message_history_query_denies_all_accessible_scope(
     db_engine: AsyncEngine,
 ) -> None:

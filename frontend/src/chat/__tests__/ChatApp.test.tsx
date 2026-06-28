@@ -430,6 +430,213 @@ describe('ChatApp', () => {
     expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
   });
 
+  it('adopts the opened conversation profile and sends the follow-up under it', async () => {
+    const { server } = await import('../../test/setup.js');
+    const { http, HttpResponse } = await import('msw');
+
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        if (params.conversationId !== 'web_conv_profile_adopt') {
+          return HttpResponse.json({ messages: [] });
+        }
+        return HttpResponse.json({
+          latest_user_profile_id: 'complex_tasks',
+          messages: [
+            {
+              internal_id: 201,
+              role: 'user',
+              content: 'Plan the trip',
+              timestamp: '2026-06-24T12:00:00Z',
+              processing_profile_id: 'complex_tasks',
+            },
+            {
+              internal_id: 202,
+              role: 'assistant',
+              content: 'Sure, here is a plan.',
+              timestamp: '2026-06-24T12:00:01Z',
+              processing_profile_id: 'complex_tasks',
+            },
+          ],
+        });
+      })
+    );
+
+    let capturedProfileId: string | undefined;
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as { turn_id: string; profile_id?: string };
+        capturedProfileId = body.profile_id;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: 'web_conv_profile_adopt',
+          first_seq: 0,
+        });
+      })
+    );
+
+    // The persisted *preferred* profile differs from the conversation's profile,
+    // so an un-adopted turn would be sent under 'default_assistant' and the
+    // backend would filter the (complex_tasks-tagged) history down to nothing.
+    mockLocalStorage.getItem.mockImplementation((key: string) => {
+      if (key === 'lastConversationId') {
+        return 'web_conv_profile_adopt';
+      }
+      if (key === 'selectedProfileId') {
+        return 'default_assistant';
+      }
+      return null;
+    });
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    // Wait for the conversation history to load (adoption runs on this load).
+    expect(await screen.findByText('Plan the trip')).toBeInTheDocument();
+
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Continue the plan');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(capturedProfileId).toBe('complex_tasks'), { timeout: 10000 });
+  }, 30000);
+
+  it('adopts the backend-resolved conversation profile, ignoring a later delegated assistant row', async () => {
+    const { server } = await import('../../test/setup.js');
+    const { http, HttpResponse } = await import('msw');
+
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        if (params.conversationId !== 'web_conv_profile_delegated') {
+          return HttpResponse.json({ messages: [] });
+        }
+        // The backend resolves latest_user_profile_id from the most recent *user*
+        // message (the delegated assistant row tagged 'engineer' is ignored there);
+        // the client just adopts whatever the backend returns.
+        return HttpResponse.json({
+          latest_user_profile_id: 'complex_tasks',
+          messages: [
+            {
+              internal_id: 301,
+              role: 'user',
+              content: 'Research and book it',
+              timestamp: '2026-06-24T12:00:00Z',
+              processing_profile_id: 'complex_tasks',
+            },
+            {
+              internal_id: 302,
+              role: 'assistant',
+              content: 'Handing off to the engineer.',
+              timestamp: '2026-06-24T12:00:01Z',
+              processing_profile_id: 'engineer',
+            },
+          ],
+        });
+      })
+    );
+
+    let capturedProfileId: string | undefined;
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as { turn_id: string; profile_id?: string };
+        capturedProfileId = body.profile_id;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: 'web_conv_profile_delegated',
+          first_seq: 0,
+        });
+      })
+    );
+
+    mockLocalStorage.getItem.mockImplementation((key: string) => {
+      if (key === 'lastConversationId') {
+        return 'web_conv_profile_delegated';
+      }
+      if (key === 'selectedProfileId') {
+        return 'default_assistant';
+      }
+      return null;
+    });
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    expect(await screen.findByText('Research and book it')).toBeInTheDocument();
+
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Keep going');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(capturedProfileId).toBe('complex_tasks'), { timeout: 10000 });
+  }, 30000);
+
+  it('resets to the preferred profile when starting a new chat', async () => {
+    const { server } = await import('../../test/setup.js');
+    const { http, HttpResponse } = await import('msw');
+
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        if (params.conversationId !== 'web_conv_profile_adopt') {
+          return HttpResponse.json({ messages: [] });
+        }
+        return HttpResponse.json({
+          latest_user_profile_id: 'complex_tasks',
+          messages: [
+            {
+              internal_id: 201,
+              role: 'user',
+              content: 'Plan the trip',
+              timestamp: '2026-06-24T12:00:00Z',
+              processing_profile_id: 'complex_tasks',
+            },
+          ],
+        });
+      })
+    );
+
+    let capturedProfileId: string | undefined;
+    server.use(
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as {
+          turn_id: string;
+          profile_id?: string;
+          conversation_id?: string;
+        };
+        capturedProfileId = body.profile_id;
+        return HttpResponse.json({
+          turn_id: body.turn_id,
+          conversation_id: body.conversation_id ?? 'web_conv_new',
+          first_seq: 0,
+        });
+      })
+    );
+
+    mockLocalStorage.getItem.mockImplementation((key: string) => {
+      if (key === 'lastConversationId') {
+        return 'web_conv_profile_adopt';
+      }
+      if (key === 'selectedProfileId') {
+        return 'default_assistant';
+      }
+      return null;
+    });
+
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    // Open adopts 'complex_tasks'...
+    expect(await screen.findByText('Plan the trip')).toBeInTheDocument();
+
+    // ...but a fresh chat must fall back to the persisted preferred profile.
+    const [newChatButton] = screen.getAllByTestId('new-chat-button');
+    await user.click(newChatButton);
+
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Brand new question');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(capturedProfileId).toBe('default_assistant'), { timeout: 10000 });
+  }, 30000);
+
   // Note: Attachment display from assistant message metadata is covered by E2E Playwright tests:
   // - test_tool_attachment_persistence_after_page_reload (tests/functional/web/test_chat_ui_attachment_response.py)
   // - test_attachment_response_flow (tests/functional/web/test_chat_ui_attachment_response.py)

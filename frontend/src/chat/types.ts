@@ -96,6 +96,7 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   metadata?: BackendMessageMetadata;
   tool_calls?: BackendToolCall[];
   tool_call_id?: string;
+  processing_profile_id?: string | null;
 }
 
 export interface ActiveTurnInfo {
@@ -108,6 +109,11 @@ export interface ActiveTurnInfo {
 
 export interface ConversationMessagesResponse {
   messages: BackendConversationMessage[];
+  // Profile of the most recent user message across the whole conversation,
+  // independent of the returned message page. Present only when the request
+  // sets include_conversation_profile=true; used to adopt the conversation's
+  // profile on open.
+  latest_user_profile_id?: string | null;
   // Recently retained turn states for this conversation, when the backend has them.
   active_turns?: ActiveTurnInfo[];
 }
