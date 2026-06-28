@@ -593,8 +593,11 @@ final class ChatViewModelTests: XCTestCase {
                     """
                 )
             case ("GET", "/api/v1/chat/conversations"):
+                // A future timestamp models the server having caught up (the
+                // persisted reply is newer than the optimistic send), so the
+                // freshness guard retires the optimistic row for the server's.
                 return .json(
-                    #"{"conversations":[{"conversation_id":"web_conv_reconcile","last_message":"Persisted reply","last_timestamp":"2026-06-08T12:00:01Z","message_count":2}],"count":1}"#
+                    #"{"conversations":[{"conversation_id":"web_conv_reconcile","last_message":"Persisted reply","last_timestamp":"2030-01-01T00:00:00Z","message_count":2}],"count":1}"#
                 )
             case ("GET", "/api/v1/chat/conversations/web_conv_reconcile/messages"):
                 return .json(
@@ -647,6 +650,56 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertFalse(
             model.conversations.contains { $0.conversationID == "web_conv_failstart" },
             "A brand-new conversation whose turn failed to start must not linger as a phantom in the list."
+        )
+    }
+
+    func testOptimisticBumpSurvivesStaleRefresh() async throws {
+        var streamedTurnID = "turn-stalebump"
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_bump","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_bump/stream"):
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                // Stale: the server hasn't caught up to the just-sent message, so
+                // it still reports an older preview/timestamp for this thread.
+                return .json(
+                    #"{"conversations":[{"conversation_id":"web_conv_bump","last_message":"Old preview","last_timestamp":"2020-01-01T00:00:00Z","message_count":3}],"count":1}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_bump/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_bump","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_bump")
+        model.draftText = "Fresh message"
+
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        let bumped = model.conversations.first { $0.conversationID == "web_conv_bump" }
+        XCTAssertEqual(
+            bumped?.lastMessage,
+            "Fresh message",
+            "A stale refresh (older server summary) must not revert the optimistic bump."
         )
     }
 

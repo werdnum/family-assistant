@@ -499,18 +499,29 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (response.ok) {
         const data = await response.json();
         const serverList: Conversation[] = data.conversations;
-        const serverIds = new Set(serverList.map((c) => c.conversation_id));
-        // Drop optimistic rows the server now reports (it's authoritative for
-        // them); keep any not-yet-persisted ones on top so a stale in-flight
-        // fetch can't erase a just-sent conversation.
+        const serverById = new Map(serverList.map((c) => [c.conversation_id, c]));
+        // Retire an optimistic row only once the server's summary for it is at
+        // least as fresh as the optimistic one. This keeps a not-yet-persisted
+        // new conversation AND a just-bumped existing conversation on top until
+        // the server catches up, so a stale in-flight fetch (which still carries
+        // the old timestamp/preview for an existing thread) can't undo the
+        // optimistic insert or bump.
         const pending = pendingOptimisticConversationsRef.current;
-        for (const id of [...pending.keys()]) {
-          if (serverIds.has(id)) {
+        for (const [id, optimistic] of [...pending.entries()]) {
+          const serverRow = serverById.get(id);
+          if (
+            serverRow &&
+            Date.parse(serverRow.last_timestamp) >= Date.parse(optimistic.last_timestamp)
+          ) {
             pending.delete(id);
           }
         }
-        const survivors = [...pending.values()].filter((c) => !serverIds.has(c.conversation_id));
-        setConversations([...survivors, ...serverList]);
+        const survivors = [...pending.values()];
+        const survivorIds = new Set(survivors.map((c) => c.conversation_id));
+        setConversations([
+          ...survivors,
+          ...serverList.filter((c) => !survivorIds.has(c.conversation_id)),
+        ]);
       }
     } catch (error) {
       // Don't log error if request was aborted (component unmounting)

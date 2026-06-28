@@ -305,12 +305,32 @@ final class ChatViewModel {
     /// first (most-recent-first) page, so paging the entire history each time is
     /// wasteful. Merges the page over the held list, preserving older summaries
     /// the page didn't include.
+    ///
+    /// Freshness guard: where a held summary is strictly newer than the server's
+    /// (an optimistic insert/bump the server hasn't caught up to yet), keep the
+    /// held one so a stale in-flight refresh — which still carries the old
+    /// timestamp/preview for an existing thread — can't undo the optimistic bump.
+    /// The recent page is then re-sorted most-recent-first so a kept optimistic
+    /// row floats back to the top.
     private func refreshRecentConversations() async {
         do {
             let recent = try await apiClient.listRecentConversations()
             let recentIDs = Set(recent.map(\.conversationID))
+            let heldByID = Dictionary(
+                conversations.map { ($0.conversationID, $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let merged = recent.map { serverRow -> ChatConversationSummary in
+                if let held = heldByID[serverRow.conversationID],
+                   held.lastTimestamp > serverRow.lastTimestamp
+                {
+                    return held
+                }
+                return serverRow
+            }
+            .sorted { $0.lastTimestamp > $1.lastTimestamp }
             let untouched = conversations.filter { !recentIDs.contains($0.conversationID) }
-            conversations = recent + untouched
+            conversations = merged + untouched
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
