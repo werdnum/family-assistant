@@ -1268,6 +1268,12 @@ final class ChatViewModel {
                 queuedFollowUpSteers.append(prompt)
                 await sendNextQueuedFollowUpSteerIfReady()
             } else {
+                // Clear the composer as soon as the steer is accepted (matching
+                // the web composer), not when the echo later arrives. The
+                // match-guarded clear preserves a fresh edit the user typed while
+                // the steer was in flight; awaitingEchoSteers still tracks the
+                // prompt independently for recovery if the stream drops.
+                clearComposerIfMatching(prompt)
                 awaitingEchoSteers.append(prompt)
             }
         case .finished:

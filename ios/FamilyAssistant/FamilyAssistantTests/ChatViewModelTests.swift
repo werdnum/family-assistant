@@ -517,7 +517,8 @@ final class ChatViewModelTests: XCTestCase {
         model.draftText = "focus on tomorrow"
         await model.sendSteerDraft()
         XCTAssertEqual(steerPrompt.value, "focus on tomorrow")
-        XCTAssertEqual(model.draftText, "focus on tomorrow")
+        // The composer clears as soon as the steer is accepted, matching web.
+        XCTAssertEqual(model.draftText, "")
 
         stream.finish(
             appending: """
