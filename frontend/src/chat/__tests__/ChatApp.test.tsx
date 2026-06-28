@@ -440,6 +440,7 @@ describe('ChatApp', () => {
           return HttpResponse.json({ messages: [] });
         }
         return HttpResponse.json({
+          latest_user_profile_id: 'complex_tasks',
           messages: [
             {
               internal_id: 201,
@@ -499,7 +500,7 @@ describe('ChatApp', () => {
     await waitFor(() => expect(capturedProfileId).toBe('complex_tasks'), { timeout: 10000 });
   }, 30000);
 
-  it('adopts the most recent user message profile, not a delegated assistant row', async () => {
+  it('adopts the backend-resolved conversation profile, ignoring a later delegated assistant row', async () => {
     const { server } = await import('../../test/setup.js');
     const { http, HttpResponse } = await import('msw');
 
@@ -508,7 +509,11 @@ describe('ChatApp', () => {
         if (params.conversationId !== 'web_conv_profile_delegated') {
           return HttpResponse.json({ messages: [] });
         }
+        // The backend resolves latest_user_profile_id from the most recent *user*
+        // message (the delegated assistant row tagged 'engineer' is ignored there);
+        // the client just adopts whatever the backend returns.
         return HttpResponse.json({
+          latest_user_profile_id: 'complex_tasks',
           messages: [
             {
               internal_id: 301,
@@ -518,8 +523,6 @@ describe('ChatApp', () => {
               processing_profile_id: 'complex_tasks',
             },
             {
-              // A delegated assistant row tagged with a different profile must be
-              // ignored — adoption follows the profile the user was talking to.
               internal_id: 302,
               role: 'assistant',
               content: 'Handing off to the engineer.',
@@ -576,6 +579,7 @@ describe('ChatApp', () => {
           return HttpResponse.json({ messages: [] });
         }
         return HttpResponse.json({
+          latest_user_profile_id: 'complex_tasks',
           messages: [
             {
               internal_id: 201,

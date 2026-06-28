@@ -1791,6 +1791,42 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return row["count"] if row else 0
 
+    async def get_latest_user_profile_id(
+        self, conversation_id: str, include_subconversations: bool = False
+    ) -> str | None:
+        """Return the processing profile of the most recent user message.
+
+        Clients adopt this when reopening a conversation so the follow-up turn is
+        sent under the profile the conversation's (profile-partitioned) history was
+        produced under. The most recent *user* row is used — not a delegated
+        assistant row — so a thread that handed off to another profile (e.g.
+        ``complex_tasks`` delegating to ``engineer``) still resumes as the profile
+        the user was actually talking to. Computed independently of any message
+        page limit, so adoption works even when the last user message is many
+        rows back in a long, tool-heavy conversation.
+        """
+        conditions = [
+            message_history_table.c.conversation_id == conversation_id,
+            message_history_table.c.role == "user",
+            message_history_table.c.processing_profile_id.is_not(None),
+            _visible_message_condition(),
+        ]
+        if not include_subconversations:
+            conditions.append(message_history_table.c.subconversation_id.is_(None))
+
+        stmt = (
+            select(message_history_table.c.processing_profile_id)
+            .where(*conditions)
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.internal_id.desc(),
+            )
+            .limit(1)
+        )
+
+        row = await self._db.fetch_one(stmt)
+        return row["processing_profile_id"] if row else None
+
     async def get_messages_after(
         self,
         conversation_id: str,

@@ -436,6 +436,16 @@ class ConversationMessagesResponse(BaseModel):
         default=False,
         description="Whether there are more messages after the current batch",
     )
+    latest_user_profile_id: str | None = Field(
+        default=None,
+        description=(
+            "Processing profile of the most recent user message in the whole "
+            "conversation (independent of the returned message page). Populated "
+            "only when the request sets include_conversation_profile=true. The "
+            "client adopts it when reopening a conversation so the follow-up turn "
+            "loads the matching profile-partitioned history."
+        ),
+    )
     active_turns: list["ActiveTurnInfo"] = Field(
         default_factory=list,
         description=(
@@ -1921,6 +1931,7 @@ async def get_conversation_messages(
     before: str | None = None,  # ISO timestamp string
     after: str | None = None,  # ISO timestamp string
     limit: int = 50,
+    include_conversation_profile: bool = False,
 ) -> ConversationMessagesResponse:
     """
     Get messages for a specific conversation with timestamp-based pagination.
@@ -1930,6 +1941,11 @@ async def get_conversation_messages(
         before: Get messages before this timestamp (ISO format)
         after: Get messages after this timestamp (ISO format)
         limit: Maximum number of messages to return (default: 50, use 0 for all)
+        include_conversation_profile: When true, also resolve
+            ``latest_user_profile_id`` (the most recent user message's profile
+            across the whole conversation, independent of the page limit) so the
+            client can adopt it on open. Skipped by default to keep the frequent
+            limit=1 active-turn poll cheap.
 
     Returns:
         Paginated list of messages in the conversation, plus ``active_turns``
@@ -2055,6 +2071,14 @@ async def get_conversation_messages(
     hub = _get_hub(request)
     active_turns = _owned_turns(hub, conversation_id, user_id)
 
+    latest_user_profile_id = None
+    if include_conversation_profile:
+        latest_user_profile_id = (
+            await db_context.message_history.get_latest_user_profile_id(
+                conversation_id, include_subconversations=False
+            )
+        )
+
     return ConversationMessagesResponse(
         conversation_id=conversation_id,
         messages=response_messages,
@@ -2062,6 +2086,7 @@ async def get_conversation_messages(
         total_messages=total_message_count,
         has_more_before=has_more_before,
         has_more_after=has_more_after,
+        latest_user_profile_id=latest_user_profile_id,
         active_turns=active_turns,
     )
 

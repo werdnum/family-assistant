@@ -1130,7 +1130,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       if (!background) {
         setIsLoading(true);
       }
-      const response = await fetch(`/api/v1/chat/conversations/${convId}/messages`, {
+      // A foreground load is an explicit user open, where we adopt the
+      // conversation's profile; ask the backend to resolve it (it's computed
+      // across the whole conversation, not just the returned page, so adoption
+      // is correct even when the last user message is many rows back). Background
+      // reloads skip it to keep the response cheap.
+      const messagesUrl = background
+        ? `/api/v1/chat/conversations/${convId}/messages`
+        : `/api/v1/chat/conversations/${convId}/messages?include_conversation_profile=true`;
+      const response = await fetch(messagesUrl, {
         signal: messagesAbortController.signal,
       });
       if (response.ok) {
@@ -1145,16 +1153,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // background reload passes background=true). Adopt the profile its
         // history was produced under so the follow-up turn loads the matching
         // (profile-partitioned) history instead of silently dropping context.
-        // Use the most recent *user* message's profile, not a delegated
-        // assistant row's, so a thread that handed off to another profile (e.g.
-        // complex_tasks delegating to engineer) still resumes as the profile the
-        // user was actually talking to.
+        // The backend resolves latest_user_profile_id from the most recent *user*
+        // message across the whole conversation — not a delegated assistant row,
+        // so a thread that handed off to another profile (e.g. complex_tasks
+        // delegating to engineer) still resumes as the profile the user was
+        // actually talking to, and not bounded by the returned page, so adoption
+        // is correct even when the last user message is many rows back.
         if (!background) {
-          const adoptedProfileId = [...data.messages]
-            .reverse()
-            .find(
-              (msg) => msg.role === 'user' && typeof msg.processing_profile_id === 'string'
-            )?.processing_profile_id;
+          const adoptedProfileId = data.latest_user_profile_id;
           if (typeof adoptedProfileId === 'string' && adoptedProfileId) {
             setCurrentProfileId(adoptedProfileId);
           }

@@ -541,3 +541,47 @@ async def test_tool_result_attachments_include_complete_metadata(
 # implementation details rather than API behavior. The structure of messages sent
 # to the LLM is an internal concern and the actual API functionality is tested
 # by the other attachment tests.
+
+
+@pytest.mark.asyncio
+async def test_messages_returns_latest_user_profile_only_when_requested(
+    api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """include_conversation_profile gates the conversation-profile lookup.
+
+    The frequent active-turn poll fetches /messages too, so the conversation
+    profile is resolved only when the client explicitly asks for it on open.
+    """
+    api_mock_llm_client.default_response = LLMOutput(content="Done.")
+    conversation_id = "web_conv_profile_adopt_endpoint"
+
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
+            "prompt": "Plan the trip",
+            "conversation_id": conversation_id,
+            "interface_type": "web",
+        },
+    )
+    assert response.status_code == 200
+
+    # Without the flag the field is omitted, keeping the poll payload cheap.
+    default_response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert default_response.status_code == 200
+    assert default_response.json()["latest_user_profile_id"] is None
+
+    # With the flag the endpoint resolves the profile the conversation's most
+    # recent user message was sent under, matching that message's own tag.
+    adopt_response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        params={"include_conversation_profile": "true"},
+    )
+    assert adopt_response.status_code == 200
+    adopt_data = adopt_response.json()
+    user_message = next(
+        message for message in adopt_data["messages"] if message["role"] == "user"
+    )
+    assert user_message["processing_profile_id"] is not None
+    assert adopt_data["latest_user_profile_id"] == user_message["processing_profile_id"]
