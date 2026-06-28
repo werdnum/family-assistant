@@ -128,6 +128,11 @@
 # Server-Sent Events), and "streamable_http" (remote Streamable HTTP; aliases
 # "streamablehttp"/"http"). Remote transports accept an optional Bearer `token`
 # (use "$ENV_VAR" to read it from the environment).
+#
+# Set `on_demand: true` on a server to load its tools lazily (via activate_tools)
+# in every profile instead of advertising them eagerly. On-demand status is a
+# property of the server, so flagging it here is preferred over re-listing the
+# server id in each profile's tools_config.on_demand_mcp_server_ids.
 # mcp_config:
 #   mcpServers:
 #     custom_server:
@@ -135,6 +140,9 @@
 #       args: ["path/to/server.py"]
 #       env:
 #         API_KEY: "$CUSTOM_API_KEY"
+#     heavy_server:
+#       command: "heavy-mcp"
+#       on_demand: true   # lazy-loaded everywhere; no per-profile list edits
 #     remote_sse_server:
 #       transport: "sse"
 #       url: "https://example.com/sse"

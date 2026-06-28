@@ -749,9 +749,18 @@ def resolve_service_profile(
                         SYSTEM_PROMPT_DOCS_KEY,
                     )
 
-    # Replace tools_config entirely if defined.
+    # Deep-merge tools_config so a profile inherits every key it does not
+    # override. tools_config is a multi-knob object (on-demand catalogs,
+    # timeouts, delegation tuning); replacing it wholesale would let a profile
+    # that sets one knob silently discard the inherited values of all the
+    # others. List-valued keys still replace wholesale (deep_merge only recurses
+    # into dicts), so a profile that wants a different on-demand catalog states
+    # the full list, while one that wants the inherited catalog omits the key.
     if "tools_config" in profile_def and isinstance(profile_def["tools_config"], dict):
-        resolved["tools_config"] = copy.deepcopy(profile_def["tools_config"])
+        resolved["tools_config"] = deep_merge_dicts(
+            resolved.get("tools_config", {}),
+            profile_def["tools_config"],
+        )
 
     # Replace tools_policy entirely if defined (operator layer is preserved
     # separately so it still applies via PolicyEngine.from_layers)

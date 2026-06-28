@@ -345,6 +345,38 @@ class TestMcpConfigDeepMerge:
         assert "custom" in servers
         assert len(servers) == 4
 
+    def test_mcp_server_on_demand_flag(self, tmp_path: Path) -> None:
+        """An MCP server can declare on_demand-ness where it is defined.
+
+        on-demand status is a property of the server, so flagging it once avoids
+        re-listing the id in every profile's on_demand_mcp_server_ids.
+        """
+        defaults = tmp_path / "defaults.yaml"
+        defaults.write_text(
+            yaml.dump({
+                "mcp_config": {
+                    "mcpServers": {
+                        "time": {"command": "uvx", "args": ["mcp-server-time"]},
+                        "vikunja": {
+                            "command": "vikunja-mcp",
+                            "on_demand": True,
+                        },
+                    }
+                }
+            })
+        )
+        config = load_config(
+            defaults_file_path=str(defaults),
+            config_file_path=str(tmp_path / "missing.yaml"),
+            prompts_file_path=str(tmp_path / "missing_prompts.yaml"),
+            load_dotenv_file=False,
+        )
+        servers = config.mcp_config.mcpServers
+        assert servers["vikunja"].on_demand is True
+        assert servers["time"].on_demand is False
+        flagged = {sid for sid, s in servers.items() if s.on_demand}
+        assert flagged == {"vikunja"}
+
     def test_config_yaml_overrides_existing_server_args(self, tmp_path: Path) -> None:
         """config.yaml can override an existing server's configuration."""
         defaults = tmp_path / "defaults.yaml"
@@ -942,13 +974,18 @@ class TestResolveServiceProfile:
             == "Config YAML prompt"
         )
 
-    def test_tools_config_replaced_entirely(self) -> None:
-        """Test that tools_config is replaced, not merged."""
+    def test_tools_config_deep_merged(self) -> None:
+        """A profile inherits tools_config keys it does not override.
+
+        Overriding one knob (a list) must not wipe sibling keys such as the
+        confirmation timeout inherited from default_profile_settings.
+        """
         default_settings: dict[str, Any] = {
             "processing_config": {},
             "tools_config": {
                 "confirmation_timeout_seconds": 60.0,
                 "on_demand_local_tools": ["lazy_default"],
+                "on_demand_mcp_server_ids": ["vikunja"],
             },
             "chat_id_to_name_map": {},
             "slash_commands": [],
@@ -958,8 +995,56 @@ class TestResolveServiceProfile:
             "tools_config": {"on_demand_local_tools": ["specific_tool"]},
         }
         result = resolve_service_profile(profile_def, default_settings, {})
-        # tools_config should be completely replaced
-        assert result["tools_config"] == {"on_demand_local_tools": ["specific_tool"]}
+        # Overridden list replaces; sibling keys are inherited.
+        assert result["tools_config"] == {
+            "confirmation_timeout_seconds": 60.0,
+            "on_demand_local_tools": ["specific_tool"],
+            "on_demand_mcp_server_ids": ["vikunja"],
+        }
+
+    def test_tools_config_inherited_when_profile_sets_unrelated_key(self) -> None:
+        """Setting only the confirmation timeout keeps the inherited catalogs.
+
+        This is the email_intake regression: overriding the timeout used to wipe
+        the on-demand lists, forcing every MCP server to load eagerly.
+        """
+        default_settings: dict[str, Any] = {
+            "processing_config": {},
+            "tools_config": {
+                "confirmation_timeout_seconds": 60.0,
+                "on_demand_local_tools": ["lazy_default"],
+                "on_demand_mcp_server_ids": ["vikunja", "homeassistant"],
+            },
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "email_intake",
+            "tools_config": {"confirmation_timeout_seconds": 86400.0},
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["tools_config"]["confirmation_timeout_seconds"] == 86400.0
+        assert result["tools_config"]["on_demand_local_tools"] == ["lazy_default"]
+        assert result["tools_config"]["on_demand_mcp_server_ids"] == [
+            "vikunja",
+            "homeassistant",
+        ]
+
+    def test_tools_config_inherited_when_profile_omits_it(self) -> None:
+        """A profile with no tools_config block inherits it verbatim."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {},
+            "tools_config": {
+                "confirmation_timeout_seconds": 60.0,
+                "on_demand_mcp_server_ids": ["vikunja"],
+            },
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {"id": "complex_tasks"}
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["tools_config"]["on_demand_mcp_server_ids"] == ["vikunja"]
+        assert result["tools_config"]["confirmation_timeout_seconds"] == 60.0
 
     def test_tools_policy_inherited_from_defaults(self) -> None:
         """Test that tools_policy is inherited when the profile does not override it."""

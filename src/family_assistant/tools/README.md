@@ -150,7 +150,12 @@ service_profiles:
 ```
 
 For tools that should appear in the on-demand catalog instead of the always-advertised tool list,
-also add their names to `tools_config.on_demand_local_tools`.
+also add their names to `tools_config.on_demand_local_tools`. This list lives in
+`default_profile_settings.tools_config` and is deep-merged into every profile, so a profile inherits
+it unless it explicitly overrides the list. For MCP servers, prefer flagging the server
+`on_demand: true` under `mcp_config.mcpServers` — on-demand status is a property of the server, so it
+applies to every profile without re-listing the server id in each
+`tools_config.on_demand_mcp_server_ids`.
 
 ## Tool Execution Context
 

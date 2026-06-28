@@ -812,6 +812,16 @@ class Assistant:
         if user_dir:
             all_skills.extend(load_skills_from_directory(user_dir))
         note_registry = NoteRegistry(all_skills) if all_skills else None
+
+        # MCP servers flagged on_demand load lazily in every profile, so on-demand
+        # status can be declared once at the server instead of re-listed in each
+        # profile's tools_config.on_demand_mcp_server_ids.
+        on_demand_flagged_mcp_ids = {
+            server_id
+            for server_id, server_config in self.config.mcp_config.mcpServers.items()
+            if server_config.on_demand
+        }
+
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
 
@@ -919,7 +929,10 @@ class Assistant:
             )
             profile_tools_provider = policy_provider
             on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
-            on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
+            on_demand_mcp_ids = (
+                set(profile_tools_conf.get_on_demand_mcp_server_ids())
+                | on_demand_flagged_mcp_ids
+            )
             profile_on_demand_view: OnDemandToolsView | None = None
             if on_demand_tool_names or on_demand_mcp_ids:
                 profile_on_demand_view = OnDemandToolsView(

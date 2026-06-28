@@ -815,6 +815,11 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
+    # When true, this server's tools are loaded on demand (via activate_tools)
+    # in every profile rather than advertised eagerly. On-demand-ness is a
+    # property of the server, so declaring it here avoids re-listing the server
+    # id in each profile's tools_config.on_demand_mcp_server_ids.
+    on_demand: bool = False
 
 
 class MCPConfig(BaseModel):

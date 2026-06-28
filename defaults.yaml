@@ -341,6 +341,12 @@ default_profile_settings:
     web_max_history_messages: 100
     web_history_max_age_hours: 720 # 30 days
     max_iterations: 10 # Maximum number of tool call iterations
+  # Single source of truth for tool loading behaviour. Profiles deep-merge their
+  # own tools_config onto this, so they inherit every key they do not override
+  # (a profile that sets only confirmation_timeout_seconds keeps these on-demand
+  # catalogs). To make an MCP server load lazily everywhere, prefer flagging it
+  # `on_demand: true` under mcp_config.mcpServers rather than re-listing its id
+  # in each profile.
   tools_config:
     mcp_initialization_timeout_seconds: 60 # Default 1 minute
     on_demand_local_tools:
@@ -534,6 +540,9 @@ service_profiles:
           - Browser, script, worker, delegation, automation, and arbitrary outbound communication tools are off in this profile.
           - For calendar, notes, reminders, messages to known users, and URL ingestion, the tool runs only after {user_name} approves the confirmation in Telegram or the web UI. You don't need to flag that — it's automatic.
     tools_config:
+      # Only overrides the confirmation timeout; the on-demand catalogs are
+      # deep-merged from default_profile_settings, so denied/expensive MCP
+      # servers stay lazy here instead of loading eagerly.
       confirmation_timeout_seconds: 86400 # 24 hours; gives the user time to come back to the confirmation
     tools_policy:
       default_decision: "deny"
@@ -1364,19 +1373,9 @@ service_profiles:
           Current time: {current_time}
 
           {aggregated_other_context}
-    tools_config:
-      on_demand_local_tools:
-        - "render_home_assistant_template"
-        - "get_camera_snapshot"
-        - "download_state_history"
-        - "list_home_assistant_entities"
-        - "list_home_assistant_actions"
-        - "call_home_assistant_action"
-        - "ucp_add_to_cart"
-        - "ucp_get_cart"
-        - "ucp_transfer_checkout_to_human"
-      on_demand_mcp_server_ids:
-        - "homeassistant"
+    # tools_config is inherited from default_profile_settings (on-demand catalogs
+    # and timeouts). complex_tasks deliberately does not override it so new MCP
+    # servers and on-demand tools stay lazy here automatically.
     tools_policy:
       default_decision: "deny"
       rules:

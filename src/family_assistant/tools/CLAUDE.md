@@ -183,7 +183,13 @@ service_profiles:
 ```
 
 For tools that should be discoverable on demand instead of always advertised, also add their names
-to `tools_config.on_demand_local_tools`.
+to `tools_config.on_demand_local_tools`. `tools_config` is deep-merged from
+`default_profile_settings`, so a profile inherits the on-demand catalogs (and other knobs like
+`confirmation_timeout_seconds`) unless it explicitly overrides a key. For MCP servers, prefer
+flagging the server `on_demand: true` under `mcp_config.mcpServers` rather than re-listing the server
+id in each profile's `tools_config.on_demand_mcp_server_ids` — on-demand status is a property of the
+server and applies to every profile. See
+[docs/design/tools_config_inheritance.md](../../../docs/design/tools_config_inheritance.md).
 
 ## Tool Execution Context
 
