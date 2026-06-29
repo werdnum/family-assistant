@@ -194,10 +194,11 @@ async def test_ucp_add_to_cart_creates_unsigned_cart_request(
     )
 
     assert "https://shop.example.com/cart/c/cart_abc123" in result.get_text()
-    # Discovery probes the merchant profile; with no profile served the tool
-    # falls back to the Shopify endpoint convention.
+    # Discovery probes the merchant profile; with no profile served (404) it
+    # retries the .json fallback, then falls back to the Shopify convention.
     assert _FakeAsyncClient.profile_requests == [
-        "https://shop.example.com/.well-known/ucp"
+        "https://shop.example.com/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp.json",
     ]
     request = _FakeAsyncClient.requests[0]
     assert request.url == "https://shop.example.com/api/ucp/mcp"
@@ -432,9 +433,11 @@ async def test_ucp_add_to_existing_cart_resolves_endpoint_once(
         line_items=[{"variant_id": "variant-1", "quantity": 1}],
     )
 
-    # get_cart + update_cart share a single endpoint resolution.
+    # get_cart + update_cart share a single endpoint resolution; the unserved
+    # profile (404) probes the well-known path then its .json fallback once.
     assert _FakeAsyncClient.profile_requests == [
-        "https://shop.example.com/.well-known/ucp"
+        "https://shop.example.com/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp.json",
     ]
     assert len(_FakeAsyncClient.requests) == 2
 

@@ -109,6 +109,16 @@ and an untrusted cross-host redirect is still rejected even when an allowlist is
 chain stays bounded by `MAX_DISCOVERY_REDIRECTS` and the shared timeout budget. DNS rebinding
 remains out of scope as above.
 
+### `.well-known/ucp.json` discovery fallback
+
+Some static hosts (S3, Netlify, IIS) can't serve the spec's extension-less `/.well-known/ucp` path
+without bespoke routing and return `404` for it. When the primary probe returns exactly `404`,
+discovery makes **one** secondary attempt against `/.well-known/ucp.json` before treating the
+merchant as having no profile. Only a `404` triggers the fallback — a `5xx`, an off-trust redirect,
+or a network error is a miss straight away. The fallback request reuses the same trusted-redirect
+following and shares the single discovery timeout budget (the `.json` attempt gets only the time
+left after the first probe), so it can't double the worst-case discovery latency.
+
 ## Follow-up: REST transport (done)
 
 THE ICONIC and Adore Beauty advertise `transport: "rest"`, not `mcp`. The client originally only

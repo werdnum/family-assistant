@@ -28,6 +28,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 UCP_PROFILE_PATH = "/.well-known/ucp"
+# Some static hosts (S3, Netlify, IIS) cannot serve the extension-less
+# well-known path, so discovery falls back to this ``.json`` variant on a 404.
+UCP_PROFILE_FALLBACK_PATH = "/.well-known/ucp.json"
 SHOPPING_SERVICE_NAME = "dev.ucp.shopping"
 MCP_TRANSPORT = "mcp"
 REST_TRANSPORT = "rest"
@@ -430,11 +433,15 @@ async def discover_merchant_ucp_profile(
 ) -> MerchantUCPProfile | None:
     """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
 
-    ``url`` may be any URL on the merchant; only its HTTPS origin is used.
-    ``timeout`` bounds the whole discovery GET — including any redirect chain
-    (each hop gets only the remaining budget) — independent of the caller's
-    client-wide timeout, so a slow/tarpit ``/.well-known/ucp`` cannot stall a
-    subsequent request; when ``None`` the client's default timeout applies.
+    ``url`` may be any URL on the merchant; only its HTTPS origin is used. When
+    the extension-less ``/.well-known/ucp`` path returns ``404`` — as some static
+    hosts (S3, Netlify, IIS) do for files without an extension — discovery makes
+    one secondary attempt against ``/.well-known/ucp.json`` before giving up.
+    ``timeout`` bounds the whole discovery GET — including both probes and any
+    redirect chain (each request gets only the remaining shared budget) —
+    independent of the caller's client-wide timeout, so a slow/tarpit
+    ``/.well-known/ucp`` cannot stall a subsequent request; when ``None`` the
+    client's default timeout applies.
     ``trusted_suffixes`` are the configured commerce-platform host suffixes a
     discovery redirect may land on cross-site (in addition to same-origin and
     same-site hops), mirroring where the signed POST is allowed to go; pass the
@@ -451,27 +458,58 @@ async def discover_merchant_ucp_profile(
     if origin is None:
         return None
 
-    profile_url = f"{origin}{UCP_PROFILE_PATH}"
     headers = {"Accept": "application/json"}
-    try:
-        result = await _get_following_trusted_redirects(
-            client,
-            profile_url,
-            headers=headers,
-            timeout=timeout,
-            trusted_suffixes=trusted_suffixes,
-            now=now,
-        )
-    except httpx.HTTPError as exc:
-        logger.debug("UCP discovery request failed for %s: %s", origin, exc)
+    # Share one timeout budget across the well-known probe and its .json fallback
+    # so the secondary attempt cannot double the worst-case discovery latency.
+    deadline = None if timeout is None else now() + timeout
+
+    response: httpx.Response | None = None
+    final_url: str | None = None
+    for profile_path in (UCP_PROFILE_PATH, UCP_PROFILE_FALLBACK_PATH):
+        remaining = None if deadline is None else deadline - now()
+        if remaining is not None and remaining <= 0:
+            logger.debug("UCP discovery exceeded its time budget for %s", origin)
+            return None
+        profile_url = f"{origin}{profile_path}"
+        try:
+            result = await _get_following_trusted_redirects(
+                client,
+                profile_url,
+                headers=headers,
+                timeout=remaining,
+                trusted_suffixes=trusted_suffixes,
+                now=now,
+            )
+        except httpx.HTTPError as exc:
+            logger.debug("UCP discovery request failed for %s: %s", profile_url, exc)
+            return None
+        if result is None:
+            logger.debug(
+                "UCP discovery for %s redirected to an untrusted host; not followed",
+                profile_url,
+            )
+            return None
+        candidate, candidate_url = result
+        # A static host that cannot serve the extension-less path returns 404;
+        # retry once against the .json variant before treating it as a miss.
+        if (
+            candidate.status_code == httpx.codes.NOT_FOUND
+            and profile_path != UCP_PROFILE_FALLBACK_PATH
+        ):
+            logger.debug(
+                "UCP discovery for %s returned 404; retrying %s%s",
+                profile_url,
+                origin,
+                UCP_PROFILE_FALLBACK_PATH,
+            )
+            continue
+        response, final_url = candidate, candidate_url
+        break
+
+    if (
+        response is None or final_url is None
+    ):  # pragma: no cover - loop always sets both or returns early
         return None
-    if result is None:
-        logger.debug(
-            "UCP discovery for %s redirected to an untrusted host; not followed",
-            origin,
-        )
-        return None
-    response, final_url = result
     if response.is_error:
         logger.debug(
             "UCP discovery for %s returned HTTP %s", origin, response.status_code
