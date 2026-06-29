@@ -222,6 +222,10 @@ final class AuthManager {
     /// Handles its own errors so the watchdog only needs to observe completion.
     @MainActor
     private func performBootstrap() async {
+        // Ownership token: if the watchdog abandons this task and a logout/re-login
+        // bumps the epoch, a late resume must not mutate the now-current auth state.
+        let epoch = authEpoch
+
         guard let token = KeychainHelper.readString(key: Keys.apiToken) else {
             clearLocalAuthState()
             return
@@ -230,7 +234,7 @@ final class AuthManager {
         do {
             try await refreshIfNeeded()
         } catch AuthError.authRejected, AuthError.noCredentials {
-            clearLocalAuthState()
+            if isCurrentAuthEpoch(epoch) { clearLocalAuthState() }
             return
         } catch is CancellationError {
             return
@@ -240,12 +244,15 @@ final class AuthManager {
             )
         }
 
+        // Superseded while refreshing? Stop before the bridge mutates auth state.
+        guard isCurrentAuthEpoch(epoch) else { return }
+
         let activeToken = KeychainHelper.readString(key: Keys.apiToken) ?? token
 
         do {
             try await establishSession(apiToken: activeToken)
         } catch AuthError.authRejected {
-            clearLocalAuthState()
+            if isCurrentAuthEpoch(epoch) { clearLocalAuthState() }
         } catch is CancellationError {
             return
         } catch {
@@ -297,20 +304,31 @@ final class AuthManager {
         authEpoch += 1
     }
 
-    /// Whether a session bridge that started at `capturedEpoch` may still apply its
-    /// cookie. False once an auth-invalidating transition has bumped ``authEpoch``.
+    /// Whether the bridge that captured `epoch` still owns the current auth state.
+    /// False once an auth-invalidating transition (logout / credential clear / new
+    /// login) has bumped ``authEpoch``. A watchdog-abandoned bridge that resumes
+    /// after such a transition must not mutate auth state (cookies or keychain).
     @MainActor
-    func shouldApplySessionCookies(capturedEpoch: Int) -> Bool {
-        capturedEpoch == authEpoch
+    func isCurrentAuthEpoch(_ epoch: Int) -> Bool {
+        epoch == authEpoch
     }
 
-    /// Whether cookies a bridge just wrote must be undone. True only when the epoch
-    /// advanced *after* the write (the non-cancellable `setCookie` stalled past a
-    /// logout/re-login) **and** no live session remains — so we never delete a fresh
-    /// login's cookies, only resurrected logged-out ones.
-    @MainActor
-    func shouldDiscardWrittenCookies(capturedEpoch: Int) -> Bool {
-        capturedEpoch != authEpoch && !isAuthenticated
+    /// Of the cookies a bridge `written`, the subset still present in `live` with
+    /// the exact value we wrote — i.e. ours, not overwritten by a newer login. Used
+    /// to undo a stalled-then-superseded bridge's writes without ever deleting a
+    /// fresh login's same-named cookie (which carries a different value).
+    static func staleCookiesToDelete(
+        written: [HTTPCookie],
+        live: [HTTPCookie]
+    ) -> [HTTPCookie] {
+        written.filter { ours in
+            live.contains {
+                $0.name == ours.name
+                    && $0.domain == ours.domain
+                    && $0.path == ours.path
+                    && $0.value == ours.value
+            }
+        }
     }
 
     // MARK: - Token Refresh
@@ -405,7 +423,7 @@ final class AuthManager {
         // Fence: if an auth-invalidating transition (logout / re-login) happened
         // while this bridge was in flight — e.g. it was abandoned by the bootstrap
         // watchdog and only now resumed — do not write the now-stale session cookie.
-        guard await shouldApplySessionCookies(capturedEpoch: capturedEpoch) else {
+        guard await isCurrentAuthEpoch(capturedEpoch) else {
             return
         }
 
@@ -420,11 +438,16 @@ final class AuthManager {
 
             // The setCookie awaits above are themselves where the non-cancellable
             // WebKit stall can occur. If auth was invalidated while we were
-            // suspended there — and no fresh login has since taken ownership of the
-            // store — undo the now-stale writes so an abandoned bootstrap cannot
-            // resurrect a logged-out session.
-            if await shouldDiscardWrittenCookies(capturedEpoch: capturedEpoch) {
-                for cookie in cookies {
+            // suspended there, undo our writes — but only the cookies whose live
+            // value is still exactly what we wrote, so a fresh login's same-named
+            // cookie (a different value) is never collateral. Failing safe to a
+            // re-bridge beats persisting a stale/cross-session cookie.
+            if await !isCurrentAuthEpoch(capturedEpoch) {
+                let stale = Self.staleCookiesToDelete(
+                    written: cookies,
+                    live: await cookieStore.allCookies()
+                )
+                for cookie in stale {
                     await cookieStore.deleteCookie(cookie)
                 }
             }

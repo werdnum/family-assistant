@@ -177,39 +177,48 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertTrue(completed)
     }
 
-    func testSessionCookieFenceRejectsBridgeAfterAuthInvalidation() async {
+    func testAuthEpochOwnershipIsLostAfterAuthInvalidation() async {
         seedStoredAuth(apiToken: "api-token", refreshToken: "refresh-token", expiresIn: 7200)
         let authManager = makeAuthManager()
 
         let captured = authManager.authEpoch
-        XCTAssertTrue(authManager.shouldApplySessionCookies(capturedEpoch: captured))
+        XCTAssertTrue(authManager.isCurrentAuthEpoch(captured))
 
         // A logout (the case where a watchdog-abandoned bridge could resume and
-        // re-add the stale cookie) must invalidate the captured epoch.
+        // re-add the stale cookie or clear a fresh login) invalidates ownership, so
+        // both the cookie write and the auth-rejection clear are fenced out.
         await authManager.logout()
 
         XCTAssertFalse(
-            authManager.shouldApplySessionCookies(capturedEpoch: captured),
-            "a bridge captured before logout must not be allowed to write its cookie"
+            authManager.isCurrentAuthEpoch(captured),
+            "a bridge captured before logout must no longer own the auth state"
         )
     }
 
-    func testWrittenCookiesAreDiscardedOnlyWhenNoLiveSessionRemains() async {
-        seedStoredAuth(apiToken: "api-token", refreshToken: "refresh-token", expiresIn: 7200)
-        let authManager = makeAuthManager()
-        let captured = authManager.authEpoch
+    func testStaleCookieSelectionDeletesOnlyOurOwnUnreplacedWrites() {
+        let session = "session"
+        let domain = "assistant.example.test"
+        let path = "/"
+        func cookie(_ value: String) -> HTTPCookie {
+            HTTPCookie(properties: [
+                .name: session, .value: value, .domain: domain, .path: path,
+            ])!
+        }
+        let written = [cookie("OLD")]
 
-        // Epoch unchanged: a normal bridge keeps its cookies.
-        XCTAssertFalse(authManager.shouldDiscardWrittenCookies(capturedEpoch: captured))
-
-        // Logout while the write was stalled -> stale cookies must be undone.
-        await authManager.logout()
-        XCTAssertTrue(authManager.shouldDiscardWrittenCookies(capturedEpoch: captured))
-
-        // A fresh login then takes ownership of the store: the abandoned bridge must
-        // NOT delete the new session's cookies.
-        authManager.isAuthenticated = true
-        XCTAssertFalse(authManager.shouldDiscardWrittenCookies(capturedEpoch: captured))
+        // Our write is still the live value -> delete it (stale, superseded).
+        XCTAssertEqual(
+            AuthManager.staleCookiesToDelete(written: written, live: [cookie("OLD")]).map(\.value),
+            ["OLD"]
+        )
+        // A fresh login overwrote it with a new value -> never delete the new one.
+        XCTAssertTrue(
+            AuthManager.staleCookiesToDelete(written: written, live: [cookie("NEW")]).isEmpty
+        )
+        // Already gone (e.g. logout cleared the store) -> nothing to delete.
+        XCTAssertTrue(
+            AuthManager.staleCookiesToDelete(written: written, live: []).isEmpty
+        )
     }
 
     func testAuthSupportTypesExposeExpectedUserFacingValues() {
