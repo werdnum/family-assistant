@@ -632,6 +632,12 @@ async def handle_llm_callback(
             f"Saved system trigger message for callback {callback_turn_id} to history."
         )
 
+        # The owner recorded on the payload owns confirm-gated tool calls made on
+        # this turn AND any nested scheduled actions the turn creates (those tools
+        # stamp the next task from exec_context.user_id), so thread it through as
+        # the turn's user_id too — not just into the confirmation callback.
+        callback_owner_user_id = payload.get("created_by_user_id")
+
         # Call the ProcessingService.
         # NOTE: `handle_chat_interaction` now handles saving of all messages in the turn.
         result = await processing_service.handle_chat_interaction(
@@ -645,9 +651,10 @@ async def handle_llm_callback(
             trigger_content_parts=[{"type": "text", "text": trigger_text}],
             trigger_interface_message_id=None,  # System trigger
             user_name=exec_context.user_name,  # Use preserved user name from context
+            user_id=callback_owner_user_id,
             replied_to_interface_id=None,  # Not a reply
             request_confirmation_callback=build_deferred_confirmation_callback(
-                target_user_id=payload.get("created_by_user_id"),
+                target_user_id=callback_owner_user_id,
                 source_prefix="From a scheduled action — approve to run:",
                 missing_owner_message=lambda tool_name: (
                     "This scheduled action has no recorded owner, so the "
@@ -2973,15 +2980,17 @@ class TaskWorker:
 
         notification_task_id = f"script_error_notify_{uuid.uuid4().hex[:8]}"
 
+        # Deliberately left ownerless: this is a read-only "summarize the failure"
+        # turn whose prompt embeds the failed script, error, and (untrusted) event
+        # data. An owner would make it a deferred-confirmation-capable turn, letting
+        # that content drive durable approvals for confirm-gated tools. Ownerless,
+        # any confirm-gated call instead reports it cannot be approved.
         notification_payload = LlmCallbackPayload(
             conversation_id=conversation_id,
             interface_type=interface_type,
             callback_context=callback_context,
             scheduling_timestamp=datetime.now(UTC).isoformat(),
         )
-        created_by_user_id = payload_dict.get("created_by_user_id")
-        if created_by_user_id is not None:
-            notification_payload["created_by_user_id"] = created_by_user_id
 
         try:
             await enqueue_task(

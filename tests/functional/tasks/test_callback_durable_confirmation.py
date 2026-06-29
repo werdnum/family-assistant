@@ -42,10 +42,12 @@ class CallbackCapturingService:
         self.service_config = SimpleNamespace(id="callback_profile")
         self.processing_services_registry: dict[str, object] = {}
         self.captured_callback: object = "unset"
+        self.captured_user_id: object = "unset"
         self.confirmation_outcome: ConfirmationOutcome | None = None
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.captured_callback = kwargs["request_confirmation_callback"]
+        self.captured_user_id = kwargs.get("user_id")
         db_context = cast("DatabaseContext", kwargs["db_context"])
         callback = kwargs["request_confirmation_callback"]
         if callback is not None:
@@ -131,6 +133,9 @@ async def test_callback_with_owner_can_request_durable_confirmation(
         )
 
     assert processing_service.captured_callback is not None
+    # The owner is threaded as the turn's user_id too, so nested scheduled
+    # actions (schedule_reminder, create_automation, ...) inherit the owner.
+    assert processing_service.captured_user_id == "callback-owner"
     assert processing_service.confirmation_outcome is not None
     assert processing_service.confirmation_outcome.kind == "completed"
     assert isinstance(processing_service.confirmation_outcome.result, str)
