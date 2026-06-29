@@ -474,6 +474,13 @@ When the assistant needs to perform important actions, you'll be asked to confir
   - If the operator has linked your Telegram and web login to the same account, an action requested
     from Telegram can also appear in the web interface for approval.
   - The assistant will wait for your response before proceeding
+- **Background turns can ask too:** When the assistant acts without you in the chat — a scheduled
+  reminder or callback firing, or a delegated task reporting back its result — and it needs to do
+  something that requires approval, it no longer just gives up. It records the request as a pending
+  confirmation addressed to you, sends it to your primary channel, and finishes its turn; the action
+  runs later once you approve, just like the email and automation-script flows above. (For older
+  reminders scheduled before this was added, the assistant has no record of who to ask, so a
+  confirm-gated action is reported as "not run" instead.)
 - **Why this matters:** This gives you full control over what the assistant does and prevents
   unintended actions
 

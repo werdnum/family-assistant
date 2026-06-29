@@ -336,6 +336,8 @@ async def schedule_reminder_tool(
                 "current_attempt": 1,
             },
         }
+        if exec_context.user_id is not None:
+            payload["created_by_user_id"] = exec_context.user_id
 
         await db_context.tasks.enqueue(
             task_id=task_id,
@@ -410,6 +412,8 @@ async def schedule_future_callback_tool(
             "callback_context": context,
             "scheduling_timestamp": scheduling_time.isoformat(),
         }
+        if exec_context.user_id is not None:
+            payload["created_by_user_id"] = exec_context.user_id
 
         await db_context.tasks.enqueue(
             task_id=task_id,

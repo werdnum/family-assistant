@@ -1907,6 +1907,129 @@ async def test_web_delegation_can_request_confirmation(db_engine: AsyncEngine) -
     assert confirmation_manager.requests[0]["tool_name"] == "confirmable_delegated_tool"
 
 
+class FakeConfirmingWakeSourceService:
+    """Source service fake that exercises the wakeup's confirmation callback."""
+
+    def __init__(self) -> None:
+        self.service_config = SimpleNamespace(
+            id="source_profile",
+            tools_config=ToolsConfig(
+                async_delegation_enabled=True,
+                delegate_handoff_after_seconds=15.0,
+                delegate_status_poll_seconds=0.05,
+            ),
+            visibility_grants=None,
+            default_note_visibility_labels=None,
+        )
+        self.processing_services_registry: dict[str, object] = {}
+        self.home_assistant_client = None
+        self.attachment_registry = None
+        self.confirmation_outcome: ConfirmationOutcome | None = None
+
+    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
+        db_context = cast("DatabaseContext", kwargs["db_context"])
+        turn_id = cast("str", kwargs["turn_id"])
+        thread_root_id = cast("int | None", kwargs["thread_root_id"])
+        subconversation_id = cast("str | None", kwargs["subconversation_id"])
+
+        callback = kwargs["request_confirmation_callback"]
+        assert callback is not None
+        callback_context = ToolExecutionContext(
+            interface_type=kwargs["interface_type"],
+            conversation_id=kwargs["conversation_id"],
+            user_name=TEST_USER_NAME,
+            user_id="async-delegation-user",
+            turn_id=turn_id,
+            db_context=db_context,
+            processing_service=None,
+            clock=SystemClock(),
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            processing_profile_id="source_profile",
+            request_confirmation_callback=callback,
+            confirmation_ui_managers=kwargs["confirmation_ui_managers"],
+        )
+        self.confirmation_outcome = await callback(
+            interface_type=kwargs["interface_type"],
+            conversation_id=kwargs["conversation_id"],
+            turn_id=turn_id,
+            tool_name="delete_calendar_event",
+            call_id="wake_confirm_call_1",
+            tool_args={"event_id": "evt-from-wakeup"},
+            timeout_seconds=42.0,
+            context=callback_context,
+        )
+
+        assistant_message_id = await db_context.message_history.add_message(
+            AssistantMessage(content="source relayed delegated result"),
+            interface_type=kwargs["interface_type"],
+            conversation_id=kwargs["conversation_id"],
+            timestamp=SystemClock().now(),
+            turn_id=turn_id,
+            thread_root_id=thread_root_id,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            user_id="async-delegation-user",
+        )
+        return ChatInteractionResult.success(
+            text_reply="source relayed delegated result",
+            assistant_message_internal_id=assistant_message_id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_source_wake_can_request_durable_confirmation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A delegation completion notification can defer a confirm-gated tool call to a
+    durable confirmation addressed to the source user, instead of being denied."""
+    processing_service = FakeConfirmingWakeSourceService()
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_wake_confirm")
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_wake_confirm", clock.now()
+        )
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_wake_confirm",
+            result_text="delegated work done",
+            result_attachment_ids=[],
+            completed_at=clock.now(),
+        )
+
+    worker = _build_worker(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                db_context,
+                cast("ProcessingService", processing_service),
+                chat_interface,
+            ),
+            _payload("delegation_wake_confirm"),
+        )
+
+    assert processing_service.confirmation_outcome is not None
+    assert processing_service.confirmation_outcome.kind == "completed"
+    assert isinstance(processing_service.confirmation_outcome.result, str)
+    assert "hasn't run yet" in processing_service.confirmation_outcome.result
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        pending = await db_context.confirmation_requests.list_pending_for_user(
+            "async-delegation-user"
+        )
+    assert len(pending) == 1
+    assert pending[0]["tool_name"] == "delete_calendar_event"
+    assert pending[0]["origin_conversation_id"] == TEST_CONVERSATION_ID
+
+
 @pytest.mark.asyncio
 async def test_get_messages_after_defaults_to_main_conversation_only(
     db_engine: AsyncEngine,

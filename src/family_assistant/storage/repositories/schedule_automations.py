@@ -244,6 +244,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                         scheduling_timestamp=datetime.now(UTC).isoformat(),
                     )
                 )
+                if created_by_user_id is not None:
+                    payload["created_by_user_id"] = created_by_user_id
             else:  # script
                 payload = _build_script_payload(
                     action_config=action_config,
@@ -484,6 +486,9 @@ class ScheduleAutomationsRepository(BaseRepository):
                         scheduling_timestamp=datetime.now(UTC).isoformat(),
                     )
                 )
+                created_by = automation.get("created_by_user_id")
+                if created_by is not None:
+                    enqueue_payload["created_by_user_id"] = created_by
             else:
                 enqueue_payload = _build_script_payload(
                     action_config=action_config,
@@ -934,6 +939,9 @@ class ScheduleAutomationsRepository(BaseRepository):
                 callback_context=final_action_config.get("context", ""),
                 scheduling_timestamp=datetime.now(UTC).isoformat(),
             )
+            created_by = automation.get("created_by_user_id")
+            if created_by is not None:
+                payload["created_by_user_id"] = created_by
         else:  # script
             payload = _build_script_payload(
                 action_config=final_action_config,
@@ -1064,6 +1072,9 @@ class ScheduleAutomationsRepository(BaseRepository):
                         scheduling_timestamp=datetime.now(UTC).isoformat(),
                     )
                 )
+                created_by = automation.get("created_by_user_id")
+                if created_by is not None:
+                    recur_payload["created_by_user_id"] = created_by
             else:  # script
                 recur_payload = _build_script_payload(
                     action_config=action_config,

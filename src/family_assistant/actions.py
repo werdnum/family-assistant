@@ -83,6 +83,8 @@ async def execute_action(
         }
         if user_name:
             payload["user_name"] = user_name
+        if created_by_user_id is not None:
+            payload["created_by_user_id"] = created_by_user_id
 
         await enqueue_task(
             db_context=db_ctx,
