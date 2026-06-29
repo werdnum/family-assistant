@@ -27,6 +27,14 @@ final class AuthManager {
     /// a dead network surfaces as a transient failure before the watchdog trips.
     private let authRequestTimeoutSeconds: TimeInterval = 10
 
+    /// Monotonic counter bumped on every auth-invalidating transition (logout,
+    /// credential clear, new login). A session bridge captures it on entry and
+    /// only writes its cookie if it is still current — so a bridge abandoned by
+    /// the ``bootstrapSession()`` watchdog cannot resurrect a stale session cookie
+    /// after a later logout/re-login has superseded it. `private(set)` so tests can
+    /// observe it; only `bumpAuthEpoch()` mutates it.
+    @MainActor private(set) var authEpoch = 0
+
     private var codeVerifier: String?
     private var authSession: ASWebAuthenticationSession?
     private var contextProvider: PresentationContextProvider?
@@ -144,6 +152,9 @@ final class AuthManager {
         do {
             let tokens = try await exchangeCode(code: code, codeVerifier: verifier)
             saveTokens(tokens)
+            // Supersede any abandoned bootstrap bridge so it cannot clobber this
+            // fresh login's cookie; this login's own bridge captures the new epoch.
+            bumpAuthEpoch()
             try await establishSession(apiToken: tokens.apiToken)
             isAuthenticated = true
         } catch {
@@ -272,10 +283,25 @@ final class AuthManager {
 
     @MainActor
     private func clearLocalAuthState() {
+        bumpAuthEpoch()
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
         isAuthenticated = false
+    }
+
+    /// Invalidate any in-flight (possibly watchdog-abandoned) session bridge so it
+    /// cannot mutate auth state after this transition. See ``authEpoch``.
+    @MainActor
+    private func bumpAuthEpoch() {
+        authEpoch += 1
+    }
+
+    /// Whether a session bridge that started at `capturedEpoch` may still apply its
+    /// cookie. False once an auth-invalidating transition has bumped ``authEpoch``.
+    @MainActor
+    func shouldApplySessionCookies(capturedEpoch: Int) -> Bool {
+        capturedEpoch == authEpoch
     }
 
     // MARK: - Token Refresh
@@ -339,6 +365,8 @@ final class AuthManager {
             throw AuthError.invalidServerURL
         }
 
+        let capturedEpoch = await authEpoch
+
         let url = baseURL.appendingPathComponent("api/auth/token-session")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -365,6 +393,13 @@ final class AuthManager {
             throw AuthError.transient(underlying: nil)
         }
 
+        // Fence: if an auth-invalidating transition (logout / re-login) happened
+        // while this bridge was in flight — e.g. it was abandoned by the bootstrap
+        // watchdog and only now resumed — do not write the now-stale session cookie.
+        guard await shouldApplySessionCookies(capturedEpoch: capturedEpoch) else {
+            return
+        }
+
         if let headerFields = httpResponse.allHeaderFields as? [String: String],
            let responseURL = httpResponse.url
         {
@@ -380,6 +415,10 @@ final class AuthManager {
 
     @MainActor
     func logout() async {
+        // Supersede any in-flight session bridge before clearing WebKit data, so a
+        // watchdog-abandoned bootstrap cannot re-add the cookie after this cleanup.
+        bumpAuthEpoch()
+
         // Revoke token server-side (best effort)
         if let apiToken = KeychainHelper.readString(key: Keys.apiToken),
            let baseURL = validatedServerURL()

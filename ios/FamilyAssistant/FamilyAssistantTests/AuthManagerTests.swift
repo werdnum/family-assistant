@@ -172,6 +172,23 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "valid-api-token")
     }
 
+    func testSessionCookieFenceRejectsBridgeAfterAuthInvalidation() async {
+        seedStoredAuth(apiToken: "api-token", refreshToken: "refresh-token", expiresIn: 7200)
+        let authManager = makeAuthManager()
+
+        let captured = authManager.authEpoch
+        XCTAssertTrue(authManager.shouldApplySessionCookies(capturedEpoch: captured))
+
+        // A logout (the case where a watchdog-abandoned bridge could resume and
+        // re-add the stale cookie) must invalidate the captured epoch.
+        await authManager.logout()
+
+        XCTAssertFalse(
+            authManager.shouldApplySessionCookies(capturedEpoch: captured),
+            "a bridge captured before logout must not be allowed to write its cookie"
+        )
+    }
+
     func testAuthSupportTypesExposeExpectedUserFacingValues() {
         XCTAssertEqual(AuthError.invalidServerURL.errorDescription, "Invalid server URL")
         XCTAssertEqual(AuthError.exchangeFailed.errorDescription, "Failed to exchange authorization code")
