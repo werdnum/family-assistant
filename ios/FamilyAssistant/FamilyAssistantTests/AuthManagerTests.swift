@@ -157,9 +157,18 @@ final class AuthManagerTests: XCTestCase {
 
         let start = Date()
         let completed = await authManager.runWithWatchdog(seconds: 0.2) {
-            // A long, cancellable stall standing in for the non-cancellable
-            // WKWebsiteDataStore hand-off the watchdog exists to survive.
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            // A non-cancellable stall — a dispatch timer cannot be unstuck by task
+            // cancellation, standing in for the WKWebsiteDataStore hand-off this
+            // watchdog exists to survive. It resumes far past the watchdog budget,
+            // so the test passes ONLY if runWithWatchdog abandons (does not await)
+            // the operation; a cancel-then-await regression would wait the full
+            // delay and fail the elapsed assertion. (It does eventually resume, to
+            // avoid leaking the continuation.)
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                    continuation.resume()
+                }
+            }
         }
         let elapsed = Date().timeIntervalSince(start)
 
