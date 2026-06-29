@@ -274,6 +274,11 @@ async def _probe_ucp_support(
     if origin is None:
         return None
 
+    # Same trusted suffixes gate both discovery redirects and endpoint hinting,
+    # so the probe follows a redirect to a trusted platform host (e.g. a Shopify
+    # store's *.myshopify.com shop host) exactly when it would hint the endpoint
+    # found there.
+    trusted_suffixes = _trusted_endpoint_suffixes(exec_context)
     session = await get_browser_session(exec_context)
     if origin in session.ucp_profiles:
         profile = session.ucp_profiles[origin]
@@ -284,7 +289,10 @@ async def _probe_ucp_support(
             # let a same-origin redirect chain stall the probe for up to
             # (MAX_DISCOVERY_REDIRECTS + 1) * UCP_PROBE_TIMEOUT_SECONDS.
             profile = await discover_merchant_ucp_profile(
-                origin, client=client, timeout=UCP_PROBE_TIMEOUT_SECONDS
+                origin,
+                client=client,
+                timeout=UCP_PROBE_TIMEOUT_SECONDS,
+                trusted_suffixes=trusted_suffixes,
             )
         session.ucp_profiles[origin] = profile
 
@@ -292,7 +300,6 @@ async def _probe_ucp_support(
     # actually use (same-origin, same-site, or a trusted platform suffix); a
     # profile whose only binding is an untrusted cross-host endpoint is not
     # usable for this origin, so hinting it would mislead the model.
-    trusted_suffixes = _trusted_endpoint_suffixes(exec_context)
     if (
         profile is not None
         and profile.usable_shopping_endpoint(trusted_suffixes=trusted_suffixes)

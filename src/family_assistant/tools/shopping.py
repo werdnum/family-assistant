@@ -240,7 +240,10 @@ async def _resolve_ucp_endpoint(
         msg = "business_url must be an https merchant origin."
         raise ValueError(msg)
     profile = await discover_merchant_ucp_profile(
-        business_url, client=client, timeout=UCP_DISCOVERY_TIMEOUT_SECONDS
+        business_url,
+        client=client,
+        timeout=UCP_DISCOVERY_TIMEOUT_SECONDS,
+        trusted_suffixes=trusted_suffixes,
     )
     if profile is not None:
         usable = profile.usable_shopping_endpoint(trusted_suffixes=trusted_suffixes)

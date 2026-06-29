@@ -303,7 +303,11 @@ class TestProbeUcpSupport:
         timeouts: list[float | None] = []
 
         async def fake_discover(
-            url: str, *, client: object, timeout: float | None = None
+            url: str,
+            *,
+            client: object,
+            timeout: float | None = None,
+            trusted_suffixes: tuple[str, ...] = (),
         ) -> MerchantUCPProfile | None:
             calls.append(url)
             timeouts.append(timeout)
@@ -327,7 +331,11 @@ class TestProbeUcpSupport:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def fail_discover(
-            url: str, *, client: object, timeout: float | None = None
+            url: str,
+            *,
+            client: object,
+            timeout: float | None = None,
+            trusted_suffixes: tuple[str, ...] = (),
         ) -> MerchantUCPProfile | None:  # pragma: no cover - must not be called
             raise AssertionError("non-HTTPS origin must not be probed")
 
@@ -341,7 +349,11 @@ class TestProbeUcpSupport:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def fake_discover(
-            url: str, *, client: object, timeout: float | None = None
+            url: str,
+            *,
+            client: object,
+            timeout: float | None = None,
+            trusted_suffixes: tuple[str, ...] = (),
         ) -> MerchantUCPProfile | None:
             return MerchantUCPProfile(
                 origin="https://shop.example.com",
@@ -366,7 +378,11 @@ class TestProbeUcpSupport:
         calls: list[str] = []
 
         async def fake_discover(
-            url: str, *, client: object, timeout: float | None = None
+            url: str,
+            *,
+            client: object,
+            timeout: float | None = None,
+            trusted_suffixes: tuple[str, ...] = (),
         ) -> MerchantUCPProfile | None:
             calls.append(url)
             return None

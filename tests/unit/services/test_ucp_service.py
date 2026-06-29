@@ -299,6 +299,222 @@ async def test_discover_merchant_ucp_profile_ignores_cross_origin_redirect() -> 
     assert profile is None
 
 
+async def test_discover_merchant_ucp_profile_follows_same_site_redirect() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "www.example.com":
+            # A sibling subdomain of the merchant's registrable domain is still
+            # the merchant's own site, so the redirect is followed even though it
+            # leaves the exact origin.
+            return httpx.Response(
+                301,
+                headers={"Location": "https://shop.example.com/.well-known/ucp"},
+            )
+        return httpx.Response(200, json=_merchant_profile_payload())
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://www.example.com", client=client
+        )
+
+    assert requested == [
+        "https://www.example.com/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp",
+    ]
+    assert profile is not None
+    assert profile.origin == "https://www.example.com"
+
+
+async def test_discover_merchant_ucp_profile_follows_trusted_suffix_redirect() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "bellroy.example":
+            # A Shopify store on a custom domain redirects its well-known path to
+            # the *.myshopify.com shop host that actually serves the profile.
+            return httpx.Response(
+                301,
+                headers={
+                    "Location": "https://bellroy-prod.myshopify.com/.well-known/ucp"
+                },
+            )
+        return httpx.Response(
+            200,
+            json=_merchant_profile_payload(
+                endpoint="https://bellroy-prod.myshopify.com/api/ucp/mcp"
+            ),
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://bellroy.example",
+            client=client,
+            trusted_suffixes=("myshopify.com",),
+        )
+
+    assert requested == [
+        "https://bellroy.example/.well-known/ucp",
+        "https://bellroy-prod.myshopify.com/.well-known/ucp",
+    ]
+    assert profile is not None
+    # Discovery follows the platform redirect, and the endpoint it serves
+    # resolves under the same trusted-suffix policy — the end-to-end unlock.
+    usable = profile.usable_shopping_endpoint(trusted_suffixes=("myshopify.com",))
+    assert usable is not None
+    assert usable.endpoint == "https://bellroy-prod.myshopify.com/api/ucp/mcp"
+
+
+async def test_discovery_resolves_relative_endpoint_against_redirect_target() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "bellroy.example":
+            return httpx.Response(
+                301,
+                headers={
+                    "Location": "https://bellroy-prod.myshopify.com/.well-known/ucp"
+                },
+            )
+        # The redirected profile advertises a relative endpoint, which must
+        # resolve against the host that served it, not the original storefront.
+        return httpx.Response(
+            200, json=_merchant_profile_payload(endpoint="/api/ucp/mcp")
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://bellroy.example",
+            client=client,
+            trusted_suffixes=("myshopify.com",),
+        )
+
+    assert profile is not None
+    # Trust stays anchored to the original origin, but the relative endpoint
+    # resolves to the myshopify host the profile was actually fetched from.
+    assert profile.origin == "https://bellroy.example"
+    assert profile.mcp_endpoint == "https://bellroy-prod.myshopify.com/api/ucp/mcp"
+    usable = profile.usable_shopping_endpoint(trusted_suffixes=("myshopify.com",))
+    assert usable is not None
+    assert usable.endpoint == "https://bellroy-prod.myshopify.com/api/ucp/mcp"
+
+
+async def test_discovery_ignores_trusted_suffix_redirect_when_unconfigured() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "bellroy.example":
+            # Without a configured trusted suffix, a cross-site redirect — even to
+            # a platform host — stays an SSRF risk and is not followed.
+            return httpx.Response(
+                302,
+                headers={
+                    "Location": "https://bellroy-prod.myshopify.com/.well-known/ucp"
+                },
+            )
+        raise AssertionError(  # pragma: no cover
+            "redirect to an unconfigured platform suffix must not be fetched"
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://bellroy.example", client=client
+        )
+
+    assert requested == ["https://bellroy.example/.well-known/ucp"]
+    assert profile is None
+
+
+async def test_discovery_ignores_untrusted_redirect_even_with_trusted_suffixes() -> (
+    None
+):
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "bellroy.example":
+            # Off-site and not on any trusted suffix: configuring an allowlist
+            # must not widen the guard to an unrelated host (SSRF).
+            return httpx.Response(
+                302,
+                headers={"Location": "https://attacker.example/.well-known/ucp"},
+            )
+        raise AssertionError(  # pragma: no cover
+            "untrusted cross-host redirect target must not be fetched"
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://bellroy.example",
+            client=client,
+            trusted_suffixes=("myshopify.com",),
+        )
+
+    assert requested == ["https://bellroy.example/.well-known/ucp"]
+    assert profile is None
+
+
+async def test_discovery_falls_back_to_json_path_on_404() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        # Static hosts that can't serve the extension-less path 404 it; the
+        # .json variant carries the profile.
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(404)
+        return httpx.Response(200, json=_merchant_profile_payload())
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert requested == [
+        "https://shop.example.com/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp.json",
+    ]
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
+async def test_discovery_does_not_fall_back_on_non_404_error() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(500)
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    # Only a 404 triggers the .json fallback; a 5xx is a miss straight away.
+    assert requested == ["https://shop.example.com/.well-known/ucp"]
+    assert profile is None
+
+
+async def test_discovery_returns_none_when_both_paths_404() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(404)
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert requested == [
+        "https://shop.example.com/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp.json",
+    ]
+    assert profile is None
+
+
 async def test_discover_merchant_ucp_profile_collects_all_endpoints() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
