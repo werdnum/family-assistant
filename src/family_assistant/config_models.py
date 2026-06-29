@@ -175,6 +175,16 @@ class RemoteA2AAuthConfig(BaseModel):
     header_name: str = "Authorization"
 
 
+# Default wall-clock cap for an async (submit-then-poll) A2A delegation when
+# ``max_async_seconds`` is not set explicitly. This is intentionally decoupled
+# from ``timeout_seconds`` (the per-HTTP-call timeout): an async delegation is
+# polled across many short HTTP calls and may legitimately run far longer than a
+# single request. The cap only exists to reap a genuinely orphaned remote run
+# that never reaches a terminal state; the assistant can poll a still-running
+# delegation via ``get_delegation_status`` within this envelope.
+DEFAULT_REMOTE_MAX_ASYNC_SECONDS = 3600.0
+
+
 class RemoteA2AConfig(BaseModel):
     """Configuration for a remote A2A agent profile."""
 
@@ -187,8 +197,9 @@ class RemoteA2AConfig(BaseModel):
     # Async (submit-then-poll) delegation tuning. poll_interval_seconds is the
     # base cadence for polling an in-flight remote task; max_async_seconds is the
     # total wall-clock cap before the delegation is cancelled + failed. When
-    # max_async_seconds is unset it defaults to timeout_seconds, preserving the
-    # effective cap configured for the (previously blocking) remote.
+    # max_async_seconds is unset it defaults to DEFAULT_REMOTE_MAX_ASYNC_SECONDS
+    # (1 hour) rather than the per-call timeout, so a long-running remote run is
+    # not killed at the 5-minute HTTP-call boundary.
     poll_interval_seconds: float = Field(default=10.0, gt=0)
     max_async_seconds: float | None = Field(default=None, gt=0)
 

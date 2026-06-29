@@ -18,7 +18,10 @@ import uvicorn
 
 # Import Embedding interface/clients
 from family_assistant import embeddings
-from family_assistant.config_models import AppConfig  # noqa: TC001  # Used at runtime
+from family_assistant.config_models import (
+    DEFAULT_REMOTE_MAX_ASYNC_SECONDS,
+    AppConfig,  # noqa: TC001  # Used at runtime
+)
 from family_assistant.config_models import (  # noqa: TC001  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
 )
@@ -1312,13 +1315,15 @@ class Assistant:
             timeout=remote_config.timeout_seconds,
         )
 
-        # Preserve the configured timeout as the async wall-clock cap unless an
-        # explicit max_async_seconds is set (async delegation may legitimately
-        # outlast a single HTTP timeout, but defaulting to it keeps prior caps).
+        # The async wall-clock cap is decoupled from the per-HTTP-call timeout: an
+        # async delegation is polled across many short calls and may legitimately
+        # run far longer than a single request, so default it to one hour rather
+        # than killing the run at the timeout_seconds boundary. The cap only reaps
+        # a genuinely orphaned remote run; the assistant can poll status within it.
         max_async_seconds = (
             remote_config.max_async_seconds
             if remote_config.max_async_seconds is not None
-            else remote_config.timeout_seconds
+            else DEFAULT_REMOTE_MAX_ASYNC_SECONDS
         )
         service_config = RemoteServiceConfig(
             id=profile_conf.id,
