@@ -78,6 +78,30 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertNotNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
     }
 
+    func testRefreshSkipsPersistWhenOwnerEpochIsSuperseded() async throws {
+        seedStoredAuth(apiToken: "old-api-token", refreshToken: "old-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {"api_token": "rotated", "refresh_token": "rotated-refresh", "expires_in": 7200}
+                """
+            )
+        }
+
+        // A stale owner epoch stands in for a bootstrap superseded by a logout /
+        // re-login while its refresh was in flight.
+        try await authManager.refreshIfNeeded(ownerEpoch: authManager.authEpoch - 1)
+
+        XCTAssertEqual(AuthBackendURLProtocol.requests.count, 1, "the refresh request is still made")
+        XCTAssertEqual(
+            KeychainHelper.readString(key: "fa_api_token"),
+            "old-api-token",
+            "a superseded bootstrap must not overwrite the current session's credentials"
+        )
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "old-refresh-token")
+    }
+
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
         KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
         let authManager = makeAuthManager()
@@ -135,6 +159,99 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
         XCTAssertNil(KeychainHelper.readString(key: "fa_refresh_token"))
         XCTAssertNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
+    }
+
+    func testBootstrapSessionCompletesNormallyWhenSessionBridgeSucceeds() async {
+        seedStoredAuth(apiToken: "valid-api-token", refreshToken: "refresh-token", expiresIn: 7200)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/token-session")
+            return .json("{}", headers: ["Set-Cookie": "session=abc123; Path=/; HttpOnly"])
+        }
+
+        await authManager.bootstrapSession()
+
+        XCTAssertFalse(authManager.isBootstrapping)
+        XCTAssertTrue(authManager.isAuthenticated)
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "valid-api-token")
+    }
+
+    func testWatchdogAbandonsAStallAndReturnsPromptly() async {
+        let authManager = makeAuthManager()
+
+        let start = Date()
+        let completed = await authManager.runWithWatchdog(seconds: 0.2) {
+            // A non-cancellable stall — a dispatch timer cannot be unstuck by task
+            // cancellation, standing in for the WKWebsiteDataStore hand-off this
+            // watchdog exists to survive. It resumes far past the watchdog budget,
+            // so the test passes ONLY if runWithWatchdog abandons (does not await)
+            // the operation; a cancel-then-await regression would wait the full
+            // delay and fail the elapsed assertion. (It does eventually resume, to
+            // avoid leaking the continuation.)
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                    continuation.resume()
+                }
+            }
+        }
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertFalse(completed, "watchdog should report the operation did not finish")
+        XCTAssertLessThan(elapsed, 2, "watchdog should return shortly after its budget, not wait for the stall")
+    }
+
+    func testWatchdogReturnsTrueWhenOperationFinishesInTime() async {
+        let authManager = makeAuthManager()
+
+        let completed = await authManager.runWithWatchdog(seconds: 5) {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertTrue(completed)
+    }
+
+    func testAuthEpochOwnershipIsLostAfterAuthInvalidation() async {
+        seedStoredAuth(apiToken: "api-token", refreshToken: "refresh-token", expiresIn: 7200)
+        let authManager = makeAuthManager()
+
+        let captured = authManager.authEpoch
+        XCTAssertTrue(authManager.isCurrentAuthEpoch(captured))
+
+        // A logout (the case where a watchdog-abandoned bridge could resume and
+        // re-add the stale cookie or clear a fresh login) invalidates ownership, so
+        // both the cookie write and the auth-rejection clear are fenced out.
+        await authManager.logout()
+
+        XCTAssertFalse(
+            authManager.isCurrentAuthEpoch(captured),
+            "a bridge captured before logout must no longer own the auth state"
+        )
+    }
+
+    func testStaleCookieSelectionDeletesOnlyOurOwnUnreplacedWrites() {
+        let session = "session"
+        let domain = "assistant.example.test"
+        let path = "/"
+        func cookie(_ value: String) -> HTTPCookie {
+            HTTPCookie(properties: [
+                .name: session, .value: value, .domain: domain, .path: path,
+            ])!
+        }
+        let written = [cookie("OLD")]
+
+        // Our write is still the live value -> delete it (stale, superseded).
+        XCTAssertEqual(
+            AuthManager.staleCookiesToDelete(written: written, live: [cookie("OLD")]).map(\.value),
+            ["OLD"]
+        )
+        // A fresh login overwrote it with a new value -> never delete the new one.
+        XCTAssertTrue(
+            AuthManager.staleCookiesToDelete(written: written, live: [cookie("NEW")]).isEmpty
+        )
+        // Already gone (e.g. logout cleared the store) -> nothing to delete.
+        XCTAssertTrue(
+            AuthManager.staleCookiesToDelete(written: written, live: []).isEmpty
+        )
     }
 
     func testAuthSupportTypesExposeExpectedUserFacingValues() {
@@ -214,11 +331,12 @@ private final class AuthBackendURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        Self.lock.withLock {
+        let handler: Handler? = Self.lock.withLock {
             Self.recordedRequests.append(request)
+            return Self.handler
         }
 
-        guard let handler = Self.lock.withLock({ Self.handler }) else {
+        guard let handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
             return
         }
