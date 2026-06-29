@@ -367,6 +367,38 @@ async def test_discover_merchant_ucp_profile_follows_trusted_suffix_redirect() -
     assert usable.endpoint == "https://bellroy-prod.myshopify.com/api/ucp/mcp"
 
 
+async def test_discovery_resolves_relative_endpoint_against_redirect_target() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "bellroy.example":
+            return httpx.Response(
+                301,
+                headers={
+                    "Location": "https://bellroy-prod.myshopify.com/.well-known/ucp"
+                },
+            )
+        # The redirected profile advertises a relative endpoint, which must
+        # resolve against the host that served it, not the original storefront.
+        return httpx.Response(
+            200, json=_merchant_profile_payload(endpoint="/api/ucp/mcp")
+        )
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://bellroy.example",
+            client=client,
+            trusted_suffixes=("myshopify.com",),
+        )
+
+    assert profile is not None
+    # Trust stays anchored to the original origin, but the relative endpoint
+    # resolves to the myshopify host the profile was actually fetched from.
+    assert profile.origin == "https://bellroy.example"
+    assert profile.mcp_endpoint == "https://bellroy-prod.myshopify.com/api/ucp/mcp"
+    usable = profile.usable_shopping_endpoint(trusted_suffixes=("myshopify.com",))
+    assert usable is not None
+    assert usable.endpoint == "https://bellroy-prod.myshopify.com/api/ucp/mcp"
+
+
 async def test_discovery_ignores_trusted_suffix_redirect_when_unconfigured() -> None:
     requested: list[str] = []
 

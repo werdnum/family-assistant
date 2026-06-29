@@ -279,7 +279,7 @@ def merchant_origin(url: str) -> str | None:
 
 
 def _shopping_endpoints(
-    origin: str, services: Mapping[str, object], transport: str
+    base_url: str, services: Mapping[str, object], transport: str
 ) -> tuple[str, ...]:
     """Return every advertised HTTPS shopping endpoint for ``transport``.
 
@@ -288,6 +288,12 @@ def _shopping_endpoints(
     even when a cross-origin one is listed first. Bindings whose endpoint cannot
     be parsed (merchant-controlled metadata) are skipped rather than allowed to
     break discovery.
+
+    Relative endpoints resolve against ``base_url`` — the URL the profile was
+    actually fetched from, which may differ from the merchant origin when
+    discovery followed a trusted redirect (e.g. to a ``*.myshopify.com`` shop
+    host) — so a redirected profile's relative binding points at the host that
+    served it rather than the original storefront.
     """
     bindings = services.get(SHOPPING_SERVICE_NAME)
     if not isinstance(bindings, list):
@@ -303,7 +309,7 @@ def _shopping_endpoints(
             continue
         try:
             resolved = (
-                endpoint if urlparse(endpoint).scheme else urljoin(origin, endpoint)
+                endpoint if urlparse(endpoint).scheme else urljoin(base_url, endpoint)
             )
             parsed_resolved = urlparse(resolved)
             netloc = parsed_resolved.netloc
@@ -315,7 +321,18 @@ def _shopping_endpoints(
     return tuple(endpoints)
 
 
-def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile | None:
+def _parse_merchant_profile(
+    origin: str, endpoint_base: str, payload: object
+) -> MerchantUCPProfile | None:
+    """Parse a fetched UCP payload into a :class:`MerchantUCPProfile`.
+
+    ``origin`` is the original merchant origin and becomes ``profile.origin`` —
+    the anchor every trust check runs against. ``endpoint_base`` is the URL the
+    profile was actually fetched from (the final hop after any trusted redirect)
+    and is used only to resolve relative endpoint bindings, so a redirected
+    profile's relative endpoint resolves to the host that served it while trust
+    stays anchored to the merchant the user chose.
+    """
     if not isinstance(payload, dict):
         return None
     ucp = payload.get("ucp")
@@ -328,8 +345,8 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
     version = ucp.get("version")
     return MerchantUCPProfile(
         origin=origin,
-        mcp_endpoints=_shopping_endpoints(origin, services, MCP_TRANSPORT),
-        rest_endpoints=_shopping_endpoints(origin, services, REST_TRANSPORT),
+        mcp_endpoints=_shopping_endpoints(endpoint_base, services, MCP_TRANSPORT),
+        rest_endpoints=_shopping_endpoints(endpoint_base, services, REST_TRANSPORT),
         service_names=tuple(services.keys()),
         capability_names=tuple(capabilities.keys()),
         version=version if isinstance(version, str) else None,
@@ -347,7 +364,7 @@ async def _get_following_trusted_redirects(
     timeout: float | None,
     trusted_suffixes: tuple[str, ...] = (),
     now: Callable[[], float] = time.monotonic,
-) -> httpx.Response | None:
+) -> tuple[httpx.Response, str] | None:
     """GET ``url``, following 301/302/etc only to trusted redirect targets.
 
     Live merchants frequently serve ``/.well-known/ucp`` behind a redirect
@@ -360,9 +377,11 @@ async def _get_following_trusted_redirects(
     otherwise point the discovery GET at an internal host (SSRF). Each hop must
     be a trusted target relative to the original ``url`` — same-origin,
     same-site, or on a configured ``trusted_suffixes`` platform, matching where
-    the signed POST is allowed to go — and the chain is bounded. Returns
-    ``None`` when a redirect leaves the trusted set (or the bound is exceeded),
-    so the caller treats it as a discovery miss.
+    the signed POST is allowed to go — and the chain is bounded. Returns the
+    final response together with the URL it was fetched from (so the caller can
+    resolve relative endpoints against the host that actually served the
+    profile), or ``None`` when a redirect leaves the trusted set (or the bound
+    is exceeded), so the caller treats it as a discovery miss.
 
     ``timeout`` bounds the *whole* redirect chain, not each hop: each GET is
     given only the remaining budget, so a slow same-origin redirect chain cannot
@@ -381,10 +400,10 @@ async def _get_following_trusted_redirects(
         else:
             response = await client.get(current_url, headers=headers)
         if not response.is_redirect:
-            return response
+            return response, current_url
         location = response.headers.get("location")
         if not location:
-            return response
+            return response, current_url
         # The Location is merchant-controlled; a malformed value (e.g. a bad
         # IPv6 host) makes urljoin raise, so treat that as a discovery miss
         # rather than letting it crash endpoint resolution / the browser probe.
@@ -435,7 +454,7 @@ async def discover_merchant_ucp_profile(
     profile_url = f"{origin}{UCP_PROFILE_PATH}"
     headers = {"Accept": "application/json"}
     try:
-        response = await _get_following_trusted_redirects(
+        result = await _get_following_trusted_redirects(
             client,
             profile_url,
             headers=headers,
@@ -446,12 +465,13 @@ async def discover_merchant_ucp_profile(
     except httpx.HTTPError as exc:
         logger.debug("UCP discovery request failed for %s: %s", origin, exc)
         return None
-    if response is None:
+    if result is None:
         logger.debug(
             "UCP discovery for %s redirected to an untrusted host; not followed",
             origin,
         )
         return None
+    response, final_url = result
     if response.is_error:
         logger.debug(
             "UCP discovery for %s returned HTTP %s", origin, response.status_code
@@ -463,7 +483,12 @@ async def discover_merchant_ucp_profile(
         logger.debug("UCP discovery for %s returned an undecodable body", origin)
         return None
 
-    return _parse_merchant_profile(origin, payload)
+    # Resolve relative endpoints against the host the profile was actually
+    # fetched from (the final hop after any trusted redirect), while keeping the
+    # original merchant origin as the trust anchor. Falls back to the original
+    # origin if the final URL is somehow not an HTTPS origin.
+    endpoint_base = merchant_origin(final_url) or origin
+    return _parse_merchant_profile(origin, endpoint_base, payload)
 
 
 def _base64_url_no_padding(value: bytes) -> str:
