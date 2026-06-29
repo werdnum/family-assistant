@@ -4079,11 +4079,16 @@ def _resolve_confirmation_result_delivery(
     """Pick where to deliver a confirmation result message.
 
     Chat/email confirmations thread the result back to the originating
-    conversation (replying to the source message). Automation-originated
-    confirmations have no source message, so the result is delivered to the
-    target user's primary Telegram chat instead (mirroring how the pending
-    confirmation was delivered). Returns ``(chat_interface, conversation_id,
-    reply_to_interface_id)`` or None when no deliverable target exists.
+    conversation (replying to the source message). Confirmations created without
+    a source message (automation scripts, scheduled callbacks, delegation
+    completion wakeups) instead thread the result to the origin conversation
+    recorded on the request itself; this needs no source-message row — avoiding a
+    cross-transaction foreign-key dependency — and works for any interface, not
+    just Telegram. Only when no origin is recorded (or its interface is
+    unavailable) does delivery fall back to the target user's primary Telegram
+    chat, mirroring how the pending confirmation was delivered. Returns
+    ``(chat_interface, conversation_id, reply_to_interface_id)`` or None when no
+    deliverable target exists.
     """
     if source_row is not None:
         if context.chat_interface is None:
@@ -4094,6 +4099,17 @@ def _resolve_confirmation_result_delivery(
             else None
         )
         return context.chat_interface, context.conversation_id, reply_to_interface_id
+
+    origin_interface_type = request["origin_interface_type"]
+    origin_conversation_id = request["origin_conversation_id"]
+    if (
+        origin_interface_type is not None
+        and origin_conversation_id is not None
+        and context.chat_interfaces is not None
+    ):
+        origin_interface = context.chat_interfaces.get(origin_interface_type)
+        if origin_interface is not None:
+            return origin_interface, origin_conversation_id, None
 
     processing_service = context.processing_service
     if processing_service is None or context.chat_interfaces is None:

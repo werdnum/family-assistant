@@ -65,6 +65,17 @@ where the owner is known (the `schedule_reminder` / `schedule_future_callback` t
 builds the deferred callback from `payload.get("created_by_user_id")`; legacy payloads without an
 owner degrade gracefully (confirm-gated tools report they cannot be approved).
 
+### Result delivery for source-less confirmations
+
+Deferred confirmations carry no `source_message_internal_id` (see above), so after approval the
+result notification cannot thread back via a source message. The execution context already falls
+back to the request's recorded `origin_interface_type` / `origin_conversation_id`, and
+`_resolve_confirmation_result_delivery` now does the same: when there is no source row it delivers
+the result to the recorded origin conversation on any interface, falling back to the user's primary
+Telegram chat only when no origin (or its interface) is available. This also improves the
+pre-existing automation-script path, which previously could only deliver source-less results to
+Telegram.
+
 ## Compatibility
 
 - Turns that previously hard-denied confirm-gated tools now advertise them; calling one with no
