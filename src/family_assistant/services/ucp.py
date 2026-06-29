@@ -238,6 +238,30 @@ def host_matches_trusted_suffix(url: str, suffixes: tuple[str, ...]) -> bool:
     return False
 
 
+def _is_trusted_redirect_target(
+    next_url: str, origin_url: str, trusted_suffixes: tuple[str, ...]
+) -> bool:
+    """Whether a discovery redirect to ``next_url`` is safe to follow.
+
+    Mirrors the endpoint-trust policy applied to advertised bindings
+    (:meth:`MerchantUCPProfile.usable_shopping_endpoint`) so discovery and the signed
+    POST trust the same hosts: the merchant frequently redirects
+    ``/.well-known/ucp`` to a sibling subdomain or, for a Shopify store on a
+    custom domain, to its ``*.myshopify.com`` shop host. A hop is followed when
+    it is same-origin, same-site (a sibling subdomain of the *original* merchant
+    origin's registrable domain), or on a configured trusted platform suffix.
+    Every hop is checked against the original origin, not the previous hop, so a
+    chain cannot walk off the merchant's site one same-site step at a time.
+    Anything else is treated as a discovery miss so a merchant-controlled
+    ``Location`` cannot point the probe at an unrelated or internal host (SSRF).
+    """
+    return (
+        same_origin(next_url, origin_url)
+        or same_site(next_url, origin_url)
+        or host_matches_trusted_suffix(next_url, trusted_suffixes)
+    )
+
+
 def merchant_origin(url: str) -> str | None:
     """Return the ``https://host`` origin for ``url``, or ``None`` if not HTTPS.
 
@@ -315,26 +339,30 @@ def _parse_merchant_profile(origin: str, payload: object) -> MerchantUCPProfile 
 MAX_DISCOVERY_REDIRECTS = 5
 
 
-async def _get_following_same_origin_redirects(
+async def _get_following_trusted_redirects(
     client: httpx.AsyncClient,
     url: str,
     *,
     headers: dict[str, str],
     timeout: float | None,
+    trusted_suffixes: tuple[str, ...] = (),
     now: Callable[[], float] = time.monotonic,
 ) -> httpx.Response | None:
-    """GET ``url``, following 301/302/etc only while they stay same-origin.
+    """GET ``url``, following 301/302/etc only to trusted redirect targets.
 
     Live merchants frequently serve ``/.well-known/ucp`` behind a redirect
-    (commonly a trailing-slash or path canonicalization), and httpx does not
-    follow redirects by default — so the 3xx would otherwise be treated as an
-    empty body and discovery would silently fail. Redirects are followed
-    manually rather than with ``follow_redirects=True`` because the profile URL
-    is merchant-controlled: an off-origin ``Location`` could otherwise point the
-    discovery GET at an arbitrary internal host (SSRF). Each hop is required to
-    share the original origin, and the chain is bounded. Returns ``None`` when a
-    redirect leaves the origin (or the bound is exceeded), so the caller treats
-    it as a discovery miss.
+    (commonly a trailing-slash or path canonicalization, but also a hop to a
+    sibling subdomain or a Shopify store's ``*.myshopify.com`` shop host), and
+    httpx does not follow redirects by default — so the 3xx would otherwise be
+    treated as an empty body and discovery would silently fail. Redirects are
+    followed manually rather than with ``follow_redirects=True`` because the
+    profile URL is merchant-controlled: an arbitrary ``Location`` could
+    otherwise point the discovery GET at an internal host (SSRF). Each hop must
+    be a trusted target relative to the original ``url`` — same-origin,
+    same-site, or on a configured ``trusted_suffixes`` platform, matching where
+    the signed POST is allowed to go — and the chain is bounded. Returns
+    ``None`` when a redirect leaves the trusted set (or the bound is exceeded),
+    so the caller treats it as a discovery miss.
 
     ``timeout`` bounds the *whole* redirect chain, not each hop: each GET is
     given only the remaining budget, so a slow same-origin redirect chain cannot
@@ -367,7 +395,7 @@ async def _get_following_same_origin_redirects(
                 "UCP discovery got a malformed redirect Location: %r", location
             )
             return None
-        if not same_origin(next_url, url):
+        if not _is_trusted_redirect_target(next_url, url, trusted_suffixes):
             return None
         current_url = next_url
     return None
@@ -378,17 +406,24 @@ async def discover_merchant_ucp_profile(
     *,
     client: httpx.AsyncClient,
     timeout: float | None = None,
+    trusted_suffixes: tuple[str, ...] = (),
     now: Callable[[], float] = time.monotonic,
 ) -> MerchantUCPProfile | None:
     """Fetch and parse a merchant's ``/.well-known/ucp`` profile.
 
     ``url`` may be any URL on the merchant; only its HTTPS origin is used.
-    ``timeout`` bounds the whole discovery GET — including any same-origin
-    redirect chain (each hop gets only the remaining budget) — independent of
-    the caller's client-wide timeout, so a slow/tarpit ``/.well-known/ucp``
-    cannot stall a subsequent request; when ``None`` the client's default
-    timeout applies. ``now`` is the monotonic clock used for that budget,
-    injectable so tests can drive the deadline deterministically.
+    ``timeout`` bounds the whole discovery GET — including any redirect chain
+    (each hop gets only the remaining budget) — independent of the caller's
+    client-wide timeout, so a slow/tarpit ``/.well-known/ucp`` cannot stall a
+    subsequent request; when ``None`` the client's default timeout applies.
+    ``trusted_suffixes`` are the configured commerce-platform host suffixes a
+    discovery redirect may land on cross-site (in addition to same-origin and
+    same-site hops), mirroring where the signed POST is allowed to go; pass the
+    operator's ``ucp_config.trusted_endpoint_suffixes`` so a Shopify store on a
+    custom domain that redirects to its ``*.myshopify.com`` shop host is
+    followed instead of treated as a discovery miss. ``now`` is the monotonic
+    clock used for the timeout budget, injectable so tests can drive the
+    deadline deterministically.
     Returns ``None`` when the origin is not HTTPS, the profile is unreachable or
     not valid JSON, or it advertises no shopping service. Network and decode
     errors are swallowed so callers can fall back without special handling.
@@ -400,14 +435,22 @@ async def discover_merchant_ucp_profile(
     profile_url = f"{origin}{UCP_PROFILE_PATH}"
     headers = {"Accept": "application/json"}
     try:
-        response = await _get_following_same_origin_redirects(
-            client, profile_url, headers=headers, timeout=timeout, now=now
+        response = await _get_following_trusted_redirects(
+            client,
+            profile_url,
+            headers=headers,
+            timeout=timeout,
+            trusted_suffixes=trusted_suffixes,
+            now=now,
         )
     except httpx.HTTPError as exc:
         logger.debug("UCP discovery request failed for %s: %s", origin, exc)
         return None
     if response is None:
-        logger.debug("UCP discovery for %s redirected off-origin; not followed", origin)
+        logger.debug(
+            "UCP discovery for %s redirected to an untrusted host; not followed",
+            origin,
+        )
         return None
     if response.is_error:
         logger.debug(

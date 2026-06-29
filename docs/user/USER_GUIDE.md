@@ -203,18 +203,19 @@ You can ask the assistant a wide variety of things:
   return the merchant checkout URL for you to complete payment yourself. It works with any merchant
   that supports the Universal Commerce Protocol (UCP) — Shopify stores and other UCP merchants
   alike. The assistant discovers each merchant's commerce endpoint from the merchant's own
-  `/.well-known/ucp` profile (following any redirect the merchant serves there), and while browsing
-  it automatically notices when a site supports UCP shopping. This includes Shopify stores on their
-  own custom domain, whose commerce endpoint lives on a `*.myshopify.com` host — you can just give
-  the assistant the storefront you browsed. The assistant speaks both UCP transports — the MCP
-  JSON-RPC transport that Shopify stores use and the REST transport that merchants such as THE
-  ICONIC and Adore Beauty advertise — so a merchant's choice of transport is transparent to you.
-  Some merchants are checkout-only (they support checkout but not a cart); for these the assistant
-  opens a checkout session directly from the selected items instead of building a cart first. The
-  server also publishes its own public UCP platform profile at `/.well-known/ucp`. Checkout handoff
-  requires signed UCP requests; configure `UCP_SIGNING_KEY_ID` and either `UCP_SIGNING_PRIVATE_KEY`
-  or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key. The assistant does not
-  complete checkout or collect payment credentials in chat.
+  `/.well-known/ucp` profile (following a redirect there to the merchant's own site or a trusted
+  commerce-platform host), and while browsing it automatically notices when a site supports UCP
+  shopping. This includes Shopify stores on their own custom domain, whose commerce endpoint lives
+  on a `*.myshopify.com` host — even when the storefront redirects discovery to that shop host, so
+  you can just give the assistant the storefront you browsed. The assistant speaks both UCP
+  transports — the MCP JSON-RPC transport that Shopify stores use and the REST transport that
+  merchants such as THE ICONIC and Adore Beauty advertise — so a merchant's choice of transport is
+  transparent to you. Some merchants are checkout-only (they support checkout but not a cart); for
+  these the assistant opens a checkout session directly from the selected items instead of building
+  a cart first. The server also publishes its own public UCP platform profile at `/.well-known/ucp`.
+  Checkout handoff requires signed UCP requests; configure `UCP_SIGNING_KEY_ID` and either
+  `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384 private key.
+  The assistant does not complete checkout or collect payment credentials in chat.
 
 - **Ingest Documents (Files and URLs):**
 
@@ -491,9 +492,9 @@ various tasks with dark mode support and mobile optimization.
   browser, streams replies as they are generated, supports stopping or steering a running reply,
   supports profile switching (picking a profile starts a fresh conversation in it, and reopening an
   earlier conversation resumes the profile it was started in so its prior messages stay in the
-  assistant's context), shows Markdown and tool calls, handles approve/reject confirmations,
-  and can upload images, PDFs, plain text, and Markdown files up to 100 MB. A very long message (or
-  a large tool result) renders a section at a time with a **Show more** control, so the thread stays
+  assistant's context), shows Markdown and tool calls, handles approve/reject confirmations, and can
+  upload images, PDFs, plain text, and Markdown files up to 100 MB. A very long message (or a large
+  tool result) renders a section at a time with a **Show more** control, so the thread stays
   responsive no matter how big the content is. You can search, read, create, edit, and delete notes
   on iOS, including changing whether a note is included in the assistant's system prompt. The
   **More** tab gathers the long-tail destinations — Voice, Events, History, Automations, Tools, and

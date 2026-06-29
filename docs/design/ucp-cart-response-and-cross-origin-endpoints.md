@@ -4,8 +4,10 @@
 
 Live testing of the UCP shopping tools against Australian retailers surfaced that the tools could
 not complete a cart against any real merchant, even ones we nominally support. Investigation against
-the vendored UCP spec found three issues, fixed here. A separate gap (no REST transport) is recorded
-as follow-up.
+the vendored UCP spec found three issues, fixed here. Section 3 was added as a follow-up: it closed
+a gap left by section 2, where the *advertised endpoint* gained cross-host trust but the *discovery
+redirect* that fetches the profile did not, so platform-redirecting merchants never reached the new
+endpoint logic. A separate gap (no REST transport) is recorded as follow-up.
 
 ## 1. Cart response parsing (P0 bug)
 
@@ -73,6 +75,39 @@ DNS rebinding of an attacker's own public domain to a private IP is not newly in
 prior same-origin path posted to the attacker-influenced storefront origin too) and is not addressed
 in this change. A private-IP/internal-host guard on the shopping POST path remains possible future
 hardening.
+
+## 3. Discovery redirect trust (aligning the probe with endpoint trust)
+
+Section 2 widened the trust applied to an *advertised* endpoint inside a fetched profile, but the
+**discovery GET** that fetches the profile still followed only **same-origin** redirects (an SSRF
+guard from the original discovery work). That left a gap: a Shopify store on a custom domain that
+redirects `https://brand.com/.well-known/ucp` to its
+`https://brand-prod.myshopify.com/.well-known/ucp` shop host — or a merchant that serves the
+well-known path from a sibling subdomain — failed discovery entirely (silent miss → fallback to the
+conventional `/api/ucp/mcp` path on the wrong host), so the cross-host endpoint trust in section 2
+never got the chance to run.
+
+The discovery redirect guard now mirrors the endpoint-trust predicate exactly.
+`discover_merchant_ucp_profile` accepts `trusted_suffixes` (callers pass
+`ucp_config.trusted_endpoint_suffixes`), and each redirect hop is followed only when it is
+**same-origin**, **same-site**, or on a **trusted platform suffix** relative to the *original*
+merchant origin — the same `same_origin` / `same_site` / `host_matches_trusted_suffix` checks that
+gate the signed POST, not a separate naive host-suffix comparison. Every hop is evaluated against
+the original origin (not the previous hop), so a chain cannot walk off the merchant's site one
+same-site step at a time. The parsed profile's `origin` stays the original merchant, so advertised
+endpoints are still trust-checked relative to the host the user actually chose.
+
+### Security rationale
+
+The discovery GET is unsigned, read-only, and its body is never returned to the model (only a
+sanitized "shoppable" hint), so it is strictly *less* sensitive than the signed POST that already
+trusts these same hosts. Extending the redirect guard to the same set adds no authority beyond what
+section 2 already granted: same-site stays within the merchant's own registrable domain, and trusted
+suffixes remain an operator allowlist of public commerce backends that cannot be pointed at the
+internal network. With no suffixes configured the behaviour collapses to same-origin/same-site only,
+and an untrusted cross-host redirect is still rejected even when an allowlist is configured. The
+chain stays bounded by `MAX_DISCOVERY_REDIRECTS` and the shared timeout budget. DNS rebinding
+remains out of scope as above.
 
 ## Follow-up: REST transport (done)
 
