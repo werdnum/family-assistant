@@ -232,7 +232,7 @@ final class AuthManager {
         }
 
         do {
-            try await refreshIfNeeded()
+            try await refreshIfNeeded(ownerEpoch: epoch)
         } catch AuthError.authRejected, AuthError.noCredentials {
             if isCurrentAuthEpoch(epoch) { clearLocalAuthState() }
             return
@@ -333,8 +333,13 @@ final class AuthManager {
 
     // MARK: - Token Refresh
 
+    /// - Parameter ownerEpoch: when set (the bootstrap path), rotated tokens are
+    ///   persisted only if this epoch is still current. A watchdog-abandoned
+    ///   bootstrap whose refresh returns late after a logout/re-login must not
+    ///   overwrite the current session's credentials. The lazy `authorizedRequest`
+    ///   path passes `nil` and always persists.
     @MainActor
-    func refreshIfNeeded() async throws {
+    func refreshIfNeeded(ownerEpoch: Int? = nil) async throws {
         guard let expiryString = UserDefaults.standard.string(forKey: Keys.tokenExpiry),
               let expiry = ISO8601DateFormatter().date(from: expiryString)
         else {
@@ -374,6 +379,11 @@ final class AuthManager {
         case 200:
             do {
                 let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+                if let ownerEpoch, !isCurrentAuthEpoch(ownerEpoch) {
+                    // Superseded while refreshing; drop the rotation rather than
+                    // clobber the current session's credentials.
+                    return
+                }
                 saveTokens(tokenResponse)
             } catch {
                 throw AuthError.transient(underlying: error)

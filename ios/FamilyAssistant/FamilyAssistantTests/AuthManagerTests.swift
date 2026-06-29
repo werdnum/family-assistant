@@ -78,6 +78,30 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertNotNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
     }
 
+    func testRefreshSkipsPersistWhenOwnerEpochIsSuperseded() async throws {
+        seedStoredAuth(apiToken: "old-api-token", refreshToken: "old-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {"api_token": "rotated", "refresh_token": "rotated-refresh", "expires_in": 7200}
+                """
+            )
+        }
+
+        // A stale owner epoch stands in for a bootstrap superseded by a logout /
+        // re-login while its refresh was in flight.
+        try await authManager.refreshIfNeeded(ownerEpoch: authManager.authEpoch - 1)
+
+        XCTAssertEqual(AuthBackendURLProtocol.requests.count, 1, "the refresh request is still made")
+        XCTAssertEqual(
+            KeychainHelper.readString(key: "fa_api_token"),
+            "old-api-token",
+            "a superseded bootstrap must not overwrite the current session's credentials"
+        )
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "old-refresh-token")
+    }
+
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
         KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
         let authManager = makeAuthManager()
