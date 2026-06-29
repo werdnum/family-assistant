@@ -82,7 +82,7 @@ if TYPE_CHECKING:
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.deferred_tool_confirmation import (
-    create_deferred_tool_confirmation,
+    build_deferred_confirmation_callback,
 )
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
@@ -102,7 +102,6 @@ from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     RequestConfirmationCallback,
-    ToolArguments,
     ToolResult,
 )
 from family_assistant.utils.clock import Clock, SystemClock
@@ -140,6 +139,11 @@ class LlmCallbackPayload(TypedDict, total=False):
     metadata: dict[str, Any]
     automation_id: str | int
     automation_type: str
+    # Owner of the schedule/reminder. Confirm-gated tool calls made on the woken
+    # turn are deferred to a durable confirmation addressed to this user. Absent
+    # for legacy tasks queued before this field existed, in which case confirm-gated
+    # tools cannot be approved.
+    created_by_user_id: str
 
 
 class ScriptExecutionPayload(TypedDict, total=False):
@@ -356,6 +360,7 @@ async def _schedule_reminder_follow_up(
     follow_up_interval: str,
     current_attempt: int,
     max_follow_ups: int,
+    created_by_user_id: str | None = None,
 ) -> None:
     """Helper function to schedule a follow-up reminder."""
     # Removed storage import - using repository pattern
@@ -407,6 +412,8 @@ async def _schedule_reminder_follow_up(
             "current_attempt": current_attempt + 1,
         },
     }
+    if created_by_user_id is not None:
+        payload["created_by_user_id"] = created_by_user_id
 
     await exec_context.db_context.tasks.enqueue(
         task_id=task_id,
@@ -625,6 +632,12 @@ async def handle_llm_callback(
             f"Saved system trigger message for callback {callback_turn_id} to history."
         )
 
+        # The owner recorded on the payload owns confirm-gated tool calls made on
+        # this turn AND any nested scheduled actions the turn creates (those tools
+        # stamp the next task from exec_context.user_id), so thread it through as
+        # the turn's user_id too — not just into the confirmation callback.
+        callback_owner_user_id = payload.get("created_by_user_id")
+
         # Call the ProcessingService.
         # NOTE: `handle_chat_interaction` now handles saving of all messages in the turn.
         result = await processing_service.handle_chat_interaction(
@@ -638,8 +651,17 @@ async def handle_llm_callback(
             trigger_content_parts=[{"type": "text", "text": trigger_text}],
             trigger_interface_message_id=None,  # System trigger
             user_name=exec_context.user_name,  # Use preserved user name from context
+            user_id=callback_owner_user_id,
             replied_to_interface_id=None,  # Not a reply
-            request_confirmation_callback=None,  # No confirmation for system callbacks
+            request_confirmation_callback=build_deferred_confirmation_callback(
+                target_user_id=callback_owner_user_id,
+                source_prefix="From a scheduled action — approve to run:",
+                missing_owner_message=lambda tool_name: (
+                    "This scheduled action has no recorded owner, so the "
+                    f"confirm-gated tool '{tool_name}' cannot be approved and "
+                    "was not run."
+                ),
+            ),
             trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
         )
 
@@ -738,6 +760,7 @@ async def handle_llm_callback(
                     follow_up_interval=follow_up_interval,
                     current_attempt=current_attempt,
                     max_follow_ups=max_follow_ups,
+                    created_by_user_id=payload.get("created_by_user_id"),
                 )
                 logger.info("Successfully scheduled follow-up reminder")
             except Exception as e:
@@ -1941,7 +1964,15 @@ class TaskWorker:
                 chat_interface=chat_interface,
                 chat_interfaces=exec_context.chat_interfaces,
                 confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                request_confirmation_callback=None,
+                request_confirmation_callback=build_deferred_confirmation_callback(
+                    target_user_id=run["user_id"],
+                    source_prefix=("From a completed delegated task — approve to run:"),
+                    missing_owner_message=lambda tool_name: (
+                        "This delegated task has no recorded owner, so the "
+                        f"confirm-gated tool '{tool_name}' cannot be approved and "
+                        "was not run."
+                    ),
+                ),
                 trigger_attachments=self._delegation_notification_attachments(run),
                 subconversation_id=source_subconversation_id,
                 thread_root_id=data_message_internal_id,
@@ -2949,17 +2980,24 @@ class TaskWorker:
 
         notification_task_id = f"script_error_notify_{uuid.uuid4().hex[:8]}"
 
+        # Deliberately left ownerless: this is a read-only "summarize the failure"
+        # turn whose prompt embeds the failed script, error, and (untrusted) event
+        # data. An owner would make it a deferred-confirmation-capable turn, letting
+        # that content drive durable approvals for confirm-gated tools. Ownerless,
+        # any confirm-gated call instead reports it cannot be approved.
+        notification_payload = LlmCallbackPayload(
+            conversation_id=conversation_id,
+            interface_type=interface_type,
+            callback_context=callback_context,
+            scheduling_timestamp=datetime.now(UTC).isoformat(),
+        )
+
         try:
             await enqueue_task(
                 db_context=db_context,
                 task_id=notification_task_id,
                 task_type="llm_callback",
-                payload=LlmCallbackPayload(
-                    conversation_id=conversation_id,
-                    interface_type=interface_type,
-                    callback_context=callback_context,
-                    scheduling_timestamp=datetime.now(UTC).isoformat(),
-                ),
+                payload=notification_payload,
                 max_retries_override=1,
             )
             logger.info(
@@ -3452,6 +3490,8 @@ async def _process_script_wake_llm(
         "scheduling_timestamp": scheduling_timestamp,
         "metadata": combined_context,
     }
+    if exec_context.user_id is not None:
+        payload["created_by_user_id"] = exec_context.user_id
 
     # Add attachments to payload if any were found
     if trigger_attachments:
@@ -3534,38 +3574,14 @@ def build_script_confirmation_callback(
     so the tool is reported as not run.
     """
 
-    async def _script_confirmation_callback(
-        interface_type: str,
-        conversation_id: str,
-        turn_id: str | None,
-        tool_name: str,
-        call_id: str,
-        tool_args: ToolArguments,
-        timeout_seconds: float,
-        context: ToolExecutionContext,
-    ) -> ConfirmationOutcome:
-        _ = interface_type
-        _ = conversation_id
-        _ = turn_id
-        if created_by_user_id is None:
-            return ConfirmationOutcome(
-                kind="failed",
-                result=(
-                    "This automation has no recorded owner, so the confirm-gated "
-                    f"tool '{tool_name}' cannot be approved and was not run."
-                ),
-            )
-        return await create_deferred_tool_confirmation(
-            context=context,
-            tool_name=tool_name,
-            call_id=call_id,
-            tool_args=tool_args,
-            timeout_seconds=timeout_seconds,
-            target_user_id=created_by_user_id,
-            source_prefix="From an automation — approve to run:",
-        )
-
-    return _script_confirmation_callback
+    return build_deferred_confirmation_callback(
+        target_user_id=created_by_user_id,
+        source_prefix="From an automation — approve to run:",
+        missing_owner_message=lambda tool_name: (
+            "This automation has no recorded owner, so the confirm-gated "
+            f"tool '{tool_name}' cannot be approved and was not run."
+        ),
+    )
 
 
 async def handle_script_execution(
@@ -4072,11 +4088,16 @@ def _resolve_confirmation_result_delivery(
     """Pick where to deliver a confirmation result message.
 
     Chat/email confirmations thread the result back to the originating
-    conversation (replying to the source message). Automation-originated
-    confirmations have no source message, so the result is delivered to the
-    target user's primary Telegram chat instead (mirroring how the pending
-    confirmation was delivered). Returns ``(chat_interface, conversation_id,
-    reply_to_interface_id)`` or None when no deliverable target exists.
+    conversation (replying to the source message). Confirmations created without
+    a source message (automation scripts, scheduled callbacks, delegation
+    completion wakeups) instead thread the result to the origin conversation
+    recorded on the request itself; this needs no source-message row — avoiding a
+    cross-transaction foreign-key dependency — and works for any interface, not
+    just Telegram. Only when no origin is recorded (or its interface is
+    unavailable) does delivery fall back to the target user's primary Telegram
+    chat, mirroring how the pending confirmation was delivered. Returns
+    ``(chat_interface, conversation_id, reply_to_interface_id)`` or None when no
+    deliverable target exists.
     """
     if source_row is not None:
         if context.chat_interface is None:
@@ -4087,6 +4108,17 @@ def _resolve_confirmation_result_delivery(
             else None
         )
         return context.chat_interface, context.conversation_id, reply_to_interface_id
+
+    origin_interface_type = request["origin_interface_type"]
+    origin_conversation_id = request["origin_conversation_id"]
+    if (
+        origin_interface_type is not None
+        and origin_conversation_id is not None
+        and context.chat_interfaces is not None
+    ):
+        origin_interface = context.chat_interfaces.get(origin_interface_type)
+        if origin_interface is not None:
+            return origin_interface, origin_conversation_id, None
 
     processing_service = context.processing_service
     if processing_service is None or context.chat_interfaces is None:

@@ -143,6 +143,7 @@ async def test_script_failure_notification_is_processable(
                 "interface_type": "telegram",
                 "task_name": "Broken Automation",
                 "automation_id": "42",
+                "created_by_user_id": "script-owner",
                 "config": {},
             },
             max_retries_override=0,
@@ -173,6 +174,10 @@ async def test_script_failure_notification_is_processable(
     assert "automation 42" in notif_payload["callback_context"]
     assert "not valid python" in notif_payload["callback_context"]
     assert "Do NOT re-run the script" in notif_payload["callback_context"]
+    # The error-summary turn is deliberately ownerless so its (untrusted) error
+    # content cannot drive durable approvals for confirm-gated tools, even though
+    # the failed script itself had a recorded owner.
+    assert "created_by_user_id" not in notif_payload
 
     # Now let the worker process the llm_callback notification task.
     # This is the key part: if the payload is malformed (e.g. missing

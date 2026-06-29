@@ -354,6 +354,8 @@ async def _create_request(
     *,
     source_message_internal_id: int | None,
     tool_args: ToolArguments | None = None,
+    origin_interface_type: str | None = None,
+    origin_conversation_id: str | None = None,
 ) -> str:
     resolved_tool_args: ToolArguments = (
         tool_args if tool_args is not None else {"value": "payload"}
@@ -366,6 +368,8 @@ async def _create_request(
         source_message_internal_id=source_message_internal_id,
         confirmation_prompt="Run record_tool with value payload",
         expires_at=datetime_now_utc() + timedelta(hours=1),
+        origin_interface_type=origin_interface_type,
+        origin_conversation_id=origin_conversation_id,
     )
     return request["id"]
 
@@ -783,6 +787,42 @@ async def test_approved_confirmation_without_source_message_skips_notification(
         )
     ]
     assert chat_interface.messages == []
+    assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_source_less_confirmation_delivers_to_origin_conversation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confirmation with no source message (e.g. a scheduled callback or
+    delegation wakeup) threads its result back to the recorded origin
+    conversation, not just the user's primary Telegram chat."""
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=None,
+        origin_interface_type="web",
+        origin_conversation_id="origin-conversation-1",
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert chat_interface.messages == [
+        (
+            "origin-conversation-1",
+            "Approved action completed.\n\n"
+            "Tool: record_tool\n\n"
+            "Result:\nexecuted:payload",
+            None,
+        )
+    ]
     assert await _task_status(db_engine, task_id) == ("done", None)
 
 

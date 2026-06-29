@@ -24,7 +24,10 @@ from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 from family_assistant.tools.types import ConfirmationOutcome
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from family_assistant.tools.types import (
+        RequestConfirmationCallback,
         ToolArguments,
         ToolArgumentsView,
         ToolExecutionContext,
@@ -137,12 +140,21 @@ async def create_deferred_tool_confirmation(
     timeout_seconds: float,
     target_user_id: str,
     source_prefix: str,
+    link_source_message: bool = True,
 ) -> ConfirmationOutcome:
     """Record a durable confirmation for a confirm-gated tool and notify the user.
 
     Returns a ``completed`` outcome whose ``result`` tells the caller the tool has
     not run yet and is awaiting approval. The policy layer surfaces this result in
     place of the tool's return value.
+
+    ``link_source_message`` resolves the originating user message from
+    ``context.turn_id`` so an approval can thread back to it. Callers whose turn's
+    source message lives in an uncommitted, ambient transaction (e.g. the
+    delegation-completion wakeup, whose data message is written in an isolated
+    context held open across the turn) must pass ``False``: the durable
+    confirmation is written by the confirmation service's own short transaction,
+    which cannot see that row and would violate the foreign key.
     """
     confirmation_prompt = await render_tool_confirmation_prompt(
         tool_name=tool_name,
@@ -163,7 +175,7 @@ async def create_deferred_tool_confirmation(
         tool_args=tool_args,
         confirmation_prompt=confirmation_prompt,
         timeout_seconds=timeout_seconds,
-        turn_id=context.turn_id,
+        turn_id=context.turn_id if link_source_message else None,
         now=now,
         processing_profile_id=context.processing_profile_id,
         origin_interface_type=context.interface_type,
@@ -186,3 +198,51 @@ async def create_deferred_tool_confirmation(
     if notification_warning is not None:
         result = f"{result}\n\nWarning: {notification_warning}"
     return ConfirmationOutcome(kind="completed", result=result)
+
+
+def build_deferred_confirmation_callback(
+    *,
+    target_user_id: str | None,
+    source_prefix: str,
+    missing_owner_message: Callable[[str], str],
+) -> RequestConfirmationCallback:
+    """Build a confirmation callback that defers confirm-gated calls to durable requests.
+
+    Non-interactive task-worker turns (automation scripts, delegated-task completion
+    notifications, scheduled callbacks/reminders) have no live channel to host an
+    inline confirmation. This callback records a durable confirmation addressed to
+    ``target_user_id`` and returns immediately; the tool runs later via the
+    ``confirmation_tool_execution`` task once the user approves. When the owning user
+    is unknown the tool cannot be approved and is reported as not run.
+    """
+
+    async def _deferred_confirmation_callback(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        _ = interface_type
+        _ = conversation_id
+        _ = turn_id
+        if target_user_id is None:
+            return ConfirmationOutcome(
+                kind="failed",
+                result=missing_owner_message(tool_name),
+            )
+        return await create_deferred_tool_confirmation(
+            context=context,
+            tool_name=tool_name,
+            call_id=call_id,
+            tool_args=tool_args,
+            timeout_seconds=timeout_seconds,
+            target_user_id=target_user_id,
+            source_prefix=source_prefix,
+            link_source_message=False,
+        )
+
+    return _deferred_confirmation_callback
