@@ -194,6 +194,24 @@ final class AuthManagerTests: XCTestCase {
         )
     }
 
+    func testWrittenCookiesAreDiscardedOnlyWhenNoLiveSessionRemains() async {
+        seedStoredAuth(apiToken: "api-token", refreshToken: "refresh-token", expiresIn: 7200)
+        let authManager = makeAuthManager()
+        let captured = authManager.authEpoch
+
+        // Epoch unchanged: a normal bridge keeps its cookies.
+        XCTAssertFalse(authManager.shouldDiscardWrittenCookies(capturedEpoch: captured))
+
+        // Logout while the write was stalled -> stale cookies must be undone.
+        await authManager.logout()
+        XCTAssertTrue(authManager.shouldDiscardWrittenCookies(capturedEpoch: captured))
+
+        // A fresh login then takes ownership of the store: the abandoned bridge must
+        // NOT delete the new session's cookies.
+        authManager.isAuthenticated = true
+        XCTAssertFalse(authManager.shouldDiscardWrittenCookies(capturedEpoch: captured))
+    }
+
     func testAuthSupportTypesExposeExpectedUserFacingValues() {
         XCTAssertEqual(AuthError.invalidServerURL.errorDescription, "Invalid server URL")
         XCTAssertEqual(AuthError.exchangeFailed.errorDescription, "Failed to exchange authorization code")

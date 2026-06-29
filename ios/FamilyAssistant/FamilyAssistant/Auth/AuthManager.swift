@@ -304,6 +304,15 @@ final class AuthManager {
         capturedEpoch == authEpoch
     }
 
+    /// Whether cookies a bridge just wrote must be undone. True only when the epoch
+    /// advanced *after* the write (the non-cancellable `setCookie` stalled past a
+    /// logout/re-login) **and** no live session remains — so we never delete a fresh
+    /// login's cookies, only resurrected logged-out ones.
+    @MainActor
+    func shouldDiscardWrittenCookies(capturedEpoch: Int) -> Bool {
+        capturedEpoch != authEpoch && !isAuthenticated
+    }
+
     // MARK: - Token Refresh
 
     @MainActor
@@ -407,6 +416,17 @@ final class AuthManager {
             let cookieStore = await WKWebsiteDataStore.default().httpCookieStore
             for cookie in cookies {
                 await cookieStore.setCookie(cookie)
+            }
+
+            // The setCookie awaits above are themselves where the non-cancellable
+            // WebKit stall can occur. If auth was invalidated while we were
+            // suspended there — and no fresh login has since taken ownership of the
+            // store — undo the now-stale writes so an abandoned bootstrap cannot
+            // resurrect a logged-out session.
+            if await shouldDiscardWrittenCookies(capturedEpoch: capturedEpoch) {
+                for cookie in cookies {
+                    await cookieStore.deleteCookie(cookie)
+                }
             }
         }
     }
