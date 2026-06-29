@@ -18,6 +18,9 @@ def _register(profile: ServiceProfile) -> RemoteA2AService:
     namespace is sufficient and avoids constructing a full Assistant.
     """
     fake_self = SimpleNamespace(processing_services_registry={})
+    # _setup_remote_a2a_profile reads only self.processing_services_registry, so a
+    # SimpleNamespace stand-in exercises the real method without constructing a full
+    # Assistant; the arg-type suppression covers that deliberate duck-typed self.
     Assistant._setup_remote_a2a_profile(fake_self, profile)  # type: ignore[arg-type]
     return fake_self.processing_services_registry[profile.id]
 
