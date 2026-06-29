@@ -542,18 +542,46 @@ class RemoteBrowserBackend:
         Covers two server signals: 404 ``unknown session`` (the server forgot the
         session, e.g. after eviction or a restart) and 410 ``Gone`` (the session
         existed but expired or reached a terminal state). Both mean "start a new
-        session"; a 403 deliberately does *not* match, because that signals the
-        agent does not own the lease (e.g. a human handoff is in progress) and must
-        not be papered over by silently opening a fresh session.
+        session". A handed-off 403 is handled separately by
+        :meth:`_is_lease_lost_response` so that only ``browser_open`` (navigate)
+        starts fresh, while in-flight commands surface a clear error instead.
         """
         return resp.status_code == 410 or self._is_unknown_session_response(resp)
+
+    def _is_lease_lost_response(self, resp: httpx.Response) -> bool:
+        """True when the session still exists but the agent no longer holds its lease.
+
+        browser-server returns 403 with this detail once the session has been handed
+        to a human (``handoff_requested``/``human_active``) or is parked awaiting a
+        human->agent handover claim (``handover_requested``). Without this, a
+        conversation that ever handed the browser off stays pinned to a session it
+        can no longer drive — every later ``browser_open`` keeps hitting the same 403,
+        so the browser is blocked for the rest of the conversation (and any subagent
+        sharing the conversation), which is the bug this detects.
+
+        It is deliberately distinct from an auth 403 (``agent service token
+        required``): that must not reset the session. The lease-denied detail always
+        contains "the lease", which the auth detail never does.
+        """
+        if resp.status_code != 403:
+            return False
+        try:
+            payload = resp.json()
+        except ValueError:
+            return "the lease" in resp.text.lower()
+        if not isinstance(payload, dict):
+            return "the lease" in resp.text.lower()
+        detail = payload.get("detail")
+        return isinstance(detail, str) and "the lease" in detail.lower()
 
     def _session_lost_error(self, action: str, session_id: str) -> BrowserBackendError:
         self._clear_remote_session(session_id)
         return BrowserBackendError(
-            f"browser-server {action} failed because the live browser session "
-            "is no longer available. Start with browser_open to create a new "
-            "browser session."
+            f"browser-server {action} failed because the live browser session is "
+            "not available to the agent (it may have been evicted, expired, or "
+            "handed to a human). Start with browser_open to create a new browser "
+            "session, or browser_claim_handback to resume a session a human handed "
+            "back."
         )
 
     # ast-grep-ignore: no-dict-any - agent-command results are heterogeneous JSON
@@ -566,7 +594,12 @@ class RemoteBrowserBackend:
             headers=self._headers(),
             json={"type": command_type, "args": args or {}},
         )
-        if self._is_session_gone_response(resp):
+        # A gone session (eviction/expiry) or a handed-off session (the agent lost
+        # the lease) both mean the cached session can't serve this command. For
+        # navigate (browser_open) we transparently start a fresh session so the
+        # conversation is never wedged after a handoff; other commands surface a
+        # clear "start with browser_open" error instead of silently retargeting.
+        if self._is_session_gone_response(resp) or self._is_lease_lost_response(resp):
             if command_type != "navigate":
                 raise self._session_lost_error(f"command {command_type}", session_id)
             self._clear_remote_session(session_id)
