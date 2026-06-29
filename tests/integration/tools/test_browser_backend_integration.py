@@ -14,7 +14,7 @@ import httpx
 import pytest
 from browser_handoff_service.main import app as browser_server_app
 from browser_handoff_service.main import registry as browser_server_registry
-from browser_handoff_service.models import TERMINAL_STATES, now_utc
+from browser_handoff_service.models import TERMINAL_STATES, SessionState, now_utc
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
@@ -327,6 +327,83 @@ async def test_expired_session_command_prompts_browser_open() -> None:
         await backend.close()
 
 
+def _agent_active_session_id_for_conversation(conversation_id: str) -> str:
+    """The single agent-owned (agent_active) session for a conversation.
+
+    After a handoff the handed-off session lingers (non-terminal), so the fresh
+    session the backend recovered onto is identified by being agent_active.
+    """
+    matches = [
+        session.session_id
+        for session in browser_server_registry.list_sessions()
+        if session.conversation_id == conversation_id
+        and session.state == SessionState.AGENT_ACTIVE
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+@pytest.mark.integration
+async def test_handed_off_session_recreated_on_browser_open() -> None:
+    """browser_open starts a fresh session after the agent handed the browser off.
+
+    A handoff moves the session out of agent control (the agent loses the lease), so
+    every later command gets a 403. Without recovery the conversation stays pinned to
+    that un-drivable session forever; browser_open must transparently start anew.
+    """
+    conversation_id = "integ-handoff-reopen"
+    backend = _make_backend(conversation_id=conversation_id)
+    try:
+        await backend.goto("https://example.test/checkout")
+        stale_session_id = _session_id_for_conversation(conversation_id)
+        await backend.request_handoff(
+            reason="other",
+            handoff_note="Please take over",
+            expected_origin=None,
+        )
+
+        await backend.goto("https://example.test/after-handoff")
+
+        recovered_session_id = _agent_active_session_id_for_conversation(
+            conversation_id
+        )
+        assert recovered_session_id != stale_session_id
+        assert backend.current_url == "https://example.test/after-handoff"
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_handed_off_session_command_prompts_browser_open() -> None:
+    """A non-navigation command on a handed-off session fails clearly and clears it.
+
+    The agent that lost the lease should be told to start over (or claim the
+    handback) rather than be wedged on a session it can no longer drive.
+    """
+    conversation_id = "integ-handoff-cmd"
+    backend = _make_backend(conversation_id=conversation_id)
+    try:
+        await backend.goto("https://example.test/checkout")
+        stale_session_id = _session_id_for_conversation(conversation_id)
+        await backend.request_handoff(
+            reason="other",
+            handoff_note="Please take over",
+            expected_origin=None,
+        )
+
+        with pytest.raises(BrowserBackendError, match="browser_open"):
+            await backend.raw_snapshot()
+
+        # The handed-off session is cleared, so a fresh browser_open succeeds.
+        await backend.goto("https://example.test/restarted")
+        recovered_session_id = _agent_active_session_id_for_conversation(
+            conversation_id
+        )
+        assert recovered_session_id != stale_session_id
+    finally:
+        await backend.close()
+
+
 @pytest.mark.integration
 async def test_claim_handback_resumes_session() -> None:
     """claim_handback() re-attaches the backend to a session the human handed back.
@@ -375,6 +452,11 @@ async def test_claim_handback_resumes_session() -> None:
         # 4. Agent claims the handback
         claim_result = await backend.claim_handback(session_id, handover_token)
         assert claim_result.get("state") in {"agent_active", "agent_resumable"}
+
+        # 4b. A retried claim_handback is idempotent, not a 409 that would wedge the
+        # session for the rest of the conversation.
+        reclaim_result = await backend.claim_handback(session_id, handover_token)
+        assert reclaim_result.get("state") in {"agent_active", "agent_resumable"}
 
         # 5. Snapshot works after reclaim
         snap = await backend.raw_snapshot()

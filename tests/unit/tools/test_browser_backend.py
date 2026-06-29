@@ -17,6 +17,7 @@ import pytest
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
+    BrowserBackendError,
     HandoffUnavailableError,
     LocalPlaywrightBackend,
     RemoteBrowserBackend,
@@ -142,6 +143,111 @@ async def test_remote_backend_sends_bearer_token(
     backend = RemoteBrowserBackend(_config(), "conv_auth", client=client)
     await backend.goto("https://example.test/page")
     assert seen[0].headers["authorization"] == "Bearer s3cret"
+    await backend.close()
+
+
+def _make_handoff_browser_server(
+    detail: str,
+) -> tuple[httpx.AsyncClient, list[httpx.Request], dict[str, object]]:
+    """A fake browser-server whose first session can be flipped to reject commands.
+
+    The first created session (``bs_1``) serves commands normally until the test
+    sets ``state["handed_off"] = True``; thereafter ``bs_1`` returns ``403 detail``
+    (the agent lost the lease), while a freshly created session serves navigate
+    normally. This models a handoff without driving a real browser.
+    """
+    seen: list[httpx.Request] = []
+    state: dict[str, object] = {"created": 0, "handed_off": False}
+
+    def _navigate_result(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        url = body["args"].get("url", "https://example.test/page")
+        result: dict[str, object] = {"url": url, "title": "Fixture"}
+        if body["type"] == "snapshot":
+            result = {
+                "url": "https://example.test/page",
+                "title": "Fixture",
+                "forms": 0,
+                "elements": 0,
+                "roots": [],
+            }
+        return httpx.Response(
+            200, json={"command_id": "cmd_1", "ok": True, "result": result}
+        )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        path = request.url.path
+        if path == "/v1/sessions":
+            state["created"] = cast("int", state["created"]) + 1
+            return httpx.Response(
+                200,
+                json={
+                    "session_id": f"bs_{state['created']}",
+                    "state": "agent_active",
+                },
+            )
+        if path.endswith("/agent-command"):
+            if state["handed_off"] and path.startswith("/v1/sessions/bs_1/"):
+                return httpx.Response(403, json={"detail": detail})
+            return _navigate_result(request)
+        if path.endswith("/close"):
+            return httpx.Response(200, json={"state": "cancelled"})
+        return httpx.Response(404, json={"detail": "not found"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)
+    return client, seen, state
+
+
+_LEASE_LOST_DETAIL = "agent commands are denied unless the agent owns the lease"
+
+
+@pytest.mark.asyncio
+async def test_navigate_recovers_when_session_was_handed_off() -> None:
+    """browser_open starts a fresh session when the cached one was handed off.
+
+    A handoff leaves the conversation pinned to a session the agent can no longer
+    drive (403). Navigate must transparently restart so the browser is not blocked
+    for the rest of the conversation.
+    """
+    client, seen, state = _make_handoff_browser_server(_LEASE_LOST_DETAIL)
+    backend = RemoteBrowserBackend(_config(), "conv_lease", client=client)
+    await backend.goto("https://example.test/before")  # creates + uses bs_1
+    state["handed_off"] = True
+    await backend.goto("https://example.test/after")  # bs_1 -> 403 -> bs_2
+    assert backend.current_url == "https://example.test/after"
+    assert sum(1 for r in seen if r.url.path == "/v1/sessions") == 2
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_command_on_handed_off_session_prompts_browser_open() -> None:
+    """A non-navigation command on a handed-off session fails clearly, not silently."""
+    client, _, state = _make_handoff_browser_server(_LEASE_LOST_DETAIL)
+    backend = RemoteBrowserBackend(_config(), "conv_lease_cmd", client=client)
+    await backend.goto("https://example.test/before")  # uses bs_1
+    state["handed_off"] = True
+    with pytest.raises(BrowserBackendError, match="browser_open"):
+        await backend.raw_snapshot()  # bs_1 snapshot -> 403, no silent restart
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_navigate_does_not_restart_on_auth_403() -> None:
+    """An auth 403 must not be mistaken for a handed-off session and restarted.
+
+    Only the lease-denied 403 ("...owns the lease") restarts; an authentication
+    failure surfaces as an error so a misconfiguration is not papered over by
+    endlessly minting new sessions.
+    """
+    client, seen, state = _make_handoff_browser_server("agent service token required")
+    backend = RemoteBrowserBackend(_config(), "conv_auth_403", client=client)
+    await backend.goto("https://example.test/before")  # uses bs_1
+    state["handed_off"] = True
+    with pytest.raises(BrowserBackendError):
+        await backend.goto("https://example.test/after")  # 403 auth -> no restart
+    # Only the original session was created; no second session was minted.
+    assert sum(1 for r in seen if r.url.path == "/v1/sessions") == 1
     await backend.close()
 
 
