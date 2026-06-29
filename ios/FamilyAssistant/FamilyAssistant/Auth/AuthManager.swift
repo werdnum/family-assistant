@@ -261,7 +261,7 @@ final class AuthManager {
     /// `WKWebsiteDataStore`) cannot pin the caller. Both children run on the main
     /// actor, matching the isolation of `operation` and the auth state it mutates.
     @MainActor
-    private func runWithWatchdog(
+    func runWithWatchdog(
         seconds: Double,
         operation: @escaping @MainActor () async -> Void
     ) async -> Bool {

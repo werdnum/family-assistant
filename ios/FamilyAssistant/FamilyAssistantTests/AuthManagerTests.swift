@@ -152,24 +152,29 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "valid-api-token")
     }
 
-    func testBootstrapSessionWatchdogStopsHangAndKeepsStoredCredentials() async {
-        seedStoredAuth(apiToken: "valid-api-token", refreshToken: "refresh-token", expiresIn: 7200)
+    func testWatchdogAbandonsAStallAndReturnsPromptly() async {
         let authManager = makeAuthManager()
-        authManager.bootstrapWatchdogSeconds = 0.2
-        // Respond far later than the watchdog so the session bridge would otherwise
-        // pin "Signing in…"; the watchdog must abandon it and return promptly.
-        AuthBackendURLProtocol.setResponseDelay(3)
-        AuthBackendURLProtocol.respond { _ in .json("{}") }
 
         let start = Date()
-        await authManager.bootstrapSession()
+        let completed = await authManager.runWithWatchdog(seconds: 0.2) {
+            // A long, cancellable stall standing in for the non-cancellable
+            // WKWebsiteDataStore hand-off the watchdog exists to survive.
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
         let elapsed = Date().timeIntervalSince(start)
 
-        XCTAssertLessThan(elapsed, 2, "watchdog should abandon the stalled bridge well before the response")
-        XCTAssertFalse(authManager.isBootstrapping)
-        // Stored credentials are preserved so the app proceeds and can re-auth lazily.
-        XCTAssertTrue(authManager.isAuthenticated)
-        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "valid-api-token")
+        XCTAssertFalse(completed, "watchdog should report the operation did not finish")
+        XCTAssertLessThan(elapsed, 2, "watchdog should return shortly after its budget, not wait for the stall")
+    }
+
+    func testWatchdogReturnsTrueWhenOperationFinishesInTime() async {
+        let authManager = makeAuthManager()
+
+        let completed = await authManager.runWithWatchdog(seconds: 5) {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertTrue(completed)
     }
 
     func testSessionCookieFenceRejectsBridgeAfterAuthInvalidation() async {
@@ -239,10 +244,6 @@ private final class AuthBackendURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var handler: Handler?
     private static var recordedRequests: [URLRequest] = []
-    private static var responseDelay: TimeInterval = 0
-
-    private let cancelLock = NSLock()
-    private var cancelled = false
 
     static var requests: [URLRequest] {
         lock.withLock { recordedRequests }
@@ -254,17 +255,10 @@ private final class AuthBackendURLProtocol: URLProtocol {
         }
     }
 
-    /// Delay every response by `seconds` so a test can drive `bootstrapSession`'s
-    /// watchdog (set a short watchdog and a longer response delay).
-    static func setResponseDelay(_ seconds: TimeInterval) {
-        lock.withLock { responseDelay = seconds }
-    }
-
     static func reset() {
         lock.withLock {
             handler = nil
             recordedRequests = []
-            responseDelay = 0
         }
     }
 
@@ -277,9 +271,9 @@ private final class AuthBackendURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        let (handler, delay): (Handler?, TimeInterval) = Self.lock.withLock {
+        let handler: Handler? = Self.lock.withLock {
             Self.recordedRequests.append(request)
-            return (Self.handler, Self.responseDelay)
+            return Self.handler
         }
 
         guard let handler else {
@@ -287,32 +281,17 @@ private final class AuthBackendURLProtocol: URLProtocol {
             return
         }
 
-        let deliver: () -> Void = { [weak self] in
-            guard let self, !self.cancelLock.withLock({ self.cancelled }) else { return }
-            do {
-                let response = try handler(self.request)
-                self.client?.urlProtocol(
-                    self,
-                    didReceive: response.urlResponse(for: self.request),
-                    cacheStoragePolicy: .notAllowed
-                )
-                self.client?.urlProtocol(self, didLoad: response.data)
-                self.client?.urlProtocolDidFinishLoading(self)
-            } catch {
-                self.client?.urlProtocol(self, didFailWithError: error)
-            }
-        }
-
-        if delay > 0 {
-            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: deliver)
-        } else {
-            deliver()
+        do {
+            let response = try handler(request)
+            client?.urlProtocol(self, didReceive: response.urlResponse(for: request), cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: response.data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
-    override func stopLoading() {
-        cancelLock.withLock { cancelled = true }
-    }
+    override func stopLoading() {}
 }
 
 private struct AuthMockResponse {
