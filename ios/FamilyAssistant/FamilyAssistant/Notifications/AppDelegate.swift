@@ -4,6 +4,10 @@ import UserNotifications
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     weak var notificationManager: NotificationManager?
 
+    private enum ShortcutType {
+        static let newChat = "com.familyassistant.app.new-chat"
+    }
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -11,7 +15,18 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         NotificationManager.registerNotificationCategories()
+        if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+            return handleShortcutItem(shortcutItem)
+        }
         return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        completionHandler(handleShortcutItem(shortcutItem))
     }
 
     func application(
@@ -46,5 +61,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         await MainActor.run {
             notificationManager?.handleNotificationResponse(response)
         }
+    }
+
+    private func handleShortcutItem(_ shortcutItem: UIApplicationShortcutItem) -> Bool {
+        guard shortcutItem.type == ShortcutType.newChat else {
+            return false
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                IntentNavigationCenter.shared.requestNewChat()
+            }
+        } else {
+            Task { @MainActor in
+                IntentNavigationCenter.shared.requestNewChat()
+            }
+        }
+        return true
     }
 }

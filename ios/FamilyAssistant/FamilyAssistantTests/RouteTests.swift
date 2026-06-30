@@ -57,12 +57,21 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(parsed, ChatRoute(conversationID: "web_conv_abc", initialPrompt: "Hello there"))
     }
 
+    func testChatRouteParsesNewConversationRequest() throws {
+        let parsed = try XCTUnwrap(ChatRoute.route(for: try url("/chat?new=1"), relativeTo: baseURL))
+
+        XCTAssertNil(parsed.conversationID)
+        XCTAssertNil(parsed.initialPrompt)
+        XCTAssertNotNil(parsed.newConversationRequestID)
+    }
+
     // MARK: - owningTab resolution (table-driven)
 
     func testOwningTabResolvesEachDestination() throws {
         let cases: [(path: String, expected: AppTab?)] = [
             ("/chat", .chat),
             ("/chat?conversation_id=abc&q=hi", .chat),
+            ("/chat?new=1", .chat),
             ("/notes", .notes),
             ("/notes/edit/Milk", .notes),
             ("/documents/", .documents),

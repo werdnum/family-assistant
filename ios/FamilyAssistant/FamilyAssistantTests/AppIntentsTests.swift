@@ -168,6 +168,12 @@ final class AppIntentsTests: XCTestCase {
         XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat")
     }
 
+    func testIntentNavigationCenterCanRequestNewChat() {
+        IntentNavigationCenter.shared.requestNewChat()
+
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat?new=1")
+    }
+
     // MARK: - Deep links & shortcuts
 
     func testChatDeepLinkEncodesPromptAndConversation() {

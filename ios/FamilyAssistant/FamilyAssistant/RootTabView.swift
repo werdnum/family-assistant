@@ -14,8 +14,7 @@ struct RootTabView: View {
         TabView(selection: $appRouter.selectedTab) {
             ChatRootView(
                 authManager: authManager,
-                conversationID: appRouter.chatSelection.conversationID,
-                initialPrompt: appRouter.chatSelection.initialPrompt
+                route: appRouter.chatSelection
             )
             .tabItem { Label("Chat", systemImage: "message") }
             .tag(AppTab.chat)

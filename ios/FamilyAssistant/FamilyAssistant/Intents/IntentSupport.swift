@@ -163,6 +163,10 @@ final class IntentNavigationCenter {
         pendingChatPath = components.string ?? "/chat"
     }
 
+    func requestNewChat() {
+        pendingChatPath = "/chat?new=1"
+    }
+
     /// Returns and clears any pending path.
     func consumePendingChatPath() -> String? {
         defer { pendingChatPath = nil }

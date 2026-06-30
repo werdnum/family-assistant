@@ -48,41 +48,50 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
-    func testLaunchWithStaleConversationLandsOnList() {
+    func testLaunchWithStaleConversationOpensNewChat() {
         storeLastConversation("web_conv_stale", activeSecondsAgo: 16 * 60)
 
         let model = makeViewModel(conversationID: nil)
 
-        XCTAssertNil(
-            model.conversationSelection,
-            "A conversation last used beyond the restore window should not reopen; land on the list."
-        )
+        XCTAssertEqual(model.conversationSelection, model.conversationID)
         XCTAssertNotEqual(model.conversationID, "web_conv_stale")
         XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+        XCTAssertNotNil(model.composerFocusRequestID)
         XCTAssertEqual(
             UserDefaults.standard.string(forKey: "lastConversationId"),
             "web_conv_stale",
-            "Landing on the list must not overwrite the stored last conversation."
+            "Opening an empty draft must not overwrite the stored last conversation."
         )
     }
 
-    func testLaunchWithoutActivityTimestampLandsOnList() {
+    func testLaunchWithoutActivityTimestampOpensNewChat() {
         UserDefaults.standard.set("web_conv_legacy", forKey: "lastConversationId")
         UserDefaults.standard.removeObject(forKey: "lastConversationActiveAt")
 
         let model = makeViewModel(conversationID: nil)
 
-        XCTAssertNil(
-            model.conversationSelection,
-            "Without a recorded activity time (e.g. upgrade), launch should land on the list."
-        )
+        XCTAssertEqual(model.conversationSelection, model.conversationID)
+        XCTAssertNotEqual(model.conversationID, "web_conv_legacy")
+        XCTAssertNotNil(model.composerFocusRequestID)
     }
 
-    func testLaunchWithNoStoredConversationLandsOnList() {
+    func testLaunchWithNoStoredConversationOpensNewChat() {
         let model = makeViewModel(conversationID: nil)
 
-        XCTAssertNil(model.conversationSelection)
+        XCTAssertEqual(model.conversationSelection, model.conversationID)
         XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+        XCTAssertNotNil(model.composerFocusRequestID)
+    }
+
+    func testExplicitNewConversationRequestIgnoresRestoreWindow() {
+        storeLastConversation("web_conv_recent", activeSecondsAgo: 60)
+
+        let model = makeViewModel(conversationID: nil, startsNewConversation: true)
+
+        XCTAssertEqual(model.conversationSelection, model.conversationID)
+        XCTAssertNotEqual(model.conversationID, "web_conv_recent")
+        XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
+        XCTAssertNotNil(model.composerFocusRequestID)
     }
 
     func testExplicitConversationIDIgnoresRestoreWindow() {
@@ -6321,6 +6330,7 @@ final class ChatViewModelTests: XCTestCase {
 
     private func makeViewModel(
         conversationID: String?,
+        startsNewConversation: Bool = false,
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
@@ -6333,6 +6343,7 @@ final class ChatViewModelTests: XCTestCase {
             authManager: authManager,
             conversationID: conversationID,
             initialPrompt: nil,
+            startsNewConversation: startsNewConversation,
             liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
