@@ -94,6 +94,7 @@ final class ChatViewModel {
     @ObservationIgnored private var queuedFollowUpSteers: [String] = []
     @ObservationIgnored private var localUserInputConversationIDByMessageID: [String: String] = [:]
     @ObservationIgnored private var representedPersistedUserInputEchoCounts: [UserInputEchoKey: Int] = [:]
+    @ObservationIgnored private var importedDraftFileURLByAttachmentID: [String: URL] = [:]
     @ObservationIgnored private var lastProcessedInitialPrompt: String?
     @ObservationIgnored private var opensGeneratedLaunchDraft = false
     // Highest stream seq applied for the active conversation, threaded into the
@@ -540,6 +541,7 @@ final class ChatViewModel {
         conversationSelection = conversationID
         messages = []
         draftText = ""
+        cleanupTemporaryImports(for: draftAttachments)
         draftAttachments = []
         composerFocusRequestID = UUID()
         mobileShowsConversationList = false
@@ -888,6 +890,7 @@ final class ChatViewModel {
         messages.append(userMessage)
         messages.append(assistantMessage)
         draftText = ""
+        cleanupTemporaryImports(for: draftAttachments)
         draftAttachments = []
         isStreaming = true
         persistConversationID()
@@ -1888,6 +1891,10 @@ final class ChatViewModel {
     }
 
     func addAttachment(fileURL: URL) async {
+        await addAttachment(fileURL: fileURL, isTemporaryImport: false)
+    }
+
+    private func addAttachment(fileURL: URL, isTemporaryImport: Bool) async {
         let scoped = fileURL.startAccessingSecurityScopedResource()
         defer {
             if scoped {
@@ -1895,7 +1902,30 @@ final class ChatViewModel {
             }
         }
         let mimeType = apiClient.mimeType(for: fileURL)
-        await addAttachment(fileURL: fileURL, mimeType: mimeType, displayName: fileURL.lastPathComponent)
+        await addAttachment(
+            fileURL: fileURL,
+            mimeType: mimeType,
+            displayName: fileURL.lastPathComponent,
+            isTemporaryImport: isTemporaryImport
+        )
+    }
+
+    func addSharedAttachments(_ batch: SharedAttachmentBatch) async {
+        if !batch.importErrors.isEmpty {
+            errorMessage = (["Some shared files could not be imported."] + batch.importErrors).joined(separator: "\n")
+        }
+        let targetConversationID = conversationID
+        for (index, fileURL) in batch.fileURLs.enumerated() {
+            guard conversationID == targetConversationID else {
+                cleanupTemporaryImportFiles(Array(batch.fileURLs[index...]))
+                return
+            }
+            await addAttachment(fileURL: fileURL, isTemporaryImport: true)
+        }
+        guard conversationID == targetConversationID else {
+            return
+        }
+        composerFocusRequestID = UUID()
     }
 
     func removeDraftAttachment(_ attachment: ChatAttachment) async {
@@ -1912,6 +1942,7 @@ final class ChatViewModel {
                 return
             }
         }
+        cleanupTemporaryImport(for: attachment)
         draftAttachments.removeAll { $0.id == attachment.id }
     }
 
@@ -1959,7 +1990,12 @@ final class ChatViewModel {
         return try await apiClient.downloadAttachment(path: contentURL).0
     }
 
-    private func addAttachment(fileURL: URL, mimeType: String, displayName: String) async {
+    private func addAttachment(
+        fileURL: URL,
+        mimeType: String,
+        displayName: String,
+        isTemporaryImport: Bool = false
+    ) async {
         var attachment = ChatAttachment(
             id: UUID().uuidString,
             attachmentID: nil,
@@ -1973,6 +2009,9 @@ final class ChatViewModel {
             errorMessage: nil
         )
         draftAttachments.append(attachment)
+        if isTemporaryImport {
+            importedDraftFileURLByAttachmentID[attachment.id] = fileURL
+        }
         do {
             let upload = try await apiClient.uploadAttachment(fileURL: fileURL, mimeType: mimeType)
             attachment.attachmentID = upload.attachmentID
@@ -1987,6 +2026,33 @@ final class ChatViewModel {
         }
         if let index = draftAttachments.firstIndex(where: { $0.id == attachment.id }) {
             draftAttachments[index] = attachment
+        }
+    }
+
+    private func cleanupTemporaryImports(for attachments: [ChatAttachment]) {
+        for attachment in attachments {
+            cleanupTemporaryImport(for: attachment)
+        }
+    }
+
+    private func cleanupTemporaryImport(for attachment: ChatAttachment) {
+        guard let fileURL = importedDraftFileURLByAttachmentID.removeValue(forKey: attachment.id) else {
+            return
+        }
+        cleanupTemporaryImportFile(fileURL)
+    }
+
+    private func cleanupTemporaryImportFiles(_ fileURLs: [URL]) {
+        for fileURL in fileURLs {
+            cleanupTemporaryImportFile(fileURL)
+        }
+    }
+
+    private func cleanupTemporaryImportFile(_ fileURL: URL) {
+        let importDirectory = fileURL.deletingLastPathComponent()
+        try? FileManager.default.removeItem(at: fileURL)
+        if importDirectory.deletingLastPathComponent().lastPathComponent == "SharedAttachmentImports" {
+            try? FileManager.default.removeItem(at: importDirectory)
         }
     }
 

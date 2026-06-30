@@ -4,6 +4,7 @@ import UIKit
 struct ContentView: View {
     @Environment(AuthManager.self) private var authManager
     @Environment(NotificationManager.self) private var notificationManager
+    @Environment(SharedAttachmentInbox.self) private var sharedAttachmentInbox
     @State private var appRouter = AppRouter()
 
     var body: some View {
@@ -31,6 +32,9 @@ struct ContentView: View {
                 .onChange(of: IntentNavigationCenter.shared.pendingChatPath) { _, _ in
                     navigateToPendingIntentPath(baseURL: baseURL)
                 }
+                .onChange(of: sharedAttachmentInbox.pendingBatch?.id) { _, batchID in
+                    navigateToPendingSharedAttachmentBatch(batchID)
+                }
                 .task {
                     notificationManager.bind(authManager: authManager)
                     await notificationManager.syncRegistrationIfNeeded()
@@ -39,6 +43,7 @@ struct ContentView: View {
                         baseURL: baseURL
                     )
                     navigateToPendingIntentPath(baseURL: baseURL)
+                    navigateToPendingSharedAttachmentBatch(sharedAttachmentInbox.pendingBatch?.id)
                 }
                 .sheet(item: Binding(
                     get: { notificationManager.pendingConfirmationModal },
@@ -85,5 +90,12 @@ struct ContentView: View {
             return
         }
         appRouter.navigate(to: url, relativeTo: baseURL)
+    }
+
+    private func navigateToPendingSharedAttachmentBatch(_ batchID: String?) {
+        guard let batchID else {
+            return
+        }
+        appRouter.openSharedAttachments(batchID: batchID)
     }
 }

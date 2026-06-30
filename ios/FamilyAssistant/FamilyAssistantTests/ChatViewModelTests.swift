@@ -5877,6 +5877,235 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.draftAttachments.isEmpty)
     }
 
+    func testSharedAttachmentBatchUploadsIntoDraftAttachments() async throws {
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("shared-upload.txt")
+        try Data("shared".utf8).write(to: fileURL)
+
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/attachments/upload"):
+                let body = String(data: request.bodyData, encoding: .utf8)
+                XCTAssertTrue(body?.contains(#"filename="shared-upload.txt""#) == true)
+                XCTAssertTrue(body?.contains("Content-Type: text/plain") == true)
+                XCTAssertTrue(body?.contains("shared") == true)
+                return .json(
+                    """
+                    {
+                      "attachment_id": "44444444-4444-4444-4444-444444444444",
+                      "filename": "shared-upload.txt",
+                      "content_type": "text/plain",
+                      "size": 6,
+                      "url": "/api/attachments/44444444-4444-4444-4444-444444444444"
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_shared_upload")
+
+        await model.addSharedAttachments(SharedAttachmentBatch(id: "batch-1", fileURLs: [fileURL], importErrors: []))
+        try await waitUntil { model.draftAttachments.first?.uploadState == .uploaded }
+
+        let attachment = try XCTUnwrap(model.draftAttachments.first)
+        XCTAssertEqual(attachment.attachmentID, "44444444-4444-4444-4444-444444444444")
+        XCTAssertEqual(attachment.name, "shared-upload.txt")
+        XCTAssertEqual(attachment.mimeType, "text/plain")
+        XCTAssertTrue(model.canSendDraft)
+        XCTAssertNotNil(model.composerFocusRequestID)
+    }
+
+    func testSharedAttachmentBatchStopsWhenDraftChangesDuringUpload() async throws {
+        let importRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SharedAttachmentImports", isDirectory: true)
+        let firstDirectory = importRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let secondDirectory = importRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: firstDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondDirectory, withIntermediateDirectories: true)
+        let firstURL = firstDirectory.appendingPathComponent("shared-first.txt")
+        let secondURL = secondDirectory.appendingPathComponent("shared-second.txt")
+        try Data("first".utf8).write(to: firstURL)
+        try Data("second".utf8).write(to: secondURL)
+        defer {
+            try? FileManager.default.removeItem(at: firstDirectory)
+            try? FileManager.default.removeItem(at: secondDirectory)
+        }
+        let firstUpload = HangingStream()
+        defer {
+            firstUpload.finish()
+        }
+        let uploadCount = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/attachments/upload"):
+                let count = uploadCount.increment()
+                if count > 1 {
+                    XCTFail("Shared batch should stop before uploading the second file")
+                }
+                return ChatMockResponse(
+                    statusCode: 200,
+                    data: Data(),
+                    headers: ["Content-Type": "application/json"],
+                    hangingStream: firstUpload
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: "web_conv_shared_switch")
+
+        let importTask = Task {
+            await model.addSharedAttachments(
+                SharedAttachmentBatch(id: "batch-switch", fileURLs: [firstURL, secondURL], importErrors: [])
+            )
+        }
+        try await waitUntil { uploadCount.value == 1 }
+        try await waitUntil { model.draftAttachments.first?.uploadState == .uploading }
+
+        model.startNewConversation()
+        let newConversationID = model.conversationID
+        XCTAssertTrue(model.draftAttachments.isEmpty)
+        firstUpload.finish(
+            appending: """
+            {
+              "attachment_id": "55555555-5555-5555-5555-555555555555",
+              "filename": "shared-first.txt",
+              "content_type": "text/plain",
+              "size": 5,
+              "url": "/api/attachments/55555555-5555-5555-5555-555555555555"
+            }
+            """
+        )
+        await importTask.value
+
+        XCTAssertEqual(model.conversationID, newConversationID)
+        XCTAssertTrue(model.draftAttachments.isEmpty)
+        XCTAssertEqual(uploadCount.value, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondURL.path))
+    }
+
+    func testSharedAttachmentBatchSurfacesImportErrors() async {
+        let model = makeViewModel(conversationID: "web_conv_shared_error")
+
+        await model.addSharedAttachments(
+            SharedAttachmentBatch(
+                id: "batch-errors",
+                fileURLs: [],
+                importErrors: ["Could not import broken.pdf. The file could not be opened."]
+            )
+        )
+
+        XCTAssertTrue(model.draftAttachments.isEmpty)
+        XCTAssertEqual(
+            model.errorMessage,
+            """
+            Some shared files could not be imported.
+            Could not import broken.pdf. The file could not be opened.
+            """
+        )
+        XCTAssertNotNil(model.composerFocusRequestID)
+    }
+
+    func testRemovingSharedAttachmentDeletesTemporaryImport() async throws {
+        let importDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SharedAttachmentImports", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: importDirectory, withIntermediateDirectories: true)
+        let fileURL = importDirectory.appendingPathComponent("shared-remove.txt")
+        try Data("shared".utf8).write(to: fileURL)
+
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/attachments/upload"):
+                return .json(
+                    """
+                    {
+                      "attachment_id": "55555555-5555-5555-5555-555555555555",
+                      "filename": "\(fileURL.lastPathComponent)",
+                      "content_type": "text/plain",
+                      "size": 6,
+                      "url": "/api/attachments/55555555-5555-5555-5555-555555555555"
+                    }
+                    """
+                )
+            case ("DELETE", "/api/attachments/55555555-5555-5555-5555-555555555555"):
+                return .json(#"{"message":"deleted"}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_shared_remove")
+        await model.addSharedAttachments(SharedAttachmentBatch(id: "batch-remove", fileURLs: [fileURL], importErrors: []))
+        try await waitUntil { model.draftAttachments.first?.uploadState == .uploaded }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        let attachment = try XCTUnwrap(model.draftAttachments.first)
+        await model.removeDraftAttachment(attachment)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: importDirectory.path))
+        XCTAssertTrue(model.draftAttachments.isEmpty)
+    }
+
+    func testSendingSharedAttachmentDeletesTemporaryImport() async throws {
+        let importDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SharedAttachmentImports", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: importDirectory, withIntermediateDirectories: true)
+        let fileURL = importDirectory.appendingPathComponent("shared-send.txt")
+        try Data("shared".utf8).write(to: fileURL)
+
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/attachments/upload"):
+                return .json(
+                    """
+                    {
+                      "attachment_id": "66666666-6666-6666-6666-666666666666",
+                      "filename": "\(fileURL.lastPathComponent)",
+                      "content_type": "text/plain",
+                      "size": 6,
+                      "url": "/api/attachments/66666666-6666-6666-6666-666666666666"
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(#"{"turn_id":"turn-shared-send","conversation_id":"web_conv_shared_send","first_seq":0,"already_complete":true}"#)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_shared_send/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_shared_send",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_shared_send")
+        await model.addSharedAttachments(SharedAttachmentBatch(id: "batch-send", fileURLs: [fileURL], importErrors: []))
+        try await waitUntil { model.draftAttachments.first?.uploadState == .uploaded }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        await model.sendDraft()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: importDirectory.path))
+        XCTAssertTrue(model.draftAttachments.isEmpty)
+    }
+
     func testRemoveUploadedDraftAttachmentSurfacesDeleteFailureAndKeepsAttachment() async {
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
