@@ -29,7 +29,7 @@ struct ContentView: View {
                 .onChange(of: notificationManager.pendingNavigationPath) { _, path in
                     navigateToPendingNotificationPath(path, baseURL: baseURL)
                 }
-                .onChange(of: IntentNavigationCenter.shared.pendingChatPath) { _, _ in
+                .onChange(of: IntentNavigationCenter.shared.pendingNavigationPath) { _, _ in
                     navigateToPendingIntentPath(baseURL: baseURL)
                 }
                 .onChange(of: sharedAttachmentInbox.pendingBatch?.id) { _, batchID in
@@ -84,7 +84,7 @@ struct ContentView: View {
     }
 
     private func navigateToPendingIntentPath(baseURL: URL) {
-        guard let path = IntentNavigationCenter.shared.consumePendingChatPath(),
+        guard let path = IntentNavigationCenter.shared.consumePendingNavigationPath(),
               let url = URL(string: path, relativeTo: baseURL)?.absoluteURL
         else {
             return

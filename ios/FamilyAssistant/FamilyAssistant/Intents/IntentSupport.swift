@@ -135,7 +135,8 @@ enum IntentSupport {
     }
 }
 
-/// Bridges an `openAppWhenRun` App Intent to the app's router.
+/// Bridges an `openAppWhenRun` App Intent or home-screen quick action to the
+/// app's router.
 ///
 /// In-app intents run in the app's own process, so a shared singleton is the
 /// simplest reliable channel on iOS 17 (`OpenURLIntent` is iOS 18+). The intent
@@ -148,9 +149,10 @@ enum IntentSupport {
 final class IntentNavigationCenter {
     static let shared = IntentNavigationCenter()
 
-    /// An app-relative path (e.g. `/chat?q=...`), resolved against the server
-    /// base URL by `ContentView`. A non-empty `q` is auto-sent by the chat view.
-    private(set) var pendingChatPath: String?
+    /// An app-relative path (e.g. `/chat?q=...` or `/voice`), resolved against
+    /// the server base URL by `ContentView`. A non-empty `q` on `/chat` is
+    /// auto-sent by the chat view.
+    private(set) var pendingNavigationPath: String?
 
     private init() {}
 
@@ -160,16 +162,20 @@ final class IntentNavigationCenter {
         if let prompt, !prompt.isEmpty {
             components.queryItems = [URLQueryItem(name: "q", value: prompt)]
         }
-        pendingChatPath = components.string ?? "/chat"
+        pendingNavigationPath = components.string ?? "/chat"
     }
 
     func requestNewChat() {
-        pendingChatPath = "/chat?new=1"
+        pendingNavigationPath = "/chat?new=1"
+    }
+
+    func requestVoice() {
+        pendingNavigationPath = "/voice"
     }
 
     /// Returns and clears any pending path.
-    func consumePendingChatPath() -> String? {
-        defer { pendingChatPath = nil }
-        return pendingChatPath
+    func consumePendingNavigationPath() -> String? {
+        defer { pendingNavigationPath = nil }
+        return pendingNavigationPath
     }
 }

@@ -1,7 +1,8 @@
 # Family Assistant iOS App
 
 A native iOS app that uses secure PKCE-based authentication, native APNs notification registration,
-native Chat and Notes screens, and a WKWebView fallback for the rest of the Family Assistant web UI.
+native Chat, Voice, and Notes screens, and a WKWebView fallback for the rest of the Family Assistant
+web UI.
 
 ## Requirements
 
@@ -101,6 +102,13 @@ Attachment upload and preview still live in the web UI. The native editor preser
 `attachment_ids` and `visibility_labels` values when saving so notes are not stripped of metadata
 that the native screen does not edit yet.
 
+### Native Voice
+
+The app renders `/voice` as a top-level native SwiftUI tab instead of loading the browser voice UI
+in a web view. Native Voice requests microphone permission, streams microphone frames through the
+Gemini Live session client, shows capture/playback state, and reports microphone startup failures as
+visible errors instead of staying connected silently.
+
 ### Native Notifications
 
 The app can register with APNs and send the device token to the Family Assistant server. Users turn
@@ -175,6 +183,14 @@ or backend change is required. `FamilyAssistantAppShortcuts` registers Siri phra
 
 If the user is signed out, intents throw a "sign in" error rather than attempting interactive login.
 See [docs/design/ios-app-intents.md](../../docs/design/ios-app-intents.md) for the full design.
+
+### Home Screen Quick Actions
+
+`Info.plist` registers static long-press app-icon shortcuts:
+
+- **New Chat** — queues `/chat?new=1` through `IntentNavigationCenter` and opens the native Chat tab
+  on a blank composer.
+- **Voice** — queues `/voice` through `IntentNavigationCenter` and opens the native Voice tab.
 
 Manual APNs configuration:
 

@@ -77,8 +77,8 @@ final class RouteTests: XCTestCase {
             ("/documents/", .documents),
             ("/documents", .documents),
             ("/documents/123", .documents),
+            ("/voice", .voice),
             ("/events", .more),
-            ("/voice", .more),
             ("/automations", .more),
             ("/vector-search", .more),
             ("/tasks", .more),
@@ -136,8 +136,8 @@ final class RouteTests: XCTestCase {
     func testNavigateVoiceGoesToNativeVoiceRoute() throws {
         let router = AppRouter()
         XCTAssertTrue(router.navigate(to: try url("/voice"), relativeTo: baseURL))
-        XCTAssertEqual(router.selectedTab, .more)
-        XCTAssertEqual(router.morePath, [.voice])
+        XCTAssertEqual(router.selectedTab, .voice)
+        XCTAssertEqual(router.morePath, [])
     }
 
     func testNavigateForeignOriginReturnsFalse() throws {
@@ -331,7 +331,6 @@ final class RouteTests: XCTestCase {
             "/context",
             "/documents/upload",
             "/vector-search",
-            "/voice",
             "/history",
             "/automations",
             "/events",

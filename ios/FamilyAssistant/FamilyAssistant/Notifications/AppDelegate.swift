@@ -95,18 +95,26 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
 
 enum HomeScreenShortcutRouter {
     static let newChatType = "com.familyassistant.app.new-chat"
+    static let voiceType = "com.familyassistant.app.voice"
 
     static func handle(_ shortcutItem: UIApplicationShortcutItem) -> Bool {
-        guard shortcutItem.type == newChatType else {
+        let action: @MainActor () -> Void
+        switch shortcutItem.type {
+        case newChatType:
+            action = { IntentNavigationCenter.shared.requestNewChat() }
+        case voiceType:
+            action = { IntentNavigationCenter.shared.requestVoice() }
+        default:
             return false
         }
+
         if Thread.isMainThread {
             MainActor.assumeIsolated {
-                IntentNavigationCenter.shared.requestNewChat()
+                action()
             }
         } else {
             Task { @MainActor in
-                IntentNavigationCenter.shared.requestNewChat()
+                action()
             }
         }
         return true
