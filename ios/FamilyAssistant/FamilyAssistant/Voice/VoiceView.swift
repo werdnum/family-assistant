@@ -9,7 +9,13 @@ struct VoiceView: View {
     @Environment(\.openURL) private var openURL
 
     /// Optional processing profile to route the session to (nil → default).
-    var profileID: String?
+    let profileID: String?
+    let onClose: (() -> Void)?
+
+    init(profileID: String? = nil, onClose: (() -> Void)? = nil) {
+        self.profileID = profileID
+        self.onClose = onClose
+    }
 
     @State private var model: VoiceSessionViewModel?
     @State private var sessionRequestID = UUID()
@@ -20,7 +26,7 @@ struct VoiceView: View {
                 VoiceSessionContent(
                     model: model,
                     onStartNewSession: startNewSession,
-                    onClose: { dismiss() }
+                    onClose: close
                 )
             } else {
                 ProgressView()
@@ -49,6 +55,17 @@ struct VoiceView: View {
         model?.end()
         model = nil
         sessionRequestID = UUID()
+    }
+
+    private func close() {
+        model?.end()
+        model = nil
+        sessionRequestID = UUID()
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
     }
 }
 

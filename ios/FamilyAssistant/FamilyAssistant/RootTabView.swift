@@ -20,7 +20,7 @@ struct RootTabView: View {
             .tag(AppTab.chat)
 
             NavigationStack {
-                VoiceView()
+                VoiceView(onClose: { appRouter.selectedTab = .chat })
             }
             .tabItem { Label("Voice", systemImage: "mic") }
             .tag(AppTab.voice)
