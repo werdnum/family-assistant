@@ -26,8 +26,8 @@ enum GeminiLiveError: LocalizedError, Equatable {
 final class GeminiLiveClient {
     typealias SocketFactory = @Sendable (URL) -> GeminiLiveSocket
 
-    static let defaultHost = "generativelanguage.googleapis.com"
-    static let apiVersion = "v1alpha"
+    nonisolated static let defaultHost = "generativelanguage.googleapis.com"
+    nonisolated static let apiVersion = "v1alpha"
 
     /// Ordered stream of decoded server events. Finishes when the connection ends
     /// (via ``close()`` or a socket failure); inspect ``lastError`` afterward to

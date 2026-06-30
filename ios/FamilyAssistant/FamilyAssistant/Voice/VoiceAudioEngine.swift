@@ -8,6 +8,8 @@ import os
 protocol VoiceAudioIO: AnyObject {
     /// Called on an audio thread with each captured 16 kHz mono Int16 PCM chunk.
     var onCapturedAudio: (@Sendable (Data) -> Void)? { get set }
+    /// Called on an audio thread with normalized microphone activity from 0...1.
+    var onInputLevel: (@Sendable (Double) -> Void)? { get set }
     /// Configure the audio session, start capture, and begin playback.
     func start() async throws
     /// Stop capture/playback and deactivate the audio session.
@@ -64,11 +66,17 @@ final class VoiceAudioEngine: VoiceAudioIO {
         var muted = false
         var converter: StreamingPCMConverter?
         var onCaptured: (@Sendable (Data) -> Void)?
+        var onInputLevel: (@Sendable (Double) -> Void)?
     }
 
     var onCapturedAudio: (@Sendable (Data) -> Void)? {
         get { tapState.withLock { $0.onCaptured } }
         set { tapState.withLock { $0.onCaptured = newValue } }
+    }
+
+    var onInputLevel: (@Sendable (Double) -> Void)? {
+        get { tapState.withLock { $0.onInputLevel } }
+        set { tapState.withLock { $0.onInputLevel = newValue } }
     }
 
     private let engine = AVAudioEngine()
@@ -101,13 +109,12 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
             input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
                 guard let self else { return }
-                let (muted, converter, callback) = self.tapState.withLock {
-                    ($0.muted, $0.converter, $0.onCaptured)
+                let (muted, converter, audioCallback, levelCallback) = self.tapState.withLock {
+                    ($0.muted, $0.converter, $0.onCaptured, $0.onInputLevel)
                 }
-                guard !muted, let converter, let callback else { return }
-                if let data = converter.convertToData(buffer) {
-                    callback(data)
-                }
+                guard !muted, let converter, let data = converter.convertToData(buffer) else { return }
+                levelCallback?(Self.normalizedLevel(forPCM16: data))
+                audioCallback?(data)
             }
 
             engine.prepare()
@@ -167,6 +174,22 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     func setMuted(_ muted: Bool) {
         tapState.withLock { $0.muted = muted }
+    }
+
+    private static func normalizedLevel(forPCM16 data: Data) -> Double {
+        guard data.count >= MemoryLayout<Int16>.size else { return 0 }
+        let sampleCount = data.count / MemoryLayout<Int16>.size
+        let sumSquares = data.withUnsafeBytes { rawBuffer -> Double in
+            guard let samples = rawBuffer.bindMemory(to: Int16.self).baseAddress else { return 0 }
+            var total = 0.0
+            for index in 0 ..< sampleCount {
+                let sample = Double(samples[index]) / Double(Int16.max)
+                total += sample * sample
+            }
+            return total
+        }
+        let rms = sqrt(sumSquares / Double(sampleCount))
+        return min(1.0, rms * 8.0)
     }
 
     // MARK: - Interruptions & resets
@@ -234,7 +257,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
+            options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
         )
         try session.setActive(true, options: [])
     }

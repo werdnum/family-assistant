@@ -83,6 +83,7 @@ export function useGeminiLive(): GeminiLiveState {
   // Refs for mutable state
   const sessionRef = useRef<Session | null>(null);
   const clientRef = useRef<GoogleGenAI | null>(null);
+  const canSendRealtimeInputRef = useRef(false);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const duckingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Store max duration from backend config (in minutes)
@@ -274,7 +275,7 @@ export function useGeminiLive(): GeminiLiveState {
    * Send audio data to Gemini.
    */
   const sendAudio = useCallback((audioData: ArrayBuffer) => {
-    if (!sessionRef.current) {
+    if (!sessionRef.current || !canSendRealtimeInputRef.current) {
       return;
     }
 
@@ -397,12 +398,18 @@ export function useGeminiLive(): GeminiLiveState {
 
       try {
         setConnectionState('connecting');
-        setConnectingStatus('Fetching token...');
+        setConnectingStatus('Starting microphone...');
         setError(null);
         setTranscripts([]);
+        setSessionDuration(0);
         lastTranscriptRef.current = null;
+        canSendRealtimeInputRef.current = false;
+
+        await audioPlayback.preparePlayback();
+        await audioCapture.startCapture();
 
         // Fetch ephemeral token from backend
+        setConnectingStatus('Fetching token...');
         const tokenResponse = await fetch('/api/gemini/ephemeral-token', {
           method: 'POST',
           headers: {
@@ -501,10 +508,7 @@ export function useGeminiLive(): GeminiLiveState {
         // This prevents "WebSocket is already in CLOSING or CLOSED state" errors
         setConnectingStatus('Waiting for connection...');
         await openPromise;
-
-        // Start audio capture now that connection is ready
-        setConnectingStatus('Starting microphone...');
-        await audioCapture.startCapture();
+        canSendRealtimeInputRef.current = true;
 
         // Set up session state
         setConnectionState('connected');
@@ -528,12 +532,30 @@ export function useGeminiLive(): GeminiLiveState {
         }, 1000);
       } catch (err) {
         console.error('Error connecting to Gemini:', err);
+        stopCaptureRef.current();
+        stopPlaybackRef.current();
+        canSendRealtimeInputRef.current = false;
+        if (sessionRef.current) {
+          try {
+            sessionRef.current.close();
+          } catch {
+            // Ignore close errors during failed startup
+          }
+          sessionRef.current = null;
+        }
         setError(err instanceof Error ? err.message : 'Failed to connect');
         setConnectionState('error');
         setConnectingStatus(undefined); // Clear connecting status on error
       }
     },
-    [connectionState, audioCapture, handleSessionMessage, handleSessionError, handleSessionClose]
+    [
+      connectionState,
+      audioCapture,
+      audioPlayback,
+      handleSessionMessage,
+      handleSessionError,
+      handleSessionClose,
+    ]
   );
 
   /**
@@ -554,6 +576,7 @@ export function useGeminiLive(): GeminiLiveState {
     stopPlaybackRef.current();
 
     // Close session
+    canSendRealtimeInputRef.current = false;
     if (sessionRef.current) {
       try {
         sessionRef.current.close();
@@ -614,6 +637,9 @@ export function useGeminiLive(): GeminiLiveState {
     sessionStartTime,
     sessionDuration,
     connectingStatus,
+    isCapturingAudio: audioCapture.isCapturing,
+    audioLevel: audioCapture.audioLevel,
+    lastAudioFrameAt: audioCapture.lastAudioFrameAt,
   };
 
   return {

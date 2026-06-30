@@ -86,9 +86,10 @@ final class GeminiLiveCodecTests: XCTestCase {
         let pcm = Data([0x01, 0x02, 0x03, 0x04])
         let message = try GeminiLiveCodec.audioMessage(base64PCM16: pcm.base64EncodedString())
         let realtime = try XCTUnwrap(try jsonObject(message)["realtimeInput"] as? [String: Any])
-        let audio = try XCTUnwrap(realtime["audio"] as? [String: Any])
-        XCTAssertEqual(audio["data"] as? String, pcm.base64EncodedString())
-        XCTAssertEqual(audio["mimeType"] as? String, "audio/pcm;rate=16000")
+        let mediaChunks = try XCTUnwrap(realtime["mediaChunks"] as? [[String: Any]])
+        XCTAssertNil(realtime["audio"])
+        XCTAssertEqual(mediaChunks.first?["data"] as? String, pcm.base64EncodedString())
+        XCTAssertEqual(mediaChunks.first?["mimeType"] as? String, "audio/pcm;rate=16000")
     }
 
     func testAudioStreamEndMessage() throws {

@@ -29,11 +29,15 @@ export function useAudioCapture({
 }: UseAudioCaptureOptions): AudioCaptureState {
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [lastAudioFrameAt, setLastAudioFrameAt] = useState<number | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const silentOutputRef = useRef<GainNode | null>(null);
   const workletUrlRef = useRef<string | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   const startCapture = useCallback(async () => {
     if (isCapturing) {
@@ -42,6 +46,16 @@ export function useAudioCapture({
 
     try {
       setError(null);
+      setAudioLevel(0);
+      setLastAudioFrameAt(null);
+
+      // Create and resume the context before any network waits consume the
+      // original tap/click activation. iOS Safari is strict about this.
+      const audioContext = new AudioContext();
+      audioContextRef.current = audioContext;
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
 
       // Request microphone access
       // NOTE: Do NOT force sampleRate - iOS AEC breaks when forced to 16kHz
@@ -69,10 +83,9 @@ export function useAudioCapture({
       });
       mediaStreamRef.current = stream;
 
-      // Create audio context - let browser use native sample rate for best AEC
-      // AudioWorklet handles resampling to 16kHz
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
 
       // Create and register the AudioWorklet processor
       const workletUrl = createAudioWorkletProcessor();
@@ -83,21 +96,82 @@ export function useAudioCapture({
       // Create worklet node
       const workletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor');
       workletNodeRef.current = workletNode;
+      let hasReceivedFirstFrame = false;
+      let resolveFirstFrame: (() => void) | null = null;
+      const firstFramePromise = new Promise<void>((resolve) => {
+        resolveFirstFrame = resolve;
+      });
 
       // Handle audio data from the worklet
       workletNode.port.onmessage = (event: MessageEvent) => {
         if (event.data.type === 'audio') {
           onAudioData(event.data.data);
+          setAudioLevel(event.data.level ?? 0);
+          setLastAudioFrameAt(Date.now());
+          if (!hasReceivedFirstFrame) {
+            hasReceivedFirstFrame = true;
+            resolveFirstFrame?.();
+          }
         }
       };
 
       // Connect the media stream to the worklet
       const source = audioContext.createMediaStreamSource(stream);
+      sourceNodeRef.current = source;
       source.connect(workletNode);
-      // Don't connect to destination - we don't want to hear ourselves
+
+      // Safari will construct a worklet that never runs unless the graph is
+      // connected to an output. A zero-gain destination keeps processing alive
+      // without playing the microphone back to the user.
+      const silentOutput = audioContext.createGain();
+      silentOutput.gain.value = 0;
+      silentOutputRef.current = silentOutput;
+      workletNode.connect(silentOutput);
+      silentOutput.connect(audioContext.destination);
+
+      await Promise.race([
+        firstFramePromise,
+        new Promise<void>((_, reject) => {
+          setTimeout(() => {
+            reject(
+              new Error(
+                'Microphone started, but no audio frames were received. Try reloading the page and allowing microphone access again.'
+              )
+            );
+          }, 2000);
+        }),
+      ]);
 
       setIsCapturing(true);
     } catch (err) {
+      if (sourceNodeRef.current) {
+        sourceNodeRef.current.disconnect();
+        sourceNodeRef.current = null;
+      }
+      if (workletNodeRef.current) {
+        workletNodeRef.current.disconnect();
+        workletNodeRef.current = null;
+      }
+      if (silentOutputRef.current) {
+        silentOutputRef.current.disconnect();
+        silentOutputRef.current = null;
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+      }
+      if (audioContextRef.current) {
+        await audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+      if (workletUrlRef.current) {
+        URL.revokeObjectURL(workletUrlRef.current);
+        workletUrlRef.current = null;
+      }
+      setIsCapturing(false);
+      setAudioLevel(0);
+      setLastAudioFrameAt(null);
+
       const errorMessage = err instanceof Error ? err.message : 'Failed to start audio capture';
 
       // Handle specific error types
@@ -114,14 +188,25 @@ export function useAudioCapture({
       }
 
       onError?.(errorMessage);
+      throw err instanceof Error ? err : new Error(errorMessage);
     }
   }, [isCapturing, onAudioData, onError]);
 
   const stopCapture = useCallback(() => {
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+      sourceNodeRef.current = null;
+    }
+
     // Disconnect and clean up worklet node
     if (workletNodeRef.current) {
       workletNodeRef.current.disconnect();
       workletNodeRef.current = null;
+    }
+
+    if (silentOutputRef.current) {
+      silentOutputRef.current.disconnect();
+      silentOutputRef.current = null;
     }
 
     // Stop media stream tracks
@@ -143,6 +228,8 @@ export function useAudioCapture({
     }
 
     setIsCapturing(false);
+    setAudioLevel(0);
+    setLastAudioFrameAt(null);
   }, []);
 
   /**
@@ -159,6 +246,8 @@ export function useAudioCapture({
   return {
     isCapturing,
     error,
+    audioLevel,
+    lastAudioFrameAt,
     startCapture,
     stopCapture,
     setDucking,

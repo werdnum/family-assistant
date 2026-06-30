@@ -507,11 +507,13 @@ various tasks with dark mode support and mobile optimization.
   quick action that jumps straight to a blank composer. You can search, read, create, edit, and
   delete notes on iOS, including changing whether a note is included in the assistant's system
   prompt. The **More** tab gathers the long-tail destinations — Voice, Events, History, Automations,
-  Tools, and more — and a single **Settings** screen with notification controls and sign-out. Use
-  the tab bar to move between sections; each tab remembers where you were. When enabled, iOS
-  notifications can open the relevant tab or page, and confirmation notifications are actionable:
-  they include approve/reject actions, and tapping the notification opens an in-app confirmation
-  dialog showing the full request.
+  Tools, and more — and a single **Settings** screen with notification controls and sign-out. On
+  iOS, Voice opens as a native screen: it asks for microphone permission, shows a microphone level
+  meter while audio is being captured, and reports an error instead of connecting silently if the
+  microphone pipeline does not start. Use the tab bar to move between sections; each tab remembers
+  where you were. When enabled, iOS notifications can open the relevant tab or page, and
+  confirmation notifications are actionable: they include approve/reject actions, and tapping the
+  notification opens an in-app confirmation dialog showing the full request.
 
 - **Siri & Shortcuts (iOS):** The iOS app adds actions you can run with Siri or the **Shortcuts**
   app — no setup required. Just say or run:

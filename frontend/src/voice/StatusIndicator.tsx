@@ -12,6 +12,12 @@ interface StatusIndicatorProps {
   activityState: VoiceActivityState;
   /** Detailed status message during connection (e.g., "Fetching token...", "Connecting to Gemini...") */
   connectingStatus?: string;
+  /** Whether the microphone capture pipeline is active */
+  isCapturingAudio?: boolean;
+  /** Latest microphone level from 0 to 1 */
+  audioLevel?: number;
+  /** Timestamp of the latest microphone frame received from the worklet */
+  lastAudioFrameAt?: number | null;
 }
 
 /**
@@ -84,9 +90,15 @@ export function StatusIndicator({
   connectionState,
   activityState,
   connectingStatus,
+  isCapturingAudio = false,
+  audioLevel = 0,
+  lastAudioFrameAt = null,
 }: StatusIndicatorProps) {
   const statusLabel = getStatusLabel(connectionState, activityState, connectingStatus);
   const orbClasses = getOrbClasses(connectionState, activityState);
+  const hasRecentAudioFrame = lastAudioFrameAt !== null && Date.now() - lastAudioFrameAt < 2000;
+  const normalizedLevel = Math.max(0, Math.min(1, audioLevel));
+  const meterBars = [0.08, 0.18, 0.32, 0.48, 0.64, 0.82, 1];
 
   return (
     <div className="flex flex-col items-center gap-4">
@@ -139,6 +151,28 @@ export function StatusIndicator({
       >
         {statusLabel}
       </span>
+
+      {(isCapturingAudio || connectionState === 'connected') && (
+        <div
+          className="flex h-10 items-end gap-1 rounded-md border border-gray-200 bg-white/80 px-2 py-1.5 shadow-sm dark:border-gray-700 dark:bg-gray-900/80"
+          aria-label="Microphone level"
+          data-testid="voice-mic-level"
+        >
+          {meterBars.map((threshold, index) => {
+            const isLit = hasRecentAudioFrame && (index === 0 || normalizedLevel >= threshold);
+            const height = 8 + index * 3;
+            return (
+              <div
+                key={threshold}
+                className={`w-2 rounded-sm transition-colors duration-100 ${
+                  isLit ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-700'
+                }`}
+                style={{ height: `${height}px` }}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

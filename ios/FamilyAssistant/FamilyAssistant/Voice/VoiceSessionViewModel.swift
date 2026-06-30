@@ -53,6 +53,8 @@ final class VoiceSessionViewModel {
     private(set) var phase: Phase = .idle
     private(set) var transcript = VoiceTranscript()
     private(set) var isAssistantSpeaking = false
+    private(set) var inputLevel = 0.0
+    private(set) var lastInputLevelAt: Date?
     var isMuted = false {
         didSet { audio.setMuted(isMuted) }
     }
@@ -96,6 +98,13 @@ final class VoiceSessionViewModel {
         self.sessionFactory = sessionFactory
         self.sessionTimeoutOverride = sessionTimeoutOverride
         self.reportError = reportError
+        audio.onInputLevel = { [weak self] level in
+            Task { @MainActor in
+                guard let self else { return }
+                self.inputLevel = level
+                self.lastInputLevelAt = Date()
+            }
+        }
     }
 
     /// Whether the session has reached a terminal phase.
@@ -106,6 +115,11 @@ final class VoiceSessionViewModel {
         default:
             false
         }
+    }
+
+    var hasRecentInputLevel: Bool {
+        guard let lastInputLevelAt else { return false }
+        return Date().timeIntervalSince(lastInputLevelAt) < 2
     }
 
     /// Begin the session. Safe to call once; subsequent calls are ignored.
@@ -313,6 +327,8 @@ final class VoiceSessionViewModel {
     private func teardown() {
         persistTranscriptIfNeeded()
         isAssistantSpeaking = false
+        inputLevel = 0
+        lastInputLevelAt = nil
         for task in toolTasks.values {
             task.cancel()
         }
@@ -320,6 +336,7 @@ final class VoiceSessionViewModel {
         timeoutTask?.cancel()
         timeoutTask = nil
         audio.onCapturedAudio = nil
+        audio.onInputLevel = nil
         audioOut?.finish()
         audioOut = nil
         audioPumpTask?.cancel()
