@@ -1150,6 +1150,36 @@ class OpenAIImageConfig(BaseModel):
     )
 
 
+class GeminiImageConfig(BaseModel):
+    """Gemini image configuration for generation and transformation.
+
+    ``model`` selects the Gemini image model. Examples: ``gemini-3-pro-image``
+    (highest quality, the default), ``gemini-3.1-flash-image`` (Nano Banana 2,
+    high-efficiency) and ``gemini-3.1-flash-lite-image`` (Nano Banana Lite,
+    fastest and cheapest).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "gemini-3-pro-image-preview"
+
+
+class VeoVideoConfig(BaseModel):
+    """Veo video-generation configuration (long-running ``generateVideos`` API)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "veo-3.1-generate-preview"
+
+
+class GeminiOmniVideoConfig(BaseModel):
+    """Gemini Omni Flash video-generation configuration (Interactions API)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = "gemini-omni-flash-preview"
+
+
 class AppConfig(BaseSettings):
     """Main application configuration.
 
@@ -1223,6 +1253,15 @@ class AppConfig(BaseSettings):
     # Image generation
     image_generation_backend: Literal["openai", "gemini", "mock"] | None = None
     openai_image: OpenAIImageConfig = Field(default_factory=OpenAIImageConfig)
+    gemini_image: GeminiImageConfig = Field(default_factory=GeminiImageConfig)
+
+    # Video generation. When backend is None it is inferred from the requested
+    # model (``veo-*`` -> Veo, otherwise Gemini Omni Flash), defaulting to Veo.
+    video_generation_backend: Literal["veo", "gemini_omni", "mock"] | None = None
+    veo_video: VeoVideoConfig = Field(default_factory=VeoVideoConfig)
+    gemini_omni_video: GeminiOmniVideoConfig = Field(
+        default_factory=GeminiOmniVideoConfig
+    )
 
     # Model configuration
     model: str = "gemini/gemini-3.1-pro-preview"

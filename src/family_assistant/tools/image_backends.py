@@ -360,16 +360,17 @@ class MockImageBackend:
 class GeminiImageBackend:
     """Gemini API backend for production image generation."""
 
-    MODEL = "gemini-3-pro-image-preview"
+    DEFAULT_MODEL = "gemini-3-pro-image-preview"
 
-    def __init__(self, api_key: str) -> None:
-        """Initialize the Gemini backend with API key."""
+    def __init__(self, api_key: str, model: str | None = None) -> None:
+        """Initialize the Gemini backend with API key and optional model override."""
         if not GENAI_AVAILABLE:
             raise ImportError(
                 "google-genai library required for Gemini image generation"
             )
 
         self.api_key = api_key
+        self.model = model or self.DEFAULT_MODEL
         self.client = genai.Client(api_key=api_key)
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
@@ -397,7 +398,7 @@ class GeminiImageBackend:
 
         # Call Gemini image generation
         response = await self.client.aio.models.generate_content(
-            model=self.MODEL, contents=full_prompt
+            model=self.model, contents=full_prompt
         )
 
         # Log response structure for debugging
@@ -538,7 +539,7 @@ class GeminiImageBackend:
         contents = cast("genai_types.ContentListUnion", content_parts)
 
         response = await self.client.aio.models.generate_content(
-            model=self.MODEL,
+            model=self.model,
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"]

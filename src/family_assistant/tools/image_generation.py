@@ -122,7 +122,8 @@ def _create_image_backend(
             raise ValueError(
                 "image_generation_backend is 'gemini' but GEMINI_API_KEY is not set"
             )
-        return GeminiImageBackend(gemini_key)
+        assert app_config is not None
+        return GeminiImageBackend(gemini_key, model=app_config.gemini_image.model)
     elif backend_choice == "mock":
         return MockImageBackend()
     # No explicit backend — auto-detect from available API keys
@@ -137,7 +138,8 @@ def _create_image_backend(
         )
     elif gemini_key:
         logger.info("No image_generation_backend configured, auto-selecting Gemini")
-        return GeminiImageBackend(gemini_key)
+        assert app_config is not None  # gemini_key is None when app_config is None
+        return GeminiImageBackend(gemini_key, model=app_config.gemini_image.model)
     else:
         logger.info("No image_generation_backend or API keys configured, using mock")
         return MockImageBackend()
