@@ -102,7 +102,11 @@ struct ChatAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(EphemeralTokenRequestBody(profileID: profileID))
         let (data, response) = try await urlSession.data(for: request)
-        try validate(response: response, data: data)
+        do {
+            try validate(response: response, data: data)
+        } catch let ChatAPIError.server(statusCode, detail) where detail == nil {
+            throw ChatAPIError.validation("Voice session request failed with status \(statusCode).")
+        }
         return try JSONDecoder.chatDecoder.decode(EphemeralToken.self, from: data)
     }
 

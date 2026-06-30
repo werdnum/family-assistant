@@ -111,6 +111,19 @@ final class EphemeralTokenTests: XCTestCase {
         }
     }
 
+    func testFetchEphemeralTokenLabelsBlankServerErrorAsVoiceFailure() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            ChatMockResponse(statusCode: 500, data: Data(), headers: [:])
+        }
+
+        do {
+            _ = try await makeClient().fetchEphemeralToken(profileID: nil)
+            XCTFail("Expected a voice session error.")
+        } catch let ChatAPIError.validation(message) {
+            XCTAssertEqual(message, "Voice session request failed with status 500.")
+        }
+    }
+
     func testSaveVoiceSessionPostsTurnsAndReturnsConversationID() async throws {
         var capturedBody: [String: Any] = [:]
         ChatMockBackendURLProtocol.respond { request in

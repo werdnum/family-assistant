@@ -52,10 +52,10 @@ enum GeminiLiveCodec {
     static func audioMessage(base64PCM16: String) throws -> String {
         try encode(.object([
             "realtimeInput": .object([
-                "mediaChunks": .array([.object([
+                "audio": .object([
                     "data": .string(base64PCM16),
                     "mimeType": .string(inputAudioMIMEType),
-                ])]),
+                ]),
             ])
         ]))
     }
