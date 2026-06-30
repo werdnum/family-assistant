@@ -161,7 +161,8 @@ final class GeminiLiveClientTests: XCTestCase {
         try await client.connect(token: makeToken())
         try await client.sendAudio(Data([0x01, 0x02]))
         XCTAssertTrue(socket.sentFrames.last?.contains("\"realtimeInput\"") == true)
-        XCTAssertTrue(socket.sentFrames.last?.contains("\"audio\"") == true)
+        XCTAssertTrue(socket.sentFrames.last?.contains("\"mediaChunks\"") == true)
+        XCTAssertFalse(socket.sentFrames.last?.contains("\"audio\"") == true)
         client.close()
     }
 

@@ -134,10 +134,142 @@ async def _setup_mock_token_endpoint(page: Page, base_url: str) -> None:
                 ],
                 "system_instruction": "You are a helpful voice assistant.",
                 "model": "gemini-3.1-flash-live-preview",
+                "config": {
+                    "model": "gemini-3.1-flash-live-preview",
+                    "voice": {"name": "Puck"},
+                    "session": {"max_duration_minutes": 15},
+                    "transcription": {"input_enabled": True, "output_enabled": True},
+                    "vad": {
+                        "automatic": True,
+                        "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
+                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+                        "prefix_padding_ms": None,
+                        "silence_duration_ms": None,
+                    },
+                    "affective_dialog": {"enabled": False},
+                    "proactivity": {"enabled": False, "proactive_audio": False},
+                    "thinking": {"include_thoughts": False},
+                },
             }),
         )
 
     await page.route(f"{base_url}/api/gemini/ephemeral-token", mock_token_response)
+
+
+MOCK_AUDIO_APIS_SCRIPT = """
+// Mock getUserMedia to return a fake audio stream
+const fakeStream = {
+    getTracks: () => [{
+        stop: () => console.log('[Test] Fake track stopped'),
+        kind: 'audio'
+    }],
+    getAudioTracks: () => [{ stop: () => {} }]
+};
+
+navigator.mediaDevices.getUserMedia = async (constraints) => {
+    console.log('[Test] Mock getUserMedia called');
+    return fakeStream;
+};
+
+// Mock AudioContext and AudioWorklet
+window.AudioContext = class MockAudioContext {
+    constructor(options) {
+        console.log('[Test] Mock AudioContext created');
+        this.sampleRate = options?.sampleRate || 16000;
+        this.state = 'running';
+        this.destination = {};
+        this.currentTime = 0;
+    }
+
+    createMediaStreamSource(stream) {
+        return {
+            connect: () => console.log('[Test] MediaStreamSource connected'),
+            disconnect: () => console.log('[Test] MediaStreamSource disconnected')
+        };
+    }
+
+    createGain() {
+        return {
+            gain: { value: 1 },
+            connect: () => console.log('[Test] Silent output connected'),
+            disconnect: () => console.log('[Test] Silent output disconnected')
+        };
+    }
+
+    createBuffer() {
+        return {
+            duration: 0,
+            getChannelData: () => new Float32Array(1)
+        };
+    }
+
+    createBufferSource() {
+        return {
+            buffer: null,
+            connect: () => console.log('[Test] Playback source connected'),
+            start: () => console.log('[Test] Playback source started'),
+            stop: () => {},
+            onended: null
+        };
+    }
+
+    get audioWorklet() {
+        return {
+            addModule: async (url) => {
+                console.log('[Test] Mock audioWorklet.addModule called');
+                return Promise.resolve();
+            }
+        };
+    }
+
+    close() {
+        console.log('[Test] Mock AudioContext closed');
+        return Promise.resolve();
+    }
+
+    resume() {
+        this.state = 'running';
+        return Promise.resolve();
+    }
+};
+
+window.AudioWorkletNode = class MockAudioWorkletNode {
+    constructor(context, name) {
+        console.log('[Test] Mock AudioWorkletNode created:', name);
+        this.port = {
+            onmessage: null,
+            postMessage: () => {}
+        };
+        window.__TEST_AUDIO_INTERVAL__ = setInterval(() => {
+            if (this.port.onmessage) {
+                this.port.onmessage({
+                    data: {
+                        type: 'audio',
+                        data: new Int16Array([8000, 4000, -4000, -8000]).buffer,
+                        level: 0.6
+                    }
+                });
+            }
+        }, 100);
+    }
+
+    connect() {
+        console.log('[Test] Mock AudioWorkletNode connected');
+    }
+
+    disconnect() {
+        console.log('[Test] Mock AudioWorkletNode disconnected');
+        clearInterval(window.__TEST_AUDIO_INTERVAL__);
+    }
+};
+
+console.log('[Test] Audio APIs mocked');
+"""
+
+
+async def _setup_mock_audio_apis(page: Page) -> None:
+    """Mock browser audio APIs so voice startup can receive microphone frames."""
+    await page.add_init_script(MOCK_AUDIO_APIS_SCRIPT)
 
 
 @pytest.mark.playwright
@@ -154,6 +286,7 @@ async def test_voice_start_fetches_token(
 
     # Set up mock token endpoint
     await _setup_mock_token_endpoint(page, base_url)
+    await _setup_mock_audio_apis(page)
 
     # Navigate to voice page
     await page.goto(f"{base_url}/voice")
@@ -252,66 +385,7 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
     )
 
     # Mock the audio APIs to prevent microphone permission issues
-    await page.add_init_script("""
-        // Mock getUserMedia to return a fake audio stream
-        const fakeStream = {
-            getTracks: () => [{
-                stop: () => console.log('[Test] Fake track stopped'),
-                kind: 'audio'
-            }],
-            getAudioTracks: () => [{ stop: () => {} }]
-        };
-
-        navigator.mediaDevices.getUserMedia = async (constraints) => {
-            console.log('[Test] Mock getUserMedia called');
-            return fakeStream;
-        };
-
-        // Mock AudioContext and AudioWorklet
-        const OriginalAudioContext = window.AudioContext;
-        window.AudioContext = class MockAudioContext {
-            constructor(options) {
-                console.log('[Test] Mock AudioContext created');
-                this.sampleRate = options?.sampleRate || 16000;
-                this.state = 'running';
-            }
-
-            createMediaStreamSource(stream) {
-                return {
-                    connect: () => console.log('[Test] MediaStreamSource connected')
-                };
-            }
-
-            get audioWorklet() {
-                return {
-                    addModule: async (url) => {
-                        console.log('[Test] Mock audioWorklet.addModule called');
-                        return Promise.resolve();
-                    }
-                };
-            }
-
-            close() {
-                console.log('[Test] Mock AudioContext closed');
-            }
-        };
-
-        // Mock AudioWorkletNode
-        window.AudioWorkletNode = class MockAudioWorkletNode {
-            constructor(context, name) {
-                console.log('[Test] Mock AudioWorkletNode created:', name);
-                this.port = {
-                    onmessage: null,
-                    postMessage: () => {}
-                };
-            }
-            disconnect() {
-                console.log('[Test] Mock AudioWorkletNode disconnected');
-            }
-        };
-
-        console.log('[Test] Audio APIs mocked');
-    """)
+    await _setup_mock_audio_apis(page)
 
     # Set up mock token endpoint (uses the real backend for everything else)
     await _setup_mock_token_endpoint(page, base_url)
@@ -392,3 +466,18 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
         "result" in func_response["response"]
         or "error" not in func_response["response"]
     ), f"Tool should have executed successfully, got: {func_response['response']}"
+
+    await page.wait_for_function(
+        "window.__TEST_REALTIME_INPUTS__ && window.__TEST_REALTIME_INPUTS__.length > 0",
+        timeout=10000,
+    )
+    realtime_inputs = await page.evaluate("window.__TEST_REALTIME_INPUTS__")
+    assert realtime_inputs[0]["audio"]["mimeType"] == "audio/pcm;rate=16000"
+    assert realtime_inputs[0]["audio"]["data"], (
+        "Audio input should include base64 PCM data"
+    )
+
+    mic_level = page.get_by_test_id("voice-mic-level")
+    assert await mic_level.is_visible(), (
+        "Mic level meter should be visible during capture"
+    )

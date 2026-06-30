@@ -215,6 +215,15 @@ final class FamilyAssistantUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Shopping"].waitForExistence(timeout: 4))
     }
 
+    func testNativeVoiceDeepLinkShowsMicrophoneFeedback() {
+        relaunch(initialPath: "/voice")
+        acceptMicrophonePermissionIfNeeded()
+
+        XCTAssertTrue(app.navigationBars["Voice"].waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertTrue(app.otherElements["voice-mic-level"].waitForExistence(timeout: 10))
+        attachScreenshot(named: "native-voice-microphone-feedback")
+    }
+
     func testMoreTabOpensSettingsAndSignsOut() {
         XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
 
@@ -293,6 +302,23 @@ final class FamilyAssistantUITests: XCTestCase {
     private func relaunch(initialPath: String) {
         app.terminate()
         launch(initialPath: initialPath)
+    }
+
+    private func acceptMicrophonePermissionIfNeeded() {
+        addUIInterruptionMonitor(withDescription: "Microphone permission") { alert in
+            let allowButton = alert.buttons["Allow"]
+            if allowButton.exists {
+                allowButton.tap()
+                return true
+            }
+            let okButton = alert.buttons["OK"]
+            if okButton.exists {
+                okButton.tap()
+                return true
+            }
+            return false
+        }
+        app.tap()
     }
 
     private func openSeededConversationIfNeeded() {

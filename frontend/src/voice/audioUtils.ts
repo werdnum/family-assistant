@@ -131,17 +131,22 @@ export function createAudioWorkletProcessor(): string {
         while (this.buffer.length >= this.chunkSize) {
           const chunk = this.buffer.splice(0, this.chunkSize);
           const float32Chunk = new Float32Array(chunk);
+          let sumSquares = 0;
 
           // Convert to Int16 PCM
           const int16Chunk = new Int16Array(float32Chunk.length);
           for (let i = 0; i < float32Chunk.length; i++) {
             const sample = Math.max(-1, Math.min(1, float32Chunk[i]));
+            sumSquares += sample * sample;
             int16Chunk[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
           }
+          const rms = Math.sqrt(sumSquares / float32Chunk.length);
+          const level = Math.min(1, rms * 8);
 
           this.port.postMessage({
             type: 'audio',
-            data: int16Chunk.buffer
+            data: int16Chunk.buffer,
+            level
           }, [int16Chunk.buffer]);
         }
 

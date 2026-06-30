@@ -48,6 +48,22 @@ export function useAudioPlayback(): AudioPlaybackState {
   }, []);
 
   /**
+   * Prime output audio from the user's start gesture so iOS allows later playback.
+   */
+  const preparePlayback = useCallback(async () => {
+    const audioContext = getAudioContext();
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    const buffer = audioContext.createBuffer(1, 1, AUDIO_CONFIG.OUTPUT_SAMPLE_RATE);
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    source.start();
+  }, [getAudioContext]);
+
+  /**
    * Process the audio queue and schedule playback.
    */
   const processQueue = useCallback(() => {
@@ -158,6 +174,7 @@ export function useAudioPlayback(): AudioPlaybackState {
 
   return {
     isPlaying,
+    preparePlayback,
     queueAudio,
     clearQueue,
     stopPlayback,

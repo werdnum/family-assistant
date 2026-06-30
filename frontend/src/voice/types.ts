@@ -26,6 +26,12 @@ export interface VoiceSessionState {
   sessionDuration: number;
   /** Detailed status message during connection (e.g., "Fetching token...", "Connecting to Gemini...") */
   connectingStatus?: string;
+  /** Whether the browser microphone capture pipeline is active */
+  isCapturingAudio: boolean;
+  /** Latest microphone level from 0 to 1 */
+  audioLevel: number;
+  /** Timestamp of the latest microphone frame received from the worklet */
+  lastAudioFrameAt: number | null;
 }
 
 /**
@@ -154,6 +160,10 @@ export interface EphemeralTokenResponse {
 export interface AudioCaptureState {
   isCapturing: boolean;
   error: string | null;
+  /** Latest microphone level from 0 to 1 */
+  audioLevel: number;
+  /** Timestamp of the latest microphone frame received from the worklet */
+  lastAudioFrameAt: number | null;
   startCapture: () => Promise<void>;
   stopCapture: () => void;
   /** Set ducking level (true = 10% volume to suppress echo while AI speaks) */
@@ -165,6 +175,8 @@ export interface AudioCaptureState {
  */
 export interface AudioPlaybackState {
   isPlaying: boolean;
+  /** Create/resume the playback context from a user gesture before remote audio arrives */
+  preparePlayback: () => Promise<void>;
   queueAudio: (audioData: ArrayBuffer) => void;
   clearQueue: () => void;
   stopPlayback: () => void;

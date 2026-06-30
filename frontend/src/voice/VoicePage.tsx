@@ -155,6 +155,9 @@ export function VoicePage() {
             connectionState={sessionState.connection}
             activityState={sessionState.activity}
             connectingStatus={sessionState.connectingStatus}
+            isCapturingAudio={sessionState.isCapturingAudio}
+            audioLevel={sessionState.audioLevel}
+            lastAudioFrameAt={sessionState.lastAudioFrameAt}
           />
         </div>
 

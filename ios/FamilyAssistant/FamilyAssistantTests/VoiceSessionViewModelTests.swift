@@ -45,6 +45,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
 
 private final class FakeAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
+    var onInputLevel: (@Sendable (Double) -> Void)?
     var startError: Error?
     private(set) var started = false
     private(set) var stopped = false
@@ -314,6 +315,18 @@ final class VoiceSessionViewModelTests: XCTestCase {
         audio.onCapturedAudio?(d1)
         audio.onCapturedAudio?(d2)
         try await waitUntil { self.session.sentAudio == [d1, d2] }
+    }
+
+    func testInputLevelUpdatesVisibleState() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        audio.onInputLevel?(0.42)
+
+        try await waitUntil { model.inputLevel == 0.42 }
+        XCTAssertTrue(model.hasRecentInputLevel)
     }
 
     func testEndTearsDownResources() async {

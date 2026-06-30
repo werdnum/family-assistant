@@ -55,7 +55,12 @@ private struct VoiceSessionContent: View {
     var body: some View {
         VStack(spacing: 28) {
             statusHeader
-            VoiceOrb(isAssistantSpeaking: model.isAssistantSpeaking, isActive: model.phase == .active)
+            VoiceOrb(
+                isAssistantSpeaking: model.isAssistantSpeaking,
+                isActive: model.phase == .active,
+                inputLevel: model.inputLevel,
+                hasRecentInput: model.hasRecentInputLevel
+            )
             transcript
             Spacer(minLength: 0)
             controls
@@ -168,25 +173,49 @@ private struct VoiceSessionContent: View {
 private struct VoiceOrb: View {
     let isAssistantSpeaking: Bool
     let isActive: Bool
+    let inputLevel: Double
+    let hasRecentInput: Bool
+
+    private let meterThresholds = [0.08, 0.18, 0.32, 0.48, 0.64, 0.82, 1.0]
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(isAssistantSpeaking ? Color.accentColor : Color.blue)
-                .opacity(isActive ? 0.85 : 0.4)
-                .frame(width: 160, height: 160)
-                .scaleEffect(isAssistantSpeaking ? 1.08 : 1.0)
-                .animation(
-                    isAssistantSpeaking
-                        ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
-                        : .default,
-                    value: isAssistantSpeaking
-                )
-            Image(systemName: "waveform")
-                .font(.system(size: 48, weight: .semibold))
-                .foregroundStyle(.white)
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(isAssistantSpeaking ? Color.accentColor : Color.blue)
+                    .opacity(isActive ? 0.85 : 0.4)
+                    .frame(width: 160, height: 160)
+                    .scaleEffect(isAssistantSpeaking ? 1.08 : 1.0)
+                    .animation(
+                        isAssistantSpeaking
+                            ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
+                            : .default,
+                        value: isAssistantSpeaking
+                    )
+                Image(systemName: "waveform")
+                    .font(.system(size: 48, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+
+            HStack(alignment: .bottom, spacing: 5) {
+                ForEach(Array(meterThresholds.enumerated()), id: \.offset) { index, threshold in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(meterBarColor(index: index, threshold: threshold))
+                        .frame(width: 8, height: CGFloat(8 + index * 4))
+                        .animation(.easeOut(duration: 0.08), value: inputLevel)
+                }
+            }
+            .frame(height: 38)
+            .accessibilityLabel("Microphone level")
+            .accessibilityIdentifier("voice-mic-level")
         }
-        .accessibilityHidden(true)
+    }
+
+    private func meterBarColor(index: Int, threshold: Double) -> Color {
+        guard isActive, hasRecentInput, index == 0 || inputLevel >= threshold else {
+            return Color.secondary.opacity(0.25)
+        }
+        return .green
     }
 }
 
