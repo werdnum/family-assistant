@@ -187,6 +187,14 @@ class VeoVideoBackend:
         types = _lazy_import_genai_types()
         return types.Image(image_bytes=reference.content, mime_type=reference.mime_type)
 
+    def _force_fixed_duration(
+        self, config_params: dict[str, object], mode: str
+    ) -> None:
+        """Pin duration to 8s; reference-image and interpolation modes require it."""
+        if config_params.get("duration_seconds") != self._FIXED_DURATION_MODES_SECONDS:
+            self.logger.info("Forcing duration to 8s for %s mode", mode)
+            config_params["duration_seconds"] = self._FIXED_DURATION_MODES_SECONDS
+
     async def generate_video(
         self, request: VideoGenerationRequest
     ) -> VideoGenerationResult:
@@ -209,25 +217,11 @@ class VeoVideoBackend:
                     )
                     for reference in request.reference_images[:3]
                 ]
-                # Docs require duration 8s when using reference images.
-                if config_params.get("duration_seconds") != (
-                    self._FIXED_DURATION_MODES_SECONDS
-                ):
-                    self.logger.info("Forcing duration to 8s for reference images mode")
-                    config_params["duration_seconds"] = (
-                        self._FIXED_DURATION_MODES_SECONDS
-                    )
+                self._force_fixed_duration(config_params, "reference images")
 
             if request.last_frame is not None:
                 config_params["last_frame"] = self._to_genai_image(request.last_frame)
-                # Docs require duration 8s when using interpolation.
-                if config_params.get("duration_seconds") != (
-                    self._FIXED_DURATION_MODES_SECONDS
-                ):
-                    self.logger.info("Forcing duration to 8s for interpolation mode")
-                    config_params["duration_seconds"] = (
-                        self._FIXED_DURATION_MODES_SECONDS
-                    )
+                self._force_fixed_duration(config_params, "interpolation")
 
             config = types.GenerateVideosConfig(**config_params)
 
@@ -354,9 +348,11 @@ class GeminiOmniVideoBackend:
                 self.model,
                 request.prompt[:50],
             )
+            # base64-encoding reference images can be multi-MB; keep it off the loop.
+            interaction_input = await asyncio.to_thread(self._build_input, request)
             interaction = await client.interactions.create(
                 model=self.model,
-                input=cast("Any", self._build_input(request)),
+                input=cast("Any", interaction_input),
                 response_format=response_format,
             )
 
@@ -398,7 +394,8 @@ class GeminiOmniVideoBackend:
                 continue
             data = getattr(output, "data", None)
             if data:
-                return base64.b64decode(data)
+                # Decoding a multi-MB video off the event loop.
+                return await asyncio.to_thread(base64.b64decode, data)
             uri = getattr(output, "uri", None)
             if uri:
                 self.logger.info("Downloading Omni Flash video from URI...")
