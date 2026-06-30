@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Top-level destinations shown in the root `TabView`. Tabs are features, not
 /// implementations: Chat and Notes are native, Documents is a focused web
@@ -15,6 +16,7 @@ struct ChatRoute: Equatable {
     var conversationID: String?
     var initialPrompt: String?
     var newConversationRequestID: String?
+    var sharedAttachmentBatchID: String?
 
     static func route(for url: URL, relativeTo baseURL: URL) -> ChatRoute? {
         guard url.matchesOrigin(of: baseURL),
@@ -171,8 +173,162 @@ final class AppRouter {
         morePath = []
     }
 
+    func openSharedAttachments(batchID: String) {
+        chatSelection = ChatRoute(
+            conversationID: nil,
+            initialPrompt: nil,
+            newConversationRequestID: batchID,
+            sharedAttachmentBatchID: batchID
+        )
+        selectedTab = .chat
+    }
+
     private static func isDocumentsRoot(_ url: URL) -> Bool {
         url.normalizedPath == "/documents"
+    }
+}
+
+struct SharedAttachmentBatch: Equatable, Identifiable {
+    let id: String
+    let fileURLs: [URL]
+    let importErrors: [String]
+}
+
+@MainActor
+@Observable
+final class SharedAttachmentInbox {
+    var pendingBatch: SharedAttachmentBatch?
+
+    @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private let receiveDebounce: Duration
+    @ObservationIgnored private var bufferedReceivedURLs: [URL] = []
+    @ObservationIgnored private var receiveTask: Task<Void, Never>?
+
+    init(fileManager: FileManager = .default, receiveDebounce: Duration = .milliseconds(250)) {
+        self.fileManager = fileManager
+        self.receiveDebounce = receiveDebounce
+    }
+
+    static func canReceive(_ url: URL) -> Bool {
+        url.isFileURL
+    }
+
+    func receive(urls: [URL]) {
+        bufferedReceivedURLs.append(contentsOf: urls)
+        receiveTask?.cancel()
+        receiveTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: receiveDebounce)
+            } catch {
+                return
+            }
+            flushBufferedURLs()
+        }
+    }
+
+    private func flushBufferedURLs() {
+        let urls = bufferedReceivedURLs
+        bufferedReceivedURLs = []
+        receiveTask = nil
+        guard !urls.isEmpty else {
+            return
+        }
+        let fileManager = fileManager
+        Task.detached { [weak self] in
+            let importResult = Self.importURLs(urls, fileManager: fileManager)
+            await self?.enqueue(importResult)
+        }
+    }
+
+    private func enqueue(_ importResult: SharedAttachmentImportResult) {
+        guard !importResult.fileURLs.isEmpty || !importResult.errors.isEmpty else { return }
+        if let pendingBatch {
+            self.pendingBatch = SharedAttachmentBatch(
+                id: pendingBatch.id,
+                fileURLs: pendingBatch.fileURLs + importResult.fileURLs,
+                importErrors: pendingBatch.importErrors + importResult.errors
+            )
+            return
+        }
+        pendingBatch = SharedAttachmentBatch(
+            id: UUID().uuidString,
+            fileURLs: importResult.fileURLs,
+            importErrors: importResult.errors
+        )
+    }
+
+    func consume(batchID: String) -> SharedAttachmentBatch? {
+        guard pendingBatch?.id == batchID else {
+            return nil
+        }
+        let batch = pendingBatch
+        pendingBatch = nil
+        return batch
+    }
+
+    nonisolated private static func importURLs(
+        _ sourceURLs: [URL],
+        fileManager: FileManager
+    ) -> SharedAttachmentImportResult {
+        var importedURLs: [URL] = []
+        var errors: [String] = []
+        for sourceURL in sourceURLs {
+            do {
+                importedURLs.append(try importURL(sourceURL, fileManager: fileManager))
+            } catch {
+                let filename = sourceURL.lastPathComponent.isEmpty ? sourceURL.absoluteString : sourceURL.lastPathComponent
+                errors.append("Could not import \(filename). \(error.localizedDescription)")
+            }
+        }
+        return SharedAttachmentImportResult(fileURLs: importedURLs, errors: errors)
+    }
+
+    nonisolated private static func importURL(_ sourceURL: URL, fileManager: FileManager) throws -> URL {
+        guard sourceURL.isFileURL else {
+            throw SharedAttachmentImportError.unsupportedURL
+        }
+        let isScoped = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if isScoped {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let sourceFileSize = try sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard sourceFileSize <= ChatConstants.maxAttachmentSizeBytes else {
+            throw SharedAttachmentImportError.oversizedFile
+        }
+
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("SharedAttachmentImports", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent(sourceURL.lastPathComponent)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.copyItem(at: sourceURL, to: destination)
+        return destination
+    }
+}
+
+private struct SharedAttachmentImportResult: Sendable {
+    let fileURLs: [URL]
+    let errors: [String]
+}
+
+private enum SharedAttachmentImportError: LocalizedError {
+    case unsupportedURL
+    case oversizedFile
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedURL:
+            "Only local files can be attached."
+        case .oversizedFile:
+            "File size exceeds 100MB."
+        }
     }
 }
 

@@ -5,6 +5,7 @@ struct FamilyAssistantApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var authManager: AuthManager
     @State private var notificationManager: NotificationManager
+    @State private var sharedAttachmentInbox = SharedAttachmentInbox()
 
     init() {
         #if DEBUG
@@ -40,6 +41,7 @@ struct FamilyAssistantApp: App {
         ContentView()
             .environment(authManager)
             .environment(notificationManager)
+            .environment(sharedAttachmentInbox)
             .onAppear {
                 appDelegate.notificationManager = notificationManager
                 notificationManager.bind(authManager: authManager)
@@ -49,6 +51,10 @@ struct FamilyAssistantApp: App {
             }
             .onOpenURL { url in
                 Task { @MainActor in
+                    if SharedAttachmentInbox.canReceive(url) {
+                        sharedAttachmentInbox.receive(urls: [url])
+                        return
+                    }
                     if URLComponents(url: url, resolvingAgainstBaseURL: false)?
                         .queryItems?
                         .contains(where: { $0.name == "code" }) == true

@@ -147,6 +147,17 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(router.selectedTab, .chat)
     }
 
+    func testOpenSharedAttachmentsSelectsNewChatRoute() {
+        let router = AppRouter()
+
+        router.openSharedAttachments(batchID: "batch-1")
+
+        XCTAssertEqual(router.selectedTab, .chat)
+        XCTAssertNil(router.chatSelection.conversationID)
+        XCTAssertEqual(router.chatSelection.newConversationRequestID, "batch-1")
+        XCTAssertEqual(router.chatSelection.sharedAttachmentBatchID, "batch-1")
+    }
+
     // MARK: - followWebLink (in-page link taps)
 
     func testFollowWebLinkWithinSameDocumentsTabIsLeftToWebView() throws {
@@ -214,6 +225,100 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(try url("/").normalizedPath, "/")
     }
 
+    // MARK: - Shared attachment inbox
+
+    @MainActor
+    func testSharedAttachmentInboxCopiesFileURLsForDeferredImport() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("route-test-\(UUID().uuidString).txt")
+        let secondSource = FileManager.default.temporaryDirectory
+            .appendingPathComponent("route-test-\(UUID().uuidString)-second.txt")
+        try Data("shared text".utf8).write(to: source)
+        try Data("second text".utf8).write(to: secondSource)
+        let inbox = SharedAttachmentInbox()
+
+        inbox.receive(urls: [source])
+        try await waitUntil { inbox.pendingBatch?.fileURLs.count == 1 }
+        let firstBatchID = try XCTUnwrap(inbox.pendingBatch?.id)
+        inbox.receive(urls: [secondSource])
+        try await waitUntil { inbox.pendingBatch?.fileURLs.count == 2 }
+
+        let batch = try XCTUnwrap(inbox.pendingBatch)
+        XCTAssertEqual(batch.id, firstBatchID)
+        XCTAssertEqual(batch.fileURLs.count, 2)
+        XCTAssertTrue(batch.importErrors.isEmpty)
+        let imported = try XCTUnwrap(batch.fileURLs.first)
+        XCTAssertNotEqual(imported, source)
+        XCTAssertEqual(imported.lastPathComponent, source.lastPathComponent)
+        XCTAssertEqual(try Data(contentsOf: imported), Data("shared text".utf8))
+        XCTAssertTrue(SharedAttachmentInbox.canReceive(imported))
+        let secondImported = try XCTUnwrap(batch.fileURLs.last)
+        XCTAssertEqual(secondImported.lastPathComponent, secondSource.lastPathComponent)
+        XCTAssertEqual(try Data(contentsOf: secondImported), Data("second text".utf8))
+
+        XCTAssertEqual(inbox.consume(batchID: batch.id), batch)
+        XCTAssertNil(inbox.pendingBatch)
+    }
+
+    @MainActor
+    func testSharedAttachmentInboxBuffersAdjacentOpenCallbacksIntoOneBatch() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("route-buffer-\(UUID().uuidString).txt")
+        let secondSource = FileManager.default.temporaryDirectory
+            .appendingPathComponent("route-buffer-\(UUID().uuidString)-second.txt")
+        try Data("first".utf8).write(to: source)
+        try Data("second".utf8).write(to: secondSource)
+        let inbox = SharedAttachmentInbox(receiveDebounce: .milliseconds(1))
+
+        inbox.receive(urls: [source])
+        inbox.receive(urls: [secondSource])
+        try await waitUntil { inbox.pendingBatch?.fileURLs.count == 2 }
+
+        let batch = try XCTUnwrap(inbox.pendingBatch)
+        XCTAssertEqual(batch.fileURLs.count, 2)
+        XCTAssertEqual(batch.fileURLs[0].lastPathComponent, source.lastPathComponent)
+        XCTAssertEqual(batch.fileURLs[1].lastPathComponent, secondSource.lastPathComponent)
+        XCTAssertEqual(try Data(contentsOf: batch.fileURLs[0]), Data("first".utf8))
+        XCTAssertEqual(try Data(contentsOf: batch.fileURLs[1]), Data("second".utf8))
+    }
+
+    @MainActor
+    func testSharedAttachmentInboxPreservesImportFailuresInBatch() async throws {
+        let inbox = SharedAttachmentInbox()
+
+        inbox.receive(urls: [try XCTUnwrap(URL(string: "https://assistant.example.test/not-a-file.txt"))])
+        try await waitUntil { inbox.pendingBatch?.importErrors.isEmpty == false }
+
+        let batch = try XCTUnwrap(inbox.pendingBatch)
+        XCTAssertTrue(batch.fileURLs.isEmpty)
+        XCTAssertEqual(batch.importErrors.count, 1)
+        XCTAssertTrue(batch.importErrors[0].contains("Could not import not-a-file.txt"))
+    }
+
+    @MainActor
+    func testSharedAttachmentInboxRejectsOversizedFilesBeforeCopying() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("route-oversized-\(UUID().uuidString).pdf")
+        XCTAssertTrue(FileManager.default.createFile(atPath: source.path, contents: Data()))
+        let sourceHandle = try FileHandle(forWritingTo: source)
+        try sourceHandle.truncate(atOffset: UInt64(ChatConstants.maxAttachmentSizeBytes + 1))
+        try sourceHandle.close()
+        defer {
+            try? FileManager.default.removeItem(at: source)
+        }
+        let inbox = SharedAttachmentInbox()
+
+        inbox.receive(urls: [source])
+        try await waitUntil { inbox.pendingBatch?.importErrors.isEmpty == false }
+
+        let batch = try XCTUnwrap(inbox.pendingBatch)
+        XCTAssertTrue(batch.fileURLs.isEmpty)
+        XCTAssertEqual(batch.importErrors.count, 1)
+        XCTAssertTrue(batch.importErrors[0].contains("Could not import \(source.lastPathComponent)"))
+        XCTAssertTrue(batch.importErrors[0].contains("File size exceeds 100MB."))
+        XCTAssertFalse(sharedImportExists(named: source.lastPathComponent))
+    }
+
     // MARK: - More catalog nav-divergence guard
 
     /// Guards the More destination set against silent drift from the canonical
@@ -242,5 +347,34 @@ final class RouteTests: XCTestCase {
     func testMoreCatalogPathsAreUnique() {
         let paths = MoreCatalog.sections.flatMap { $0.destinations.map(\.path) }
         XCTAssertEqual(Set(paths).count, paths.count)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 4,
+        predicate: @escaping @MainActor () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await predicate() {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("Timed out waiting for predicate")
+    }
+
+    private func sharedImportExists(named filename: String) -> Bool {
+        let importsRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SharedAttachmentImports", isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(
+            at: importsRoot,
+            includingPropertiesForKeys: nil
+        ) else {
+            return false
+        }
+        for case let fileURL as URL in enumerator where fileURL.lastPathComponent == filename {
+            return true
+        }
+        return false
     }
 }

@@ -5,6 +5,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 struct ChatRootView: View {
+    @Environment(SharedAttachmentInbox.self) private var sharedAttachmentInbox
     @State private var viewModel: ChatViewModel
     // Drives which column the compact (iPhone) split view shows. Bound so the
     // launch decision (restore a thread vs. land on the list) is honored
@@ -58,6 +59,7 @@ struct ChatRootView: View {
         }
         .task {
             await viewModel.bootstrap(initialPrompt: route.initialPrompt)
+            await importSharedAttachments(for: route)
         }
         .onChange(of: route) { _, newRoute in
             Task {
@@ -66,6 +68,7 @@ struct ChatRootView: View {
                     initialPrompt: newRoute.initialPrompt,
                     newConversationRequestID: newRoute.newConversationRequestID
                 )
+                await importSharedAttachments(for: newRoute)
             }
         }
         .onChange(of: viewModel.conversationSelection) { _, selection in
@@ -84,6 +87,15 @@ struct ChatRootView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+    }
+
+    private func importSharedAttachments(for route: ChatRoute) async {
+        guard let batchID = route.sharedAttachmentBatchID,
+              let batch = sharedAttachmentInbox.consume(batchID: batchID)
+        else {
+            return
+        }
+        await viewModel.addSharedAttachments(batch)
     }
 }
 
