@@ -41,6 +41,7 @@ final class ChatViewModel {
     var mobileShowsConversationList = false
     var steerErrorMessage: String?
     var stopWarningMessage: String?
+    var composerFocusRequestID: UUID?
 
     var canSendDraft: Bool {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -94,6 +95,7 @@ final class ChatViewModel {
     @ObservationIgnored private var localUserInputConversationIDByMessageID: [String: String] = [:]
     @ObservationIgnored private var representedPersistedUserInputEchoCounts: [UserInputEchoKey: Int] = [:]
     @ObservationIgnored private var lastProcessedInitialPrompt: String?
+    @ObservationIgnored private var opensGeneratedLaunchDraft = false
     // Highest stream seq applied for the active conversation, threaded into the
     // follow subscribe's `ack_seq` and the `/ack` POST after a turn_ended so the
     // server suppresses the disconnect push for events this client has seen.
@@ -200,6 +202,7 @@ final class ChatViewModel {
         authManager: AuthManager,
         conversationID: String? = nil,
         initialPrompt: String? = nil,
+        startsNewConversation: Bool = false,
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
@@ -220,7 +223,11 @@ final class ChatViewModel {
         // `bootstrap` reopens it via `selectConversation`, which adopts that
         // conversation's own profile.
         selectedProfileID = storedProfileID
-        if let initialPrompt, !initialPrompt.isEmpty {
+        if startsNewConversation {
+            self.conversationID = Self.generateConversationID()
+            conversationSelection = self.conversationID
+            composerFocusRequestID = UUID()
+        } else if let initialPrompt, !initialPrompt.isEmpty {
             // Launched to start a brand-new chat (share extension / App Intent).
             self.conversationID = Self.generateConversationID()
             conversationSelection = self.conversationID
@@ -237,11 +244,14 @@ final class ChatViewModel {
             conversationSelection = restored
             persistConversationID()
         } else {
-            // No recent conversation: open a fresh thread but land on the list
-            // (selection nil). Leave the stored last conversation untouched so a
-            // genuinely-recent reopen after this one still resolves correctly.
+            // No recent conversation: open a fresh thread and focus the composer
+            // for quick capture. Leave the stored last conversation untouched so
+            // merely opening the app does not make an empty draft the restored
+            // thread on the next launch.
             self.conversationID = Self.generateConversationID()
-            conversationSelection = nil
+            conversationSelection = self.conversationID
+            composerFocusRequestID = UUID()
+            opensGeneratedLaunchDraft = true
         }
     }
 
@@ -256,10 +266,11 @@ final class ChatViewModel {
     func bootstrap(initialPrompt: String? = nil) async {
         await loadProfiles()
         await refreshConversations()
-        // Only open the thread when launch decided to restore a selection.
-        // A nil selection means we deliberately landed on the conversation list
-        // (no recent conversation), so opening one here would defeat that.
-        if let conversationID, conversationSelection != nil {
+        // Only load through the normal selection path when launch restored or
+        // explicitly opened a real conversation. Auto-created empty drafts stay
+        // visible without becoming the persisted "last conversation" until the
+        // user sends.
+        if let conversationID, conversationSelection != nil, !opensGeneratedLaunchDraft {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
@@ -274,7 +285,20 @@ final class ChatViewModel {
         }
     }
 
-    func applyRoute(conversationID: String?, initialPrompt: String?) async {
+    func applyRoute(
+        conversationID: String?,
+        initialPrompt: String?,
+        newConversationRequestID: String? = nil
+    ) async {
+        if newConversationRequestID != nil {
+            startNewConversation()
+            if let initialPrompt, !initialPrompt.isEmpty {
+                lastProcessedInitialPrompt = initialPrompt
+                draftText = initialPrompt
+                await sendDraft()
+            }
+            return
+        }
         if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
             lastProcessedInitialPrompt = initialPrompt
             startNewConversation()
@@ -517,6 +541,7 @@ final class ChatViewModel {
         messages = []
         draftText = ""
         draftAttachments = []
+        composerFocusRequestID = UUID()
         mobileShowsConversationList = false
         // A brand-new conversation has no history to load, so it is never in a
         // loading state. Clear the flag explicitly: starting a new conversation

@@ -11,23 +11,21 @@ struct ChatRootView: View {
     // deterministically and stays in sync as the user opens threads / taps Back,
     // rather than letting the selection-before-data-loads race decide.
     @State private var preferredColumn: NavigationSplitViewColumn
-    let routeConversationID: String?
-    let initialPrompt: String?
+    let route: ChatRoute
 
     init(
         authManager: AuthManager,
-        conversationID: String?,
-        initialPrompt: String?
+        route: ChatRoute
     ) {
         let model = ChatViewModel(
             authManager: authManager,
-            conversationID: conversationID,
-            initialPrompt: initialPrompt
+            conversationID: route.conversationID,
+            initialPrompt: route.initialPrompt,
+            startsNewConversation: route.newConversationRequestID != nil
         )
         _viewModel = State(initialValue: model)
         _preferredColumn = State(initialValue: model.conversationSelection == nil ? .sidebar : .detail)
-        routeConversationID = conversationID
-        self.initialPrompt = initialPrompt
+        self.route = route
     }
 
     var body: some View {
@@ -59,16 +57,15 @@ struct ChatRootView: View {
                 }
         }
         .task {
-            await viewModel.bootstrap(initialPrompt: initialPrompt)
+            await viewModel.bootstrap(initialPrompt: route.initialPrompt)
         }
-        .onChange(of: routeConversationID) { _, newValue in
+        .onChange(of: route) { _, newRoute in
             Task {
-                await viewModel.applyRoute(conversationID: newValue, initialPrompt: nil)
-            }
-        }
-        .onChange(of: initialPrompt) { _, newValue in
-            Task {
-                await viewModel.applyRoute(conversationID: routeConversationID, initialPrompt: newValue)
+                await viewModel.applyRoute(
+                    conversationID: newRoute.conversationID,
+                    initialPrompt: newRoute.initialPrompt,
+                    newConversationRequestID: newRoute.newConversationRequestID
+                )
             }
         }
         .onChange(of: viewModel.conversationSelection) { _, selection in
@@ -429,6 +426,8 @@ private struct ChatComposerView: View {
     var viewModel: ChatViewModel
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var importsFiles = false
+    @State private var handledFocusRequestID: UUID?
+    @FocusState private var isComposerFocused: Bool
 
     // While a turn runs the main composer doubles as the steer input: an empty
     // box → Stop, text in the box → Steer. When idle it sends a normal message.
@@ -507,6 +506,7 @@ private struct ChatComposerView: View {
                     .frame(minHeight: 36)
                     .padding(.horizontal, 4)
                     .accessibilityIdentifier("chat-composer")
+                    .focused($isComposerFocused)
 
                 Button {
                     if viewModel.isStreaming {
@@ -540,6 +540,13 @@ private struct ChatComposerView: View {
         .padding(.horizontal)
         .padding(.vertical, 6)
         .background(.bar)
+        .onChange(of: viewModel.composerFocusRequestID, initial: true) { _, requestID in
+            guard let requestID, handledFocusRequestID != requestID else {
+                return
+            }
+            handledFocusRequestID = requestID
+            isComposerFocused = true
+        }
         .onChange(of: selectedPhotoItem) { _, item in
             guard let item else { return }
             Task {

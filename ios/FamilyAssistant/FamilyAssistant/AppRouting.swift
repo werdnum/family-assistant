@@ -14,6 +14,7 @@ enum AppTab: String, CaseIterable, Hashable {
 struct ChatRoute: Equatable {
     var conversationID: String?
     var initialPrompt: String?
+    var newConversationRequestID: String?
 
     static func route(for url: URL, relativeTo baseURL: URL) -> ChatRoute? {
         guard url.matchesOrigin(of: baseURL),
@@ -29,7 +30,14 @@ struct ChatRoute: Equatable {
 
         let conversationID = components.queryItems?.first { $0.name == "conversation_id" }?.value
         let initialPrompt = components.queryItems?.first { $0.name == "q" }?.value
-        return ChatRoute(conversationID: conversationID, initialPrompt: initialPrompt)
+        let startsNewConversation = components.queryItems?.contains { item in
+            item.name == "new" && item.value != "0" && item.value?.lowercased() != "false"
+        } == true
+        return ChatRoute(
+            conversationID: conversationID,
+            initialPrompt: initialPrompt,
+            newConversationRequestID: startsNewConversation ? UUID().uuidString : nil
+        )
     }
 }
 

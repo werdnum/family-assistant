@@ -168,6 +168,29 @@ final class AppIntentsTests: XCTestCase {
         XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat")
     }
 
+    func testIntentNavigationCenterCanRequestNewChat() {
+        IntentNavigationCenter.shared.requestNewChat()
+
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat?new=1")
+    }
+
+    func testHomeScreenShortcutRouterRequestsNewChat() {
+        let shortcutItem = UIApplicationShortcutItem(
+            type: HomeScreenShortcutRouter.newChatType,
+            localizedTitle: "New Chat"
+        )
+
+        XCTAssertTrue(HomeScreenShortcutRouter.handle(shortcutItem))
+
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat?new=1")
+    }
+
+    func testHomeScreenShortcutSceneDelegateHandlesWindowSceneLifecycle() {
+        let sceneDelegate: UIWindowSceneDelegate = HomeScreenShortcutSceneDelegate()
+
+        XCTAssertTrue(sceneDelegate is HomeScreenShortcutSceneDelegate)
+    }
+
     // MARK: - Deep links & shortcuts
 
     func testChatDeepLinkEncodesPromptAndConversation() {
