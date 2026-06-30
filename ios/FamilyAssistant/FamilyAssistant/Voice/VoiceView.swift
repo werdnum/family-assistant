@@ -12,18 +12,23 @@ struct VoiceView: View {
     var profileID: String?
 
     @State private var model: VoiceSessionViewModel?
+    @State private var sessionRequestID = UUID()
 
     var body: some View {
         Group {
             if let model {
-                VoiceSessionContent(model: model)
+                VoiceSessionContent(
+                    model: model,
+                    onStartNewSession: startNewSession,
+                    onClose: { dismiss() }
+                )
             } else {
                 ProgressView()
             }
         }
         .navigationTitle("Voice")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: sessionRequestID) {
             guard model == nil else { return }
             let api = ChatAPIClient(authManager: authManager)
             let viewModel = VoiceSessionViewModel(
@@ -35,22 +40,24 @@ struct VoiceView: View {
             model = viewModel
             await viewModel.start()
         }
-        .onChange(of: model?.phase) { _, phase in
-            if phase == .finished {
-                dismiss()
-            }
-        }
         .onDisappear {
             model?.end()
         }
+    }
+
+    private func startNewSession() {
+        model?.end()
+        model = nil
+        sessionRequestID = UUID()
     }
 }
 
 /// Renders one active/loading/failed voice session.
 private struct VoiceSessionContent: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Bindable var model: VoiceSessionViewModel
+    let onStartNewSession: () -> Void
+    let onClose: () -> Void
 
     var body: some View {
         VStack(spacing: 28) {
@@ -125,12 +132,16 @@ private struct VoiceSessionContent: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            Button("Close") { dismiss() }
+            Button("Close", action: onClose)
                 .accessibilityIdentifier("voice-close-button")
         case .failed:
-            Button("Close") { dismiss() }
+            Button("Close", action: onClose)
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("voice-close-button")
+        case .finished:
+            Button("Start New Session", action: onStartNewSession)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("voice-start-new-session-button")
         default:
             HStack(spacing: 40) {
                 Button {
@@ -151,7 +162,6 @@ private struct VoiceSessionContent: View {
 
                 Button {
                     model.end()
-                    dismiss()
                 } label: {
                     Label("End", systemImage: "phone.down.fill")
                         .labelStyle(.iconOnly)

@@ -198,13 +198,13 @@ final class FamilyAssistantUITests: XCTestCase {
 
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.buttons["Chat"].waitForExistence(timeout: 4))
+        XCTAssertTrue(tabBar.buttons["Voice"].exists)
         XCTAssertTrue(tabBar.buttons["Notes"].exists)
         XCTAssertTrue(tabBar.buttons["Documents"].exists)
         XCTAssertTrue(tabBar.buttons["More"].exists)
 
         tabBar.buttons["More"].tap()
         XCTAssertTrue(app.navigationBars["More"].waitForExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["Voice"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.staticTexts["Events"].exists)
         attachScreenshot(named: "tab-more-list")
 
