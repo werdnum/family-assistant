@@ -29,7 +29,6 @@ enum MoreCatalog {
             MoreDestination(title: "Search", systemImage: "magnifyingglass", path: "/vector-search"),
         ]),
         MoreSection(title: "Communication", destinations: [
-            MoreDestination(title: "Voice", systemImage: "mic", path: "/voice"),
             MoreDestination(title: "History", systemImage: "clock.arrow.circlepath", path: "/history"),
         ]),
         MoreSection(title: "Automation", destinations: [
@@ -86,18 +85,12 @@ struct MoreTabView: View {
                     )
                 case .settings:
                     SettingsView(onLogout: onLogout)
-                case .voice:
-                    VoiceView()
                 }
             }
         }
     }
 
-    /// Voice is a native screen; every other catalog entry is web-backed.
     private func route(for destination: MoreDestination) -> MoreRoute {
-        if destination.path == MoreRoute.voicePath {
-            return .voice
-        }
         return .web(WebRoute(path: destination.path, title: destination.title))
     }
 }

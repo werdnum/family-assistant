@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// The app's root: a four-tab `TabView` whose tabs are features, not
-/// implementations. Chat and Notes render native screens; Documents and More
-/// render focused web pages inside their own navigation stacks. Each tab keeps
-/// independent navigation state across tab switches via `AppRouter`.
+/// implementations. Chat, Voice, and Notes render native screens; Documents
+/// and More render focused web pages inside their own navigation stacks. Each
+/// tab keeps independent navigation state across tab switches via `AppRouter`.
 struct RootTabView: View {
     @Bindable var appRouter: AppRouter
     let authManager: AuthManager
@@ -18,6 +18,12 @@ struct RootTabView: View {
             )
             .tabItem { Label("Chat", systemImage: "message") }
             .tag(AppTab.chat)
+
+            NavigationStack {
+                VoiceView(onClose: { appRouter.selectedTab = .chat })
+            }
+            .tabItem { Label("Voice", systemImage: "mic") }
+            .tag(AppTab.voice)
 
             NotesRootView(
                 route: appRouter.notesRoute,

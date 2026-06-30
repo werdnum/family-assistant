@@ -2,10 +2,11 @@ import Foundation
 import Observation
 
 /// Top-level destinations shown in the root `TabView`. Tabs are features, not
-/// implementations: Chat and Notes are native, Documents is a focused web
-/// surface, and More hosts the long-tail destinations (Events, Voice, …).
+/// implementations: Chat, Voice, and Notes are native, Documents is a focused
+/// web surface, and More hosts the long-tail destinations.
 enum AppTab: String, CaseIterable, Hashable {
     case chat
+    case voice
     case notes
     case documents
     case more
@@ -88,16 +89,12 @@ struct WebRoute: Equatable, Hashable {
 enum MoreRoute: Equatable, Hashable {
     case web(WebRoute)
     case settings
-    /// Native voice-conversation screen (replaces the web `/voice` page).
-    case voice
-
-    /// The catalog/deep-link path that resolves to the native ``voice`` screen
-    /// instead of a web page. Single source of truth for that decision.
-    static let voicePath = "/voice"
 }
 
 @Observable
 final class AppRouter {
+    private static let voicePath = "/voice"
+
     var selectedTab: AppTab = .chat
     var chatSelection = ChatRoute()
     var notesRoute: NotesRoute = .list
@@ -111,6 +108,7 @@ final class AppRouter {
     static func owningTab(for url: URL, relativeTo baseURL: URL) -> AppTab? {
         guard url.matchesOrigin(of: baseURL) else { return nil }
         if ChatRoute.route(for: url, relativeTo: baseURL) != nil { return .chat }
+        if url.normalizedPath == Self.voicePath { return .voice }
         if NotesRoute.route(for: url, relativeTo: baseURL) != nil { return .notes }
         let path = url.normalizedPath
         if path == "/documents" || path.hasPrefix("/documents/") { return .documents }
@@ -129,17 +127,14 @@ final class AppRouter {
         switch tab {
         case .chat:
             chatSelection = ChatRoute.route(for: url, relativeTo: baseURL) ?? ChatRoute()
+        case .voice:
+            break
         case .notes:
             notesRoute = NotesRoute.route(for: url, relativeTo: baseURL) ?? .list
         case .documents:
             documentsPath = Self.isDocumentsRoot(url) ? [] : [WebRoute(path: url.pathAndQuery)]
         case .more:
-            // Voice is a native screen; route the /voice path to it instead of
-            // the (now removed) web page, so deep links and cross-tab link follows
-            // open the same native experience as the More-list row.
-            morePath = url.normalizedPath == MoreRoute.voicePath
-                ? [.voice]
-                : [.web(WebRoute(path: url.pathAndQuery))]
+            morePath = [.web(WebRoute(path: url.pathAndQuery))]
         }
         selectedTab = tab
         return true

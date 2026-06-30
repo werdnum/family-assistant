@@ -21,7 +21,7 @@ final class AppIntentsTests: XCTestCase {
         URLProtocol.unregisterClass(ChatMockBackendURLProtocol.self)
         // The navigation center is a process-wide singleton; clear any pending
         // path so it does not leak into the next test.
-        _ = IntentNavigationCenter.shared.consumePendingChatPath()
+        _ = IntentNavigationCenter.shared.consumePendingNavigationPath()
         resetStoredAuth()
         super.tearDown()
     }
@@ -157,7 +157,7 @@ final class AppIntentsTests: XCTestCase {
         intent.prompt = "hello world"
         _ = try await intent.perform()
 
-        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat?q=hello%20world")
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingNavigationPath(), "/chat?q=hello%20world")
     }
 
     func testOpenConversationIntentWithoutPromptOpensChat() async throws {
@@ -165,13 +165,19 @@ final class AppIntentsTests: XCTestCase {
         intent.prompt = nil
         _ = try await intent.perform()
 
-        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat")
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingNavigationPath(), "/chat")
     }
 
     func testIntentNavigationCenterCanRequestNewChat() {
         IntentNavigationCenter.shared.requestNewChat()
 
-        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat?new=1")
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingNavigationPath(), "/chat?new=1")
+    }
+
+    func testIntentNavigationCenterCanRequestVoice() {
+        IntentNavigationCenter.shared.requestVoice()
+
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingNavigationPath(), "/voice")
     }
 
     func testHomeScreenShortcutRouterRequestsNewChat() {
@@ -182,7 +188,18 @@ final class AppIntentsTests: XCTestCase {
 
         XCTAssertTrue(HomeScreenShortcutRouter.handle(shortcutItem))
 
-        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingChatPath(), "/chat?new=1")
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingNavigationPath(), "/chat?new=1")
+    }
+
+    func testHomeScreenShortcutRouterRequestsVoice() {
+        let shortcutItem = UIApplicationShortcutItem(
+            type: HomeScreenShortcutRouter.voiceType,
+            localizedTitle: "Voice"
+        )
+
+        XCTAssertTrue(HomeScreenShortcutRouter.handle(shortcutItem))
+
+        XCTAssertEqual(IntentNavigationCenter.shared.consumePendingNavigationPath(), "/voice")
     }
 
     func testHomeScreenShortcutSceneDelegateHandlesWindowSceneLifecycle() {
