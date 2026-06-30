@@ -95,6 +95,7 @@ final class ChatViewModel {
     @ObservationIgnored private var localUserInputConversationIDByMessageID: [String: String] = [:]
     @ObservationIgnored private var representedPersistedUserInputEchoCounts: [UserInputEchoKey: Int] = [:]
     @ObservationIgnored private var lastProcessedInitialPrompt: String?
+    @ObservationIgnored private var opensGeneratedLaunchDraft = false
     // Highest stream seq applied for the active conversation, threaded into the
     // follow subscribe's `ack_seq` and the `/ack` POST after a turn_ended so the
     // server suppresses the disconnect push for events this client has seen.
@@ -250,6 +251,7 @@ final class ChatViewModel {
             self.conversationID = Self.generateConversationID()
             conversationSelection = self.conversationID
             composerFocusRequestID = UUID()
+            opensGeneratedLaunchDraft = true
         }
     }
 
@@ -264,10 +266,11 @@ final class ChatViewModel {
     func bootstrap(initialPrompt: String? = nil) async {
         await loadProfiles()
         await refreshConversations()
-        // Only open the thread when launch decided to restore a selection.
-        // A nil selection means we deliberately landed on the conversation list
-        // (no recent conversation), so opening one here would defeat that.
-        if let conversationID, conversationSelection != nil {
+        // Only load through the normal selection path when launch restored or
+        // explicitly opened a real conversation. Auto-created empty drafts stay
+        // visible without becoming the persisted "last conversation" until the
+        // user sends.
+        if let conversationID, conversationSelection != nil, !opensGeneratedLaunchDraft {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
@@ -285,11 +288,11 @@ final class ChatViewModel {
     func applyRoute(
         conversationID: String?,
         initialPrompt: String?,
-        startsNewConversation: Bool = false
+        newConversationRequestID: String? = nil
     ) async {
-        if startsNewConversation {
+        if newConversationRequestID != nil {
             startNewConversation()
-            if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
+            if let initialPrompt, !initialPrompt.isEmpty {
                 lastProcessedInitialPrompt = initialPrompt
                 draftText = initialPrompt
                 await sendDraft()

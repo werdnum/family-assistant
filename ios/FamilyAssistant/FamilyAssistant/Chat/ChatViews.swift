@@ -64,7 +64,7 @@ struct ChatRootView: View {
                 await viewModel.applyRoute(
                     conversationID: newRoute.conversationID,
                     initialPrompt: newRoute.initialPrompt,
-                    startsNewConversation: newRoute.newConversationRequestID != nil
+                    newConversationRequestID: newRoute.newConversationRequestID
                 )
             }
         }

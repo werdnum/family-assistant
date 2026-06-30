@@ -64,6 +64,34 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testBootstrapWithStaleConversationDoesNotPersistEmptyLaunchDraft() async {
+        storeLastConversation("web_conv_stale", activeSecondsAgo: 16 * 60)
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .text("")
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        await model.bootstrap()
+
+        XCTAssertEqual(model.conversationSelection, model.conversationID)
+        XCTAssertEqual(
+            UserDefaults.standard.string(forKey: "lastConversationId"),
+            "web_conv_stale",
+            "Bootstrapping an empty launch draft must not make it the restored conversation."
+        )
+    }
+
     func testLaunchWithoutActivityTimestampOpensNewChat() {
         UserDefaults.standard.set("web_conv_legacy", forKey: "lastConversationId")
         UserDefaults.standard.removeObject(forKey: "lastConversationActiveAt")
@@ -5645,6 +5673,66 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         XCTAssertEqual(sentPrompts, ["First", "Second"])
+        XCTAssertEqual(conversationIDs.count, 2)
+        XCTAssertNotEqual(conversationIDs.first, conversationIDs.last)
+    }
+
+    func testApplyRouteProcessesRepeatedPromptForExplicitNewRequests() async throws {
+        var sentPrompts: [String] = []
+        var conversationIDs: [String] = []
+        var streamedTurnID = "turn-route"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                sentPrompts.append(try XCTUnwrap(payload["prompt"] as? String))
+                let conversationID = try XCTUnwrap(payload["conversation_id"] as? String)
+                conversationIDs.append(conversationID)
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    """
+                    {"turn_id":"\(streamedTurnID)","conversation_id":"\(conversationID)","first_seq":0}
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete"}
+
+                        """
+                    )
+                }
+                if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_route",
+                          "messages":[],
+                          "count":0,
+                          "total_messages":0,
+                          "has_more_before":false,
+                          "has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_seed")
+
+        await model.applyRoute(conversationID: nil, initialPrompt: "Again", newConversationRequestID: "request-1")
+        try await waitUntil { !model.isStreaming }
+        await model.applyRoute(conversationID: nil, initialPrompt: "Again", newConversationRequestID: "request-2")
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(sentPrompts, ["Again", "Again"])
         XCTAssertEqual(conversationIDs.count, 2)
         XCTAssertNotEqual(conversationIDs.first, conversationIDs.last)
     }
