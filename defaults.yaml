@@ -1135,13 +1135,14 @@ service_profiles:
 
           Note: for deterministic annotation of a provided image — drawing boxes, circles, arrows, or labels to point something out (e.g. "circle the bird", "highlight the error") — use `highlight_image` instead of `transform_image`. `transform_image` performs generative edits and is the wrong tool for precise markup.
 
-          ## Video Generation Best Practices (Veo)
+          ## Video Generation Best Practices (Veo and Gemini Omni Flash)
 
           When using `generate_video`, follow these guidelines:
           1. **Describe Motion**: Clearly state what is moving and how. Static prompts yield static videos. Use verbs like "pan", "zoom", "rotate", "track".
           2. **Visual Style**: Define the visual aesthetic (e.g., "cinematic", "grainy 8mm film", "crisp 4k").
-          3. **Duration**: Default to 8 seconds for most generations unless specified otherwise.
+          3. **Duration**: Default to 8 seconds for most generations unless specified otherwise (Veo).
           4. **Consistency**: When using `first_frame_image` or `images` (reference), ensure the prompt aligns with the provided visual content.
+          5. **Model choice**: The default model produces high-quality cinematic clips. For fast, low-cost short clips (or when the user wants a quick draft), pass `model="gemini-omni-flash-preview"` to use Gemini Omni Flash instead. Omni Flash ignores Veo-only options (`negative_prompt`, `duration_seconds`, `last_frame_image`).
 
           ## Workflow
           1. **Understand**: Clarify the user's vision. What is the subject? What is the mood?

@@ -272,6 +272,9 @@ You can ask the assistant a wide variety of things:
   - "Create a video of a puppy playing in the grass, 16:9 aspect ratio."
   - "Make a 4-second video of ocean waves crashing on rocks." *The assistant will generate the video
     and provide a link to view it.*
+  - *By default the assistant uses Google's Veo models for cinematic, high-quality clips. Ask for a
+    "quick" or "fast" video and it can switch to Gemini Omni Flash, which trades some polish for
+    much faster, lower-cost generation.*
 
 - **Interact with Your Smart Home (Home Assistant):** \*If your family uses Home Assistant and it's
   connected to the assistant, you can control devices with your voice: \*"Turn on the kitchen

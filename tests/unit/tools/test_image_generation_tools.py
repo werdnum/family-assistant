@@ -832,7 +832,9 @@ class TestBackendSelection:
             mock_cls.return_value = mock_backend
 
             await generate_image_tool(context, prompt="test")
-            mock_cls.assert_called_once_with("test-gemini-key")
+            mock_cls.assert_called_once_with(
+                "test-gemini-key", model="gemini-3-pro-image-preview"
+            )
 
     @pytest.mark.asyncio
     async def test_mock_backend_selected(self) -> None:
@@ -897,7 +899,9 @@ class TestBackendSelection:
             mock_cls.return_value = mock_backend
 
             await generate_image_tool(context, prompt="test")
-            mock_cls.assert_called_once_with("test-key")
+            mock_cls.assert_called_once_with(
+                "test-key", model="gemini-3-pro-image-preview"
+            )
 
     @pytest.mark.asyncio
     async def test_no_backend_configured_uses_mock(self) -> None:

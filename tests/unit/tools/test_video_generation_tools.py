@@ -1,10 +1,16 @@
-"""Tests for video generation tools."""
+"""Tests for the generate_video tool (request building + backend dispatch).
 
-from collections.abc import Generator
-from dataclasses import dataclass
+Backend API behavior is covered in test_video_backends.py. These tests use an
+injected fake backend (the ``video_backend`` seam on the execution context) to
+verify how the tool turns its arguments into a VideoGenerationRequest and how it
+wraps the backend's result.
+"""
+
+from __future__ import annotations
+
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -14,381 +20,161 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
-from family_assistant.tools.video_generation import (
-    generate_video_tool,
+from family_assistant.tools.video_backends import (
+    VideoGenerationError,
+    VideoGenerationRequest,
+    VideoGenerationResult,
 )
+from family_assistant.tools.video_generation import generate_video_tool
 
 
-@dataclass
-class _FakeImage:
-    image_bytes: bytes
-    mime_type: str
+class _RecordingBackend:
+    """Fake backend that records the request and returns canned bytes."""
+
+    def __init__(
+        self,
+        result: VideoGenerationResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result or VideoGenerationResult(
+            content=b"video-bytes", mime_type="video/mp4", model="fake-model"
+        )
+        self.error = error
+        self.request: VideoGenerationRequest | None = None
+
+    async def generate_video(
+        self, request: VideoGenerationRequest
+    ) -> VideoGenerationResult:
+        self.request = request
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
-@dataclass
-class _FakeGenerateVideosSource:
-    prompt: str
-    image: _FakeImage | None = None
-
-
-@dataclass
-class _FakeVideoGenerationReferenceImage:
-    image: _FakeImage
-
-
-@dataclass
-class _FakeGenerateVideosConfig:
-    negative_prompt: str | None = None
-    aspect_ratio: str | None = None
-    duration_seconds: int | None = None
-    last_frame: _FakeImage | None = None
-    reference_images: list[_FakeVideoGenerationReferenceImage] | None = None
-
-
-def _fake_genai_types() -> SimpleNamespace:
-    """Return lightweight stand-ins for google.genai.types."""
-    return SimpleNamespace(
-        Image=_FakeImage,
-        GenerateVideosConfig=_FakeGenerateVideosConfig,
-        GenerateVideosSource=_FakeGenerateVideosSource,
-        VideoGenerationReferenceImage=_FakeVideoGenerationReferenceImage,
+def _exec_context(backend: _RecordingBackend) -> ToolExecutionContext:
+    """An execution context carrying an injected video backend."""
+    return cast(
+        "ToolExecutionContext",
+        SimpleNamespace(processing_service=None, video_backend=backend),
     )
 
 
-@pytest.fixture
-def mock_exec_context() -> MagicMock:
-    """Create a mock execution context."""
-    return MagicMock(spec=ToolExecutionContext)
-
-
-@pytest.fixture
-def mock_genai_client() -> Generator[MagicMock]:
-    """Mock _create_genai_client to avoid importing google.genai.Client.
-
-    Only the Client (external API boundary) is mocked. The google.genai.types
-    data classes are used as-is since they're just data structures, not external
-    services. This lets tests verify actual API request structure.
-    """
-    mock_client = MagicMock()
-
-    # Mock async operation
-    mock_operation = MagicMock()
-    mock_operation.name = "operation/123"
-    mock_operation.done = True
-    mock_operation.error = None
-
-    # Mock response
-    mock_video_asset = MagicMock()
-    mock_video_asset.video = "file-ref"
-
-    mock_response = MagicMock()
-    mock_response.generated_videos = [mock_video_asset]
-    mock_operation.response = mock_response
-
-    # Create an async client that will be yielded by the context manager
-    mock_async_client = MagicMock()
-    mock_async_client.models.generate_videos = AsyncMock(return_value=mock_operation)
-    mock_async_client.operations.get = AsyncMock(return_value=mock_operation)
-    mock_async_client.files.download = AsyncMock(return_value=b"video-content")
-
-    # Setup .aio as an async context manager that yields mock_async_client
-    mock_aio = MagicMock()
-    mock_aio.__aenter__ = AsyncMock(return_value=mock_async_client)
-    mock_aio.__aexit__ = AsyncMock(return_value=None)
-    mock_client.aio = mock_aio
-
-    with patch(
-        "family_assistant.tools.video_generation._create_genai_client",
-        return_value=mock_client,
-    ):
-        yield mock_async_client
+def _attachment(
+    content: bytes | None, mime: str = "image/png", att_id: str = "a1"
+) -> ScriptAttachment:
+    attachment = MagicMock(spec=ScriptAttachment)
+    attachment.get_content_async = AsyncMock(return_value=content)
+    attachment.get_mime_type.return_value = mime
+    attachment.get_id.return_value = att_id
+    return cast("ScriptAttachment", attachment)
 
 
 @pytest.mark.asyncio
-async def test_generate_video_tool_success(
-    mock_exec_context: MagicMock, mock_genai_client: MagicMock
-) -> None:
-    """Test successful video generation."""
-    fake_genai_types = _fake_genai_types()
+async def test_generate_video_returns_attachment_from_backend() -> None:
+    backend = _RecordingBackend()
 
-    with (
-        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
-        patch("asyncio.sleep", AsyncMock()),
-        patch(
-            "family_assistant.tools.video_generation._lazy_import_genai_types",
-            return_value=fake_genai_types,
-        ),
-    ):
-        result = await generate_video_tool(
-            mock_exec_context,
-            prompt="A video of a cat",
-            aspect_ratio="16:9",
-            duration_seconds="8",
-        )
+    result = await generate_video_tool(
+        _exec_context(backend),
+        prompt="A video of a cat",
+        aspect_ratio="9:16",
+        duration_seconds="6",
+    )
 
-        # Verify result
-        assert isinstance(result, ToolResult)
-        assert result.data is not None
-        assert isinstance(result.data, dict)
-        assert result.data["status"] == "success"
-        assert "A video of a cat" in result.data["prompt"]
+    assert isinstance(result, ToolResult)
+    assert result.data == {
+        "status": "success",
+        "model": "fake-model",
+        "prompt": "A video of a cat",
+    }
+    assert result.attachments is not None
+    attachment = result.attachments[0]
+    assert isinstance(attachment, ToolAttachment)
+    assert attachment.content == b"video-bytes"
+    assert attachment.mime_type == "video/mp4"
 
-        # Verify attachment
-        assert result.attachments is not None
-        assert len(result.attachments) == 1
-        attachment = result.attachments[0]
-        assert isinstance(attachment, ToolAttachment)
-        assert attachment.content == b"video-content"
-        assert attachment.mime_type == "video/mp4"
-
-        # Verify client calls
-        mock_genai_client.models.generate_videos.assert_called_once()
-        _, kwargs = mock_genai_client.models.generate_videos.call_args
-
-        # Verify source uses real types
-        assert "source" in kwargs
-        assert isinstance(kwargs["source"], _FakeGenerateVideosSource)
-        assert kwargs["source"].prompt == "A video of a cat"
-
-        # Verify config parameters
-        config = kwargs["config"]
-        assert isinstance(config, _FakeGenerateVideosConfig)
-        assert config.duration_seconds == 8
-
-        mock_genai_client.files.download.assert_called_once_with(file="file-ref")
+    # The tool forwarded its arguments into the request.
+    assert backend.request is not None
+    assert backend.request.prompt == "A video of a cat"
+    assert backend.request.aspect_ratio == "9:16"
+    assert backend.request.duration_seconds == 6
 
 
 @pytest.mark.asyncio
-async def test_generate_video_multimodal(
-    mock_exec_context: MagicMock, mock_genai_client: MagicMock
-) -> None:
-    """Test video generation with reference images and first/last frame."""
-    fake_genai_types = _fake_genai_types()
+async def test_generate_video_builds_reference_and_frame_images() -> None:
+    backend = _RecordingBackend()
+    ref = _attachment(b"ref", "image/png", "ref1")
+    first = _attachment(b"first", "image/jpeg", "first1")
+    last = _attachment(b"last", "image/jpeg", "last1")
 
-    with (
-        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
-        patch("asyncio.sleep", AsyncMock()),
-        patch(
-            "family_assistant.tools.video_generation._lazy_import_genai_types",
-            return_value=fake_genai_types,
-        ),
-    ):
-        # Create mock ScriptAttachment objects
-        ref_img1 = MagicMock(spec=ScriptAttachment)
-        ref_img1.get_content_async = AsyncMock(return_value=b"img1")
-        ref_img1.get_mime_type.return_value = "image/png"
-        ref_img1.get_id.return_value = "ref1"
+    await generate_video_tool(
+        _exec_context(backend),
+        prompt="A multimodal video",
+        images=[ref],
+        first_frame_image=first,
+        last_frame_image=last,
+        negative_prompt="no rain",
+    )
 
-        first_frame = MagicMock(spec=ScriptAttachment)
-        first_frame.get_content_async = AsyncMock(return_value=b"first")
-        first_frame.get_mime_type.return_value = "image/jpeg"
-        first_frame.get_id.return_value = "first1"
-
-        last_frame = MagicMock(spec=ScriptAttachment)
-        last_frame.get_content_async = AsyncMock(return_value=b"last")
-        last_frame.get_mime_type.return_value = "image/jpeg"
-        last_frame.get_id.return_value = "last1"
-
-        result = await generate_video_tool(
-            mock_exec_context,
-            prompt="A multimodal video",
-            images=[ref_img1],
-            first_frame_image=first_frame,
-            last_frame_image=last_frame,
-            duration_seconds="4",  # Should be forced to 8
-        )
-
-        assert isinstance(result, ToolResult)
-        # ast-grep-ignore: no-dict-any - ToolResult.data is flexible
-        result_data: dict[str, Any] = result.data  # type: ignore
-        assert result_data["status"] == "success"
-
-        # Verify client calls
-        mock_genai_client.models.generate_videos.assert_called_once()
-        _, kwargs = mock_genai_client.models.generate_videos.call_args
-
-        source = kwargs["source"]
-        config = kwargs["config"]
-
-        # Verify real types are used
-        assert isinstance(source, _FakeGenerateVideosSource)
-        assert isinstance(config, _FakeGenerateVideosConfig)
-
-        # Check First Frame in Source
-        assert source.image is not None
-        assert isinstance(source.image, _FakeImage)
-        assert source.image.image_bytes == b"first"
-
-        # Check Last Frame in Config
-        assert config.last_frame is not None
-        assert isinstance(config.last_frame, _FakeImage)
-        assert config.last_frame.image_bytes == b"last"
-
-        # Check Reference Images in Config
-        assert config.reference_images is not None
-        assert len(config.reference_images) == 1
-        ref_image = config.reference_images[0]
-        assert isinstance(ref_image, _FakeVideoGenerationReferenceImage)
-        assert ref_image.image is not None
-        assert ref_image.image.image_bytes == b"img1"
-
-        # Check Duration Forced to 8s
-        assert config.duration_seconds == 8
+    request = backend.request
+    assert request is not None
+    assert [img.content for img in request.reference_images] == [b"ref"]
+    assert request.first_frame is not None and request.first_frame.content == b"first"
+    assert request.last_frame is not None and request.last_frame.content == b"last"
+    assert request.first_frame.mime_type == "image/jpeg"
+    assert request.negative_prompt == "no rain"
 
 
 @pytest.mark.asyncio
-async def test_generate_video_invalid_attachments(
-    mock_exec_context: MagicMock, mock_genai_client: MagicMock
-) -> None:
-    """Test video generation with invalid attachments (should skip them)."""
-    fake_genai_types = _fake_genai_types()
+async def test_generate_video_truncates_reference_images_to_three() -> None:
+    backend = _RecordingBackend()
+    images = [_attachment(f"img{i}".encode(), att_id=f"img{i}") for i in range(5)]
 
-    with (
-        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
-        patch("asyncio.sleep", AsyncMock()),
-        patch(
-            "family_assistant.tools.video_generation._lazy_import_genai_types",
-            return_value=fake_genai_types,
-        ),
-    ):
-        # Invalid object passed as attachment
-        invalid_att = MagicMock()  # Not ScriptAttachment spec
+    await generate_video_tool(
+        _exec_context(backend), prompt="too many refs", images=images
+    )
 
-        # Valid attachment but empty content
-        empty_att = MagicMock(spec=ScriptAttachment)
-        empty_att.get_content_async = AsyncMock(return_value=None)
-        empty_att.get_id.return_value = "empty1"
-
-        result = await generate_video_tool(
-            mock_exec_context,
-            prompt="Invalid inputs",
-            images=[invalid_att, empty_att],
-            first_frame_image=empty_att,
-        )
-
-        assert isinstance(result, ToolResult)
-        # ast-grep-ignore: no-dict-any - ToolResult.data is flexible
-        result_data: dict[str, Any] = result.data  # type: ignore
-        assert result_data["status"] == "success"
-
-        _, kwargs = mock_genai_client.models.generate_videos.call_args
-        source = kwargs["source"]
-        config = kwargs["config"]
-
-        # Should be None/Empty because inputs were invalid
-        assert hasattr(source, "image")
-        assert hasattr(config, "reference_images")
-        assert source.image is None
-        assert not config.reference_images
+    assert backend.request is not None
+    assert len(backend.request.reference_images) == 3
 
 
 @pytest.mark.asyncio
-async def test_generate_video_tool_missing_api_key(
-    mock_exec_context: MagicMock,
-) -> None:
-    """Test missing API key."""
-    with patch.dict("os.environ", {}, clear=True):
-        result = await generate_video_tool(mock_exec_context, prompt="A video of a cat")
+async def test_generate_video_skips_invalid_and_empty_attachments() -> None:
+    backend = _RecordingBackend()
+    invalid = cast("ScriptAttachment", MagicMock())  # not a ScriptAttachment
+    empty = _attachment(None, att_id="empty")
 
-        assert isinstance(result, ToolResult)
-        assert result.data is not None
-        assert isinstance(result.data, dict)
-        assert "error" in result.data
-        assert "GEMINI_API_KEY missing" in result.data["error"]
+    await generate_video_tool(
+        _exec_context(backend),
+        prompt="invalid inputs",
+        images=[invalid, empty],
+        first_frame_image=empty,
+    )
 
-
-@pytest.mark.asyncio
-async def test_generate_video_tool_api_error(
-    mock_exec_context: MagicMock, mock_genai_client: MagicMock
-) -> None:
-    """Test API error handling."""
-    with (
-        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
-        patch("asyncio.sleep", AsyncMock()),
-    ):
-        # Setup operation with error
-        mock_operation = MagicMock()
-        mock_operation.done = True
-        mock_operation.error = MagicMock()
-        mock_operation.error.message = "Safety violation"
-        mock_operation.error.code = 400
-
-        mock_genai_client.models.generate_videos.return_value = mock_operation
-        mock_genai_client.operations.get.return_value = mock_operation
-
-        result = await generate_video_tool(mock_exec_context, prompt="Unsafe prompt")
-
-        assert isinstance(result, ToolResult)
-        assert result.data is not None
-        assert isinstance(result.data, dict)
-        assert "error" in result.data
-        assert "Safety violation" in result.data["error"]
+    assert backend.request is not None
+    assert backend.request.reference_images == []
+    assert backend.request.first_frame is None
 
 
 @pytest.mark.asyncio
-async def test_generate_video_tool_polling(
-    mock_exec_context: MagicMock, mock_genai_client: MagicMock
-) -> None:
-    """Test polling mechanism."""
-    with (
-        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
-        patch("asyncio.sleep", AsyncMock()) as mock_sleep,
-    ):
-        # Setup operation states: not done, then done
-        op_pending = MagicMock()
-        op_pending.done = False
-        op_pending.name = "op/pending"
+async def test_generate_video_reports_backend_error() -> None:
+    backend = _RecordingBackend(error=VideoGenerationError("safety filter blocked"))
 
-        op_done = MagicMock()
-        op_done.done = True
-        op_done.name = "op/done"
-        op_done.error = None
-        op_done.response.generated_videos = [MagicMock()]
+    result = await generate_video_tool(_exec_context(backend), prompt="unsafe")
 
-        # Initial call returns pending operation
-        mock_genai_client.models.generate_videos.return_value = op_pending
-        # Polling calls: return pending first time, then done second time
-        mock_genai_client.operations.get.side_effect = [op_pending, op_done]
-        mock_genai_client.files.download.return_value = b"video-content"
-
-        await generate_video_tool(mock_exec_context, prompt="A video of a dog")
-
-        # Verify polling
-        # Called initial + 2 polls
-        assert mock_genai_client.operations.get.call_count == 2
-        # Sleep called twice
-        assert mock_sleep.call_count == 2
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert isinstance(result.data, dict)
+    assert "safety filter blocked" in result.data["error"]
+    assert not result.attachments
 
 
 @pytest.mark.asyncio
-async def test_generate_video_tool_timeout(
-    mock_exec_context: MagicMock, mock_genai_client: MagicMock
-) -> None:
-    """Test timeout during polling."""
-    with (
-        patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
-        patch("asyncio.sleep", AsyncMock()),
-        patch("time.time") as mock_time,
-    ):
-        # Setup operation states: always not done
-        op_pending = MagicMock()
-        op_pending.done = False
-        op_pending.name = "op/pending"
+async def test_generate_video_reports_unexpected_error() -> None:
+    backend = _RecordingBackend(error=RuntimeError("boom"))
 
-        mock_genai_client.models.generate_videos.return_value = op_pending
-        mock_genai_client.operations.get.return_value = op_pending
+    result = await generate_video_tool(_exec_context(backend), prompt="oops")
 
-        # Mock time to advance past timeout
-        # Initial call + loop check
-        # We need start_time, then next check > timeout
-        mock_time.side_effect = [1000.0, 1700.0]  # 700s > 600s
-
-        result = await generate_video_tool(
-            mock_exec_context, prompt="A video of a slow cat"
-        )
-
-        assert isinstance(result, ToolResult)
-        assert result.data is not None
-        assert isinstance(result.data, dict)
-        assert "error" in result.data
-        assert "Timeout" in result.data["error"]
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert isinstance(result.data, dict)
+    assert "boom" in result.data["error"]
