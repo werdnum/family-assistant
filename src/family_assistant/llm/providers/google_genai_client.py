@@ -94,6 +94,13 @@ _SDK_STATUS_CODE_TO_EXCEPTION: dict[int, type[LLMProviderError]] = {
     429: RateLimitError,
 }
 
+_DEEP_RESEARCH_TERMINAL_ERROR_STATUSES = {
+    "failed",
+    "cancelled",
+    "incomplete",
+    "budget_exceeded",
+}
+
 
 def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
     """
@@ -1515,7 +1522,10 @@ class GoogleGenAIClient(BaseLLMClient):
             if previous_interaction_id:
                 create_kwargs["previous_interaction_id"] = previous_interaction_id
 
-            stream = await self.client.aio.interactions.create(**create_kwargs)
+            stream = cast(
+                "AsyncIterator[Any]",
+                await self.client.aio.interactions.create(**create_kwargs),
+            )
 
             interaction_id = None
             last_event_id: str | None = None
@@ -1523,16 +1533,17 @@ class GoogleGenAIClient(BaseLLMClient):
 
             # 3. Process stream
             async for chunk in stream:
+                event_type = getattr(chunk, "event_type", None)
                 # Track event IDs for potential stream reconnection
-                if chunk.event_id:
-                    last_event_id = chunk.event_id
+                if event_id := getattr(chunk, "event_id", None):
+                    last_event_id = event_id
 
                 # Capture Interaction ID
-                if chunk.event_type == "interaction.start":
+                if event_type in {"interaction.created", "interaction.start"}:
                     interaction_id = chunk.interaction.id
                     logger.info(f"Deep Research interaction started: {interaction_id}")
 
-                elif chunk.event_type == "content.delta":
+                elif event_type in {"step.delta", "content.delta"}:
                     if chunk.delta.type == "text":
                         yield LLMStreamEvent(type="content", content=chunk.delta.text)
                         content_yielded = True
@@ -1550,21 +1561,21 @@ class GoogleGenAIClient(BaseLLMClient):
                             "Ignoring Deep Research image delta (visualization not yet wired)"
                         )
 
-                elif chunk.event_type == "interaction.complete":
+                elif event_type in {"interaction.completed", "interaction.complete"}:
                     logger.info("Deep Research interaction complete")
 
-                elif chunk.event_type == "interaction.status_update":
+                elif event_type == "interaction.status_update":
                     status = getattr(chunk, "status", None) or getattr(
                         getattr(chunk, "interaction", None), "status", None
                     )
-                    if status in {"failed", "cancelled"}:
+                    if status in _DEEP_RESEARCH_TERMINAL_ERROR_STATUSES:
                         raise ServiceUnavailableError(
                             f"Deep Research interaction {status}",
                             provider="google",
                             model=self.model_name,
                         )
 
-                elif chunk.event_type == "error":
+                elif event_type == "error":
                     error_obj = chunk.error
                     error_code = getattr(error_obj, "code", None)
                     error_message = getattr(error_obj, "message", None) or str(
