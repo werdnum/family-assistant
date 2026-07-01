@@ -295,8 +295,8 @@ async def test_veo_raises_on_timeout(veo_async_client: MagicMock) -> None:
 
 
 def _video_output(data: bytes) -> SimpleNamespace:
+    """A completed interaction's ``output_video`` block (inline base64 data)."""
     return SimpleNamespace(
-        type="video",
         data=base64.b64encode(data).decode("ascii"),
         uri=None,
         mime_type="video/mp4",
@@ -304,16 +304,16 @@ def _video_output(data: bytes) -> SimpleNamespace:
 
 
 def _omni_interaction(
-    status: str = "completed", outputs: list[SimpleNamespace] | None = None
+    status: str = "completed", output_video: SimpleNamespace | None = None
 ) -> SimpleNamespace:
-    return SimpleNamespace(id="interaction-1", status=status, outputs=outputs or [])
+    return SimpleNamespace(id="interaction-1", status=status, output_video=output_video)
 
 
 @pytest.fixture
 def omni_async_client() -> Generator[MagicMock]:
     async_client = MagicMock()
     async_client.interactions.create = AsyncMock(
-        return_value=_omni_interaction(outputs=[_video_output(b"omni-video")])
+        return_value=_omni_interaction(output_video=_video_output(b"omni-video"))
     )
     async_client.interactions.get = AsyncMock()
     async_client.files.download = AsyncMock(return_value=b"uri-video")
@@ -342,7 +342,24 @@ async def test_omni_returns_inline_video_bytes(omni_async_client: MagicMock) -> 
     _, kwargs = omni_async_client.interactions.create.call_args
     assert kwargs["model"] == "gemini-omni-flash-preview"
     assert kwargs["input"] == "a dancing robot"
-    assert kwargs["response_format"] == {"type": "video", "aspect_ratio": "9:16"}
+    assert kwargs["response_format"] == {
+        "type": "video",
+        "delivery": "inline",
+        "aspect_ratio": "9:16",
+    }
+
+
+@pytest.mark.asyncio
+async def test_omni_passes_duration_to_response_format(
+    omni_async_client: MagicMock,
+) -> None:
+    backend = GeminiOmniVideoBackend("key")
+    await backend.generate_video(
+        VideoGenerationRequest(prompt="a quick clip", duration_seconds=3)
+    )
+
+    _, kwargs = omni_async_client.interactions.create.call_args
+    assert kwargs["response_format"]["duration"] == "3s"
 
 
 @pytest.mark.asyncio
@@ -377,7 +394,7 @@ async def test_omni_polls_until_completed(omni_async_client: MagicMock) -> None:
     )
     omni_async_client.interactions.get.side_effect = [
         _omni_interaction(status="in_progress"),
-        _omni_interaction(outputs=[_video_output(b"polled-video")]),
+        _omni_interaction(output_video=_video_output(b"polled-video")),
     ]
 
     backend = GeminiOmniVideoBackend("key")
@@ -392,10 +409,10 @@ async def test_omni_downloads_uri_when_no_inline_data(
     omni_async_client: MagicMock,
 ) -> None:
     uri_output = SimpleNamespace(
-        type="video", data=None, uri="https://files/video", mime_type="video/mp4"
+        data=None, uri="https://files/video", mime_type="video/mp4"
     )
     omni_async_client.interactions.create.return_value = _omni_interaction(
-        outputs=[uri_output]
+        output_video=uri_output
     )
 
     backend = GeminiOmniVideoBackend("key")
@@ -408,7 +425,7 @@ async def test_omni_downloads_uri_when_no_inline_data(
 @pytest.mark.asyncio
 async def test_omni_raises_when_no_video_output(omni_async_client: MagicMock) -> None:
     omni_async_client.interactions.create.return_value = _omni_interaction(
-        outputs=[SimpleNamespace(type="text", data=None, uri=None)]
+        output_video=None
     )
 
     backend = GeminiOmniVideoBackend("key")

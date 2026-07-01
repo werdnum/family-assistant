@@ -28,6 +28,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    NotRequired,
     Protocol,
     TypedDict,
     cast,
@@ -39,13 +40,19 @@ if TYPE_CHECKING:
 
     from google import genai
     from google.genai import types as genai_types
-    from google.genai._interactions.types import Interaction
+    from google.genai._gaos.types.interactions.interaction import Interaction
     from google.genai.client import AsyncClient
 
 logger = logging.getLogger(__name__)
 
 # Terminal Interactions API statuses (generation finished, success or not).
-_INTERACTION_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+_INTERACTION_TERMINAL_STATUSES = frozenset({
+    "completed",
+    "failed",
+    "cancelled",
+    "incomplete",
+    "budget_exceeded",
+})
 
 
 class _ImageBlock(TypedDict):
@@ -67,10 +74,12 @@ type _ContentBlock = _ImageBlock | _TextBlock
 
 
 class _VideoResponseFormat(TypedDict):
-    """Interactions ``response_format`` requesting video output."""
+    """Interactions ``response_format`` requesting inline video output."""
 
     type: Literal["video"]
+    delivery: Literal["inline"]
     aspect_ratio: str
+    duration: NotRequired[str]
 
 
 @dataclass(frozen=True)
@@ -87,7 +96,7 @@ class VideoGenerationRequest:
 
     Each backend honors the subset of fields its API supports. Veo uses every
     field; Gemini Omni Flash uses ``prompt``, ``reference_images`` and
-    ``first_frame`` (as image inputs) and ``aspect_ratio``.
+    ``first_frame`` (as image inputs), ``aspect_ratio`` and ``duration_seconds``.
     """
 
     prompt: str
@@ -334,14 +343,15 @@ class GeminiOmniVideoBackend:
     ) -> VideoGenerationResult:
         """Generate a video with Gemini Omni Flash via the Interactions API."""
         async with _create_genai_client(self.api_key).aio as client:
-            # response_format requests video output (the Interactions
-            # response_modalities enum only covers text/image/audio). Shape
-            # follows the Omni Flash docs and may evolve while the model is in
-            # preview.
+            # response_format requests inline video output (the Interactions
+            # response_modalities enum only covers text/image/audio).
             response_format: _VideoResponseFormat = {
                 "type": "video",
+                "delivery": "inline",
                 "aspect_ratio": request.aspect_ratio,
             }
+            if request.duration_seconds is not None:
+                response_format["duration"] = f"{request.duration_seconds}s"
 
             self.logger.info(
                 "Starting Omni Flash video generation with model %s and prompt: %s...",
@@ -350,10 +360,14 @@ class GeminiOmniVideoBackend:
             )
             # base64-encoding reference images can be multi-MB; keep it off the loop.
             interaction_input = await asyncio.to_thread(self._build_input, request)
-            interaction = await client.interactions.create(
-                model=self.model,
-                input=cast("Any", interaction_input),
-                response_format=response_format,
+            # Not a streaming request, so create() returns an Interaction.
+            interaction = cast(
+                "Interaction",
+                await client.interactions.create(
+                    model=self.model,
+                    input=cast("Any", interaction_input),
+                    response_format=response_format,
+                ),
             )
 
             interaction = await self._await_completion(client, interaction)
@@ -373,6 +387,9 @@ class GeminiOmniVideoBackend:
         self, client: AsyncClient, interaction: Interaction
     ) -> Interaction:
         """Poll the interaction until it reaches a terminal status."""
+        interaction_id = interaction.id
+        if interaction_id is None:
+            raise VideoGenerationError("Interaction is missing an id; cannot poll.")
         start_time = time.time()
         while interaction.status not in _INTERACTION_TERMINAL_STATUSES:
             if time.time() - start_time > self._TIMEOUT_SECONDS:
@@ -382,21 +399,22 @@ class GeminiOmniVideoBackend:
                 )
             self.logger.debug("Waiting for Omni Flash generation to complete...")
             await asyncio.sleep(self._POLL_INTERVAL_SECONDS)
-            interaction = await client.interactions.get(interaction.id)
+            interaction = cast(
+                "Interaction", await client.interactions.get(interaction_id)
+            )
         return interaction
 
     async def _extract_video_bytes(
         self, client: AsyncClient, interaction: Interaction
     ) -> bytes:
-        """Pull the first video block's bytes from the interaction outputs."""
-        for output in interaction.outputs or []:
-            if getattr(output, "type", None) != "video":
-                continue
-            data = getattr(output, "data", None)
+        """Pull the generated video bytes from the interaction's output_video."""
+        output_video = getattr(interaction, "output_video", None)
+        if output_video is not None:
+            data = getattr(output_video, "data", None)
             if data:
                 # Decoding a multi-MB video off the event loop.
                 return await asyncio.to_thread(base64.b64decode, data)
-            uri = getattr(output, "uri", None)
+            uri = getattr(output_video, "uri", None)
             if uri:
                 self.logger.info("Downloading Omni Flash video from URI...")
                 return await client.files.download(file=cast("Any", uri))

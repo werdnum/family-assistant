@@ -70,7 +70,7 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "string",
                         "enum": ["4", "6", "8"],
                         "default": "8",
-                        "description": "Length of the generated video in seconds. Default is 8. (Veo only.)",
+                        "description": "Length of the generated video in seconds. Default is 8.",
                     },
                     "model": {
                         "type": "string",
