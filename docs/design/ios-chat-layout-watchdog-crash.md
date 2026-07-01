@@ -2,10 +2,9 @@
 
 ## Status
 
-M1–M3 shipped (PR #920, 2026-06-18). M4 (suspend-watchdog recurrence) shipped in
-PR #947. M5 added after a **foreground** recurrence on build 23 traced to
-unbounded per-message markdown layout (see "M5 — Unbounded message layout" below);
-this is the current focus.
+M1–M3 shipped (PR #920, 2026-06-18). M4 (suspend-watchdog recurrence) shipped in PR #947. M5 added
+after a **foreground** recurrence on build 23 traced to unbounded per-message markdown layout (see
+"M5 — Unbounded message layout" below); this is the current focus.
 
 ## Summary
 
@@ -114,110 +113,99 @@ diff before and after.
 
 ### M4 — Suspend-watchdog recurrence (post-M1–M3)
 
-`scratch/FamilyAssistant-2026-06-25-013649.ips` crashed on build 21 (archived
-2026-06-21), which already contains M1–M3 (PR #920, merged 2026-06-18). It is the
-same hang family but a **different watchdog**:
+`scratch/FamilyAssistant-2026-06-25-013649.ips` crashed on build 21 (archived 2026-06-21), which
+already contains M1–M3 (PR #920, merged 2026-06-18). It is the same hang family but a **different
+watchdog**:
 
-- `termination`: FRONTBOARD `0x8BADF00D`, **"Failed to terminate gracefully after
-  5.0s"** — the 5 s `process-exit` (suspend) watchdog, not the 10 s `scene-update`
-  one the M1–M3 reports tripped. `WatchdogVisibility: Background`, `procRole: Non UI`.
+- `termination`: FRONTBOARD `0x8BADF00D`, **"Failed to terminate gracefully after 5.0s"** — the 5 s
+  `process-exit` (suspend) watchdog, not the 10 s `scene-update` one the M1–M3 reports tripped.
+  `WatchdogVisibility: Background`, `procRole: Non UI`.
 - Main thread: `_UIUpdateSequenceRunNext` → `_UIHostingView.beginTransaction` →
   `GraphHost.flushTransactions` → `LazyLayoutViewCache.updateItemPhases` /
-  `supportsViewHierarchyPrefetching` — a LazyVStack item-phase/prefetch render
-  transaction running at the moment iOS tries to suspend the app.
+  `supportsViewHierarchyPrefetching` — a LazyVStack item-phase/prefetch render transaction running
+  at the moment iOS tries to suspend the app.
 
 Root cause of the recurrence: M1 gates the whole list behind
 `if scenePhase == .active { messageScrollArea } else { Color.clear }`, so every
-`.active → .background` transition **unmounts the entire `LazyVStack`**, forcing a
-teardown transaction (`updateItemPhases` over all realized items) exactly when the
-OS wants the app quiescent. M1 fixed the offscreen-*launch* path but introduced a
-teardown-at-suspend path.
+`.active → .background` transition **unmounts the entire `LazyVStack`**, forcing a teardown
+transaction (`updateItemPhases` over all realized items) exactly when the OS wants the app
+quiescent. M1 fixed the offscreen-*launch* path but introduced a teardown-at-suspend path.
 
 Fix:
 
-- **Keep the thread mounted once it has been active.** `ChatThreadView` latches
-  `hasMountedThread` true on the first `.active` phase and gates on
-  `ChatViewModel.shouldRenderThread(isActive:hasMountedBefore:)`
-  (`isActive || hasMountedBefore`). An offscreen launch (never active) still keeps
-  the list out of the tree — preserving M1 — but a later backgrounding no longer
-  tears it down, so no transaction is kicked at suspend.
-- **Don't drive layout while inactive.** The scroll-to-latest `withAnimation` in
-  `messageScrollArea` is guarded on `scenePhase == .active`, so a message landing
-  during a background transition can't kick an animated layout transaction at
-  suspend. On the next foregrounding `onAppear` lands at the bottom unanimated.
+- **Keep the thread mounted once it has been active.** `ChatThreadView` latches `hasMountedThread`
+  true on the first `.active` phase and gates on
+  `ChatViewModel.shouldRenderThread(isActive:hasMountedBefore:)` (`isActive || hasMountedBefore`).
+  An offscreen launch (never active) still keeps the list out of the tree — preserving M1 — but a
+  later backgrounding no longer tears it down, so no transaction is kicked at suspend.
+- **Don't drive layout while inactive.** The scroll-to-latest `withAnimation` in `messageScrollArea`
+  is guarded on `scenePhase == .active`, so a message landing during a background transition can't
+  kick an animated layout transaction at suspend. On the next foregrounding `onAppear` lands at the
+  bottom unanimated.
 
 Decision is unit-tested (`testShouldRenderThreadKeepsListMountedOnceActive`).
 
 ### M5 — Unbounded message layout (foreground recurrence, build 23)
 
-`scratch/FamilyAssistant-2026-06-27-192549.ips` crashed on build 23 (which already
-contains M1–M4): the **10s scene-update watchdog**, ~10.1s of app CPU burned on the
-main thread. Reported trigger: *sending a follow-up after a turn that used tools*,
-preceded by a foreground freeze. The faulting stack is the chat ScrollView sizing
-its content — `ScrollViewLayoutComputer.sizeThatFits` → `StackLayout`
-(`sizeChildrenIdeally` / `prioritize`) → `StyledTextLayoutEngine.sizeThatFits`.
+`scratch/FamilyAssistant-2026-06-27-192549.ips` crashed on build 23 (which already contains M1–M4):
+the **10s scene-update watchdog**, ~10.1s of app CPU burned on the main thread. Reported trigger:
+*sending a follow-up after a turn that used tools*, preceded by a foreground freeze. The faulting
+stack is the chat ScrollView sizing its content — `ScrollViewLayoutComputer.sizeThatFits` →
+`StackLayout` (`sizeChildrenIdeally` / `prioritize`) → `StyledTextLayoutEngine.sizeThatFits`.
 
-**Corrected diagnosis (an end-to-end UI test, not a theory).** The first
-hypothesis — that the completed turn's *collapsed* `ToolGroupView` was being laid
-out — was **disproved** by the repro test: a collapsed `DisclosureGroup` with a
-huge result rendered instantly, because SwiftUI does not lay out collapsed
-content. The real cause is an **unbounded always-visible markdown bubble**:
-`NativeMarkdownView` built a `VStack` over *every* parsed block, so a long
-assistant answer (or an expanded tool result) became thousands of nested-stack
-`Text` nodes that the ScrollView must size in one main-thread pass. "After a tool
-turn" is incidental — tool turns just tend to produce long answers/results.
+**Corrected diagnosis (an end-to-end UI test, not a theory).** The first hypothesis — that the
+completed turn's *collapsed* `ToolGroupView` was being laid out — was **disproved** by the repro
+test: a collapsed `DisclosureGroup` with a huge result rendered instantly, because SwiftUI does not
+lay out collapsed content. The real cause is an **unbounded always-visible markdown bubble**:
+`NativeMarkdownView` built a `VStack` over *every* parsed block, so a long assistant answer (or an
+expanded tool result) became thousands of nested-stack `Text` nodes that the ScrollView must size in
+one main-thread pass. "After a tool turn" is incidental — tool turns just tend to produce long
+answers/results.
 
-A "large message" is not only *many blocks*. It can be one block with thousands
-of children (a huge list or **wide/tall table**) or one enormous `Text` (a giant
-code block or an unbroken string). A fuzz harness (below) found the wide-table
-case after an initial block-count-only cap missed it.
+A "large message" is not only *many blocks*. It can be one block with thousands of children (a huge
+list or **wide/tall table**) or one enormous `Text` (a giant code block or an unbroken string). A
+fuzz harness (below) found the wide-table case after an initial block-count-only cap missed it.
 
 **Fix.** All rendering goes through one bounded choke point,
 `MarkdownRenderBudget.renderPlan(for:pages:)`, which bounds every cost dimension:
 
 - **Parse size** — only a `charsPerPage` (16 KB) prefix is parsed per page.
-- **Structure** — a `leafBudget` (150) cap on total realized leaves (paragraphs,
-  list items, table rows); high-fan-out blocks are truncated to fit, and **tables
-  cap both rows and columns** (cells), since a wide table's `Grid` is super-linear.
-- **Single `Text`** — any one string is clamped to `textCharCap` (2000), marked
-  inline with an ellipsis (never silent).
+- **Structure** — a `leafBudget` (150) cap on total realized leaves (paragraphs, list items, table
+  rows); high-fan-out blocks are truncated to fit, and **tables cap both rows and columns** (cells),
+  since a wide table's `Grid` is super-linear.
+- **Single `Text`** — any one string is clamped to `textCharCap` (2000), marked inline with an
+  ellipsis (never silent).
 
 Content beyond the budget is revealed on demand via a "Show more" control
-(`accessibilityIdentifier("markdown-show-more")`) that grants another page — the
-per-message analogue of the thread-level "Load earlier messages" windowing (M3).
+(`accessibilityIdentifier("markdown-show-more")`) that grants another page — the per-message
+analogue of the thread-level "Load earlier messages" windowing (M3).
 
-**Second cause: animated scroll-to-bottom.** The end-to-end repro still wedged on
-*send* even after the bubble was bounded. A `sample` of the wedged main thread
-showed the cost was not in markdown rendering (parse/bound were cold) but in
-SwiftUI repeatedly re-applying and re-placing the `LazyVStack`
-(`LazySubviewPlacements.placeSubviews`, `ForEachState.applyNodes`, `StackLayout`)
-— i.e. the `withAnimation` scroll-to-bottom past a tall bubble re-places the lazy
-rows every animation frame without settling. Opening the same thread (which
-scrolls *without* animation) never wedged. Fix: `messageScrollArea` now scrolls
-to the newest message **without** animation. This was invisible to the unit-level
-budget harness because it has no `ScrollViewReader.scrollTo`; only the end-to-end
+**Second cause: animated scroll-to-bottom.** The end-to-end repro still wedged on *send* even after
+the bubble was bounded. A `sample` of the wedged main thread showed the cost was not in markdown
+rendering (parse/bound were cold) but in SwiftUI repeatedly re-applying and re-placing the
+`LazyVStack` (`LazySubviewPlacements.placeSubviews`, `ForEachState.applyNodes`, `StackLayout`) —
+i.e. the `withAnimation` scroll-to-bottom past a tall bubble re-places the lazy rows every animation
+frame without settling. Opening the same thread (which scrolls *without* animation) never wedged.
+Fix: `messageScrollArea` now scrolls to the newest message **without** animation. This was invisible
+to the unit-level budget harness because it has no `ScrollViewReader.scrollTo`; only the end-to-end
 UI test exercised it — which is why both layers exist.
 
-**Coverage (this is the durable part).** The watchdog is a *class* of bug — any
-unbounded layout subtree — so the regression guard enforces the invariant, not the
-one shape:
+**Coverage (this is the durable part).** The watchdog is a *class* of bug — any unbounded layout
+subtree — so the regression guard enforces the invariant, not the one shape:
 
-- `ChatLayoutBudgetTests.testRenderPlanStaysBoundedForEveryShape` — a fast,
-  pure-function guard (no view hosting, cannot wedge) asserting the *plan* the view
-  will display has a bounded leaf count and no oversized `Text`, across an
-  adversarial matrix **and a seeded fuzzer**. This catches an unbounded shape in
-  milliseconds rather than wedging a layout pass for tens of minutes.
+- `ChatLayoutBudgetTests.testRenderPlanStaysBoundedForEveryShape` — a fast, pure-function guard (no
+  view hosting, cannot wedge) asserting the *plan* the view will display has a bounded leaf count
+  and no oversized `Text`, across an adversarial matrix **and a seeded fuzzer**. This catches an
+  unbounded shape in milliseconds rather than wedging a layout pass for tens of minutes.
 - `ChatLayoutBudgetTests.testSingleMessageLayoutStaysBoundedAcrossShapes` /
-  `testFuzzedMessagesStayUnderBudget` — the symptom-level anchors: they host the
-  real `ScrollView`/`LazyVStack`/`MessageBubble` path (`ChatMessageListLayoutProbe`)
-  and assert each message lays out within a wall-clock budget (1.5s) well under the
-  10s watchdog. Shape sizes are tuned so a future cap regression fails *slow*
-  (seconds) rather than wedging the suite, since a synchronous main-thread layout
-  cannot be interrupted.
-- `FamilyAssistantUITests.testFollowUpAfterToolTurnStaysResponsive` — the
-  end-to-end repro: seeds a tool turn with a very large answer (`web_conv_tool_heavy`),
-  sends a follow-up, and asserts the app stays responsive (the original failing
-  case).
+  `testFuzzedMessagesStayUnderBudget` — the symptom-level anchors: they host the real
+  `ScrollView`/`LazyVStack`/`MessageBubble` path (`ChatMessageListLayoutProbe`) and assert each
+  message lays out within a wall-clock budget (1.5s) well under the 10s watchdog. Shape sizes are
+  tuned so a future cap regression fails *slow* (seconds) rather than wedging the suite, since a
+  synchronous main-thread layout cannot be interrupted.
+- `FamilyAssistantUITests.testFollowUpAfterToolTurnStaysResponsive` — the end-to-end repro: seeds a
+  tool turn with a very large answer (`web_conv_tool_heavy`), sends a follow-up, and asserts the app
+  stays responsive (the original failing case).
 
 ## Verification
 
