@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 if TYPE_CHECKING:
+    from google.genai.client import DebugConfig
+
     from family_assistant.config_models import OpenAIImageRequestConfig
 
 # Optional imports for production use
@@ -362,8 +364,17 @@ class GeminiImageBackend:
 
     DEFAULT_MODEL = "gemini-3-pro-image-preview"
 
-    def __init__(self, api_key: str, model: str | None = None) -> None:
-        """Initialize the Gemini backend with API key and optional model override."""
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None = None,
+        debug_config: DebugConfig | None = None,
+    ) -> None:
+        """Initialize the Gemini backend with API key and optional model override.
+
+        ``debug_config`` enables the SDK's record/replay mode for integration
+        tests (see tests/integration/test_gemini_image_generation.py).
+        """
         if not GENAI_AVAILABLE:
             raise ImportError(
                 "google-genai library required for Gemini image generation"
@@ -371,7 +382,7 @@ class GeminiImageBackend:
 
         self.api_key = api_key
         self.model = model or self.DEFAULT_MODEL
-        self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(api_key=api_key, debug_config=debug_config)
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
