@@ -40,11 +40,14 @@ struct SystemMicrophonePermission: VoiceMicrophonePermission {
 
 enum VoiceAudioError: LocalizedError {
     case converterUnavailable
+    case simulatorLiveInputDisabled
 
     var errorDescription: String? {
         switch self {
         case .converterUnavailable:
             "Could not initialize audio conversion."
+        case .simulatorLiveInputDisabled:
+            "Live microphone input is disabled in the iOS Simulator. Set FA_ALLOW_SIMULATOR_MIC=1 to try the simulator microphone."
         }
     }
 }
@@ -93,6 +96,11 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     func start() async throws {
         guard !isRunning else { return }
+        #if targetEnvironment(simulator)
+            guard ProcessInfo.processInfo.environment["FA_ALLOW_SIMULATOR_MIC"] == "1" else {
+                throw VoiceAudioError.simulatorLiveInputDisabled
+            }
+        #endif
         try configureSession()
 
         do {
