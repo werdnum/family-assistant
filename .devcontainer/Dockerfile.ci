@@ -1,7 +1,7 @@
 # Multi-stage build for the CI container.
 # Stage 1: Base image setup (from the old Dockerfile.base)
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:26.04 AS base
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive

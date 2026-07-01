@@ -5,7 +5,7 @@
 FROM golang:1.24 AS gh-token-builder
 RUN go install github.com/Link-/gh-token@latest
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:26.04 AS base
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
