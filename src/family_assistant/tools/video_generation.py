@@ -127,7 +127,7 @@ def _resolve_app_config(exec_context: ToolExecutionContext) -> AppConfig | None:
 
 
 def _is_veo_model(model: str | None) -> bool:
-    return bool(model) and model.lower().startswith("veo")  # type: ignore[union-attr]
+    return model is not None and model.lower().startswith("veo")
 
 
 def _create_video_backend(
