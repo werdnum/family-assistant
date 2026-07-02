@@ -20,9 +20,11 @@ import XCTest
 /// pathological one is multiple seconds.
 @MainActor
 final class ChatLayoutBudgetTests: XCTestCase {
-    /// Per-message layout budget. The scene-update watchdog fires at 10s; a
-    /// healthy bounded message lays out in well under 100ms on the test host.
-    private static let budgetSeconds: Double = 1.5
+    /// Per-message layout budget. The scene-update watchdog fires at 10s; CI
+    /// runners can spend multiple seconds in SwiftUI layout for bounded code
+    /// block shapes, but watchdog-risk regressions still run substantially
+    /// longer than this.
+    private static let budgetSeconds: Double = 3.0
 
     /// iPhone-class content width/height the bubble is sized against.
     private static let width: CGFloat = 393

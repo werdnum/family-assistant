@@ -125,7 +125,7 @@ final class NotificationManagerTests: XCTestCase {
 
         manager.handleAPNsRegistration(deviceToken: Data([0xde, 0xad, 0xbe, 0xef]))
         await fulfillment(of: [requestCompleted], timeout: 2.0)
-        await Task.yield()
+        try await waitUntil { manager.registrationState == .registered }
 
         XCTAssertEqual(NotificationBackendURLProtocol.requests.count, 1)
         XCTAssertEqual(UserDefaults.standard.string(forKey: "fa_apns_device_token"), "deadbeef")
@@ -154,7 +154,7 @@ final class NotificationManagerTests: XCTestCase {
 
         manager.handleAPNsRegistration(deviceToken: Data([0xca, 0xfe]))
         await fulfillment(of: [requestCompleted], timeout: 2.0)
-        await Task.yield()
+        try await waitUntil { manager.registrationState == .failed }
 
         XCTAssertEqual(manager.registrationState, .failed)
         XCTAssertTrue(manager.errorMessage?.contains("503") == true)
@@ -331,6 +331,20 @@ final class NotificationManagerTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "fa_notifications_enabled")
         UserDefaults.standard.removeObject(forKey: "fa_apns_device_token")
         UserDefaults.standard.removeObject(forKey: "fa_installation_id")
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        _ condition: @MainActor () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() > deadline {
+                XCTFail("Condition not met before timeout.")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private static func jsonObject(from request: URLRequest) throws -> Any {
