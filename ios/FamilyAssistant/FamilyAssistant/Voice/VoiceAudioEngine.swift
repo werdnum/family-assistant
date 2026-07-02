@@ -304,8 +304,16 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
 
     init(prompt: String = ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_LIVE_AUDIO_PROMPT"] ?? "Say the word banana.") {
         let script = ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_LIVE_AUDIO_SCRIPT"]
-        let prompts = script?.components(separatedBy: "||").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        self.prompts = prompts?.filter { !$0.isEmpty } ?? [prompt]
+        prompts = Self.prompts(fromScript: script, fallback: prompt)
+    }
+
+    static func prompts(fromScript script: String?, fallback prompt: String) -> [String] {
+        guard let script else { return [prompt] }
+        let scriptedPrompts = script
+            .components(separatedBy: "||")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return scriptedPrompts.isEmpty ? [prompt] : scriptedPrompts
     }
 
     func start() async throws {
@@ -314,10 +322,17 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
             guard let self else { return }
             await self.waitForCaptureSink()
             for (index, prompt) in self.prompts.enumerated() {
+                guard !Task.isCancelled else { return }
                 await self.emitSpeechPrompt(prompt)
+                guard !Task.isCancelled else { return }
                 await self.emitSilence(duration: .seconds(5))
+                guard !Task.isCancelled else { return }
                 if index < self.prompts.count - 1 {
-                    try? await Task.sleep(for: .seconds(8))
+                    do {
+                        try await Task.sleep(for: .seconds(8))
+                    } catch {
+                        return
+                    }
                 }
             }
         }
@@ -325,6 +340,8 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
 
     func stop() {
         captureTask?.cancel()
+        synthesizer?.stopSpeaking(at: .immediate)
+        synthesizer = nil
         captureTask = nil
     }
 
@@ -356,6 +373,12 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
 
             synthesizer.write(utterance) { [weak self] buffer in
                 guard let self else { return }
+                guard self.synthesizer === synthesizer else {
+                    guard !didResume else { return }
+                    didResume = true
+                    continuation.resume()
+                    return
+                }
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else { return }
                 guard pcmBuffer.frameLength > 0 else {
                     guard !didResume else { return }
