@@ -1,4 +1,4 @@
-import { useAuiState } from '@assistant-ui/react';
+import { useMessage } from '@assistant-ui/react';
 import { ChevronDownIcon } from 'lucide-react';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -23,41 +23,78 @@ interface ToolGroupState {
   hasUnfinishedTool: boolean;
 }
 
+interface MessagePartLike {
+  type: string;
+  toolName?: string;
+  toolCallId?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  artifact?: unknown;
+  attachments?: unknown[];
+  status?: {
+    type?: string;
+  };
+}
+
 const DEFAULT_TOOL_GROUP_STATE: ToolGroupState = {
   toolNames: [],
   toolCallIds: [],
   hasUnfinishedTool: false,
 };
 
-// Hook to safely access message state with fallback
-function useSafeToolGroupState(startIndex: number, endIndex: number): ToolGroupState {
-  try {
-    const serializedState = useAuiState((s) => {
-      const parts = s.message.parts;
-      const toolNames: string[] = [];
-      const toolCallIds: string[] = [];
-      let hasUnfinishedTool = false;
+function isTerminalToolPart(part: MessagePartLike): boolean {
+  return (
+    part.status?.type === 'complete' ||
+    part.result !== undefined ||
+    part.artifact !== undefined ||
+    part.attachments !== undefined ||
+    (part.toolName === 'attach_to_response' && Array.isArray(part.args?.attachment_ids))
+  );
+}
 
-      for (let i = startIndex; i <= endIndex && i < parts.length; i++) {
-        const part = parts[i];
-        if (part.type === 'tool-call') {
-          toolNames.push(part.toolName);
-          toolCallIds.push(part.toolCallId);
+function getToolGroupState(
+  parts: readonly MessagePartLike[],
+  startIndex: number,
+  endIndex: number
+): ToolGroupState {
+  const toolNames: string[] = [];
+  const toolCallIds: string[] = [];
+  let hasUnfinishedTool = false;
 
-          if (part.status.type !== 'complete') {
-            hasUnfinishedTool = true;
-          }
-        }
+  for (let i = startIndex; i <= endIndex && i < parts.length; i++) {
+    const part = parts[i];
+    if (part.type === 'tool-call') {
+      if (part.toolName) {
+        toolNames.push(part.toolName);
+      }
+      if (part.toolCallId) {
+        toolCallIds.push(part.toolCallId);
       }
 
-      return JSON.stringify({ toolNames, toolCallIds, hasUnfinishedTool });
-    });
-
-    return useMemo(() => JSON.parse(serializedState) as ToolGroupState, [serializedState]);
-  } catch {
-    // Fallback when message context is not available (e.g., in tests)
-    return DEFAULT_TOOL_GROUP_STATE;
+      if (!isTerminalToolPart(part)) {
+        hasUnfinishedTool = true;
+      }
+    }
   }
+
+  return { toolNames, toolCallIds, hasUnfinishedTool };
+}
+
+// Hook to safely access message state with fallback
+function useSafeToolGroupState(startIndex: number, endIndex: number): ToolGroupState {
+  const serializedState = useMessage<string>({
+    optional: true,
+    selector: (message) =>
+      JSON.stringify(
+        getToolGroupState(message.content as readonly MessagePartLike[], startIndex, endIndex)
+      ),
+  });
+
+  return useMemo(
+    () =>
+      serializedState ? (JSON.parse(serializedState) as ToolGroupState) : DEFAULT_TOOL_GROUP_STATE,
+    [serializedState]
+  );
 }
 
 const ToolGroup: React.FC<ToolGroupProps> = ({ startIndex, endIndex, children }) => {
