@@ -144,3 +144,28 @@ so those merchants are reachable:
 - **Coverage:** `rest.openapi.json` is vendored into `tests/data/ucp/2026-04-08/`, and the contract
   test (`tests/unit/tools/test_shopping_ucp_contract.py`) validates the REST request bodies and
   verb/path against it the same way it validates the MCP `tools/call` bodies.
+
+## Follow-up: capability-only checkout merchants with no `services` block (done)
+
+Modern UCP (2026-04-08) checkout-only merchants publish a profile that advertises only
+`capabilities` (e.g. `dev.ucp.shopping.checkout`) and omit the `services` block entirely, often
+serving the profile under a path prefix (e.g. `https://host/ucommerce/.well-known/ucp`). Because
+there was no binding to parse, `_shopping_endpoints` returned nothing, `supports_shopping` was
+`False`, and the client fell through to the (non-existent) Shopify `/api/ucp/mcp` fallback.
+
+- **Parent-base fallback.** `discover_merchant_ucp_profile` now derives the API parent directory
+  from the _final fetched_ profile URL (`_api_parent_base`: the path ahead of `/.well-known/`, so
+  `.../ucommerce/.well-known/ucp` → `.../ucommerce`; a root-hosted profile yields the bare origin).
+  When the parsed profile has no MCP/REST bindings but advertises `dev.ucp.shopping.checkout`,
+  `_parse_merchant_profile` registers that parent base as the sole `rest_endpoints` entry. The path
+  prefix reflects any trusted redirect discovery followed (the root well-known typically redirects,
+  same-origin, to the subpath one), and the synthesized endpoint is same-origin as the merchant so
+  it still passes the `usable_shopping_endpoint` trust gate.
+- **Subpath-preserving REST routing.** `_rest_route` appends each route template to the base by
+  trimming the base's trailing slash and concatenating (not `urljoin`), so a base carrying its own
+  path prefix (`https://host/ucommerce`) keeps it — `POST /checkout-sessions` becomes
+  `https://host/ucommerce/checkout-sessions`, not `https://host/checkout-sessions`.
+- **Coverage:** unit tests in `test_ucp_service.py` cover the parent-base fallback (subpath and
+  root-hosted), the checkout-capability gate, and precedence of an explicit binding; the contract
+  test adds an end-to-end case resolving a services-less checkout-only merchant to a signed
+  `create_checkout` at the subpath-preserved URL.

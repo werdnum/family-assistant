@@ -561,6 +561,21 @@ def _rest_profile(*, checkout_only: bool = False) -> httpx.Response:
     )
 
 
+def _checkout_only_no_services_profile() -> httpx.Response:
+    # A modern checkout-only merchant (UCP 2026-04-08) advertises only the
+    # checkout capability and omits the `services` block entirely — no explicit
+    # endpoint binding at all.
+    return httpx.Response(
+        200,
+        json={
+            "ucp": {
+                "version": "2026-04-08",
+                "capabilities": {"dev.ucp.shopping.checkout": [{}]},
+            }
+        },
+    )
+
+
 def _rest_cart_response(
     *, line_items: list[dict[str, object]] | None = None
 ) -> httpx.Response:
@@ -795,6 +810,45 @@ async def test_rest_checkout_only_create_checkout_request_conforms_to_spec(
         _CapturingClient.requests[0],
         expected_url="https://shop.example.com/ucp/v1/checkout-sessions",
     )
+
+
+async def test_rest_checkout_only_no_services_resolves_signed_checkout(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # A REST merchant advertising the checkout capability but no `services` block,
+    # served under a /ucommerce subpath, must resolve end-to-end to a signed
+    # create_checkout at the subpath-preserved URL — not fail into the Shopify
+    # fallback. The root well-known redirects (same-origin) to the subpath one
+    # that carries the profile, so the resolved endpoint is the /ucommerce parent.
+    _reset_client(
+        monkeypatch,
+        post_responses=[_rest_checkout_response()],
+        profile_responses=[
+            httpx.Response(
+                301,
+                headers={
+                    "Location": "https://shop.example.com/ucommerce/.well-known/ucp"
+                },
+            ),
+            _checkout_only_no_services_profile(),
+        ],
+    )
+
+    result = await shopping.ucp_add_to_cart_tool(
+        _context(_signed_config()),
+        business_url="https://shop.example.com/products/drill",
+        line_items=[{"variant_id": "gid://shopify/ProductVariant/1", "quantity": 2}],
+    )
+
+    create = _CapturingClient.requests[0]
+    _assert_rest_conforms(
+        "create_checkout",
+        create,
+        expected_url="https://shop.example.com/ucommerce/checkout-sessions",
+    )
+    # Checkout must be signed: the RFC 9421 Signature header rides on the request.
+    assert _header(create, "Signature") is not None
+    assert "Checkout link:" in result.get_text()
 
 
 async def test_rest_cart_handoff_create_checkout_request_conforms_to_spec(
