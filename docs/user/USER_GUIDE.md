@@ -214,8 +214,10 @@ You can ask the assistant a wide variety of things:
   these the assistant opens a checkout session directly from the selected items instead of building
   a cart first. Newer checkout-only merchants publish only their capabilities and omit the endpoint
   list; the assistant then talks to the commerce API that hosts the profile — including merchants
-  that serve UCP under a path prefix rather than at the site root — so these resolve without special
-  configuration. The server also publishes its own public UCP platform profile at
+  that serve UCP under a path prefix (its `/.well-known/ucp` is probed at that subpath, not only at
+  the site root) — so these resolve without special configuration. If a site publishes no UCP
+  profile the assistant says so plainly and stops, rather than guessing an endpoint and reporting a
+  confusing error. The server also publishes its own public UCP platform profile at
   `/.well-known/ucp`. Checkout handoff requires signed UCP requests; configure `UCP_SIGNING_KEY_ID`
   and either `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an EC P-256 or P-384
   private key. The assistant does not complete checkout or collect payment credentials in chat.

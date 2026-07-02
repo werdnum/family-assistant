@@ -181,7 +181,7 @@ async def test_discover_merchant_ucp_profile_returns_advertised_endpoint() -> No
 
     async with _client_returning(handler) as client:
         profile = await discover_merchant_ucp_profile(
-            "https://shop.example.com/products/sweater", client=client
+            "https://shop.example.com", client=client
         )
 
     assert requested == ["https://shop.example.com/.well-known/ucp"]
@@ -191,6 +191,29 @@ async def test_discover_merchant_ucp_profile_returns_advertised_endpoint() -> No
     assert profile.supports_shopping is True
     assert "dev.ucp.shopping.cart" in profile.capability_names
     assert profile.version == "2026-04-08"
+
+
+async def test_discover_merchant_ucp_profile_probes_input_subpath() -> None:
+    # A merchant that serves UCP under a path prefix is probed at that subpath's
+    # well-known, not the bare origin, so the profile is actually found. The
+    # input's trailing path segments are preserved verbatim.
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json=_merchant_profile_payload(endpoint="/api"))
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://apis.example.com/ucommerce", client=client
+        )
+
+    assert requested == ["https://apis.example.com/ucommerce/.well-known/ucp"]
+    assert profile is not None
+    # Trust stays anchored to the origin; the endpoint_base is the parent dir of
+    # the fetched profile, so a root-relative endpoint resolves against the host.
+    assert profile.origin == "https://apis.example.com"
+    assert profile.mcp_endpoint == "https://apis.example.com/api"
 
 
 async def test_discover_merchant_ucp_profile_follows_redirect() -> None:
@@ -207,7 +230,7 @@ async def test_discover_merchant_ucp_profile_follows_redirect() -> None:
 
     async with _client_returning(handler) as client:
         profile = await discover_merchant_ucp_profile(
-            "https://shop.example.com/products/sweater", client=client
+            "https://shop.example.com", client=client
         )
 
     # The 301 is followed to the canonical config URL instead of being treated
@@ -856,16 +879,22 @@ def _subpath_redirect_handler(
 
 
 async def test_discovery_checkout_only_profile_falls_back_to_parent_base() -> None:
-    # With no `services` binding, the REST endpoint must fall back to the API
-    # parent directory that hosts the well-known profile (the /ucommerce prefix
-    # from the final fetched URL, not the bare origin).
-    async with _client_returning(
-        _subpath_redirect_handler(_checkout_only_no_services_payload())
-    ) as client:
+    # A merchant serving UCP under a /ucommerce subpath, with no `services`
+    # binding, is probed at that subpath directly and the REST endpoint falls back
+    # to the parent directory that hosts the well-known profile (the /ucommerce
+    # prefix, not the bare origin).
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(200, json=_checkout_only_no_services_payload())
+
+    async with _client_returning(handler) as client:
         profile = await discover_merchant_ucp_profile(
-            "https://apis.example.com/products/drill", client=client
+            "https://apis.example.com/ucommerce", client=client
         )
 
+    assert requested == ["https://apis.example.com/ucommerce/.well-known/ucp"]
     assert profile is not None
     assert profile.origin == "https://apis.example.com"
     assert profile.mcp_endpoints == ()
@@ -876,6 +905,21 @@ async def test_discovery_checkout_only_profile_falls_back_to_parent_base() -> No
     assert usable is not None
     assert usable.transport == "rest"
     assert usable.endpoint == "https://apis.example.com/ucommerce"
+
+
+async def test_discovery_checkout_only_parent_base_via_subpath_redirect() -> None:
+    # The same checkout-only fallback also works when the root well-known
+    # redirects (same-origin) to the subpath one — endpoint_base tracks the final
+    # fetched URL's parent directory, not the original probe.
+    async with _client_returning(
+        _subpath_redirect_handler(_checkout_only_no_services_payload())
+    ) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://apis.example.com", client=client
+        )
+
+    assert profile is not None
+    assert profile.rest_endpoints == ("https://apis.example.com/ucommerce",)
 
 
 async def test_discovery_checkout_only_parent_base_from_root_hosted_profile() -> None:
@@ -934,6 +978,97 @@ async def test_discovery_prefers_explicit_binding_over_parent_fallback() -> None
 
     assert profile is not None
     assert profile.rest_endpoints == ("https://apis.example.com/ucommerce/v2",)
+
+
+async def test_discovery_falls_back_to_root_well_known_for_product_url() -> None:
+    # An ordinary product URL is probed at its own path first; when that 404s,
+    # discovery falls back to the origin well-known, so a merchant that publishes
+    # only the root profile is still found (there is no Shopify path fallback to
+    # lean on).
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(200, json=_merchant_profile_payload())
+        return httpx.Response(404)
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com/products/sweater", client=client
+        )
+
+    assert requested == [
+        "https://shop.example.com/products/sweater/.well-known/ucp",
+        "https://shop.example.com/products/sweater/.well-known/ucp.json",
+        "https://shop.example.com/.well-known/ucp",
+    ]
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
+async def test_discovery_ignores_non_ucp_subpath_body_and_tries_root() -> None:
+    # A site that answers unknown paths with a 200 HTML catch-all (SPA routing)
+    # must not short-circuit discovery: a non-UCP body from the subpath probe is a
+    # miss, so discovery continues to the root well-known instead of reporting the
+    # merchant unsupported.
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(200, json=_merchant_profile_payload())
+        return httpx.Response(200, text="<!doctype html><html>catch-all</html>")
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com/products/sweater", client=client
+        )
+
+    # The 200 HTML subpath probe is treated as a miss (no .json retry — it wasn't
+    # a 404), and discovery falls straight through to the root well-known.
+    assert requested == [
+        "https://shop.example.com/products/sweater/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp",
+    ]
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
+async def test_discovery_resolves_directory_relative_binding_under_subpath() -> None:
+    # A subpath-hosted profile advertising a directory-relative endpoint resolves
+    # under that subpath, not at the origin root (the trailing slash is kept).
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_merchant_profile_payload(endpoint="ucp/rpc"))
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://apis.example.com/ucommerce", client=client
+        )
+
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://apis.example.com/ucommerce/ucp/rpc"
+
+
+async def test_discovery_no_checkout_fallback_from_non_well_known_profile() -> None:
+    # A capability-only checkout profile served from a non-well-known URL (via a
+    # trusted redirect to /ucp-config) yields no /.well-known/ parent, so no REST
+    # endpoint is synthesized — nothing is guessed, and the caller fails fast.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(
+                301, headers={"Location": "https://shop.example.com/ucp-config"}
+            )
+        return httpx.Response(200, json=_checkout_only_no_services_payload())
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert profile is not None
+    assert profile.rest_endpoints == ()
+    assert profile.supports_shopping is False
 
 
 async def test_discover_merchant_ucp_profile_returns_none_on_http_error() -> None:

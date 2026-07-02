@@ -153,14 +153,13 @@ serving the profile under a path prefix (e.g. `https://host/ucommerce/.well-know
 there was no binding to parse, `_shopping_endpoints` returned nothing, `supports_shopping` was
 `False`, and the client fell through to the (non-existent) Shopify `/api/ucp/mcp` fallback.
 
-- **Parent-base fallback.** `discover_merchant_ucp_profile` now derives the API parent directory
-  from the _final fetched_ profile URL (`_api_parent_base`: the path ahead of `/.well-known/`, so
-  `.../ucommerce/.well-known/ucp` → `.../ucommerce`; a root-hosted profile yields the bare origin).
-  When the parsed profile has no MCP/REST bindings but advertises `dev.ucp.shopping.checkout`,
-  `_parse_merchant_profile` registers that parent base as the sole `rest_endpoints` entry. The path
-  prefix reflects any trusted redirect discovery followed (the root well-known typically redirects,
-  same-origin, to the subpath one), and the synthesized endpoint is same-origin as the merchant so
-  it still passes the `usable_shopping_endpoint` trust gate.
+- **Parent-base fallback.** `discover_merchant_ucp_profile` derives the API parent directory from
+  the _final fetched_ profile URL (`_api_parent_base`: the path ahead of `/.well-known/`, so
+  `.../ucommerce/.well-known/ucp` → `.../ucommerce`; a root-hosted profile yields the bare origin)
+  and uses it as `endpoint_base`. When the parsed profile has no MCP/REST bindings but advertises
+  `dev.ucp.shopping.checkout`, `_parse_merchant_profile` registers `endpoint_base` as the sole
+  `rest_endpoints` entry. The synthesized endpoint is same-origin as the merchant so it still passes
+  the `usable_shopping_endpoint` trust gate.
 - **Subpath-preserving REST routing.** `_rest_route` appends each route template to the base by
   trimming the base's trailing slash and concatenating (not `urljoin`), so a base carrying its own
   path prefix (`https://host/ucommerce`) keeps it — `POST /checkout-sessions` becomes
@@ -169,3 +168,56 @@ there was no binding to parse, `_shopping_endpoints` returned nothing, `supports
   root-hosted), the checkout-capability gate, and precedence of an explicit binding; the contract
   test adds an end-to-end case resolving a services-less checkout-only merchant to a signed
   `create_checkout` at the subpath-preserved URL.
+
+## Follow-up: subpath discovery and removing the Shopify fallback (done)
+
+Two related changes, motivated by a merchant that serves UCP under a path prefix (e.g.
+`https://host/ucommerce/.well-known/ucp`) and by the observation that the Shopify fallback was
+turning every discovery miss into a confusing error.
+
+### Preserve the input path prefix during discovery
+
+`discover_merchant_ucp_profile` previously discarded the input URL's path (`merchant_origin(url)`)
+and always probed `{origin}/.well-known/ucp`, so a subpath-hosted profile was only reachable if the
+root well-known happened to redirect to it. Discovery now **preserves the input path prefix**: it
+probes `{origin}{path}/.well-known/ucp` (trailing slash trimmed), then **falls back to the origin
+well-known** so a caller that passes an ordinary product URL still finds a merchant that publishes
+only the root profile (an origin-only input collapses to the single root probe). So
+`https://host/ucommerce` is probed at `https://host/ucommerce/.well-known/ucp` directly, while
+`https://host/products/x` tries that path then `https://host/.well-known/ucp`. Trust stays anchored
+to the original merchant origin (`profile.origin`).
+
+`endpoint_base` — used to resolve relative bindings — is the parent directory of the _final fetched_
+URL, so it tracks any trusted redirect and any subpath. It is normalized with a trailing slash
+before `urljoin` so a directory-relative binding (`ucp/rpc`) resolves under the subpath
+(`https://host/ucommerce/ucp/rpc`) instead of having `ucommerce` treated as a file and dropped. The
+checkout-only REST fallback is synthesized only from a genuine `/.well-known/` parent
+(`_api_parent_base`, never the guessed-origin fallback), so a services-less profile served off a
+non-well-known path (e.g. a redirect to `/ucp-config`) fails fast rather than POSTing to a
+fabricated `/checkout-sessions`.
+
+Callers are unaffected in practice: the browser probe already passes the bare origin, and the
+shopping tools' `business_url` is contractually the merchant base.
+
+### Remove the Shopify `/api/ucp/mcp` fallback (fail fast)
+
+The tools were originally Shopify-only and always hardcoded `{origin}/api/ucp/mcp`; when generalized
+to UCP discovery, that path was demoted to a fallback for "Shopify stores that don't publish a
+profile." That assumption no longer holds — Shopify publishes a discoverable profile on the
+`{shop}.myshopify.com` shop host (a default trusted suffix), reached directly or via the
+custom-domain → shop-host redirect discovery already follows. Meanwhile the fallback was actively
+harmful: on **any** discovery miss (no profile, 404, network error, undecodable body, untrusted
+redirect — all collapsed to `None`) it POSTed to `{origin}/api/ucp/mcp`, which a non-UCP store 404s,
+so the model saw `UCP response was not JSON: HTTP 404` from a fabricated URL instead of the real "no
+UCP profile" cause.
+
+`_resolve_ucp_endpoint` now **fails fast** with a specific `ValueError` in each case: no profile
+found, a profile whose only bindings are untrusted cross-host addresses, or a profile with no usable
+binding. Nothing is posted. `SHOPIFY_FALLBACK_MCP_PATH` and the `MCP_TRANSPORT` import are removed.
+
+### Coverage
+
+`test_ucp_service.py` adds a subpath-probe test (asserting `/ucommerce/.well-known/ucp` is fetched)
+and a subpath-via-redirect variant. `test_shopping_tools.py` adds a fail-fast-without-profile test
+and converts the former cross-host-fallback tests to assert the fail-fast error and that no POST is
+made; the remaining flow tests serve a discoverable profile instead of relying on the fallback.
