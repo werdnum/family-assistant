@@ -605,7 +605,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest -q --timeout=300 --db sqlite -m "playwright" \
+              .venv/bin/pytest tests -q --timeout=300 --db sqlite -m "playwright" \
                 --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
                 --json-report --json-report-file=test-results/playwright-sqlite-report.json \
                 --output=test-results'
@@ -688,7 +688,7 @@ jobs:
                 echo "No pre-built frontend assets found at /opt/frontend-dist"; \
               fi && \
               mkdir -p test-results && \
-              .venv/bin/pytest --postgres -q --timeout=300 -m "playwright" \
+              .venv/bin/pytest tests --postgres -q --timeout=300 -m "playwright" \
                 --screenshot=on --video=retain-on-failure --tracing=retain-on-failure \
                 --json-report --json-report-file=test-results/playwright-postgres-report.json \
                 --output=test-results'

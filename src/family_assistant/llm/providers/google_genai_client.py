@@ -1822,7 +1822,9 @@ class GoogleGenAIClient(BaseLLMClient):
                 async for chunk in stream_response:  # type: ignore[misc]
                     # Extract text content from chunk
                     if hasattr(chunk, "text") and chunk.text:
-                        yield LLMStreamEvent(type="content", content=chunk.text)
+                        yield LLMStreamEvent(  # noqa: ASYNC119
+                            type="content", content=chunk.text
+                        )
                         content_yielded = True
 
                     # Handle candidates structure for more complex responses
@@ -1854,7 +1856,7 @@ class GoogleGenAIClient(BaseLLMClient):
                                         and hasattr(part, "text")
                                         and part.text
                                     ):
-                                        yield LLMStreamEvent(
+                                        yield LLMStreamEvent(  # noqa: ASYNC119
                                             type="content", content=part.text
                                         )
                                         content_yielded = True

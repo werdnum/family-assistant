@@ -269,7 +269,7 @@ async def vector_api_client(
 
     async def override_get_db() -> AsyncGenerator[DatabaseContext]:
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            yield db
+            yield db  # noqa: ASYNC119
 
     # Create embedder with dimensions that match PostgreSQL indexes
     embedder = MockEmbeddingGenerator(

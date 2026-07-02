@@ -974,7 +974,7 @@ class AnthropicClient(BaseLLMClient):
                             elif event.type == "content_block_delta":
                                 delta = event.delta
                                 if delta.type == "text_delta":
-                                    yield LLMStreamEvent(
+                                    yield LLMStreamEvent(  # noqa: ASYNC119
                                         type="content", content=delta.text
                                     )
                                 elif (
@@ -993,7 +993,7 @@ class AnthropicClient(BaseLLMClient):
                                             arguments=current_tool["arguments"] or "{}",
                                         ),
                                     )
-                                    yield LLMStreamEvent(
+                                    yield LLMStreamEvent(  # noqa: ASYNC119
                                         type="tool_call",
                                         tool_call=tool_call,
                                         tool_call_id=current_tool["id"],

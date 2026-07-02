@@ -89,7 +89,7 @@ async def comprehensive_vector_client(
 
     async def override_get_db() -> AsyncGenerator[DatabaseContext]:
         async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            yield db
+            yield db  # noqa: ASYNC119
 
     fastapi_app.dependency_overrides[get_db] = override_get_db
 

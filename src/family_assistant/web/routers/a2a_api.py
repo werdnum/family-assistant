@@ -879,7 +879,7 @@ async def _stream_message(
                             ),
                             append=True,
                         )
-                        yield _sse_jsonrpc(
+                        yield _sse_jsonrpc(  # noqa: ASYNC119
                             request_id,
                             "artifact",
                             artifact_event.model_dump(exclude_none=True),

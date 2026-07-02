@@ -14,7 +14,24 @@ from pathlib import Path
 from typing import cast
 
 PYTEST_EXIT_NO_TESTS_COLLECTED = 5
+DEFAULT_COLLECTION_SELECTOR = "tests"
 JsonObject = dict[str, object]
+
+OPTION_TAKES_VALUE = {
+    "--basetemp",
+    "--browser",
+    "--db",
+    "--ignore",
+    "--ignore-glob",
+    "--maxfail",
+    "--record-mode",
+    "--rootdir",
+    "--tb",
+    "--timeout",
+    "-k",
+    "-m",
+    "-o",
+}
 
 
 def _repo_root() -> Path:
@@ -52,15 +69,16 @@ def _sanitize_pytest_args(args: list[str]) -> list[str]:
             skip_next = False
             continue
 
+        sanitized_arg = arg
         if arg.startswith("-") and not arg.startswith("--") and len(arg) > 2:
             compact_flags = arg[1:]
             if set(compact_flags) <= {"q", "x"}:
                 compact_flags = compact_flags.replace("q", "")
                 if not compact_flags:
                     continue
-                arg = f"-{compact_flags}"
+                sanitized_arg = f"-{compact_flags}"
 
-        if arg in {
+        if sanitized_arg in {
             "--disable-warnings",
             "--json-report",
             "--json-report-file",
@@ -70,18 +88,18 @@ def _sanitize_pytest_args(args: list[str]) -> list[str]:
             "-q",
             "--numprocesses",
         }:
-            if arg in {"--json-report-file", "--tb", "-n", "--numprocesses"}:
+            if sanitized_arg in {"--json-report-file", "--tb", "-n", "--numprocesses"}:
                 skip_next = True
             continue
-        if arg.startswith("--json-report-file="):
+        if sanitized_arg.startswith("--json-report-file="):
             continue
-        if arg.startswith("--tb="):
+        if sanitized_arg.startswith("--tb="):
             continue
-        if arg.startswith("--numprocesses="):
+        if sanitized_arg.startswith("--numprocesses="):
             continue
-        if arg.startswith("-n") and arg != "-n0":
+        if sanitized_arg.startswith("-n") and sanitized_arg != "-n0":
             continue
-        sanitized.append(arg)
+        sanitized.append(sanitized_arg)
 
     return sanitized
 
@@ -107,21 +125,6 @@ def _json_report_file(args: list[str]) -> Path | None:
 
 def _strip_collection_selectors(args: list[str]) -> list[str]:
     """Keep pytest options for shard runs, but drop paths/nodeids already scheduled."""
-    option_takes_value = {
-        "--basetemp",
-        "--browser",
-        "--db",
-        "--ignore",
-        "--ignore-glob",
-        "--maxfail",
-        "--record-mode",
-        "--rootdir",
-        "--tb",
-        "--timeout",
-        "-k",
-        "-m",
-        "-o",
-    }
     shard_args: list[str] = []
     skip_next = False
 
@@ -131,7 +134,7 @@ def _strip_collection_selectors(args: list[str]) -> list[str]:
             skip_next = False
             continue
 
-        if arg in option_takes_value:
+        if arg in OPTION_TAKES_VALUE:
             shard_args.append(arg)
             skip_next = True
             continue
@@ -139,6 +142,33 @@ def _strip_collection_selectors(args: list[str]) -> list[str]:
             shard_args.append(arg)
 
     return shard_args
+
+
+def _has_collection_selector(args: list[str]) -> bool:
+    """Return true when pytest args include an explicit path or nodeid selector."""
+    skip_next = False
+
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--":
+            return True
+        if arg in OPTION_TAKES_VALUE:
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        return True
+
+    return False
+
+
+def _with_default_collection_selector(args: list[str]) -> list[str]:
+    """Ensure pytest loads tests/conftest.py when no selectors were provided."""
+    if _has_collection_selector(args):
+        return args
+    return [*args, DEFAULT_COLLECTION_SELECTOR]
 
 
 def _collect_nodeids(
@@ -239,6 +269,7 @@ def main() -> int:
     parallel_bin = _parallel_bin()
     json_report_file = _json_report_file(sys.argv[1:])
     pytest_args = _sanitize_pytest_args(sys.argv[1:])
+    collection_pytest_args = _with_default_collection_selector(pytest_args)
     shard_pytest_args = _strip_collection_selectors(pytest_args)
 
     work_dir = Path(os.environ.get("PYTEST_ADAPTIVE_DIR", ".pytest-adaptive"))
@@ -249,7 +280,7 @@ def main() -> int:
     work_dir.mkdir(parents=True)
 
     nodeids_file = work_dir / "nodeids.txt"
-    collect_exit = _collect_nodeids(pytest_bin, pytest_args, nodeids_file)
+    collect_exit = _collect_nodeids(pytest_bin, collection_pytest_args, nodeids_file)
     if collect_exit != 0:
         return collect_exit
 
@@ -280,13 +311,11 @@ def main() -> int:
         shard_reports_dir.mkdir()
         env["PYTEST_ADAPTIVE_SHARD_REPORT_DIR"] = str(shard_reports_dir)
 
-    limit_command = " ".join(
-        [
-            shlex.quote(sys.executable),
-            shlex.quote(str(_repo_root() / "scripts" / "cgroup_memory_gate.py")),
-            shlex.quote(mem_threshold),
-        ]
-    )
+    limit_command = " ".join([
+        shlex.quote(sys.executable),
+        shlex.quote(str(_repo_root() / "scripts" / "cgroup_memory_gate.py")),
+        shlex.quote(mem_threshold),
+    ])
     shard_runner = _repo_root() / "scripts" / "run_pytest_shard.py"
     command = [
         parallel_bin,
