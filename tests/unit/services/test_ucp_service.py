@@ -980,6 +980,69 @@ async def test_discovery_prefers_explicit_binding_over_parent_fallback() -> None
     assert profile.rest_endpoints == ("https://apis.example.com/ucommerce/v2",)
 
 
+async def test_discovery_falls_back_to_root_well_known_for_product_url() -> None:
+    # An ordinary product URL is probed at its own path first; when that 404s,
+    # discovery falls back to the origin well-known, so a merchant that publishes
+    # only the root profile is still found (there is no Shopify path fallback to
+    # lean on).
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(200, json=_merchant_profile_payload())
+        return httpx.Response(404)
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com/products/sweater", client=client
+        )
+
+    assert requested == [
+        "https://shop.example.com/products/sweater/.well-known/ucp",
+        "https://shop.example.com/products/sweater/.well-known/ucp.json",
+        "https://shop.example.com/.well-known/ucp",
+    ]
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
+async def test_discovery_resolves_directory_relative_binding_under_subpath() -> None:
+    # A subpath-hosted profile advertising a directory-relative endpoint resolves
+    # under that subpath, not at the origin root (the trailing slash is kept).
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_merchant_profile_payload(endpoint="ucp/rpc"))
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://apis.example.com/ucommerce", client=client
+        )
+
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://apis.example.com/ucommerce/ucp/rpc"
+
+
+async def test_discovery_no_checkout_fallback_from_non_well_known_profile() -> None:
+    # A capability-only checkout profile served from a non-well-known URL (via a
+    # trusted redirect to /ucp-config) yields no /.well-known/ parent, so no REST
+    # endpoint is synthesized — nothing is guessed, and the caller fails fast.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(
+                301, headers={"Location": "https://shop.example.com/ucp-config"}
+            )
+        return httpx.Response(200, json=_checkout_only_no_services_payload())
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert profile is not None
+    assert profile.rest_endpoints == ()
+    assert profile.supports_shopping is False
+
+
 async def test_discover_merchant_ucp_profile_returns_none_on_http_error() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(404)

@@ -180,11 +180,21 @@ turning every discovery miss into a confusing error.
 `discover_merchant_ucp_profile` previously discarded the input URL's path (`merchant_origin(url)`)
 and always probed `{origin}/.well-known/ucp`, so a subpath-hosted profile was only reachable if the
 root well-known happened to redirect to it. Discovery now **preserves the input path prefix**: it
-probes `{origin}{path}/.well-known/ucp` (trailing slash trimmed; an origin-only input still probes
-the root). So `https://host/ucommerce` is probed at `https://host/ucommerce/.well-known/ucp`
-directly. `endpoint_base` (used both to resolve relative bindings and as the checkout-only REST
-fallback) is the parent directory of the _final fetched_ URL, so it tracks any trusted redirect too.
-Trust stays anchored to the original merchant origin (`profile.origin`).
+probes `{origin}{path}/.well-known/ucp` (trailing slash trimmed), then **falls back to the origin
+well-known** so a caller that passes an ordinary product URL still finds a merchant that publishes
+only the root profile (an origin-only input collapses to the single root probe). So
+`https://host/ucommerce` is probed at `https://host/ucommerce/.well-known/ucp` directly, while
+`https://host/products/x` tries that path then `https://host/.well-known/ucp`. Trust stays anchored
+to the original merchant origin (`profile.origin`).
+
+`endpoint_base` — used to resolve relative bindings — is the parent directory of the _final fetched_
+URL, so it tracks any trusted redirect and any subpath. It is normalized with a trailing slash
+before `urljoin` so a directory-relative binding (`ucp/rpc`) resolves under the subpath
+(`https://host/ucommerce/ucp/rpc`) instead of having `ucommerce` treated as a file and dropped. The
+checkout-only REST fallback is synthesized only from a genuine `/.well-known/` parent
+(`_api_parent_base`, never the guessed-origin fallback), so a services-less profile served off a
+non-well-known path (e.g. a redirect to `/ucp-config`) fails fast rather than POSTing to a
+fabricated `/checkout-sessions`.
 
 Callers are unaffected in practice: the browser probe already passes the bare origin, and the
 shopping tools' `business_url` is contractually the merchant base.

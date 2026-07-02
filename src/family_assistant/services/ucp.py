@@ -295,15 +295,20 @@ def _shopping_endpoints(
     be parsed (merchant-controlled metadata) are skipped rather than allowed to
     break discovery.
 
-    Relative endpoints resolve against ``base_url`` — the URL the profile was
-    actually fetched from, which may differ from the merchant origin when
-    discovery followed a trusted redirect (e.g. to a ``*.myshopify.com`` shop
-    host) — so a redirected profile's relative binding points at the host that
-    served it rather than the original storefront.
+    Relative endpoints resolve against ``base_url`` — the parent directory of the
+    URL the profile was actually fetched from, which may differ from the merchant
+    origin when discovery followed a trusted redirect (e.g. to a
+    ``*.myshopify.com`` shop host) or when the profile is served under a subpath
+    (``https://host/ucommerce``). A trailing slash is ensured before ``urljoin``
+    so a directory-relative binding (``ucp/rpc``) resolves under that subpath
+    (``https://host/ucommerce/ucp/rpc``) rather than having the last path segment
+    treated as a file and dropped; a root-relative binding (``/ucp/rpc``) still
+    resolves at the origin root.
     """
     bindings = services.get(SHOPPING_SERVICE_NAME)
     if not isinstance(bindings, list):
         return ()
+    join_base = base_url if base_url.endswith("/") else f"{base_url}/"
     endpoints: list[str] = []
     for binding in bindings:
         if not isinstance(binding, dict):
@@ -315,7 +320,7 @@ def _shopping_endpoints(
             continue
         try:
             resolved = (
-                endpoint if urlparse(endpoint).scheme else urljoin(base_url, endpoint)
+                endpoint if urlparse(endpoint).scheme else urljoin(join_base, endpoint)
             )
             parsed_resolved = urlparse(resolved)
             netloc = parsed_resolved.netloc
@@ -356,6 +361,8 @@ def _parse_merchant_profile(
     origin: str,
     endpoint_base: str,
     payload: object,
+    *,
+    checkout_rest_base: str | None = None,
 ) -> MerchantUCPProfile | None:
     """Parse a fetched UCP payload into a :class:`MerchantUCPProfile`.
 
@@ -363,10 +370,12 @@ def _parse_merchant_profile(
     the anchor every trust check runs against. ``endpoint_base`` is the parent
     directory of the profile URL the payload was actually fetched from (the final
     hop after any trusted redirect, path prefix preserved — see
-    :func:`_api_parent_base`). It resolves relative endpoint bindings, and is the
-    REST endpoint used for a checkout-only merchant that omits ``services``, so a
+    :func:`_api_parent_base`), used to resolve relative endpoint bindings so a
     redirected or subpath-hosted profile resolves against the host/path that
     served it while trust stays anchored to the merchant the user chose.
+    ``checkout_rest_base`` is the REST endpoint synthesized for a checkout-only
+    merchant that omits ``services``; it is the ``/.well-known/`` parent (never a
+    guessed origin), or ``None`` to disable the synthesis.
     """
     if not isinstance(payload, dict):
         return None
@@ -383,16 +392,18 @@ def _parse_merchant_profile(
     # Modern checkout-only merchants (UCP 2026-04-08) omit the ``services`` block
     # entirely, advertising only ``capabilities``. With no explicit binding the
     # REST API lives at the directory that hosts ``/.well-known/ucp``, so register
-    # that (``endpoint_base``) as the REST endpoint when the merchant advertises
-    # the shopping checkout capability. Trust is still enforced per-call by
-    # ``usable_shopping_endpoint``, and this base is same-origin as the merchant,
-    # so it passes that gate.
+    # that (``checkout_rest_base``) as the REST endpoint when the merchant
+    # advertises the shopping checkout capability. It is only set from a genuine
+    # ``/.well-known/`` parent, so we never fabricate an endpoint from a guessed
+    # origin. Trust is still enforced per-call by ``usable_shopping_endpoint``,
+    # and this base is same-origin as the merchant, so it passes that gate.
     if (
         not mcp_endpoints
         and not rest_endpoints
+        and checkout_rest_base is not None
         and SHOPPING_CHECKOUT_CAPABILITY in capabilities
     ):
-        rest_endpoints = (endpoint_base,)
+        rest_endpoints = (checkout_rest_base,)
     return MerchantUCPProfile(
         origin=origin,
         mcp_endpoints=mcp_endpoints,
@@ -507,63 +518,74 @@ async def discover_merchant_ucp_profile(
 
     # Preserve the input URL's path prefix so a merchant that serves UCP under a
     # subpath (e.g. https://host/ucommerce/.well-known/ucp) is probed at that
-    # subpath, not only at the bare origin. urlparse is safe here — merchant_origin
-    # already parsed ``url`` without error. A trailing slash is stripped so the
-    # well-known path joins cleanly, and an origin-only input leaves the prefix
-    # empty and probes the root well-known unchanged.
+    # subpath. urlparse is safe here — merchant_origin already parsed ``url``
+    # without error. A trailing slash is stripped so the well-known path joins
+    # cleanly. The bare origin is probed as a fallback so a caller that passes an
+    # ordinary product URL (path ``/products/x``) still finds a merchant that
+    # publishes only the root ``/.well-known/ucp`` — an origin-only input collapses
+    # to a single root probe.
     probe_base = f"{origin}{urlparse(url).path.rstrip('/')}"
+    probe_bases = [probe_base] if probe_base == origin else [probe_base, origin]
 
     headers = {"Accept": "application/json"}
-    # Share one timeout budget across the well-known probe and its .json fallback
-    # so the secondary attempt cannot double the worst-case discovery latency.
+    # Share one timeout budget across every probe (each base's well-known and its
+    # .json variant) so extra probes cannot multiply the worst-case latency.
     deadline = None if timeout is None else now() + timeout
 
     response: httpx.Response | None = None
     final_url: str | None = None
-    for profile_path in (UCP_PROFILE_PATH, UCP_PROFILE_FALLBACK_PATH):
-        remaining = None if deadline is None else deadline - now()
-        if remaining is not None and remaining <= 0:
-            logger.debug("UCP discovery exceeded its time budget for %s", origin)
-            return None
-        profile_url = f"{probe_base}{profile_path}"
-        try:
-            result = await _get_following_trusted_redirects(
-                client,
-                profile_url,
-                headers=headers,
-                timeout=remaining,
-                trusted_suffixes=trusted_suffixes,
-                now=now,
-            )
-        except httpx.HTTPError as exc:
-            logger.debug("UCP discovery request failed for %s: %s", profile_url, exc)
-            return None
-        if result is None:
-            logger.debug(
-                "UCP discovery for %s redirected to an untrusted host; not followed",
-                profile_url,
-            )
-            return None
-        candidate, candidate_url = result
-        # A static host that cannot serve the extension-less path returns 404;
-        # retry once against the .json variant before treating it as a miss.
-        if (
-            candidate.status_code == httpx.codes.NOT_FOUND
-            and profile_path != UCP_PROFILE_FALLBACK_PATH
-        ):
-            logger.debug(
-                "UCP discovery for %s returned 404; retrying %s%s",
-                profile_url,
-                probe_base,
-                UCP_PROFILE_FALLBACK_PATH,
-            )
-            continue
-        response, final_url = candidate, candidate_url
-        break
+    for base in probe_bases:
+        for profile_path in (UCP_PROFILE_PATH, UCP_PROFILE_FALLBACK_PATH):
+            remaining = None if deadline is None else deadline - now()
+            if remaining is not None and remaining <= 0:
+                logger.debug("UCP discovery exceeded its time budget for %s", origin)
+                return None
+            profile_url = f"{base}{profile_path}"
+            try:
+                result = await _get_following_trusted_redirects(
+                    client,
+                    profile_url,
+                    headers=headers,
+                    timeout=remaining,
+                    trusted_suffixes=trusted_suffixes,
+                    now=now,
+                )
+            except httpx.HTTPError as exc:
+                logger.debug(
+                    "UCP discovery request failed for %s: %s", profile_url, exc
+                )
+                return None
+            if result is None:
+                logger.debug(
+                    "UCP discovery for %s redirected to an untrusted host; not "
+                    "followed",
+                    profile_url,
+                )
+                # A miss for this base; try the next base (e.g. the root origin).
+                break
+            candidate, candidate_url = result
+            # A static host that cannot serve the extension-less path returns 404;
+            # retry once against the .json variant before treating it as a miss.
+            if (
+                candidate.status_code == httpx.codes.NOT_FOUND
+                and profile_path != UCP_PROFILE_FALLBACK_PATH
+            ):
+                logger.debug(
+                    "UCP discovery for %s returned 404; retrying %s%s",
+                    profile_url,
+                    base,
+                    UCP_PROFILE_FALLBACK_PATH,
+                )
+                continue
+            if candidate.status_code == httpx.codes.NOT_FOUND:
+                # Both well-known variants 404 for this base; try the next base.
+                break
+            response, final_url = candidate, candidate_url
+            break
+        if response is not None:
+            break
 
-    if (
-        response is None or final_url is None
-    ):  # pragma: no cover - loop always sets both or returns early
+    if response is None or final_url is None:
         return None
     if response.is_error:
         logger.debug(
@@ -576,14 +598,20 @@ async def discover_merchant_ucp_profile(
         logger.debug("UCP discovery for %s returned an undecodable body", origin)
         return None
 
-    # Resolve relative endpoints — and the checkout-only REST fallback — against
-    # the directory that actually served the profile (the final hop after any
-    # trusted redirect, with its path prefix preserved), while keeping the
-    # original merchant origin as the trust anchor. Falls back to the fetched
-    # host's origin, then the original origin, if the final URL has no
-    # ``/.well-known/`` segment or is somehow not an HTTPS origin.
-    endpoint_base = _api_parent_base(final_url) or merchant_origin(final_url) or origin
-    return _parse_merchant_profile(origin, endpoint_base, payload)
+    # ``api_parent_base`` is the directory that hosts the fetched ``/.well-known/``
+    # profile (path prefix preserved), or ``None`` when the profile was served
+    # from a URL with no ``/.well-known/`` segment (e.g. a redirect to
+    # ``/ucp-config``). ``endpoint_base`` resolves relative bindings and falls
+    # back to the fetched host's origin, then the original origin. The
+    # checkout-only REST fallback, however, is only synthesized from a genuine
+    # ``/.well-known/`` parent (``api_parent_base``) — never from the guessed
+    # origin fallback — so a services-less profile served off a non-well-known
+    # path fails fast rather than posting to a fabricated ``/checkout-sessions``.
+    api_parent_base = _api_parent_base(final_url)
+    endpoint_base = api_parent_base or merchant_origin(final_url) or origin
+    return _parse_merchant_profile(
+        origin, endpoint_base, payload, checkout_rest_base=api_parent_base
+    )
 
 
 def _base64_url_no_padding(value: bytes) -> str:
