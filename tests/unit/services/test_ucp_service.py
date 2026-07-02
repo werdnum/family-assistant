@@ -1007,6 +1007,34 @@ async def test_discovery_falls_back_to_root_well_known_for_product_url() -> None
     assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
 
 
+async def test_discovery_ignores_non_ucp_subpath_body_and_tries_root() -> None:
+    # A site that answers unknown paths with a 200 HTML catch-all (SPA routing)
+    # must not short-circuit discovery: a non-UCP body from the subpath probe is a
+    # miss, so discovery continues to the root well-known instead of reporting the
+    # merchant unsupported.
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(200, json=_merchant_profile_payload())
+        return httpx.Response(200, text="<!doctype html><html>catch-all</html>")
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com/products/sweater", client=client
+        )
+
+    # The 200 HTML subpath probe is treated as a miss (no .json retry — it wasn't
+    # a 404), and discovery falls straight through to the root well-known.
+    assert requested == [
+        "https://shop.example.com/products/sweater/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp",
+    ]
+    assert profile is not None
+    assert profile.mcp_endpoint == "https://shop.example.com/api/ucp/mcp"
+
+
 async def test_discovery_resolves_directory_relative_binding_under_subpath() -> None:
     # A subpath-hosted profile advertising a directory-relative endpoint resolves
     # under that subpath, not at the origin root (the trailing slash is kept).

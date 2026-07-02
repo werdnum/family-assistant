@@ -414,6 +414,37 @@ def _parse_merchant_profile(
     )
 
 
+def _profile_from_response(
+    origin: str, response: httpx.Response, fetched_url: str
+) -> MerchantUCPProfile | None:
+    """Parse a fetched profile response into a profile, or ``None`` if unusable.
+
+    Returns ``None`` for an HTTP error status, an undecodable/non-JSON body, or a
+    payload that is not a UCP profile — so the caller can treat that probe as a
+    discovery miss and continue (e.g. to the root well-known) rather than
+    short-circuiting on an SPA catch-all page that answers every path with 200.
+
+    ``fetched_url`` is the URL the profile was actually fetched from (the final
+    hop after any trusted redirect). Its ``/.well-known/`` parent
+    (:func:`_api_parent_base`, path prefix preserved) resolves relative bindings
+    and is the only value used to synthesize the checkout-only REST endpoint —
+    never the guessed-origin fallback — so a services-less profile served off a
+    non-well-known path (e.g. a redirect to ``/ucp-config``) fails fast rather
+    than posting to a fabricated ``/checkout-sessions``.
+    """
+    if response.is_error:
+        return None
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    api_parent_base = _api_parent_base(fetched_url)
+    endpoint_base = api_parent_base or merchant_origin(fetched_url) or origin
+    return _parse_merchant_profile(
+        origin, endpoint_base, payload, checkout_rest_base=api_parent_base
+    )
+
+
 MAX_DISCOVERY_REDIRECTS = 5
 
 
@@ -532,8 +563,6 @@ async def discover_merchant_ucp_profile(
     # .json variant) so extra probes cannot multiply the worst-case latency.
     deadline = None if timeout is None else now() + timeout
 
-    response: httpx.Response | None = None
-    final_url: str | None = None
     for base in probe_bases:
         for profile_path in (UCP_PROFILE_PATH, UCP_PROFILE_FALLBACK_PATH):
             remaining = None if deadline is None else deadline - now()
@@ -580,38 +609,20 @@ async def discover_merchant_ucp_profile(
             if candidate.status_code == httpx.codes.NOT_FOUND:
                 # Both well-known variants 404 for this base; try the next base.
                 break
-            response, final_url = candidate, candidate_url
-            break
-        if response is not None:
+            profile = _profile_from_response(origin, candidate, candidate_url)
+            if profile is not None:
+                return profile
+            # A 2xx that is not a parseable UCP profile — e.g. an SPA catch-all
+            # HTML page served for an unknown path — is a miss for this base, not a
+            # hit: continue to the next base (typically the root well-known) rather
+            # than short-circuiting and reporting the merchant unsupported.
+            logger.debug(
+                "UCP discovery for %s returned a non-UCP body; trying next base",
+                profile_url,
+            )
             break
 
-    if response is None or final_url is None:
-        return None
-    if response.is_error:
-        logger.debug(
-            "UCP discovery for %s returned HTTP %s", origin, response.status_code
-        )
-        return None
-    try:
-        payload = response.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        logger.debug("UCP discovery for %s returned an undecodable body", origin)
-        return None
-
-    # ``api_parent_base`` is the directory that hosts the fetched ``/.well-known/``
-    # profile (path prefix preserved), or ``None`` when the profile was served
-    # from a URL with no ``/.well-known/`` segment (e.g. a redirect to
-    # ``/ucp-config``). ``endpoint_base`` resolves relative bindings and falls
-    # back to the fetched host's origin, then the original origin. The
-    # checkout-only REST fallback, however, is only synthesized from a genuine
-    # ``/.well-known/`` parent (``api_parent_base``) — never from the guessed
-    # origin fallback — so a services-less profile served off a non-well-known
-    # path fails fast rather than posting to a fabricated ``/checkout-sessions``.
-    api_parent_base = _api_parent_base(final_url)
-    endpoint_base = api_parent_base or merchant_origin(final_url) or origin
-    return _parse_merchant_profile(
-        origin, endpoint_base, payload, checkout_rest_base=api_parent_base
-    )
+    return None
 
 
 def _base64_url_no_padding(value: bytes) -> str:
