@@ -198,11 +198,8 @@ export class FileAttachmentAdapter {
 export class CompositeAttachmentAdapter {
   constructor(adapters = []) {
     this.adapters = adapters;
-    // Aggregate accept types from all adapters
-    this.accept = adapters
-      .map((adapter) => adapter.accept)
-      .filter(Boolean)
-      .join(',');
+    // Let our adapter validate unsupported files and render inline errors.
+    this.accept = '*';
   }
 
   /**
