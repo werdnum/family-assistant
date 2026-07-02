@@ -109,7 +109,7 @@ async def get_db(request: Request) -> AsyncGenerator[DatabaseContext]:
         raise RuntimeError("Database engine not initialized in app.state")
 
     async with get_db_context(engine) as db_context:
-        yield db_context
+        yield db_context  # noqa: ASYNC119
 
 
 async def get_tools_provider_dependency(request: Request) -> ToolsProvider:

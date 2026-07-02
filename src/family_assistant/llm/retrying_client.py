@@ -308,7 +308,7 @@ class RetryingLLMClient:
                         tool_choice=tool_choice,
                     ):
                         with trace.use_span(span, end_on_exit=False):
-                            yield event
+                            yield event  # noqa: ASYNC119
                         events_yielded = True
                 except Exception as e:
                     logger.error(
@@ -346,7 +346,7 @@ class RetryingLLMClient:
                                 ):
                                     events_yielded = True
                                     with trace.use_span(span, end_on_exit=False):
-                                        yield event
+                                        yield event  # noqa: ASYNC119
                                 return
                             except Exception as retry_err:
                                 logger.warning(
@@ -395,7 +395,7 @@ class RetryingLLMClient:
                                     tool_choice=tool_choice,
                                 ):
                                     with trace.use_span(span, end_on_exit=False):
-                                        yield event
+                                        yield event  # noqa: ASYNC119
                             except Exception as fallback_error:
                                 logger.error(
                                     f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}",

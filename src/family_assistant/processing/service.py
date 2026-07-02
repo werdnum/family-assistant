@@ -1109,7 +1109,7 @@ class ProcessingService:
                         subconversation_id=subconversation_id,
                         mid_turn_input_provider=mid_turn_input_provider,
                     ):
-                        yield event
+                        yield event  # noqa: ASYNC119
 
                         # Save messages as they're generated
                         if stream_msg is not None:
@@ -1169,6 +1169,6 @@ class ProcessingService:
                         metadata={"error_id": str(uuid.uuid4())},
                     )
 
-                    yield error_event
+                    yield error_event  # noqa: ASYNC119
         finally:
             span.end()
