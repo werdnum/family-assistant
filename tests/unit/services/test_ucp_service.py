@@ -22,7 +22,7 @@ from family_assistant.services.ucp import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 
 def _merchant_profile_payload(
@@ -823,6 +823,117 @@ async def test_discover_merchant_ucp_profile_without_shopping_binding() -> None:
     assert profile is not None
     assert profile.mcp_endpoint is None
     assert profile.supports_shopping is False
+
+
+def _checkout_only_no_services_payload() -> dict[str, object]:
+    # A modern checkout-only merchant advertises only the checkout capability and
+    # omits the `services` block entirely — no explicit endpoint binding at all.
+    return {
+        "ucp": {
+            "version": "2026-04-08",
+            "capabilities": {"dev.ucp.shopping.checkout": [{}]},
+        }
+    }
+
+
+def _subpath_redirect_handler(
+    payload: Mapping[str, object],
+) -> Callable[[httpx.Request], httpx.Response]:
+    # The API serves UCP under a /ucommerce subpath: the root well-known probe
+    # redirects (same-origin) to the subpath well-known that carries the profile,
+    # mirroring how a merchant that hosts its API under a path advertises it.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/.well-known/ucp":
+            return httpx.Response(
+                301,
+                headers={
+                    "Location": "https://apis.example.com/ucommerce/.well-known/ucp"
+                },
+            )
+        return httpx.Response(200, json=payload)
+
+    return handler
+
+
+async def test_discovery_checkout_only_profile_falls_back_to_parent_base() -> None:
+    # With no `services` binding, the REST endpoint must fall back to the API
+    # parent directory that hosts the well-known profile (the /ucommerce prefix
+    # from the final fetched URL, not the bare origin).
+    async with _client_returning(
+        _subpath_redirect_handler(_checkout_only_no_services_payload())
+    ) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://apis.example.com/products/drill", client=client
+        )
+
+    assert profile is not None
+    assert profile.origin == "https://apis.example.com"
+    assert profile.mcp_endpoints == ()
+    assert profile.rest_endpoints == ("https://apis.example.com/ucommerce",)
+    assert profile.supports_shopping is True
+    # The parent base is same-origin as the merchant, so it resolves as usable.
+    usable = profile.usable_shopping_endpoint()
+    assert usable is not None
+    assert usable.transport == "rest"
+    assert usable.endpoint == "https://apis.example.com/ucommerce"
+
+
+async def test_discovery_checkout_only_parent_base_from_root_hosted_profile() -> None:
+    # A checkout-only profile served at the root well-known (no subpath) falls
+    # back to the bare origin — there is no path prefix to preserve.
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_checkout_only_no_services_payload())
+
+    async with _client_returning(handler) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://shop.example.com", client=client
+        )
+
+    assert profile is not None
+    assert profile.rest_endpoints == ("https://shop.example.com",)
+
+
+async def test_discovery_no_parent_fallback_without_checkout_capability() -> None:
+    # A profile that omits `services` and does not advertise the checkout
+    # capability gets no synthesized endpoint — the fallback is checkout-specific.
+    async with _client_returning(
+        _subpath_redirect_handler({
+            "ucp": {"capabilities": {"dev.ucp.shopping.cart": [{}]}}
+        })
+    ) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://apis.example.com", client=client
+        )
+
+    assert profile is not None
+    assert profile.rest_endpoints == ()
+    assert profile.supports_shopping is False
+
+
+async def test_discovery_prefers_explicit_binding_over_parent_fallback() -> None:
+    # When the checkout-only merchant DOES advertise an explicit shopping
+    # binding, that binding wins; the parent-base fallback only fills the gap when
+    # no binding is present.
+    payload = {
+        "ucp": {
+            "services": {
+                "dev.ucp.shopping": [
+                    {
+                        "transport": "rest",
+                        "endpoint": "https://apis.example.com/ucommerce/v2",
+                    }
+                ]
+            },
+            "capabilities": {"dev.ucp.shopping.checkout": [{}]},
+        }
+    }
+    async with _client_returning(_subpath_redirect_handler(payload)) as client:
+        profile = await discover_merchant_ucp_profile(
+            "https://apis.example.com", client=client
+        )
+
+    assert profile is not None
+    assert profile.rest_endpoints == ("https://apis.example.com/ucommerce/v2",)
 
 
 async def test_discover_merchant_ucp_profile_returns_none_on_http_error() -> None:

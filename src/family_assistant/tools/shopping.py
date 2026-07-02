@@ -21,6 +21,7 @@ import httpx
 from family_assistant.services.ucp import (
     MCP_TRANSPORT,
     REST_TRANSPORT,
+    SHOPPING_CHECKOUT_CAPABILITY,
     UCPConfigurationError,
     discover_merchant_ucp_profile,
     has_ucp_signing_key,
@@ -46,7 +47,7 @@ SHOPIFY_FALLBACK_MCP_PATH = "/api/ucp/mcp"
 # the full MCP POST timeout before each call.
 UCP_DISCOVERY_TIMEOUT_SECONDS = 5.0
 CART_CAPABILITY = "dev.ucp.shopping.cart"
-CHECKOUT_CAPABILITY = "dev.ucp.shopping.checkout"
+CHECKOUT_CAPABILITY = SHOPPING_CHECKOUT_CAPABILITY
 
 
 @dataclass(frozen=True, slots=True)
@@ -494,6 +495,12 @@ def _rest_route(
 
     The resource id is URL-encoded into the path (cart/checkout ids are opaque
     and may contain ``/`` and ``:``) so it cannot escape its path segment.
+
+    The route template is appended to ``base_endpoint`` by trimming the base's
+    trailing slash and concatenating — not ``urljoin`` — so a base carrying its
+    own path prefix (e.g. ``https://host/ucommerce`` for a checkout-only
+    merchant discovered under a subpath) keeps that prefix instead of having a
+    leading-slash template reset the path to the site root.
     """
     verb, path_template = _REST_ROUTES[operation]
     if "{id}" in path_template:
