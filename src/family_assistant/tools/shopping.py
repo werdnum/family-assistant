@@ -3,8 +3,9 @@
 These tools work with any merchant that advertises a Universal Commerce Protocol
 (UCP) profile at ``/.well-known/ucp``. The merchant's shopping endpoint and its
 transport (MCP JSON-RPC or REST) are discovered from that profile; when a
-merchant does not advertise a usable binding, the tools fall back to the Shopify
-MCP convention (``/api/ucp/mcp``).
+merchant advertises no usable shopping binding the tools fail fast with a clear
+error rather than guessing an endpoint, so a merchant that does not support UCP
+is reported plainly instead of surfacing a confusing error from a fabricated URL.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from uuid import uuid4
 import httpx
 
 from family_assistant.services.ucp import (
-    MCP_TRANSPORT,
     REST_TRANSPORT,
     SHOPPING_CHECKOUT_CAPABILITY,
     UCPConfigurationError,
@@ -41,10 +41,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-SHOPIFY_FALLBACK_MCP_PATH = "/api/ucp/mcp"
 # Bound the discovery GET so a store without a UCP profile (which may tarpit the
-# well-known path) falls back to the Shopify endpoint promptly instead of paying
-# the full MCP POST timeout before each call.
+# well-known path) fails promptly instead of stalling the whole request for the
+# full MCP POST timeout.
 UCP_DISCOVERY_TIMEOUT_SECONDS = 5.0
 CART_CAPABILITY = "dev.ucp.shopping.cart"
 CHECKOUT_CAPABILITY = SHOPPING_CHECKOUT_CAPABILITY
@@ -54,9 +53,9 @@ CHECKOUT_CAPABILITY = SHOPPING_CHECKOUT_CAPABILITY
 class _ResolvedMerchant:
     """The endpoint to use for a merchant, its transport, and cart/checkout shape.
 
-    ``transport`` is ``MCP_TRANSPORT`` or ``REST_TRANSPORT`` and selects whether
-    operations are driven over the MCP JSON-RPC ``tools/call`` body or the REST
-    verbs/paths from ``rest.openapi.json``.
+    ``transport`` is the MCP or REST transport and selects whether operations are
+    driven over the MCP JSON-RPC ``tools/call`` body or the REST verbs/paths from
+    ``rest.openapi.json``.
 
     ``checkout_only`` is True when the merchant advertises the checkout
     capability but not the cart capability, meaning its endpoint has no cart
@@ -198,8 +197,8 @@ def _is_checkout_only(profile: MerchantUCPProfile | None) -> bool:
     Such "checkout-only" merchants (e.g. Adore Beauty) expose no cart methods on
     their MCP endpoint, so ``create_cart``/``update_cart`` would fail (403); a
     checkout session must be created directly from the line items instead. A
-    merchant with no profile (Shopify fallback) or one that advertises no
-    capabilities at all is treated as cart-capable, preserving the cart flow.
+    merchant with no profile, or one that advertises no capabilities at all, is
+    treated as cart-capable, preserving the cart flow.
     """
     if profile is None:
         return False
@@ -215,26 +214,29 @@ async def _resolve_ucp_endpoint(
 ) -> _ResolvedMerchant:
     """Resolve the merchant's shopping endpoint and transport for ``business_url``.
 
-    Discovers the endpoints from the merchant's ``/.well-known/ucp`` profile and
-    falls back to the Shopify MCP convention (``/api/ucp/mcp``) when the merchant
-    advertises no usable shopping binding. The returned ``transport`` (MCP or
-    REST) selects how the endpoint is driven. The ``checkout_only`` flag reflects
-    the discovered capabilities so callers can bypass the cart for checkout-only
-    merchants — but only when the profile's own endpoint is used; on fallback the
-    flag is cleared, since the capability described a binding that was not
-    adopted.
+    Discovers the endpoint from the merchant's ``/.well-known/ucp`` profile. The
+    returned ``transport`` (MCP or REST) selects how the endpoint is driven, and
+    the ``checkout_only`` flag reflects the discovered capabilities so callers can
+    bypass the cart for checkout-only merchants.
 
     A binding is usable when it is same-origin, same-site (a sibling subdomain of
     ``business_url``'s registrable domain), or hosted on a configured trusted
     platform suffix (``trusted_suffixes``, e.g. ``myshopify.com`` for Shopify
-    storefronts on custom domains). Every advertised binding — MCP or REST — is
-    considered, so a usable one is still selected when an unusable binding is
-    listed ahead of it. Anything else is ignored: the profile is untrusted
-    merchant-controlled metadata, so an arbitrary cross-host endpoint could
-    otherwise redirect the signed request at an unrelated/internal host — an SSRF
-    vector. Discovery is also given a short timeout so a store that does not
-    publish a profile (and may tarpit the well-known path) falls back promptly
-    instead of stalling the request.
+    storefronts on custom domains, whose profile lives on the ``*.myshopify.com``
+    shop host). Every advertised binding — MCP or REST — is considered, so a
+    usable one is still selected when an unusable binding is listed ahead of it.
+
+    When discovery finds no usable binding, this raises ``ValueError`` rather than
+    guessing an endpoint. Guessing a conventional path (the former
+    ``/api/ucp/mcp`` Shopify fallback) masked the real failure: a store that does
+    not support UCP would 404 the guessed path, surfacing a confusing "response
+    was not JSON" error from a fabricated URL instead of the true "no UCP
+    profile" cause. Failing fast keeps the error honest and actionable. Genuine
+    Shopify stores are unaffected — they publish a discoverable profile on their
+    ``*.myshopify.com`` shop host (a default trusted suffix), reached directly or
+    via the custom-domain redirect discovery already follows. Discovery is given a
+    short timeout so a store that does not publish a profile (and may tarpit the
+    well-known path) fails promptly instead of stalling the request.
     """
     origin = merchant_origin(business_url)
     if origin is None:
@@ -246,29 +248,41 @@ async def _resolve_ucp_endpoint(
         timeout=UCP_DISCOVERY_TIMEOUT_SECONDS,
         trusted_suffixes=trusted_suffixes,
     )
-    if profile is not None:
-        usable = profile.usable_shopping_endpoint(trusted_suffixes=trusted_suffixes)
-        if usable is not None:
-            return _ResolvedMerchant(
-                endpoint=usable.endpoint,
-                transport=usable.transport,
-                checkout_only=_is_checkout_only(profile),
-            )
-        if profile.mcp_endpoints or profile.rest_endpoints:
-            logger.warning(
-                "Ignoring %d untrusted cross-host UCP endpoint(s) advertised by %s",
-                len(profile.mcp_endpoints) + len(profile.rest_endpoints),
-                origin,
-            )
-    # No profile, or only unusable (untrusted cross-host) bindings: fall back to
-    # the Shopify MCP convention. That endpoint supports carts, so the profile's
-    # checkout-only capability — which described the binding we just refused —
-    # must not carry over and make the caller skip the cart here.
-    return _ResolvedMerchant(
-        endpoint=f"{origin}{SHOPIFY_FALLBACK_MCP_PATH}",
-        transport=MCP_TRANSPORT,
-        checkout_only=False,
+    if profile is None:
+        msg = (
+            f"No UCP shopping profile found at {origin}/.well-known/ucp. This "
+            "merchant may not support agentic commerce (UCP), or its profile is "
+            "unreachable. Nothing was sent."
+        )
+        raise ValueError(msg)
+    usable = profile.usable_shopping_endpoint(trusted_suffixes=trusted_suffixes)
+    if usable is not None:
+        return _ResolvedMerchant(
+            endpoint=usable.endpoint,
+            transport=usable.transport,
+            checkout_only=_is_checkout_only(profile),
+        )
+    if profile.mcp_endpoints or profile.rest_endpoints:
+        # The profile is untrusted merchant-controlled metadata, so an arbitrary
+        # cross-host endpoint could redirect the signed request at an
+        # unrelated/internal host (SSRF). Refuse it and say so, rather than
+        # silently posting to a guessed path.
+        logger.warning(
+            "Refusing %d untrusted cross-host UCP endpoint(s) advertised by %s",
+            len(profile.mcp_endpoints) + len(profile.rest_endpoints),
+            origin,
+        )
+        msg = (
+            f"{origin} advertised a UCP profile, but its only shopping "
+            "endpoint(s) are on untrusted cross-host addresses that will not be "
+            "called for security reasons. Nothing was sent."
+        )
+        raise ValueError(msg)
+    msg = (
+        f"{origin} published a UCP profile but advertised no usable shopping "
+        "endpoint. Nothing was sent."
     )
+    raise ValueError(msg)
 
 
 async def _resolve_endpoint_for(

@@ -72,26 +72,30 @@ discoverable rather than assumed.
 
 A relative `endpoint` is resolved against the origin; a non-HTTPS endpoint is rejected.
 
-### Endpoint resolution with Shopify fallback
+### Endpoint resolution (discovery only, fail fast)
 
-The UCP tools resolve the merchant MCP endpoint by discovery first, then fall back to the Shopify
-convention (`{origin}/api/ucp/mcp`) when the merchant does not advertise a usable shopping MCP
-binding. This keeps existing Shopify stores working even if they do not serve a `/.well-known/ucp`
-profile, while letting any compliant UCP merchant be reached at its advertised endpoint. Discovery
-reuses the same `httpx.AsyncClient` that performs the subsequent signed/unsigned tool POST.
+> **Update:** The UCP tools originally fell back to the Shopify convention (`{origin}/api/ucp/mcp`)
+> when discovery found no usable binding. That fallback has been **removed** — see
+> [UCP discovery: subpath probing and no Shopify fallback](ucp-cart-response-and-cross-origin-endpoints.md#follow-up-subpath-discovery-and-removing-the-shopify-fallback-done)
+> for the rationale. The tools now resolve the endpoint purely by discovery and **fail fast** with a
+> clear error when no usable binding is found. Genuine Shopify stores are unaffected: they publish a
+> discoverable profile on their `*.myshopify.com` shop host (a default trusted suffix), reached
+> directly or via the custom-domain redirect discovery follows.
+
+The UCP tools resolve the merchant endpoint from its `/.well-known/ucp` profile. Discovery reuses
+the same `httpx.AsyncClient` that performs the subsequent signed/unsigned tool POST.
 
 Two safeguards apply to the discovered endpoint because the profile is untrusted merchant-controlled
 metadata:
 
-- **Same-origin only.** Every advertised binding is considered, and the first one that is
-  same-origin as the `business_url` is selected (origins are compared on normalized
-  scheme/host/effective-port, so an explicit `:443` or differing case still matches). A cross-origin
-  (or protocol-relative, post-`urljoin`) endpoint is ignored and the Shopify fallback is used
-  instead, so a malicious profile cannot redirect the signed POST at an arbitrary or internal host
-  (SSRF), and a usable same-origin binding listed after a cross-origin one is still chosen.
+- **Trusted hosts only.** Every advertised binding is considered, and the first one that is
+  same-origin, same-site, or on a configured trusted platform suffix (relative to the
+  `business_url`) is selected. A cross-host endpoint that matches none of these is refused — and,
+  with no fallback to guess, the tool raises a clear error rather than posting anywhere — so a
+  malicious profile cannot redirect the signed POST at an arbitrary or internal host (SSRF).
 - **Bounded discovery time.** The discovery GET has its own short timeout (independent of the longer
   MCP POST timeout), so a store that does not publish a profile — and may tarpit the well-known path
-  — falls back promptly instead of stalling each call.
+  — fails promptly instead of stalling each call.
 
 ### Tool rename
 

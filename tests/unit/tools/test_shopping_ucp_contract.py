@@ -537,6 +537,30 @@ def _checkout_only_profile() -> httpx.Response:
     )
 
 
+def _mcp_cart_profile() -> httpx.Response:
+    # A Shopify-style merchant advertising a same-origin MCP binding with the cart
+    # capability, so the cart flow runs over the MCP JSON-RPC transport.
+    return httpx.Response(
+        200,
+        json={
+            "ucp": {
+                "services": {
+                    "dev.ucp.shopping": [
+                        {
+                            "transport": "mcp",
+                            "endpoint": "https://shop.example.com/ucp/rpc",
+                        }
+                    ]
+                },
+                "capabilities": {
+                    "dev.ucp.shopping.cart": [{}],
+                    "dev.ucp.shopping.checkout": [{}],
+                },
+            }
+        },
+    )
+
+
 def _rest_profile(*, checkout_only: bool = False) -> httpx.Response:
     # THE ICONIC / Adore Beauty advertise a same-origin/same-site REST binding
     # instead of MCP. Adore is checkout-only (no cart capability).
@@ -589,7 +613,11 @@ def _rest_checkout_response() -> httpx.Response:
 
 
 async def test_create_cart_request_conforms_to_spec(monkeypatch: MonkeyPatch) -> None:
-    _reset_client(monkeypatch, post_responses=[_cart_response()])
+    _reset_client(
+        monkeypatch,
+        post_responses=[_cart_response()],
+        profile_responses=[_mcp_cart_profile()],
+    )
 
     await shopping.ucp_add_to_cart_tool(
         _context(AppConfig(server_url="https://assistant.example")),
@@ -605,6 +633,7 @@ async def test_update_cart_requests_conform_to_spec(monkeypatch: MonkeyPatch) ->
     _reset_client(
         monkeypatch,
         post_responses=[_cart_response(line_items=existing), _cart_response()],
+        profile_responses=[_mcp_cart_profile()],
     )
 
     await shopping.ucp_add_to_cart_tool(
@@ -644,6 +673,7 @@ async def test_cart_handoff_create_checkout_request_conforms_to_spec(
     _reset_client(
         monkeypatch,
         post_responses=[_cart_response(line_items=existing), _checkout_response()],
+        profile_responses=[_mcp_cart_profile()],
     )
 
     await shopping.ucp_transfer_checkout_to_human_tool(

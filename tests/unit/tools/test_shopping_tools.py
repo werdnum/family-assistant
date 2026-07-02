@@ -177,13 +177,15 @@ async def test_ucp_add_to_cart_creates_unsigned_cart_request(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
-    _FakeAsyncClient.profile_responses = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.profile_requests = []
     _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
 
     result = await shopping.ucp_add_to_cart_tool(
         _context(AppConfig(server_url="https://assistant.example")),
-        business_url="https://shop.example.com/products/sweater",
+        business_url="https://shop.example.com",
         line_items=[
             {
                 "variant_id": "gid://shopify/ProductVariant/12345678901",
@@ -194,14 +196,13 @@ async def test_ucp_add_to_cart_creates_unsigned_cart_request(
     )
 
     assert "https://shop.example.com/cart/c/cart_abc123" in result.get_text()
-    # Discovery probes the merchant profile; with no profile served (404) it
-    # retries the .json fallback, then falls back to the Shopify convention.
+    # Discovery probes the merchant profile once and the cart POST is driven at
+    # its advertised same-origin endpoint.
     assert _FakeAsyncClient.profile_requests == [
         "https://shop.example.com/.well-known/ucp",
-        "https://shop.example.com/.well-known/ucp.json",
     ]
     request = _FakeAsyncClient.requests[0]
-    assert request.url == "https://shop.example.com/api/ucp/mcp"
+    assert request.url == "https://shop.example.com/ucp/rpc"
     assert request.headers["UCP-Agent"] == (
         'profile="https://assistant.example/.well-known/ucp"'
     )
@@ -213,6 +214,34 @@ async def test_ucp_add_to_cart_creates_unsigned_cart_request(
     assert cast("dict[str, object]", arguments["meta"])["ucp-agent"] == {
         "profile": "https://assistant.example/.well-known/ucp"
     }
+
+
+async def test_ucp_add_to_cart_fails_fast_without_profile(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    # A store that publishes no UCP profile (404 on both well-known paths) must
+    # fail fast with an honest error rather than guessing a conventional endpoint
+    # and surfacing a confusing "response was not JSON" from a fabricated URL.
+    monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
+    _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_requests = []
+    _FakeAsyncClient.profile_responses = []
+    _FakeAsyncClient.responses = []
+
+    with pytest.raises(ValueError, match="No UCP shopping profile found"):
+        await shopping.ucp_add_to_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com",
+            line_items=[{"variant_id": "variant-1", "quantity": 1}],
+        )
+
+    # Discovery probed the well-known path (and its .json variant); nothing was
+    # posted to any guessed endpoint.
+    assert _FakeAsyncClient.profile_requests == [
+        "https://shop.example.com/.well-known/ucp",
+        "https://shop.example.com/.well-known/ucp.json",
+    ]
+    assert _FakeAsyncClient.requests == []
 
 
 async def test_ucp_add_to_cart_uses_discovered_merchant_endpoint(
@@ -311,17 +340,19 @@ async def test_ucp_add_to_cart_rejects_cross_origin_discovered_endpoint(
             },
         )
     ]
-    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+    _FakeAsyncClient.responses = []
 
-    await shopping.ucp_add_to_cart_tool(
-        _context(AppConfig(server_url="https://assistant.example")),
-        business_url="https://shop.example.com/products/sweater",
-        line_items=[{"variant_id": "variant-1", "quantity": 1}],
-    )
+    # A profile whose only binding is an untrusted cross-host endpoint is refused;
+    # with no fallback to guess, the tool fails fast with a clear error and posts
+    # nothing.
+    with pytest.raises(ValueError, match="untrusted cross-host"):
+        await shopping.ucp_add_to_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com/products/sweater",
+            line_items=[{"variant_id": "variant-1", "quantity": 1}],
+        )
 
-    # A cross-origin endpoint is ignored; the POST stays on the merchant origin.
-    request = _FakeAsyncClient.requests[0]
-    assert request.url == "https://shop.example.com/api/ucp/mcp"
+    assert _FakeAsyncClient.requests == []
 
 
 async def test_ucp_add_to_cart_prefers_same_origin_over_cross_origin_binding(
@@ -407,7 +438,9 @@ async def test_ucp_add_to_existing_cart_resolves_endpoint_once(
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
     _FakeAsyncClient.profile_requests = []
-    _FakeAsyncClient.profile_responses = []  # 404 -> Shopify fallback
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(
             200,
@@ -433,11 +466,10 @@ async def test_ucp_add_to_existing_cart_resolves_endpoint_once(
         line_items=[{"variant_id": "variant-1", "quantity": 1}],
     )
 
-    # get_cart + update_cart share a single endpoint resolution; the unserved
-    # profile (404) probes the well-known path then its .json fallback once.
+    # get_cart + update_cart share a single endpoint resolution: discovery probes
+    # the well-known path exactly once, not per POST.
     assert _FakeAsyncClient.profile_requests == [
         "https://shop.example.com/.well-known/ucp",
-        "https://shop.example.com/.well-known/ucp.json",
     ]
     assert len(_FakeAsyncClient.requests) == 2
 
@@ -447,6 +479,9 @@ async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(200, json=_cart_with_items_response()),
         httpx.Response(200, json=_checkout_response()),
@@ -539,6 +574,9 @@ async def test_ucp_transfer_checkout_to_human_rejects_cart_error_outcome(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(200, json=_cart_with_items_response()),
         httpx.Response(
@@ -582,6 +620,9 @@ async def test_ucp_transfer_checkout_to_human_requires_checkout_id(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(200, json=_cart_with_items_response()),
         httpx.Response(
@@ -619,6 +660,9 @@ async def test_ucp_tool_raises_for_json_rpc_error(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(
             200,
@@ -650,6 +694,9 @@ async def test_ucp_tool_raises_for_http_error_with_json_body(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(429, json={"jsonrpc": "2.0", "id": "rpc-1", "result": {}})
     ]
@@ -667,6 +714,9 @@ async def test_ucp_get_cart_raises_for_unusable_cart_message(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(
             200,
@@ -701,6 +751,9 @@ async def test_ucp_get_cart_raises_when_cart_envelope_is_missing(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     _FakeAsyncClient.responses = [
         httpx.Response(
             200,
@@ -793,7 +846,7 @@ async def test_ucp_add_to_cart_checkout_only_rejects_cart_id(
     assert _FakeAsyncClient.requests == []
 
 
-async def test_ucp_add_to_cart_checkout_only_cross_origin_falls_back_to_cart(
+async def test_ucp_add_to_cart_checkout_only_cross_origin_fails_fast(
     monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
@@ -818,20 +871,18 @@ async def test_ucp_add_to_cart_checkout_only_cross_origin_falls_back_to_cart(
             },
         )
     ]
-    _FakeAsyncClient.responses = [httpx.Response(200, json=_cart_response())]
+    _FakeAsyncClient.responses = []
 
-    await shopping.ucp_add_to_cart_tool(
-        _context(AppConfig(server_url="https://assistant.example")),
-        business_url="https://shop.example.com/products/sweater",
-        line_items=[{"variant_id": "variant-1", "quantity": 1}],
-    )
+    # The only advertised binding is an untrusted cross-host endpoint; there is no
+    # fallback to guess, so the tool fails fast rather than posting anywhere.
+    with pytest.raises(ValueError, match="untrusted cross-host"):
+        await shopping.ucp_add_to_cart_tool(
+            _context(AppConfig(server_url="https://assistant.example")),
+            business_url="https://shop.example.com/products/sweater",
+            line_items=[{"variant_id": "variant-1", "quantity": 1}],
+        )
 
-    # The checkout-only capability described the refused cross-origin binding, so
-    # the Shopify fallback must NOT inherit it: the cart flow runs as normal.
-    request = _FakeAsyncClient.requests[0]
-    assert request.url == "https://shop.example.com/api/ucp/mcp"
-    params = cast("dict[str, object]", request.body["params"])
-    assert params["name"] == "create_cart"
+    assert _FakeAsyncClient.requests == []
 
 
 async def test_ucp_add_to_cart_uses_cart_flow_when_cart_capability_advertised(
@@ -863,6 +914,9 @@ async def test_ucp_add_to_existing_cart_preserves_supported_cart_state(
 ) -> None:
     monkeypatch.setattr(shopping.httpx, "AsyncClient", _FakeAsyncClient)
     _FakeAsyncClient.requests = []
+    _FakeAsyncClient.profile_responses = [
+        httpx.Response(200, json=_cart_and_checkout_profile())
+    ]
     existing_cart = {
         "jsonrpc": "2.0",
         "id": "rpc-1",
