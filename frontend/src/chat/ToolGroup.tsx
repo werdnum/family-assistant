@@ -27,6 +27,10 @@ interface MessagePartLike {
   type: string;
   toolName?: string;
   toolCallId?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  artifact?: unknown;
+  attachments?: unknown[];
   status?: {
     type?: string;
   };
@@ -37,6 +41,16 @@ const DEFAULT_TOOL_GROUP_STATE: ToolGroupState = {
   toolCallIds: [],
   hasUnfinishedTool: false,
 };
+
+function isTerminalToolPart(part: MessagePartLike): boolean {
+  return (
+    part.status?.type === 'complete' ||
+    part.result !== undefined ||
+    part.artifact !== undefined ||
+    part.attachments !== undefined ||
+    (part.toolName === 'attach_to_response' && Array.isArray(part.args?.attachment_ids))
+  );
+}
 
 function getToolGroupState(
   parts: readonly MessagePartLike[],
@@ -57,7 +71,7 @@ function getToolGroupState(
         toolCallIds.push(part.toolCallId);
       }
 
-      if (part.status?.type !== 'complete') {
+      if (!isTerminalToolPart(part)) {
         hasUnfinishedTool = true;
       }
     }

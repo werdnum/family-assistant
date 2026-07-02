@@ -278,6 +278,16 @@ function isToolOnlyAssistantMessage(message: Message): boolean {
   );
 }
 
+function isTerminalToolPart(part: MessageContent): boolean {
+  return (
+    part.type !== 'tool-call' ||
+    part.result !== undefined ||
+    part.artifact !== undefined ||
+    part.attachments !== undefined ||
+    (part.toolName === 'attach_to_response' && Array.isArray(part.args?.attachment_ids))
+  );
+}
+
 export function mergeConsecutiveToolOnlyAssistantMessages(messages: Message[]): Message[] {
   const mergedMessages: Message[] = [];
 
@@ -874,9 +884,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id === toolCallMessageId) {
-              const allToolsComplete = msg.content?.every(
-                (part) => part.type !== 'tool-call' || part.result !== undefined
-              );
+              const allToolsComplete = msg.content?.every(isTerminalToolPart);
               return {
                 ...msg,
                 status: allToolsComplete ? { type: 'complete' } : msg.status,
