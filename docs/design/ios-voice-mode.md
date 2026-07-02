@@ -123,8 +123,9 @@ what `@google/genai` sends; this is the single biggest unknown and is settled in
   `inputAudioTranscription`, `outputAudioTranscription`, and `realtimeInputConfig` (VAD from token
   `config.vad`). Mirror the field set used in `useGeminiLive.ts`.
 - **Realtime audio (client→server):**
-  `realtimeInput.mediaChunks=[{mimeType:"audio/pcm;rate=16000", data:<base64 PCM16>}]`, ~tens-of-ms
-  frames.
+  `realtimeInput.audio={mimeType:"audio/pcm;rate=16000", data:<base64 PCM16>}`, ~tens-of-ms frames.
+  The native client intentionally uses the current Live API shape and does not send the older
+  `realtimeInput.mediaChunks` wrapper.
 - **Server→client:** `setupComplete`; `serverContent` with `modelTurn.parts[].inlineData` (24 kHz
   PCM16 audio), `inputTranscription`, `outputTranscription`, `turnComplete`, `interrupted`;
   `toolCall.functionCalls[]`; `toolCallCancellation`.

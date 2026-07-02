@@ -212,6 +212,20 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertTrue(session.connected == false)
     }
 
+    func testAudioStartFailureReportsAndFails() async {
+        audio.startError = VoiceAudioError.simulatorLiveInputDisabled
+        let model = makeModel()
+
+        await model.start()
+
+        XCTAssertEqual(
+            model.phase,
+            .failed("Live microphone input is disabled in the iOS Simulator. Set FA_ALLOW_SIMULATOR_MIC=1 to try the simulator microphone.")
+        )
+        XCTAssertEqual(reportedErrors.count, 1)
+        XCTAssertTrue(session.connected)
+    }
+
     func testHappyPathConnectsThenActivatesOnSetupComplete() async throws {
         let model = makeModel()
         await model.start()

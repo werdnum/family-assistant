@@ -6,8 +6,12 @@ enum UITestConfiguration {
         ProcessInfo.processInfo.arguments.contains("--ui-testing")
     }
 
+    static var isLiveBackendEnabled: Bool {
+        ProcessInfo.processInfo.arguments.contains("--live-ui-testing")
+    }
+
     static var initialNavigationPath: String? {
-        guard isEnabled else { return nil }
+        guard isEnabled || isLiveBackendEnabled else { return nil }
         return ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_UITEST_INITIAL_PATH"]
     }
 
@@ -25,6 +29,11 @@ enum UITestConfiguration {
     }
 
     static func applyIfNeeded() {
+        if isLiveBackendEnabled {
+            applyLiveBackendConfiguration()
+            return
+        }
+
         guard isEnabled else { return }
 
         URLProtocol.registerClass(UITestBackendURLProtocol.self)
@@ -36,6 +45,25 @@ enum UITestConfiguration {
         KeychainHelper.save(key: "fa_refresh_token", string: "ui-test-refresh-token")
 
         UserDefaults.standard.set("https://assistant.example.test", forKey: "fa_server_url")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+            forKey: "fa_token_expiry"
+        )
+        UserDefaults.standard.set(false, forKey: "fa_notifications_enabled")
+        UserDefaults.standard.removeObject(forKey: "fa_apns_device_token")
+    }
+
+    private static func applyLiveBackendConfiguration() {
+        let environment = ProcessInfo.processInfo.environment
+        let serverURL = environment["FAMILY_ASSISTANT_LIVE_SERVER_URL"]
+            ?? "https://family-assistant-dev.andrewgarrett.dev"
+        let apiToken = environment["FAMILY_ASSISTANT_LIVE_API_TOKEN"] ?? "live-ui-test-token"
+
+        KeychainHelper.delete(key: "fa_api_token")
+        KeychainHelper.delete(key: "fa_refresh_token")
+        KeychainHelper.save(key: "fa_api_token", string: apiToken)
+
+        UserDefaults.standard.set(serverURL, forKey: "fa_server_url")
         UserDefaults.standard.set(
             ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
             forKey: "fa_token_expiry"

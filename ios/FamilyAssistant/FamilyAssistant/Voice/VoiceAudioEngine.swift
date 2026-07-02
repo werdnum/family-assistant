@@ -40,11 +40,14 @@ struct SystemMicrophonePermission: VoiceMicrophonePermission {
 
 enum VoiceAudioError: LocalizedError {
     case converterUnavailable
+    case simulatorLiveInputDisabled
 
     var errorDescription: String? {
         switch self {
         case .converterUnavailable:
             "Could not initialize audio conversion."
+        case .simulatorLiveInputDisabled:
+            "Live microphone input is disabled in the iOS Simulator. Set FA_ALLOW_SIMULATOR_MIC=1 to try the simulator microphone."
         }
     }
 }
@@ -93,6 +96,11 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     func start() async throws {
         guard !isRunning else { return }
+        #if targetEnvironment(simulator)
+            guard ProcessInfo.processInfo.environment["FA_ALLOW_SIMULATOR_MIC"] == "1" else {
+                throw VoiceAudioError.simulatorLiveInputDisabled
+            }
+        #endif
         try configureSession()
 
         do {
@@ -262,3 +270,148 @@ final class VoiceAudioEngine: VoiceAudioIO {
         try session.setActive(true, options: [])
     }
 }
+
+#if DEBUG && targetEnvironment(simulator)
+/// Simulator-only audio source for live backend smoke tests.
+///
+/// Some simulator/CoreAudio configurations abort inside `AVAudioEngine.inputNode`
+/// before Swift can catch an error. Live UI tests need to exercise the native
+/// token, WebSocket, and realtime-input path without depending on host audio
+/// hardware, so this source emits scripted 16 kHz PCM speech and level updates
+/// while leaving production and normal simulator launches on
+/// ``VoiceAudioEngine``.
+final class SimulatorVoiceAudioIO: VoiceAudioIO {
+    private struct State {
+        var muted = false
+        var onCaptured: (@Sendable (Data) -> Void)?
+        var onInputLevel: (@Sendable (Double) -> Void)?
+    }
+
+    var onCapturedAudio: (@Sendable (Data) -> Void)? {
+        get { state.withLock { $0.onCaptured } }
+        set { state.withLock { $0.onCaptured = newValue } }
+    }
+
+    var onInputLevel: (@Sendable (Double) -> Void)? {
+        get { state.withLock { $0.onInputLevel } }
+        set { state.withLock { $0.onInputLevel = newValue } }
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    private var captureTask: Task<Void, Never>?
+    private let prompts: [String]
+    private var synthesizer: AVSpeechSynthesizer?
+
+    init(prompt: String = ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_LIVE_AUDIO_PROMPT"] ?? "Say the word banana.") {
+        let script = ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_LIVE_AUDIO_SCRIPT"]
+        prompts = Self.prompts(fromScript: script, fallback: prompt)
+    }
+
+    static func prompts(fromScript script: String?, fallback prompt: String) -> [String] {
+        guard let script else { return [prompt] }
+        let scriptedPrompts = script
+            .components(separatedBy: "||")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return scriptedPrompts.isEmpty ? [prompt] : scriptedPrompts
+    }
+
+    func start() async throws {
+        guard captureTask == nil else { return }
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+            await self.waitForCaptureSink()
+            for (index, prompt) in self.prompts.enumerated() {
+                guard !Task.isCancelled else { return }
+                await self.emitSpeechPrompt(prompt)
+                guard !Task.isCancelled else { return }
+                await self.emitSilence(duration: .seconds(5))
+                guard !Task.isCancelled else { return }
+                if index < self.prompts.count - 1 {
+                    do {
+                        try await Task.sleep(for: .seconds(8))
+                    } catch {
+                        return
+                    }
+                }
+            }
+        }
+    }
+
+    func stop() {
+        captureTask?.cancel()
+        synthesizer?.stopSpeaking(at: .immediate)
+        synthesizer = nil
+        captureTask = nil
+    }
+
+    func enqueue(_ pcm24k: Data) {}
+
+    func flushPlayback() {}
+
+    func setMuted(_ muted: Bool) {
+        state.withLock { $0.muted = muted }
+    }
+
+    private func waitForCaptureSink() async {
+        while !Task.isCancelled {
+            let isReady = state.withLock { $0.onCaptured != nil && !$0.muted }
+            if isReady { return }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    private func emitSpeechPrompt(_ prompt: String) async {
+        await withCheckedContinuation { continuation in
+            let synthesizer = AVSpeechSynthesizer()
+            self.synthesizer = synthesizer
+            let utterance = AVSpeechUtterance(string: prompt)
+            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+            var converter: StreamingPCMConverter?
+            var didResume = false
+
+            synthesizer.write(utterance) { [weak self] buffer in
+                guard let self else { return }
+                guard self.synthesizer === synthesizer else {
+                    guard !didResume else { return }
+                    didResume = true
+                    continuation.resume()
+                    return
+                }
+                guard let pcmBuffer = buffer as? AVAudioPCMBuffer else { return }
+                guard pcmBuffer.frameLength > 0 else {
+                    guard !didResume else { return }
+                    didResume = true
+                    self.synthesizer = nil
+                    continuation.resume()
+                    return
+                }
+                if converter == nil {
+                    converter = StreamingPCMConverter(inputFormat: pcmBuffer.format)
+                }
+                guard let data = converter?.convertToData(pcmBuffer), !data.isEmpty else { return }
+                self.emit(data, inputLevel: 0.55)
+            }
+        }
+    }
+
+    private func emitSilence(duration: Duration) async {
+        let frame = Data(count: Int(VoiceAudioFormat.inputSampleRate / 20) * MemoryLayout<Int16>.size)
+        let end = ContinuousClock.now.advanced(by: duration)
+        while ContinuousClock.now < end, !Task.isCancelled {
+            emit(frame, inputLevel: 0)
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func emit(_ data: Data, inputLevel: Double) {
+        let (muted, captured, level) = state.withLock {
+            ($0.muted, $0.onCaptured, $0.onInputLevel)
+        }
+        guard !muted else { return }
+        captured?(data)
+        level?(inputLevel)
+    }
+}
+#endif

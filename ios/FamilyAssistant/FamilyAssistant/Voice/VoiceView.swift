@@ -41,6 +41,7 @@ struct VoiceView: View {
                 tokenProvider: api,
                 toolExecutor: api,
                 transcriptStore: api,
+                audio: Self.makeAudioIO(),
                 profileID: profileID
             )
             model = viewModel
@@ -66,6 +67,15 @@ struct VoiceView: View {
         } else {
             dismiss()
         }
+    }
+
+    private static func makeAudioIO() -> VoiceAudioIO {
+        #if DEBUG && targetEnvironment(simulator)
+            if UITestConfiguration.isLiveBackendEnabled {
+                return SimulatorVoiceAudioIO()
+            }
+        #endif
+        return VoiceAudioEngine()
     }
 }
 
@@ -272,5 +282,6 @@ private struct VoiceTranscriptRow: View {
             )
             .foregroundStyle(entry.speaker == .assistant ? Color.primary : Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityIdentifier("voice-transcript-\(entry.speaker.rawValue)")
     }
 }

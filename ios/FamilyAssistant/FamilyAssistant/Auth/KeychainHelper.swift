@@ -83,6 +83,7 @@ enum KeychainHelper {
     private static var isTestFallbackEnabled: Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--ui-testing")
+            || ProcessInfo.processInfo.arguments.contains("--live-ui-testing")
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         #else
         false
