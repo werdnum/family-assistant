@@ -30,10 +30,11 @@ messages and tracebacks can contain attacker-influenced content — errors trigg
 email, web content, or API responses) and it reads sensitive diagnostics. The design's job is
 therefore to make its **[C] as narrow and auditable as possible**:
 
-- Unattended writes go only into a label-confined sink (notes carrying `ops_diagnostics`).
+- Unattended writes go only into quarantined sinks: label-confined notes, and a deployment-private
+  tracker that sits inside the trust boundary.
 - LLM output derived from log content is treated as data, never as control flow.
-- Anything that leaves the quarantine (tickets in a shared tracker, free-form messages) is either
-  templated and rate-limited, or goes through a human.
+- Anything that genuinely leaves the quarantine (free-form outbound messages, shared destinations)
+  goes through a human.
 
 The goal is risk reduction, not an iron-clad guarantee. Residual risks are listed explicitly at the
 end.
@@ -45,7 +46,7 @@ end.
   layer rather than in a single tool.
 - Support unattended maintenance profiles without bespoke tools for every report type.
 - Allow unattended escalation (notification, ticket filing) without a per-action human confirmation,
-  by constraining content and destination instead.
+  by confining the destination instead.
 - Preserve current default behavior for existing profiles unless they opt into stricter semantics.
 
 ## Non-Goals
@@ -360,39 +361,36 @@ sanitized summaries; the recommended triage window is `since_hours=24, limit=200
 The confined note is the unattended sink. Two escalation paths exist beyond it, with different trust
 requirements.
 
-### Unattended, Constrained Escalation
+### Unattended Escalation to a Quarantined Destination
 
 Per-action human confirmation for routine ticket filing is a significant usability downgrade and
-trains rubber-stamping. Instead, unattended escalation is acceptable when **content and destination
-are constrained**:
+trains rubber-stamping. Instead, unattended filing is acceptable when the **destination is
+quarantined**: deployment-configured, inside the deployment's trust boundary — for the reference
+deployment, an internal Vikunja instance — and readable only by the operators who are entitled to
+the diagnostics anyway. One rule is non-negotiable regardless of destination: **no automation may
+act on tickets authored by the diagnostics automation**. An issue tracker that feeds coding bots
+turns a poisoned ticket into an injection relay with write access; that edge must not exist.
 
-1. **Templated content.** The escalation tool (e.g. a future `file_diagnostic_ticket`) takes
-   structured arguments — error-log row ids, severity, a stable dedupe fingerprint, a short summary
-   — and builds the outbound body **server-side and deterministically** from the referenced rows.
-   The LLM decides *which* errors are ticket-worthy; it does not compose the outbound document. The
-   LLM summary is confined to one clearly fenced field marked as untrusted content.
-2. **Quarantined destination.** The destination is deployment-configured and must be inside the
-   deployment's trust boundary — for the reference deployment, an internal Vikunja instance. If a
-   deployment points this at a shared tracker, tickets must be segregated (dedicated project/label),
-   and — non-negotiable — **no automation may act on tickets authored by the diagnostics
-   automation**. An issue tracker that feeds coding bots turns a poisoned ticket into an injection
-   relay with write access; that edge must not exist.
-3. **Rate limit + dedupe + audit.** Cap filings per day, dedupe on the fingerprint so a recurring
-   error updates one ticket rather than filing daily, and record every filing in the ops note. This
-   eliminates the *likely* failure mode (log storms, runaway prompts) even though it is only
-   detective for the rare one (crafted exfiltration).
+With a private, human-read destination, the two residual failure modes are ticket *content* skewed
+by injected log text and ticket *volume* under a log storm — the same risks already accepted for the
+confined note, just in a second quarantined store. So filing can be a plain tool call; no extra
+machinery is required initially.
 
-Under these constraints, filing a ticket carries essentially the same risk as writing the confined
-note, which is already accepted. A fixed-template push notification on critical severity ("N new
-critical diagnostics, see note X") satisfies the same constraints and may also run unattended.
+If a deployment ever points escalation at a shared tracker, or volume proves noisy in practice, the
+hardening ladder is known and can be added incrementally: templated server-side ticket bodies built
+from referenced error-log rows (LLM chooses *which* errors, not the outbound text, with the summary
+in one fenced untrusted field), fingerprint-based dedupe so recurring errors update one ticket, and
+daily rate caps. None of these are prerequisites for the internal-tracker deployment.
 
-The concrete tracker tool is out of scope for this design (deployment-specific backend). The
-constraints above are the acceptance bar for adding one.
+A fixed-template push notification on critical severity ("N new critical diagnostics, see note X")
+may likewise run unattended.
+
+The concrete tracker tool is out of scope for this design (deployment-specific backend).
 
 ### Human-Gated Escalation
 
 Anything that genuinely leaves the quarantine — free-form outbound messages, filing into a shared
-destination without the constraints above — is set to `decision: "confirm"` in the profile policy.
+destination without the hardening above — is set to `decision: "confirm"` in the profile policy.
 Confirm-gated tool calls inside automation scripts already produce **durable confirmations addressed
 to `created_by_user_id`** (the automation owner); the tool does not run until the owner approves.
 The confirmation itself doubles as the notification. No new mechanism is needed for this path.
@@ -455,9 +453,12 @@ discovered during review, for whenever it is picked up:
   rule and review are the backstop, not the type system.
 - The triage note's *content* is untrusted by construction. Confinement guarantees it stays
   quarantined, not that it is true; severity labels and summaries can be skewed by injected log
-  content.
-- Escalation destination quarantine (no bots acting on filed tickets) is a deployment configuration
-  property, not enforceable from this codebase.
+  content. The same applies to tickets filed in the internal tracker.
+- Ticket filing is initially unconstrained in content and volume; a log storm or runaway prompt can
+  file noisy or duplicate tickets. Accepted while the destination is private and human-read; the
+  hardening ladder in Part 4 is the remedy if it bites.
+- Escalation destination quarantine (private, and no bots acting on filed tickets) is a deployment
+  configuration property, not enforceable from this codebase.
 
 ## Recommended Rollout
 
@@ -498,14 +499,14 @@ discovered during review, for whenever it is picked up:
   - cross-profile tool-path updates are denied,
   - `read_error_logs` respects `since_hours` and defaults tracebacks off.
 
-### Phase 3: Constrained Escalation Tool (When a Deployment Needs It)
+### Phase 3: Escalation Tool (When a Deployment Needs It)
 
-- Add a templated escalation tool per the Part 4 constraints (structured args, server-side body,
-  fenced summary, fingerprint dedupe, rate limit), backed by a deployment-configured tracker.
+- Add a ticket-filing tool backed by a deployment-configured internal tracker (e.g. Vikunja),
+  allowed unattended for `ops_automation` when the destination is configured; confirm-gated or
+  absent otherwise.
 - Add the fixed-template critical-severity notification.
-- Tests: body is built from referenced rows only; dedupe updates rather than re-files; rate limit
-  enforced; the tool is confirm-gated (or absent) in profiles without the constrained destination
-  configured.
+- Hardening (templated server-side bodies, fingerprint dedupe, rate caps) is deferred until a
+  deployment needs a shared destination or volume misbehaves; see Part 4.
 
 ## Recommendation
 
