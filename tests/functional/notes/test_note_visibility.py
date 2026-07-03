@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.notes import add_or_update_note_tool, delete_note_tool
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -28,6 +29,7 @@ async def test_create_note_with_visibility_labels(
             title="Sensitive Info",
             content="Top secret data",
             visibility_labels=["sensitive", "private"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         note = await db.notes.get_by_title("Sensitive Info", visibility_grants=None)
@@ -46,11 +48,13 @@ async def test_update_preserves_visibility_labels(
             title="Labeled Note",
             content="Original content",
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         await db.notes.add_or_update(
             title="Labeled Note",
             content="Updated content",
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         note = await db.notes.get_by_title("Labeled Note", visibility_grants=None)
@@ -70,12 +74,14 @@ async def test_update_clears_visibility_labels(
             title="Was Labeled",
             content="Some content",
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         await db.notes.add_or_update(
             title="Was Labeled",
             content="Some content",
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         note = await db.notes.get_by_title("Was Labeled", visibility_grants=None)
@@ -94,16 +100,19 @@ async def test_get_prompt_notes_with_grants(
             title="Public Note",
             content="Visible to all",
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Sensitive Note",
             content="Only for sensitive",
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Private Note",
             content="Only for private",
             visibility_labels=["private"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         notes = await db.notes.get_prompt_notes(visibility_grants={"sensitive"})
@@ -124,11 +133,13 @@ async def test_get_prompt_notes_empty_grants(
             title="Public Note",
             content="No labels",
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Labeled Note",
             content="Has a label",
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         notes = await db.notes.get_prompt_notes(visibility_grants=set())
@@ -148,6 +159,7 @@ async def test_get_by_title_insufficient_grants(
             title="Secret Note",
             content="Very secret",
             visibility_labels=["top-secret"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         note = await db.notes.get_by_title("Secret Note", visibility_grants={"default"})
@@ -172,12 +184,14 @@ async def test_get_excluded_notes_titles_respects_grants(
             content="Excluded but public",
             include_in_prompt=False,
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Excluded Sensitive",
             content="Excluded and sensitive",
             include_in_prompt=False,
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         titles = await db.notes.get_excluded_notes_titles(visibility_grants={"default"})
@@ -196,16 +210,19 @@ async def test_get_all_with_grants(
             title="Default Note",
             content="Visible with default grant",
             visibility_labels=["default"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="No Labels",
             content="Always visible",
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Admin Only",
             content="Admin content",
             visibility_labels=["admin"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         notes = await db.notes.get_all(visibility_grants={"default"})
@@ -226,6 +243,7 @@ async def test_and_semantics(
             title="Multi Label Note",
             content="Needs both grants",
             visibility_labels=["sensitive", "private"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         notes_one_grant = await db.notes.get_all(visibility_grants={"sensitive"})
@@ -251,16 +269,19 @@ async def test_no_grants_returns_all(
             title="Public",
             content="No labels",
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Sensitive",
             content="Has label",
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Multi",
             content="Multiple labels",
             visibility_labels=["a", "b"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         notes = await db.notes.get_all(visibility_grants=None)
@@ -282,12 +303,14 @@ async def test_context_provider_with_grants(
             content="Sensitive content here",
             include_in_prompt=True,
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Public Note",
             content="Public content here",
             include_in_prompt=True,
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     test_prompts = {
@@ -325,12 +348,14 @@ async def test_context_provider_without_grants(
             content="Sensitive content here",
             include_in_prompt=True,
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Public Note",
             content="Public content here",
             include_in_prompt=True,
             visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     test_prompts = {
@@ -389,6 +414,7 @@ async def test_update_note_blocked_by_visibility(
             title="Secret Note",
             content="Original secret content",
             visibility_labels=["top-secret"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -419,6 +445,7 @@ async def test_update_note_allowed_with_grants(
             title="Labeled Note",
             content="Original content",
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -470,6 +497,7 @@ async def test_delete_note_blocked_by_visibility(
             title="Protected Note",
             content="Protected content",
             visibility_labels=["admin"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -496,6 +524,7 @@ async def test_delete_note_allowed_with_grants(
             title="Deletable Note",
             content="Will be deleted",
             visibility_labels=["sensitive"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -520,6 +549,7 @@ async def test_update_note_no_grants_allows_all(
             title="Any Note",
             content="Original",
             visibility_labels=["admin"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async with DatabaseContext(engine=db_engine) as db:

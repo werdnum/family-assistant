@@ -136,6 +136,8 @@ class ProcessingConfig(BaseModel):
     camera_config: CameraConfig | None = None  # Per-profile camera backend config
     greeting_wav_path: str | None = None
     default_note_visibility_labels: list[str] | None = None
+    required_note_visibility_labels: list[str] | None = None
+    allowed_note_visibility_labels: list[str] | None = None
 
 
 class ToolsConfig(BaseModel):

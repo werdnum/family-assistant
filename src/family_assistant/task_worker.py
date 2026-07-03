@@ -2725,6 +2725,16 @@ class TaskWorker:
                         if self.processing_service
                         else None
                     ),
+                    required_note_visibility_labels=(
+                        self.processing_service.service_config.required_note_visibility_labels
+                        if self.processing_service
+                        else None
+                    ),
+                    allowed_note_visibility_labels=(
+                        self.processing_service.service_config.allowed_note_visibility_labels
+                        if self.processing_service
+                        else None
+                    ),
                     confirmation_result_waiters=self.confirmation_result_waiters,
                     confirmation_ui_managers=getattr(
                         self,
@@ -3700,6 +3710,12 @@ async def handle_script_execution(
             default_note_visibility_labels=(
                 processing_service.service_config.default_note_visibility_labels
             ),
+            required_note_visibility_labels=(
+                processing_service.service_config.required_note_visibility_labels
+            ),
+            allowed_note_visibility_labels=(
+                processing_service.service_config.allowed_note_visibility_labels
+            ),
             request_confirmation_callback=build_script_confirmation_callback(
                 payload.get("created_by_user_id")
             ),
@@ -3974,6 +3990,12 @@ async def _build_confirmation_execution_context(
         visibility_grants=processing_service.service_config.visibility_grants,
         default_note_visibility_labels=(
             processing_service.service_config.default_note_visibility_labels
+        ),
+        required_note_visibility_labels=(
+            processing_service.service_config.required_note_visibility_labels
+        ),
+        allowed_note_visibility_labels=(
+            processing_service.service_config.allowed_note_visibility_labels
         ),
         note_registry=processing_service.service_config.note_registry,
         confirmation_result_waiters=exec_context.confirmation_result_waiters,

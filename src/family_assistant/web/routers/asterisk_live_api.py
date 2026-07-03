@@ -51,6 +51,7 @@ from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.storage.context import get_db_context
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.web.audio_utils import StatefulResampler
 from family_assistant.web.dependencies import get_live_audio_client
@@ -1385,16 +1386,23 @@ class AsteriskLiveHandler:
 
             content = "\n".join(lines)
 
-            visibility_labels: list[str] | None = None
             if self.processing_service:
-                visibility_labels = self.processing_service.service_config.default_note_visibility_labels
+                cfg = self.processing_service.service_config
+                write_policy = NoteWritePolicy(
+                    visibility_grants=cfg.visibility_grants,
+                    default_labels=cfg.default_note_visibility_labels,
+                    required_labels=cfg.required_note_visibility_labels,
+                    allowed_labels=cfg.allowed_note_visibility_labels,
+                )
+            else:
+                write_policy = NoteWritePolicy.UNCONSTRAINED
 
             async with get_db_context(self.database_engine) as db_context:
                 await db_context.notes.add_or_update(
                     title=title,
                     content=content,
                     include_in_prompt=False,
-                    visibility_labels=visibility_labels,
+                    write_policy=write_policy,
                 )
 
             logger.info(

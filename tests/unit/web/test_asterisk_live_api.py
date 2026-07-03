@@ -384,6 +384,9 @@ class TestCallTranscriptSaving:
 
         mock_service = MagicMock()
         mock_service.service_config.default_note_visibility_labels = ["telephone_logs"]
+        mock_service.service_config.visibility_grants = None
+        mock_service.service_config.required_note_visibility_labels = None
+        mock_service.service_config.allowed_note_visibility_labels = None
         mock_service.service_config.timezone = ZoneInfo("UTC")
         handler.processing_service = mock_service
 

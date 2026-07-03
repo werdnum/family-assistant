@@ -1,0 +1,281 @@
+"""Tests for repository-level note write confinement (NoteWritePolicy).
+
+Phase 1 of docs/design/profile-confined-note-writes-and-automation-approvals.md:
+visibility confinement is enforced in the repository so every write path is
+covered, not just the add_or_update_note tool.
+"""
+
+from zoneinfo import ZoneInfo
+
+import pytest
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import (
+    NoteWritePolicy,
+    NoteWritePolicyError,
+)
+from family_assistant.tools.notes import add_or_update_note_tool
+from family_assistant.tools.types import ToolExecutionContext
+
+
+async def cleanup_notes(engine: AsyncEngine) -> None:
+    async with DatabaseContext(engine=engine) as db:
+        await db.execute_with_retry(delete(notes_table))
+
+
+def _confined_policy() -> NoteWritePolicy:
+    return NoteWritePolicy(
+        visibility_grants={"ops_diagnostics"},
+        default_labels=["ops_diagnostics"],
+        required_labels=["ops_diagnostics"],
+        allowed_labels=["ops_diagnostics"],
+    )
+
+
+def _make_tool_context(
+    db_context: DatabaseContext,
+    *,
+    visibility_grants: set[str] | None = None,
+    default_labels: list[str] | None = None,
+    required_labels: list[str] | None = None,
+    allowed_labels: list[str] | None = None,
+) -> ToolExecutionContext:
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test",
+        user_name="tester",
+        turn_id=None,
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        visibility_grants=visibility_grants,
+        default_note_visibility_labels=default_labels,
+        required_note_visibility_labels=required_labels,
+        allowed_note_visibility_labels=allowed_labels,
+        timezone=ZoneInfo("UTC"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# resolve_labels (pure value-object logic)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_labels_required_added_when_omitted() -> None:
+    policy = _confined_policy()
+    assert policy.resolve_labels(
+        is_new_note=True, requested_labels=None, existing_labels=[]
+    ) == ["ops_diagnostics"]
+
+
+def test_resolve_labels_required_added_when_empty_list_requested() -> None:
+    policy = _confined_policy()
+    # Explicit [] cannot escape the required floor.
+    assert policy.resolve_labels(
+        is_new_note=True, requested_labels=[], existing_labels=[]
+    ) == ["ops_diagnostics"]
+
+
+def test_resolve_labels_ceiling_rejects_unexpected_label() -> None:
+    policy = _confined_policy()
+    with pytest.raises(NoteWritePolicyError):
+        policy.resolve_labels(
+            is_new_note=True, requested_labels=["family"], existing_labels=[]
+        )
+
+
+def test_resolve_labels_unconstrained_preserves_empty() -> None:
+    # UNCONSTRAINED reproduces pre-confinement behavior: [] stays [].
+    assert (
+        NoteWritePolicy.UNCONSTRAINED.resolve_labels(
+            is_new_note=True, requested_labels=[], existing_labels=[]
+        )
+        == []
+    )
+
+
+def test_resolve_labels_preserves_existing_on_update_when_omitted() -> None:
+    policy = _confined_policy()
+    assert policy.resolve_labels(
+        is_new_note=False,
+        requested_labels=None,
+        existing_labels=["ops_diagnostics"],
+    ) == ["ops_diagnostics"]
+
+
+# ---------------------------------------------------------------------------
+# Repository enforcement (covers bypass paths that skip the tool layer)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repository_applies_required_labels(db_engine: AsyncEngine) -> None:
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Diag Report",
+            content="findings",
+            write_policy=_confined_policy(),
+        )
+        note = await db.notes.get_by_title("Diag Report", visibility_grants=None)
+        assert note is not None
+        assert note.visibility_labels == ["ops_diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_repository_required_labels_win_over_empty_request(
+    db_engine: AsyncEngine,
+) -> None:
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Diag Report",
+            content="findings",
+            visibility_labels=[],
+            write_policy=_confined_policy(),
+        )
+        note = await db.notes.get_by_title("Diag Report", visibility_grants=None)
+        assert note is not None
+        assert note.visibility_labels == ["ops_diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_repository_ceiling_rejects_write(db_engine: AsyncEngine) -> None:
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        with pytest.raises(NoteWritePolicyError):
+            await db.notes.add_or_update(
+                title="Diag Report",
+                content="findings",
+                visibility_labels=["family"],
+                write_policy=_confined_policy(),
+            )
+        # Nothing persisted.
+        assert (
+            await db.notes.get_by_title("Diag Report", visibility_grants=None) is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_repository_see_before_overwrite_enforced(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confined caller cannot overwrite a note it cannot see, even via the repo."""
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Family Note",
+            content="private family content",
+            visibility_labels=["family"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+    async with DatabaseContext(engine=db_engine) as db:
+        with pytest.raises(NoteWritePolicyError):
+            await db.notes.add_or_update(
+                title="Family Note",
+                content="overwritten by ops",
+                write_policy=_confined_policy(),
+            )
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Family Note", visibility_grants=None)
+        assert note is not None
+        assert note.content == "private family content"
+
+
+@pytest.mark.asyncio
+async def test_repository_rename_applies_policy(db_engine: AsyncEngine) -> None:
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Old Title",
+            content="content",
+            visibility_labels=["ops_diagnostics"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+    async with DatabaseContext(engine=db_engine) as db:
+        with pytest.raises(NoteWritePolicyError):
+            await db.notes.rename_and_update(
+                "Old Title",
+                "New Title",
+                "content",
+                True,  # noqa: FBT003 - positional include_in_prompt matches signature
+                visibility_labels=["family"],
+                write_policy=_confined_policy(),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Tool layer end-to-end
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_confines_new_note(db_engine: AsyncEngine) -> None:
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(
+            db,
+            visibility_grants={"ops_diagnostics"},
+            default_labels=["ops_diagnostics"],
+            required_labels=["ops_diagnostics"],
+            allowed_labels=["ops_diagnostics"],
+        )
+        result = await add_or_update_note_tool(
+            exec_context=ctx,
+            title="Auto Diag",
+            content="body",
+            visibility_labels=[],
+        )
+        assert "successfully" in result.lower()
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Auto Diag", visibility_grants=None)
+        assert note is not None
+        assert note.visibility_labels == ["ops_diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_tool_ceiling_violation_returns_error(db_engine: AsyncEngine) -> None:
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(
+            db,
+            visibility_grants={"ops_diagnostics"},
+            required_labels=["ops_diagnostics"],
+            allowed_labels=["ops_diagnostics"],
+        )
+        result = await add_or_update_note_tool(
+            exec_context=ctx,
+            title="Bad Labels",
+            content="body",
+            visibility_labels=["family"],
+        )
+        assert result.lower().startswith("error")
+    async with DatabaseContext(engine=db_engine) as db:
+        assert await db.notes.get_by_title("Bad Labels", visibility_grants=None) is None
+
+
+def test_context_note_write_policy_reflects_fields() -> None:
+    """The exec-context helper carries the profile's confinement fields.
+
+    This is the single derivation used by every context-construction site, so
+    the threading is exercised through it.
+    """
+    ctx = _make_tool_context(
+        db_context=None,  # type: ignore[arg-type]  # helper only reads label fields
+        visibility_grants={"ops_diagnostics"},
+        default_labels=["ops_diagnostics"],
+        required_labels=["ops_diagnostics"],
+        allowed_labels=["ops_diagnostics"],
+    )
+    policy = ctx.note_write_policy()
+    assert policy.visibility_grants == {"ops_diagnostics"}
+    assert policy.default_labels == ["ops_diagnostics"]
+    assert policy.required_labels == ["ops_diagnostics"]
+    assert policy.allowed_labels == ["ops_diagnostics"]

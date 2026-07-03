@@ -70,6 +70,8 @@ class ToolExecutorConfig(Protocol):
     id: str
     visibility_grants: set[str] | None
     default_note_visibility_labels: list[str] | None
+    required_note_visibility_labels: list[str] | None
+    allowed_note_visibility_labels: list[str] | None
     note_registry: NoteRegistry | None
 
 
@@ -223,6 +225,8 @@ class ProcessingServiceConfig:
     # Visibility grants for note access control
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
+    required_note_visibility_labels: list[str] | None = None
+    allowed_note_visibility_labels: list[str] | None = None
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
 

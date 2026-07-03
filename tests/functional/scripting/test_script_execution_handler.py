@@ -19,6 +19,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventActionType, EventSourceType
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -524,6 +525,7 @@ async def test_script_can_retrieve_notes(
             title="Test Note Alpha",
             content="This is a test note for retrieval",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Step 2: Create event listener with script that reads notes

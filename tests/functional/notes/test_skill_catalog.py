@@ -10,6 +10,7 @@ from family_assistant.context_providers import NotesContextProvider
 from family_assistant.skills import NoteRegistry, ParsedSkill
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 
 TEST_PROMPTS = {
     "note_item_format": "- {title}: {content}",
@@ -46,11 +47,13 @@ async def test_db_skill_appears_in_catalog_not_notes(
             title="Regular Note",
             content="Just a normal note.",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Email Skill",
             content=SKILL_FRONTMATTER_CONTENT,
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async def get_db_context_func() -> DatabaseContext:
@@ -93,11 +96,13 @@ async def test_db_skill_excluded_from_other_notes_list(
             title="Hidden Regular Note",
             content="Regular hidden content.",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Hidden Skill",
             content=SKILL_FRONTMATTER_CONTENT,
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async def get_db_context_func() -> DatabaseContext:
@@ -172,6 +177,7 @@ async def test_mixed_db_and_file_skills_in_catalog(
             title="DB Skill Note",
             content=SKILL_FRONTMATTER_CONTENT,
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     file_skills = [
@@ -273,6 +279,7 @@ async def test_no_catalog_when_no_skills(
             title="Regular Note",
             content="Just content, no frontmatter.",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     async def get_db_context_func() -> DatabaseContext:

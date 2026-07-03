@@ -184,6 +184,8 @@ class ToolExecutor:
             camera_backend=camera_backend,
             visibility_grants=self.config.visibility_grants,
             default_note_visibility_labels=self.config.default_note_visibility_labels,
+            required_note_visibility_labels=self.config.required_note_visibility_labels,
+            allowed_note_visibility_labels=self.config.allowed_note_visibility_labels,
             note_registry=self.config.note_registry,
         )
 

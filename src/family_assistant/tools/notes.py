@@ -43,24 +43,17 @@ async def add_or_update_note_tool(
     Returns:
         A string indicating success or failure
     """
+    from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+        NoteWritePolicyError,
+    )
+
     db_context = exec_context.db_context
     attachment_registry = exec_context.attachment_registry
 
-    # Enforce visibility: check if user can see existing note before allowing update
-    labels_to_use = visibility_labels
-    visible_existing = await db_context.notes.get_by_title(
-        title, visibility_grants=exec_context.visibility_grants
-    )
-    if visible_existing is None:
-        # Check if title is taken by a note the user can't see
-        any_existing = await db_context.notes.get_by_title(
-            title, visibility_grants=None
-        )
-        if any_existing:
-            return f"Error: Cannot modify note '{title}' - insufficient visibility permissions."
-        # Truly new note - apply default labels if none specified
-        if labels_to_use is None and exec_context.default_note_visibility_labels:
-            labels_to_use = exec_context.default_note_visibility_labels
+    # Visibility confinement (see-before-overwrite, default/required/allowed
+    # labels) is enforced in the repository via the write policy so every write
+    # path is covered, not just this tool.
+    write_policy = exec_context.note_write_policy()
 
     # Validate attachment IDs if provided
     # None means "preserve existing", empty list means "clear all attachments"
@@ -93,7 +86,8 @@ async def add_or_update_note_tool(
             include_in_prompt=include_in_prompt,
             append=append,
             attachment_ids=valid_attachment_ids,  # None preserves existing, [] clears
-            visibility_labels=labels_to_use,
+            visibility_labels=visibility_labels,
+            write_policy=write_policy,
         )
         attachment_info = (
             f" with {len(valid_attachment_ids)} attachment(s)"
@@ -101,6 +95,8 @@ async def add_or_update_note_tool(
             else ""
         )
         return f"Note '{title}' has been {'updated' if result == 'Success' else 'created'} successfully{attachment_info}."
+    except NoteWritePolicyError as e:
+        return f"Error: {e}"
     except Exception as e:
         logger.error(f"Error adding/updating note '{title}': {e}", exc_info=True)
         return f"Error: Failed to add/update note '{title}'. {e}"
@@ -149,7 +145,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "visibility_labels": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of visibility labels for access control. Notes are only visible to profiles with matching grants. If not specified, new notes get default labels from config. Use an empty list [] to make a note visible to all profiles.",
+                        "description": "Optional list of visibility labels for access control. Notes are only visible to profiles with matching grants. If not specified, new notes get default labels from config. The active profile's policy may add required labels or reject label values you request. An empty list [] only makes the note visible to all profiles when the active profile permits unrestricted note writes.",
                     },
                 },
                 "required": ["title", "content"],

@@ -23,6 +23,7 @@ from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
@@ -227,6 +228,7 @@ async def test_notes_indexing_e2e(
             result = await db_context.notes.add_or_update(
                 title=unique_note_title,
                 content=TEST_NOTE_CONTENT,
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
             assert result == "Success", f"Failed to create note: {result}"
             logger.info(f"Created note with title: {unique_note_title}")

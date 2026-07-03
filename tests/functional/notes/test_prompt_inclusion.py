@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 
 
 @pytest.mark.asyncio
@@ -21,6 +22,7 @@ async def test_add_note_with_include_in_prompt_true(
             title="Test Note Included",
             content="This note should appear in prompts",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         assert result == "Success"
 
@@ -52,6 +54,7 @@ async def test_add_note_with_include_in_prompt_false(
             title="Test Note Excluded",
             content="This note should NOT appear in prompts",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         assert result == "Success"
 
@@ -84,6 +87,7 @@ async def test_add_note_default_includes_in_prompt(
         result = await db.notes.add_or_update(
             title="Test Note Default",
             content="This note uses default behavior",
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         assert result == "Success"
 
@@ -109,6 +113,7 @@ async def test_update_note_include_in_prompt_flag(
             title="Test Note Toggle",
             content="Original content",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Verify initial state
@@ -120,6 +125,7 @@ async def test_update_note_include_in_prompt_flag(
             title="Test Note Toggle",
             content="Updated content",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Verify updated state
@@ -137,6 +143,7 @@ async def test_update_note_include_in_prompt_flag(
             title="Test Note Toggle",
             content="Final content",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Verify final state
@@ -165,6 +172,7 @@ async def test_get_prompt_notes_filters_correctly(
                 title=title,
                 content=content,
                 include_in_prompt=include,
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
 
         # Get prompt notes

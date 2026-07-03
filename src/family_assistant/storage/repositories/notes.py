@@ -2,8 +2,9 @@
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import sqlalchemy as sa
 from pydantic import BaseModel, Field
@@ -76,6 +77,91 @@ class DuplicateNoteError(Exception):
     """Raised when attempting to create a note with a title that already exists."""
 
     pass
+
+
+class NoteWritePolicyError(Exception):
+    """Raised when a note write violates the active profile's write policy.
+
+    Covers both the see-before-overwrite check (a restricted profile may not
+    overwrite a note it cannot see) and the allowed-label ceiling.
+    """
+
+    pass
+
+
+@dataclass(frozen=True)
+class NoteWritePolicy:
+    """Write-side visibility confinement for a note write.
+
+    Enforced in the repository so every write path is covered, not just the
+    ``add_or_update_note`` tool. Constructed once from the active profile (see
+    ``ToolExecutionContext.note_write_policy``) and passed to every repository
+    write.
+
+    Attributes:
+        visibility_grants: Grants used for the see-before-overwrite check. When
+            None, the check is skipped (the caller may overwrite any note).
+        default_labels: Applied when a *new* note omits ``visibility_labels``.
+        required_labels: Write floor — always unioned into the final labels.
+        allowed_labels: Write ceiling — when set, every final label must be a
+            member, or the write is rejected.
+
+    ``UNCONSTRAINED`` (all fields None) reproduces the pre-confinement behavior
+    and is the explicit opt-out for trusted admin surfaces (e.g. the web notes
+    API). Its use is restricted by an ast-grep conformance rule.
+    """
+
+    visibility_grants: set[str] | None
+    default_labels: list[str] | None
+    required_labels: list[str] | None
+    allowed_labels: list[str] | None
+
+    UNCONSTRAINED: ClassVar["NoteWritePolicy"]
+
+    def resolve_labels(
+        self,
+        *,
+        is_new_note: bool,
+        requested_labels: list[str] | None,
+        existing_labels: list[str],
+    ) -> list[str]:
+        """Compute the final visibility labels for a write, enforcing the ceiling.
+
+        Raises:
+            NoteWritePolicyError: if the resulting labels are not a subset of
+                ``allowed_labels`` (when that ceiling is set).
+        """
+        if requested_labels is not None:
+            base = list(requested_labels)
+        elif is_new_note:
+            base = list(self.default_labels) if self.default_labels else []
+        else:
+            base = list(existing_labels)
+
+        final = list(base)
+        if self.required_labels:
+            for label in self.required_labels:
+                if label not in final:
+                    final.append(label)
+
+        if self.allowed_labels is not None:
+            allowed = set(self.allowed_labels)
+            violations = sorted({label for label in final if label not in allowed})
+            if violations:
+                raise NoteWritePolicyError(
+                    f"Visibility labels {violations} are not permitted by the active "
+                    f"profile (allowed: {sorted(allowed)})."
+                )
+
+        return final
+
+
+NoteWritePolicy.UNCONSTRAINED = NoteWritePolicy(
+    visibility_grants=None,
+    default_labels=None,
+    required_labels=None,
+    allowed_labels=None,
+)
 
 
 _NOTE_COLUMNS = [
@@ -277,6 +363,8 @@ class NotesRepository(BaseRepository):
         append: bool = False,
         attachment_ids: list[str] | None = None,
         visibility_labels: list[str] | None = None,
+        *,
+        write_policy: NoteWritePolicy,
     ) -> str:
         """Adds a new note or updates an existing note with the given title (upsert).
 
@@ -284,40 +372,46 @@ class NotesRepository(BaseRepository):
             visibility_labels: Labels for visibility control.
                 None = preserve existing on update, use default for new notes.
                 Empty list = explicitly unrestricted (visible to all profiles).
+            write_policy: Required. The active profile's write confinement.
+                See-before-overwrite, default/required/allowed labels are applied
+                here so every write path is covered. Pass
+                ``NoteWritePolicy.UNCONSTRAINED`` from trusted admin surfaces.
+
+        Raises:
+            NoteWritePolicyError: if the caller cannot see an existing note with
+                this title, or the resolved labels violate the allowed ceiling.
         """
         now = datetime.now(UTC)
 
-        # If append is True, fetch existing content first
-        existing_note = None
-        if append:
-            existing_note = await self.get_by_title(title, visibility_grants=None)
-            if existing_note:
-                content = existing_note.content + "\n" + content
+        existing_note = await self.get_by_title(title, visibility_grants=None)
+
+        # See-before-overwrite: a restricted profile may not overwrite a note it
+        # cannot see. Skipped when the policy carries no grants (admin bypass).
+        if existing_note is not None and write_policy.visibility_grants is not None:
+            visible_existing = await self.get_by_title(
+                title, visibility_grants=write_policy.visibility_grants
+            )
+            if visible_existing is None:
+                raise NoteWritePolicyError(
+                    f"Cannot modify note '{title}' - insufficient visibility permissions."
+                )
+
+        if append and existing_note:
+            content = existing_note.content + "\n" + content
 
         # Determine attachment_ids to use
         if attachment_ids is None:
-            if existing_note:
-                attachment_ids_to_use = existing_note.attachment_ids
-            else:
-                if not append:
-                    existing_note = await self.get_by_title(
-                        title, visibility_grants=None
-                    )
-                if existing_note:
-                    attachment_ids_to_use = existing_note.attachment_ids
-                else:
-                    attachment_ids_to_use = []
+            attachment_ids_to_use = (
+                existing_note.attachment_ids if existing_note else []
+            )
         else:
             attachment_ids_to_use = attachment_ids
 
-        # Determine visibility_labels to use (same pattern as attachment_ids)
-        if visibility_labels is None:
-            if existing_note:
-                visibility_labels_to_use = existing_note.visibility_labels
-            else:
-                visibility_labels_to_use = []
-        else:
-            visibility_labels_to_use = visibility_labels
+        visibility_labels_to_use = write_policy.resolve_labels(
+            is_new_note=existing_note is None,
+            requested_labels=visibility_labels,
+            existing_labels=existing_note.visibility_labels if existing_note else [],
+        )
 
         # Serialize to JSON strings
         attachment_ids_json = json.dumps(attachment_ids_to_use)
@@ -463,6 +557,8 @@ class NotesRepository(BaseRepository):
         include_in_prompt: bool,
         attachment_ids: list[str] | None = None,
         visibility_labels: list[str] | None = None,
+        *,
+        write_policy: NoteWritePolicy,
     ) -> str:
         """Renames a note and updates its content, preserving the primary key.
 
@@ -473,6 +569,9 @@ class NotesRepository(BaseRepository):
             include_in_prompt: Whether to include in prompt
             attachment_ids: Optional list of attachment IDs. If None, preserves existing.
             visibility_labels: Optional visibility labels. If None, preserves existing.
+            write_policy: Required. The active profile's write confinement (see
+                ``add_or_update``). Pass ``NoteWritePolicy.UNCONSTRAINED`` from
+                trusted admin surfaces.
 
         Returns:
             Status message
@@ -480,6 +579,8 @@ class NotesRepository(BaseRepository):
         Raises:
             NoteNotFoundError: If original note not found
             DuplicateNoteError: If new title conflicts with existing note
+            NoteWritePolicyError: If the caller cannot see the note being renamed
+                or the resolved labels violate the allowed ceiling
             SQLAlchemyError: If database error occurs
         """
         try:
@@ -491,6 +592,18 @@ class NotesRepository(BaseRepository):
                 raise NoteNotFoundError(
                     f"Cannot rename because note '{original_title}' was not found"
                 )
+
+            # See-before-overwrite: a restricted profile may not rename a note it
+            # cannot see. Skipped when the policy carries no grants (admin bypass).
+            if write_policy.visibility_grants is not None:
+                visible_existing = await self.get_by_title(
+                    original_title, visibility_grants=write_policy.visibility_grants
+                )
+                if visible_existing is None:
+                    raise NoteWritePolicyError(
+                        f"Cannot modify note '{original_title}' - insufficient "
+                        "visibility permissions."
+                    )
 
             # Check if new title conflicts with existing note (unless it's the same note)
             if new_title != original_title:
@@ -508,11 +621,11 @@ class NotesRepository(BaseRepository):
             else:
                 attachment_ids_to_use = attachment_ids
 
-            # Determine visibility_labels to use
-            if visibility_labels is None:
-                visibility_labels_to_use = existing_note.visibility_labels
-            else:
-                visibility_labels_to_use = visibility_labels
+            visibility_labels_to_use = write_policy.resolve_labels(
+                is_new_note=False,
+                requested_labels=visibility_labels,
+                existing_labels=existing_note.visibility_labels,
+            )
 
             # Serialize to JSON strings
             attachment_ids_json = json.dumps(attachment_ids_to_use)
