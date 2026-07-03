@@ -262,16 +262,16 @@ async def test_read_error_logs_negative_limit_clamped(
 
 
 @pytest.mark.asyncio
-async def test_read_error_logs_strips_tracebacks_by_default(
+async def test_read_error_logs_includes_traceback_omits_extra_data_by_default(
     db_engine: AsyncEngine,
 ) -> None:
-    """Tracebacks and extra_data must be omitted unless explicitly requested."""
+    """Tracebacks are always returned; extra_data is omitted unless requested."""
     async with DatabaseContext(engine=db_engine) as db:
         stmt = insert(error_logs_table).values(
             logger_name="test.module",
             level="ERROR",
             message="boom",
-            traceback="Traceback (most recent call last): secret",
+            traceback="Traceback (most recent call last): frame",
             extra_data={"secret": "value"},
         )
         await db.execute_with_retry(stmt)
@@ -281,13 +281,17 @@ async def test_read_error_logs_strips_tracebacks_by_default(
         data = result.get_data()
         assert isinstance(data, dict)
         assert data["count"] == 1
-        assert "traceback" not in data["logs"][0]
+        # Traceback (code structure, low risk) is always included.
+        assert (
+            data["logs"][0]["traceback"] == "Traceback (most recent call last): frame"
+        )
+        # extra_data (arbitrary logged JSON) is stripped by default.
         assert "extra_data" not in data["logs"][0]
-        assert data["filters"]["include_tracebacks"] is False
+        assert data["filters"]["include_extra_data"] is False
 
 
 @pytest.mark.asyncio
-async def test_read_error_logs_includes_tracebacks_when_requested(
+async def test_read_error_logs_includes_extra_data_when_requested(
     db_engine: AsyncEngine,
 ) -> None:
     async with DatabaseContext(engine=db_engine) as db:
@@ -295,15 +299,15 @@ async def test_read_error_logs_includes_tracebacks_when_requested(
             logger_name="test.module",
             level="ERROR",
             message="boom",
-            traceback="Traceback: details",
+            extra_data={"request_id": "abc123"},
         )
         await db.execute_with_retry(stmt)
 
         exec_context = _make_exec_context(db)
-        result = await read_error_logs(exec_context, include_tracebacks=True)
+        result = await read_error_logs(exec_context, include_extra_data=True)
         data = result.get_data()
         assert isinstance(data, dict)
-        assert data["logs"][0]["traceback"] == "Traceback: details"
+        assert data["logs"][0]["extra_data"] == {"request_id": "abc123"}
 
 
 @pytest.mark.asyncio

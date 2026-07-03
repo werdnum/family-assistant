@@ -86,9 +86,9 @@ def test_ops_policy_allows_diagnostics_and_notes(tmp_path: Path) -> None:
         ), name
 
 
-def test_ops_policy_denies_traceback_reads(tmp_path: Path) -> None:
+def test_ops_policy_denies_extra_data_reads(tmp_path: Path) -> None:
     engine = _ops_policy_engine(tmp_path)
-    # Sanitized reads are allowed; explicit tracebacks are denied.
+    # Default (message + traceback) reads are allowed; explicit extra_data is denied.
     assert (
         engine.evaluate(_descriptor("read_error_logs")).decision
         == ToolPolicyDecision.ALLOW
@@ -96,7 +96,7 @@ def test_ops_policy_denies_traceback_reads(tmp_path: Path) -> None:
     assert (
         engine.evaluate(
             _descriptor("read_error_logs"),
-            arguments={"include_tracebacks": True},
+            arguments={"include_extra_data": True},
         ).decision
         == ToolPolicyDecision.DENY
     )

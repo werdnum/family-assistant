@@ -263,10 +263,10 @@ service_profiles:
             names:
               - "read_error_logs"
             argument_equals:
-              include_tracebacks: true
+              include_extra_data: true
           decision: "deny"
           priority: 20
-          description: "Sanitized logs only; tracebacks/extra_data can carry sensitive data."
+          description: "message+traceback only; the freeform extra_data field can carry sensitive/bulky data."
         - match:
             names:
               - "read_error_logs"
@@ -278,7 +278,7 @@ service_profiles:
 
 This profile can:
 
-- Read bounded, sanitized diagnostic logs (no tracebacks/extra_data).
+- Read bounded diagnostic logs (message + traceback; no `extra_data`).
 - Write notes only into `ops_diagnostics`.
 - Create its own script automations.
 
@@ -287,7 +287,8 @@ It cannot:
 - Read general family notes unless it receives those grants.
 - Write unrestricted notes.
 - Create `wake_llm` automations, or wake the LLM from a script (see below).
-- Read tracebacks/`extra_data` via `read_error_logs(include_tracebacks=True)` (denied by policy).
+- Read the freeform `extra_data` field via `read_error_logs(include_extra_data=True)` (denied by
+  policy).
 - Enumerate or read other profiles' automations: `get_automation`/`list_automations` are **not**
   granted, because `get_automation` fetches with `conversation_id=None` and returns inline script
   bodies, which is broader than this profile's bounded access.
@@ -374,7 +375,7 @@ anything acted on crosses the trust boundary through them.
 ## Design Part 3: Bounded Diagnostic Read Tool
 
 `read_error_logs` currently supports `level`/`logger_name`/`limit` only. Add a bounded time filter
-and a traceback toggle:
+and an `extra_data` toggle:
 
 ```python
 read_error_logs(
@@ -382,18 +383,25 @@ read_error_logs(
     logger_name: str | None = None,
     limit: int = 50,
     since_hours: int | None = None,
-    include_tracebacks: bool = False,
+    include_extra_data: bool = False,
 )
 ```
 
-`include_tracebacks` defaults to **`False` globally**, not per-profile. Per-profile argument
-defaults are not enforceable: the policy matcher fails on *missing* keys, so a deny rule on
-`include_tracebacks: true` cannot catch a call that simply omits the argument. Flipping the schema
-default makes the safe behavior the passive one; the `engineer` profile — an interactive,
-human-supervised context — passes `include_tracebacks=True` explicitly when needed.
+The field worth gating is **`extra_data`**, not the traceback. A Python traceback is call stack,
+source lines, and file/function names — code *structure*, not data, and the least likely field to
+carry sensitive content; it is also the most useful for triage, so it is **always included**. The
+`message`/`exception_message` are developer-authored and are the point of the log (they cannot be
+stripped without gutting the tool). `extra_data`, by contrast, is arbitrary JSON attached at log
+time (request bodies, tokens, whole objects) — the field most likely to leak sensitive or bulky
+content — so it is omitted unless `include_extra_data=True`.
 
-Tracebacks and `extra_data` can contain sensitive information. Maintenance profiles should consume
-sanitized summaries; the recommended triage window is `since_hours=24, limit=200`.
+`include_extra_data` defaults to **`False` globally**, not per-profile. Per-profile argument
+defaults are not enforceable: the policy matcher fails on *missing* keys, so a deny rule on
+`include_extra_data: true` cannot catch a call that simply omits the argument. A global-safe default
+makes the passive behavior the safe one; the `engineer` profile — an interactive, human-supervised
+context — passes `include_extra_data=True` explicitly when needed.
+
+The recommended triage window is `since_hours=24, limit=200`.
 
 ## Design Part 4: Escalation Beyond the Note
 
@@ -526,19 +534,21 @@ discovered during review, for whenever it is picked up:
 
 ### Phase 2: Maintenance Profile, Log Window, wake_llm Guard
 
-- Add `since_hours` to `read_error_logs`; flip `include_tracebacks` default to `False` (engineer
-  passes `True` explicitly).
-- Add the `execute_action` runtime guard refusing `wake_llm` rows stamped with a non-default
-  profile.
+- Add `since_hours` to `read_error_logs`; gate the freeform `extra_data` field behind
+  `include_extra_data` (default `False`; engineer passes `True` explicitly). Tracebacks stay
+  included.
+- Add the `allow_wake_llm` capability and route `wake_llm` under the intended profile (see wake_llm
+  sections above).
 - Add the `ops_automation` example profile (script-only policy) to docs/config examples.
 - Create the daily issue-triage automation (sharded `llm_json` script) under that profile via the
   delegation setup path.
 - Add the cross-profile `update_automation` denial.
 - Tests:
   - `create_automation(action_type="wake_llm")` is denied for the profile by policy,
-  - the runtime guard fails loudly on a mis-stamped `wake_llm` row,
+  - the `allow_wake_llm` guard fails loudly for a confined profile (create/execute/script paths),
+  - event-listener wakes route to `event_handler`; scheduled wakes carry the originating profile,
   - cross-profile tool-path updates are denied,
-  - `read_error_logs` respects `since_hours` and defaults tracebacks off.
+  - `read_error_logs` respects `since_hours` and omits `extra_data` by default.
 
 ### Phase 3: Escalation Tool (When a Deployment Needs It)
 
