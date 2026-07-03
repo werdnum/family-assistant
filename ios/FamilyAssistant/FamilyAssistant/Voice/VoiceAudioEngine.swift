@@ -46,6 +46,7 @@ enum VoiceAudioError: LocalizedError {
     case converterUnavailable
     case simulatorLiveInputDisabled
     case captureStalled
+    case interruptionEndedWithoutResume
     case restartFailed(String)
 
     var errorDescription: String? {
@@ -56,6 +57,8 @@ enum VoiceAudioError: LocalizedError {
             "Live microphone input is disabled in the iOS Simulator. Set FA_ALLOW_SIMULATOR_MIC=1 to try the simulator microphone."
         case .captureStalled:
             "The microphone stopped delivering audio."
+        case .interruptionEndedWithoutResume:
+            "The voice session was interrupted and could not be resumed."
         case .restartFailed(let reason):
             "The audio engine could not be restarted: \(reason)"
         }
@@ -83,6 +86,51 @@ enum CaptureStallAction: Equatable {
             return .wait
         }
         return didAlreadyRestartForThisStall ? .fail : .restart
+    }
+}
+
+/// Tracks the watchdog's stall escalation across ticks: stall once → restart,
+/// stall again without a real capture in between → fail. Pure so the sequence is
+/// unit-testable without audio hardware or real timers.
+///
+/// The subtlety it encodes: `buildGraphAndStart()` seeds `lastCaptureAt` on every
+/// rebuild, so a restarted-but-still-dead engine looks momentarily "fresh". The
+/// escalation flag must therefore only reset when the *capture counter* advances
+/// (a genuine tap callback), never merely because `sinceLastCapture` dipped below
+/// the threshold — otherwise a restart that never revives capture would loop
+/// forever instead of failing on the next stall.
+struct StallEscalation {
+    private var didRestartForThisStall = false
+    private var lastObservedCaptureCount: UInt64
+
+    init(captureCount: UInt64) {
+        lastObservedCaptureCount = captureCount
+    }
+
+    mutating func step(
+        sinceLastCapture: Duration,
+        stallThreshold: Duration,
+        isInterrupted: Bool,
+        captureCount: UInt64
+    ) -> CaptureStallAction {
+        let action = CaptureStallAction.decide(
+            sinceLastCapture: sinceLastCapture,
+            stallThreshold: stallThreshold,
+            isInterrupted: isInterrupted,
+            didAlreadyRestartForThisStall: didRestartForThisStall
+        )
+        switch action {
+        case .wait:
+            if captureCount != lastObservedCaptureCount {
+                didRestartForThisStall = false
+            }
+        case .restart:
+            didRestartForThisStall = true
+        case .fail:
+            break
+        }
+        lastObservedCaptureCount = captureCount
+        return action
     }
 }
 
@@ -114,6 +162,10 @@ final class VoiceAudioEngine: VoiceAudioIO {
         var onCaptured: (@Sendable (Data) -> Void)?
         var onInputLevel: (@Sendable (Double) -> Void)?
         var lastCaptureAt: ContinuousClock.Instant?
+        /// Incremented only by a real tap callback. The watchdog uses this to
+        /// tell a genuine capture from the `lastCaptureAt` it seeds on a rebuild,
+        /// so a restart that never revives capture still escalates to a failure.
+        var captureCount: UInt64 = 0
     }
 
     var onCapturedAudio: (@Sendable (Data) -> Void)? {
@@ -224,6 +276,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             guard let self else { return }
             let (muted, converter, audioCallback, levelCallback) = self.tapState.withLock {
                 $0.lastCaptureAt = .now
+                $0.captureCount &+= 1
                 return ($0.muted, $0.converter, $0.onCaptured, $0.onInputLevel)
             }
             guard !muted, let converter, let data = converter.convertToData(buffer) else { return }
@@ -360,15 +413,24 @@ final class VoiceAudioEngine: VoiceAudioIO {
             isInterrupted = true
             engine.pause()
         case .ended:
-            isInterrupted = false
             let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
                 .map(AVAudioSession.InterruptionOptions.init(rawValue:))
-            if options?.contains(.shouldResume) == true {
-                try? AVAudioSession.sharedInstance().setActive(true, options: [])
-                // The interruption may have changed the route/formats; a plain
-                // start can silently come back with a dead graph, so rebuild.
-                restartOrFail()
+            guard options?.contains(.shouldResume) == true else {
+                // The system won't let us resume (e.g. another app kept the audio
+                // route). We can't revive the microphone, so fail visibly rather
+                // than clear `isInterrupted` and leave a paused engine that the
+                // watchdog would then try to restart against the system's
+                // instruction — or sit forever on a dead "Listening…" mic.
+                // `isInterrupted` stays true so the watchdog is suppressed until
+                // the session tears this engine down.
+                failEngine(VoiceAudioError.interruptionEndedWithoutResume)
+                return
             }
+            isInterrupted = false
+            try? AVAudioSession.sharedInstance().setActive(true, options: [])
+            // The interruption may have changed the route/formats; a plain
+            // start can silently come back with a dead graph, so rebuild.
+            restartOrFail()
         @unknown default:
             break
         }
@@ -423,25 +485,23 @@ final class VoiceAudioEngine: VoiceAudioIO {
     private func startWatchdog() {
         watchdogTask?.cancel()
         watchdogTask = Task { @MainActor [weak self] in
-            var didRestartForThisStall = false
+            guard let initialCaptureCount = self?.tapState.withLock({ $0.captureCount }) else { return }
+            var escalation = StallEscalation(captureCount: initialCaptureCount)
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.watchdogInterval)
                 guard let self, self.isRunning, !Task.isCancelled else { return }
-                let lastCaptureAt = self.tapState.withLock { $0.lastCaptureAt }
+                let (lastCaptureAt, captureCount) = self.tapState.withLock { ($0.lastCaptureAt, $0.captureCount) }
                 let sinceLast = lastCaptureAt.map { ContinuousClock.now - $0 } ?? .zero
-                let action = CaptureStallAction.decide(
+                let action = escalation.step(
                     sinceLastCapture: sinceLast,
                     stallThreshold: Self.stallThreshold,
                     isInterrupted: self.isInterrupted,
-                    didAlreadyRestartForThisStall: didRestartForThisStall
+                    captureCount: captureCount
                 )
                 switch action {
                 case .wait:
-                    if sinceLast < Self.stallThreshold {
-                        didRestartForThisStall = false
-                    }
+                    break
                 case .restart:
-                    didRestartForThisStall = true
                     self.logger.warning("Voice capture stalled; attempting engine restart")
                     self.restartOrFail()
                 case .fail:

@@ -151,7 +151,16 @@ what `@google/genai` sends; this is the single biggest unknown and is settled in
   recreate the converter, re-attach the player node, reinstall the tap — and restarts. A
   capture-liveness watchdog backstops any engine stop we fail to observe: stalled capture triggers
   one rebuild, and a second consecutive stall fails the session visibly (reported via
-  `ErrorReporter`, so it is diagnosable from `/api/errors/`).
+  `ErrorReporter`, so it is diagnosable from `/api/errors/`). The watchdog escalates on a real
+  capture counter, not the `lastCaptureAt` timestamp the rebuild seeds — otherwise a restart that
+  never revives the mic would restart forever instead of failing on the second stall.
+- **Media-services reset invalidates every audio object.** The `AVAudioEngine`/`AVAudioPlayerNode`
+  are recreated (not reused) on `mediaServicesWereResetNotification`, and the engine-scoped
+  configuration-change observer is rebound to the fresh engine before rebuilding — restarting the
+  invalidated objects can fail or crash.
+- **Interruptions that end without `.shouldResume` fail the session** rather than leave a paused
+  engine: the system has told us not to resume, so we surface a visible failure instead of sitting
+  on a dead "Listening…" mic (or letting the watchdog restart against that instruction).
 - `UIBackgroundModes = ["audio"]` so the session continues when backgrounded/locked. This must be
   justified to App Review as an active voice-assistant conversation (it is).
 
