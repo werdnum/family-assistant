@@ -306,6 +306,8 @@ def _processing_service(
         timezone=ZoneInfo("UTC"),
         visibility_grants=None,
         default_note_visibility_labels=None,
+        required_note_visibility_labels=None,
+        allowed_note_visibility_labels=None,
         note_registry=None,
     )
     service = SimpleNamespace(
