@@ -128,8 +128,10 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     var onEngineFailure: ((Error) -> Void)?
 
-    private let engine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
+    // Recreated on a media-services reset (which invalidates every audio object),
+    // so the engine-scoped configuration-change observer must be rebound too.
+    private var engine = AVAudioEngine()
+    private var playerNode = AVAudioPlayerNode()
     private let playbackFormat: AVAudioFormat
     private let tapState = OSAllocatedUnfairLock(initialState: TapState())
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-audio")
@@ -374,12 +376,18 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     private func handleMediaServicesReset() {
         guard isRunning else { return }
-        // The media server restarted, invalidating every audio object. Rebuild
-        // the session and the whole graph.
+        // The media server restarted, invalidating every audio object. Reusing
+        // the old engine/player can fail or crash, so discard them, rebind the
+        // engine-scoped observer to the fresh engine, and rebuild the whole graph.
+        logger.info("Media services were reset; recreating audio engine")
         do {
+            removeObservers()
+            engine = AVAudioEngine()
+            playerNode = AVAudioPlayerNode()
             try configureSession()
             try? engine.inputNode.setVoiceProcessingEnabled(true)
-            try rebuildGraphAndRestart()
+            registerObservers()
+            try buildGraphAndStart()
         } catch {
             failEngine(error)
         }
