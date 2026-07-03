@@ -739,6 +739,11 @@ async def schedule_action_tool(
 
     # Use the shared action executor with scheduling
     try:
+        default_profile_id = (
+            exec_context.processing_service.app_config.default_service_profile_id
+            if exec_context.processing_service
+            else None
+        )
         await execute_action(
             db_ctx=exec_context.db_context,
             action_type=action_type_enum,
@@ -750,6 +755,7 @@ async def schedule_action_tool(
             scheduled_at=scheduled_dt,
             processing_profile_id=exec_context.processing_profile_id,
             created_by_user_id=exec_context.user_id,
+            default_profile_id=default_profile_id,
         )
 
         return f"OK. {action_type} action scheduled for {schedule_time}"

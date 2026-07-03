@@ -1,0 +1,121 @@
+"""Policy + guard tests for the ops_automation confinement (Phase 2).
+
+Covers the wake_llm guard helper and the shipped ops_automation profile policy
+(script-only automations, bounded diagnostics reads, confined note writes).
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+
+from family_assistant.actions import (
+    ActionType,
+    WakeLlmProfileError,
+    assert_wake_llm_runs_under_default,
+)
+from family_assistant.config_loader import load_config
+from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from family_assistant.tools.metadata import ToolDescriptor
+
+
+# --- wake_llm guard helper ---
+
+
+def test_guard_allows_wake_llm_under_default() -> None:
+    # No raise when the stamped profile is the default.
+    assert_wake_llm_runs_under_default(
+        ActionType.WAKE_LLM, "default_assistant", "default_assistant"
+    )
+
+
+def test_guard_allows_unstamped_wake_llm() -> None:
+    assert_wake_llm_runs_under_default(ActionType.WAKE_LLM, None, "default_assistant")
+
+
+def test_guard_ignores_scripts() -> None:
+    # Scripts honor the stored profile, so a non-default profile is fine.
+    assert_wake_llm_runs_under_default(
+        ActionType.SCRIPT, "ops_automation", "default_assistant"
+    )
+
+
+def test_guard_refuses_wake_llm_under_confined_profile() -> None:
+    with pytest.raises(WakeLlmProfileError):
+        assert_wake_llm_runs_under_default(
+            ActionType.WAKE_LLM, "ops_automation", "default_assistant"
+        )
+
+
+def test_guard_noop_when_default_unknown() -> None:
+    # Without a known default we cannot compare; do not raise.
+    assert_wake_llm_runs_under_default(ActionType.WAKE_LLM, "ops_automation", None)
+
+
+# --- ops_automation shipped profile policy ---
+
+
+def _ops_policy_engine(tmp_path: Path) -> PolicyEngine:
+    config = load_config(
+        defaults_file_path="defaults.yaml",
+        config_file_path=str(tmp_path / "missing-config.yaml"),
+    )
+    profile = next(p for p in config.service_profiles if p.id == "ops_automation")
+    assert profile.tools_policy is not None
+    return PolicyEngine.from_policy_config(profile.tools_policy)
+
+
+def _descriptor(name: str) -> ToolDescriptor:
+    return next(d for d in LOCAL_TOOL_DESCRIPTORS if d.name == name)
+
+
+def test_ops_policy_denies_wake_llm_automation(tmp_path: Path) -> None:
+    engine = _ops_policy_engine(tmp_path)
+    evaluation = engine.evaluate(
+        _descriptor("create_automation"),
+        arguments={"action_type": "wake_llm"},
+    )
+    assert evaluation.decision == ToolPolicyDecision.DENY
+
+
+def test_ops_policy_allows_script_automation(tmp_path: Path) -> None:
+    engine = _ops_policy_engine(tmp_path)
+    evaluation = engine.evaluate(
+        _descriptor("create_automation"),
+        arguments={"action_type": "script"},
+    )
+    assert evaluation.decision == ToolPolicyDecision.ALLOW
+
+
+def test_ops_policy_allows_diagnostics_and_notes(tmp_path: Path) -> None:
+    engine = _ops_policy_engine(tmp_path)
+    for name in ("read_error_logs", "add_or_update_note", "list_automations"):
+        assert (
+            engine.evaluate(_descriptor(name)).decision == ToolPolicyDecision.ALLOW
+        ), name
+
+
+def test_ops_policy_denies_outbound_and_delegation(tmp_path: Path) -> None:
+    engine = _ops_policy_engine(tmp_path)
+    for name in ("send_message_to_user", "delegate_to_service"):
+        assert engine.evaluate(_descriptor(name)).decision == ToolPolicyDecision.DENY, (
+            name
+        )
+
+
+def test_ops_profile_confines_note_writes(tmp_path: Path) -> None:
+    config = load_config(
+        defaults_file_path="defaults.yaml",
+        config_file_path=str(tmp_path / "missing-config.yaml"),
+    )
+    profile = next(p for p in config.service_profiles if p.id == "ops_automation")
+    pc = profile.processing_config
+    assert pc.required_note_visibility_labels == ["ops_diagnostics"]
+    assert pc.allowed_note_visibility_labels == ["ops_diagnostics"]
+    assert profile.visibility_grants == ["ops_diagnostics"]

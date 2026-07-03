@@ -8,6 +8,7 @@ failing on an active PostgreSQL transaction.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -258,3 +259,82 @@ async def test_read_error_logs_negative_limit_clamped(
         data = result.get_data()
         assert isinstance(data, dict)
         assert data["filters"]["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_strips_tracebacks_by_default(
+    db_engine: AsyncEngine,
+) -> None:
+    """Tracebacks and extra_data must be omitted unless explicitly requested."""
+    async with DatabaseContext(engine=db_engine) as db:
+        stmt = insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="boom",
+            traceback="Traceback (most recent call last): secret",
+            extra_data={"secret": "value"},
+        )
+        await db.execute_with_retry(stmt)
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 1
+        assert "traceback" not in data["logs"][0]
+        assert "extra_data" not in data["logs"][0]
+        assert data["filters"]["include_tracebacks"] is False
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_includes_tracebacks_when_requested(
+    db_engine: AsyncEngine,
+) -> None:
+    async with DatabaseContext(engine=db_engine) as db:
+        stmt = insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="boom",
+            traceback="Traceback: details",
+        )
+        await db.execute_with_retry(stmt)
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, include_tracebacks=True)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["logs"][0]["traceback"] == "Traceback: details"
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_respects_since_hours(
+    db_engine: AsyncEngine,
+) -> None:
+    """since_hours excludes logs older than the window."""
+    now = datetime.now(UTC)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="recent",
+                timestamp=now - timedelta(hours=1),
+            )
+        )
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="old",
+                timestamp=now - timedelta(hours=48),
+            )
+        )
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, since_hours=24)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        messages = {log["message"] for log in data["logs"]}
+        assert "recent" in messages
+        assert "old" not in messages
+        assert data["filters"]["since_hours"] == 24

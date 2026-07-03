@@ -27,6 +27,10 @@ class Automation(BaseModel):
     created_at: datetime
     last_execution_at: datetime | None = None
 
+    # Provenance: the profile/user that created (or last re-stamped) the automation.
+    processing_profile_id: str | None = None
+    created_by_user_id: str | None = None
+
     # Event-specific fields (null for schedule automations)
     source_id: str | None = None
     # ast-grep-ignore: no-dict-any - match conditions have varying keys per event source

@@ -13,6 +13,7 @@ import logging
 import os
 import platform
 import sys
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import aiofiles
@@ -311,6 +312,8 @@ async def read_error_logs(
     level: str | None = None,
     logger_name: str | None = None,
     limit: int = 50,
+    since_hours: int | None = None,
+    include_tracebacks: bool = False,
 ) -> ToolResult:
     """Read application error logs from the database.
 
@@ -319,22 +322,47 @@ async def read_error_logs(
         level: Optional filter by log level (e.g. 'ERROR', 'WARNING').
         logger_name: Optional filter by logger name.
         limit: Maximum number of logs to return (default 50, max 200).
+        since_hours: Optional time window - only return logs from the last N hours.
+        include_tracebacks: When False (the default), tracebacks and extra_data are
+            stripped from the results. Tracebacks and extra_data can contain sensitive
+            information, so the safe behavior is the passive one; interactive,
+            human-supervised contexts (e.g. the engineer profile) pass True explicitly.
+            The default is global rather than per-profile because the policy matcher
+            cannot enforce argument defaults (a deny rule on a truthy value never fires
+            when the argument is simply omitted).
 
     Returns:
         ToolResult with error log entries.
     """
     logger.info(
-        "read_error_logs: level=%s, logger=%s, limit=%d", level, logger_name, limit
+        "read_error_logs: level=%s, logger=%s, limit=%d, since_hours=%s, tracebacks=%s",
+        level,
+        logger_name,
+        limit,
+        since_hours,
+        include_tracebacks,
     )
 
     limit = max(1, min(limit, 200))
+
+    since: datetime | None = None
+    if since_hours is not None and since_hours > 0:
+        now = exec_context.clock.now() if exec_context.clock else datetime.now(UTC)
+        since = now - timedelta(hours=since_hours)
 
     db_context = exec_context.db_context
     logs = await db_context.error_logs.get_all(
         level=level,
         logger_name=logger_name,
+        since=since,
         limit=limit,
     )
+
+    if not include_tracebacks:
+        logs = [
+            {k: v for k, v in log.items() if k not in {"traceback", "extra_data"}}
+            for log in logs
+        ]  # type: ignore[misc]  # sanitized rows drop optional keys from ErrorLogRow
 
     return ToolResult(
         data={
@@ -344,6 +372,8 @@ async def read_error_logs(
                 "level": level,
                 "logger_name": logger_name,
                 "limit": limit,
+                "since_hours": since_hours,
+                "include_tracebacks": include_tracebacks,
             },
         }
     )
@@ -878,7 +908,9 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
             "description": (
                 "Read application error logs from the database. "
                 "Useful for diagnosing application errors and warnings. "
-                "Can filter by log level and logger name."
+                "Can filter by log level, logger name, and time window. "
+                "Tracebacks and extra metadata are omitted by default and only "
+                "included when include_tracebacks is set to true."
             ),
             "parameters": {
                 "type": "object",
@@ -895,6 +927,18 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "integer",
                         "description": "Maximum number of logs to return (default 50, max 200).",
                         "default": 50,
+                    },
+                    "since_hours": {
+                        "type": "integer",
+                        "description": "Only return logs from the last N hours.",
+                    },
+                    "include_tracebacks": {
+                        "type": "boolean",
+                        "description": (
+                            "Include full tracebacks and extra metadata, which may "
+                            "contain sensitive information. Defaults to false."
+                        ),
+                        "default": False,
                     },
                 },
                 "required": [],

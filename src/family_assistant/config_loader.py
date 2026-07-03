@@ -752,6 +752,9 @@ def resolve_service_profile(
             "allowed_delegation_sources",
             "retry_config",
             "camera_config",
+            "default_note_visibility_labels",
+            "required_note_visibility_labels",
+            "allowed_note_visibility_labels",
         ]
         for key in scalar_keys:
             if (

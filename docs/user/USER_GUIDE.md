@@ -322,6 +322,20 @@ You can ask the assistant a wide variety of things:
   in the background: a confirmation lands in Telegram or the Web UI, and the action only happens
   once you approve it.
 
+- **Unattended Operational Diagnostics (`ops_automation` profile):** \*A confined profile is
+  available for standing up a scheduled job that crawls recent error logs, triages them, and records
+  a summary note for later review — without giving that unattended job broad access. \*You set it up
+  by delegating to it from a trusted chat (for example: "Set up a daily log-triage automation");
+  delegation to `ops_automation` asks for your confirmation first. \*The profile is deliberately
+  narrow: it can read bounded diagnostics and write **only** notes labelled `ops_diagnostics` (a
+  restriction enforced in storage, so it cannot write elsewhere even if asked), and it can create
+  only script automations — never the kind that wake the full assistant. \*Its triage notes are
+  quarantined: they are not pulled into the main assistant's context automatically, so log text that
+  might contain injected content can't leak into a trusted conversation. You read the reports
+  yourself via the Web UI. \*Using it requires a deployment to grant the `ops_diagnostics` label to
+  the profiles that should read the reports; see
+  `docs/design/profile-confined-note-writes-and-automation-approvals.md`.
+
 ## 4. Working with Attachments
 
 The assistant can work with various types of attachments (images, documents, files) that you send or

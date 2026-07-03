@@ -24,6 +24,45 @@ class ActionType(StrEnum):
     SCRIPT = "script"
 
 
+class WakeLlmProfileError(RuntimeError):
+    """Raised when a wake_llm action is stamped with a non-default profile.
+
+    Unlike scripts, wake_llm actions do not honor the automation's stored
+    ``processing_profile_id`` at execution time: the llm_callback path never
+    receives it and ``handle_llm_callback`` runs under the task worker's default
+    trusted profile. A wake_llm automation created under a confined profile would
+    therefore silently execute with full tools and no label confinement. Rather
+    than downgrade silently, we fail loudly and require such automations to use
+    ``action_type="script"`` (which does honor the stored profile).
+    """
+
+
+def assert_wake_llm_runs_under_default(
+    action_type: ActionType | str,
+    processing_profile_id: str | None,
+    default_profile_id: str | None,
+) -> None:
+    """Refuse a wake_llm action stamped with a non-default processing profile.
+
+    No-op for scripts, for unstamped/legacy rows, and when the stamped profile is
+    the default (the profile a wake_llm actually runs under). Raises
+    ``WakeLlmProfileError`` otherwise. ``default_profile_id`` of None disables the
+    check (the caller could not determine the default).
+    """
+    if ActionType(action_type) != ActionType.WAKE_LLM:
+        return
+    if processing_profile_id is None or default_profile_id is None:
+        return
+    if processing_profile_id != default_profile_id:
+        raise WakeLlmProfileError(
+            f"wake_llm automations run under the default profile "
+            f"'{default_profile_id}', but this one is stamped with "
+            f"'{processing_profile_id}'. wake_llm does not honor a confined "
+            "profile, so this would silently escalate privileges. Use "
+            'action_type="script" for confined automations.'
+        )
+
+
 async def execute_action(
     db_ctx: DatabaseContext,
     action_type: ActionType,
@@ -38,6 +77,7 @@ async def execute_action(
     recurrence_rule: str | None = None,
     processing_profile_id: str | None = None,
     created_by_user_id: str | None = None,
+    default_profile_id: str | None = None,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -54,13 +94,23 @@ async def execute_action(
         recurrence_rule: RRULE for recurring tasks (None for one-time)
         processing_profile_id: Creating profile for script actions; scripts
             execute under this profile so validation and execution agree.
-            Ignored for wake_llm actions, which run under the event handler
-            profile.
+            wake_llm actions do NOT honor this profile (they run under the task
+            worker's default profile), so a non-default profile on a wake_llm
+            action is refused via default_profile_id below.
         created_by_user_id: Creating user for script actions; confirm-gated
             tool calls from the script are addressed to this user.
+        default_profile_id: The default processing profile id. When provided,
+            a wake_llm action stamped with a different profile is refused loudly
+            (see assert_wake_llm_runs_under_default).
     """
     if context is None:
         context = {}
+
+    # wake_llm ignores the stored profile at execution time, so refuse to enqueue
+    # one stamped with a confined profile rather than silently running as default.
+    assert_wake_llm_runs_under_default(
+        action_type, processing_profile_id, default_profile_id
+    )
 
     if action_type == ActionType.WAKE_LLM:
         # Prepare callback context
