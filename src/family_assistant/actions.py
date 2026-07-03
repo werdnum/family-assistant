@@ -25,41 +25,37 @@ class ActionType(StrEnum):
 
 
 class WakeLlmProfileError(RuntimeError):
-    """Raised when a wake_llm action is stamped with a non-default profile.
+    """Raised when a profile that may not wake the LLM attempts to.
 
-    Unlike scripts, wake_llm actions do not honor the automation's stored
-    ``processing_profile_id`` at execution time: the llm_callback path never
-    receives it and ``handle_llm_callback`` runs under the task worker's default
-    trusted profile. A wake_llm automation created under a confined profile would
-    therefore silently execute with full tools and no label confinement. Rather
-    than downgrade silently, we fail loudly and require such automations to use
-    ``action_type="script"`` (which does honor the stored profile).
+    ``wake_llm`` (whether an ``action_type="wake_llm"`` automation or a script's
+    built-in ``wake_llm()`` call) does NOT honor the calling profile at execution
+    time: the llm_callback runs under the task worker's default trusted profile.
+    A confined profile that could trigger a wake would therefore silently
+    escalate to full tools and no label confinement. Profiles that must stay
+    confined set ``allow_wake_llm=False``; attempting to wake from such a profile
+    fails loudly rather than escalating.
     """
 
 
-def assert_wake_llm_runs_under_default(
+def assert_wake_llm_allowed(
     action_type: ActionType | str,
-    processing_profile_id: str | None,
-    default_profile_id: str | None,
+    allow_wake_llm: bool,
 ) -> None:
-    """Refuse a wake_llm action stamped with a non-default processing profile.
+    """Refuse a wake_llm action from a profile that disallows waking the LLM.
 
-    No-op for scripts, for unstamped/legacy rows, and when the stamped profile is
-    the default (the profile a wake_llm actually runs under). Raises
-    ``WakeLlmProfileError`` otherwise. ``default_profile_id`` of None disables the
-    check (the caller could not determine the default).
+    No-op for scripts and for profiles with ``allow_wake_llm=True`` (the default,
+    which preserves existing behavior for the default assistant, event handlers,
+    and other full-capability profiles). Raises ``WakeLlmProfileError`` when a
+    confined profile (``allow_wake_llm=False``) attempts a wake_llm action.
     """
     if ActionType(action_type) != ActionType.WAKE_LLM:
         return
-    if processing_profile_id is None or default_profile_id is None:
-        return
-    if processing_profile_id != default_profile_id:
+    if not allow_wake_llm:
         raise WakeLlmProfileError(
-            f"wake_llm automations run under the default profile "
-            f"'{default_profile_id}', but this one is stamped with "
-            f"'{processing_profile_id}'. wake_llm does not honor a confined "
-            "profile, so this would silently escalate privileges. Use "
-            'action_type="script" for confined automations.'
+            "This profile is not permitted to wake the LLM (allow_wake_llm is "
+            "disabled). wake_llm runs under the default trusted profile, which "
+            'would bypass this profile\'s confinement. Use action_type="script" '
+            "and keep results in data (notes) instead of waking the assistant."
         )
 
 
@@ -77,7 +73,7 @@ async def execute_action(
     recurrence_rule: str | None = None,
     processing_profile_id: str | None = None,
     created_by_user_id: str | None = None,
-    default_profile_id: str | None = None,
+    allow_wake_llm: bool = True,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -95,22 +91,20 @@ async def execute_action(
         processing_profile_id: Creating profile for script actions; scripts
             execute under this profile so validation and execution agree.
             wake_llm actions do NOT honor this profile (they run under the task
-            worker's default profile), so a non-default profile on a wake_llm
-            action is refused via default_profile_id below.
+            worker's default profile); confined profiles set allow_wake_llm=False
+            so a wake_llm action from them is refused below.
         created_by_user_id: Creating user for script actions; confirm-gated
             tool calls from the script are addressed to this user.
-        default_profile_id: The default processing profile id. When provided,
-            a wake_llm action stamped with a different profile is refused loudly
-            (see assert_wake_llm_runs_under_default).
+        allow_wake_llm: Whether the acting profile may wake the LLM. When False,
+            a wake_llm action is refused loudly (see assert_wake_llm_allowed)
+            rather than silently running under the default trusted profile.
     """
     if context is None:
         context = {}
 
-    # wake_llm ignores the stored profile at execution time, so refuse to enqueue
-    # one stamped with a confined profile rather than silently running as default.
-    assert_wake_llm_runs_under_default(
-        action_type, processing_profile_id, default_profile_id
-    )
+    # wake_llm ignores the acting profile at execution time (it runs under the
+    # default profile), so a confined profile must not be able to enqueue one.
+    assert_wake_llm_allowed(action_type, allow_wake_llm)
 
     if action_type == ActionType.WAKE_LLM:
         # Prepare callback context

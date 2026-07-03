@@ -755,6 +755,7 @@ def resolve_service_profile(
             "default_note_visibility_labels",
             "required_note_visibility_labels",
             "allowed_note_visibility_labels",
+            "allow_wake_llm",
         ]
         for key in scalar_keys:
             if (

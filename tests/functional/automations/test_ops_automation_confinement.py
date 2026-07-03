@@ -17,6 +17,9 @@ from family_assistant.actions import (
     execute_action,
 )
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.task_worker import (
+    _process_script_wake_llm,  # noqa: PLC2701  # testing the script wake_llm guard
+)
 from family_assistant.tools.automations import (
     create_automation_tool,
     update_automation_tool,
@@ -26,12 +29,15 @@ from family_assistant.tools.types import ToolExecutionContext
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.scripting.monty_engine import WakeRequest
+
 
 def _exec_context(
     db_ctx: DatabaseContext,
     *,
     conversation_id: str,
     processing_profile_id: str | None,
+    allow_wake_llm: bool = True,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="web",
@@ -48,6 +54,7 @@ def _exec_context(
         timezone=ZoneInfo("UTC"),
         processing_profile_id=processing_profile_id,
         user_id="user-1",
+        allow_wake_llm=allow_wake_llm,
     )
 
 
@@ -66,24 +73,104 @@ async def test_execute_action_refuses_confined_wake_llm(
                 action_config={"context": "diagnostics summary"},
                 conversation_id="conv",
                 processing_profile_id="ops_automation",
-                default_profile_id="default_assistant",
+                allow_wake_llm=False,
             )
 
 
 @pytest.mark.asyncio
-async def test_execute_action_allows_default_wake_llm(
+async def test_execute_action_allows_permitted_wake_llm(
     db_engine: AsyncEngine,
 ) -> None:
     async with DatabaseContext(engine=db_engine) as db:
-        # Stamped with the default profile -> enqueues without raising.
+        # A profile that permits waking the LLM enqueues without raising.
         await execute_action(
             db_ctx=db,
             action_type=ActionType.WAKE_LLM,
             action_config={"context": "hello"},
             conversation_id="conv",
             processing_profile_id="default_assistant",
-            default_profile_id="default_assistant",
+            allow_wake_llm=True,
         )
+
+
+# --- create_automation wake_llm denial for confined profiles ---
+
+
+@pytest.mark.asyncio
+async def test_create_wake_llm_automation_denied_for_confined_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _exec_context(
+            db,
+            conversation_id="conv_confined",
+            processing_profile_id="ops_automation",
+            allow_wake_llm=False,
+        )
+        result = await create_automation_tool(
+            exec_context=ctx,
+            name="Sneaky Wake",
+            automation_type="schedule",
+            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+            action_type="wake_llm",
+            action_config={"context": "wake up"},
+        )
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "not permitted to wake" in data["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_wake_llm_automation_allowed_for_normal_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _exec_context(
+            db,
+            conversation_id="conv_normal",
+            processing_profile_id="default_assistant",
+            allow_wake_llm=True,
+        )
+        result = await create_automation_tool(
+            exec_context=ctx,
+            name="Normal Wake",
+            automation_type="schedule",
+            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+            action_type="wake_llm",
+            action_config={"context": "wake up"},
+        )
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" not in data
+
+
+# --- script built-in wake_llm() escape closed for confined profiles ---
+
+
+@pytest.mark.asyncio
+async def test_script_wake_llm_refused_for_confined_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confined script cannot escape via Monty's built-in wake_llm()."""
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _exec_context(
+            db,
+            conversation_id="conv_script",
+            processing_profile_id="ops_automation",
+            allow_wake_llm=False,
+        )
+        wake_request: WakeRequest = {
+            "context": {"message": "escape"},
+            "include_event": False,
+        }
+        with pytest.raises(WakeLlmProfileError):
+            await _process_script_wake_llm(
+                exec_context=ctx,
+                wake_contexts=[wake_request],
+                event_data={},
+                listener_id=None,
+            )
 
 
 # --- cross-profile update_automation denial ---

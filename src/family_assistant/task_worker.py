@@ -29,6 +29,7 @@ from family_assistant.a2a.client import (
     A2APermanentError,
     A2ATaskNotFoundError,
 )
+from family_assistant.actions import ActionType, assert_wake_llm_allowed
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageAttachmentMetadata,
@@ -2735,6 +2736,11 @@ class TaskWorker:
                         if self.processing_service
                         else None
                     ),
+                    allow_wake_llm=(
+                        self.processing_service.service_config.allow_wake_llm
+                        if self.processing_service
+                        else True
+                    ),
                     confirmation_result_waiters=self.confirmation_result_waiters,
                     confirmation_ui_managers=getattr(
                         self,
@@ -3367,6 +3373,13 @@ async def _process_script_wake_llm(
         listener_id: ID of the event listener that ran the script
     """
 
+    # A script's built-in wake_llm() enqueues an llm_callback that runs under the
+    # worker's default trusted profile (handle_llm_callback does not honor the
+    # stored profile). A script running under a confined profile (allow_wake_llm
+    # disabled) must therefore not be able to wake the default LLM. Refuse loudly
+    # rather than escalate, mirroring the create_automation/execute_action guard.
+    assert_wake_llm_allowed(ActionType.WAKE_LLM, exec_context.allow_wake_llm)
+
     listener_id = listener_id or "scheduled"
 
     # Extract attachment IDs from all wake contexts
@@ -3716,6 +3729,7 @@ async def handle_script_execution(
             allowed_note_visibility_labels=(
                 processing_service.service_config.allowed_note_visibility_labels
             ),
+            allow_wake_llm=processing_service.service_config.allow_wake_llm,
             request_confirmation_callback=build_script_confirmation_callback(
                 payload.get("created_by_user_id")
             ),
@@ -3997,6 +4011,7 @@ async def _build_confirmation_execution_context(
         allowed_note_visibility_labels=(
             processing_service.service_config.allowed_note_visibility_labels
         ),
+        allow_wake_llm=processing_service.service_config.allow_wake_llm,
         note_registry=processing_service.service_config.note_registry,
         confirmation_result_waiters=exec_context.confirmation_result_waiters,
     )

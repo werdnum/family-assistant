@@ -186,6 +186,7 @@ class ToolExecutor:
             default_note_visibility_labels=self.config.default_note_visibility_labels,
             required_note_visibility_labels=self.config.required_note_visibility_labels,
             allowed_note_visibility_labels=self.config.allowed_note_visibility_labels,
+            allow_wake_llm=self.config.allow_wake_llm,
             note_registry=self.config.note_registry,
         )
 

@@ -344,6 +344,7 @@ class ToolExecutionContext:
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
+    allow_wake_llm: bool = True
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None

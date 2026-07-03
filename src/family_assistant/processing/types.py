@@ -72,6 +72,7 @@ class ToolExecutorConfig(Protocol):
     default_note_visibility_labels: list[str] | None
     required_note_visibility_labels: list[str] | None
     allowed_note_visibility_labels: list[str] | None
+    allow_wake_llm: bool
     note_registry: NoteRegistry | None
 
 
@@ -227,6 +228,7 @@ class ProcessingServiceConfig:
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
+    allow_wake_llm: bool = True
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
 

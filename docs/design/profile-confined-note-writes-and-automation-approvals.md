@@ -247,6 +247,7 @@ service_profiles:
       default_note_visibility_labels: ["ops_diagnostics"]
       required_note_visibility_labels: ["ops_diagnostics"]
       allowed_note_visibility_labels: ["ops_diagnostics"]
+      allow_wake_llm: false
     tools_policy:
       default_decision: "deny"
       rules:
@@ -300,16 +301,37 @@ Automations under this profile must use `action_type="script"`. Two reasons:
    content lands only in *data* — the note body, a summary field — never in control flow. An
    injection in a log message can at worst poison the summary text, not choose which tools run.
 
-Enforcement is belt-and-braces:
+Enforcement is a per-profile capability plus belt-and-braces policy:
 
-- **Policy** (above): deny `create_automation` with `argument_equals: {action_type: "wake_llm"}`.
-  This works with the existing matcher because `action_type` is a required argument, so it is always
-  present. (`update_automation` cannot change an automation's action type.)
-- **Runtime guard**: in `execute_action`, if a `wake_llm` automation row carries a
-  `processing_profile_id` that is not the default service, refuse to enqueue and fail loudly instead
-  of silently downgrading to the default profile. This mirrors the fail-loud semantics
-  `_resolve_script_execution_service` already applies to scripts, and protects against any future
-  profile that slips a `wake_llm` automation through.
+- **`allow_wake_llm` capability (new `ProcessingConfig` field, default `True`).** A profile that
+  must stay confined sets `allow_wake_llm: false`. This is the authoritative control, checked by a
+  shared `assert_wake_llm_allowed(action_type, allow_wake_llm)` guard at **every** point a wake can
+  be triggered:
+
+  - `create_automation` (refuses creating a `wake_llm` automation),
+  - `execute_action` (refuses enqueuing a `wake_llm` action — one-time schedules and event
+    listeners),
+  - **`_process_script_wake_llm`** — the script built-in `wake_llm()`. This is the important one: an
+    allowed `action_type="script"` can still call Monty's `wake_llm()`, which drains into an
+    `llm_callback` with no `processing_profile_id` and runs under the default trusted profile.
+    Denying only `create_automation(wake_llm)` would leave this path open, so the same guard runs
+    before the script's accumulated wakes are enqueued.
+
+  The capability is used instead of a "non-default profile" heuristic because full-capability
+  non-default profiles (`event_handler`, `complex_tasks`) legitimately wake the LLM — only profiles
+  that opt into confinement are blocked.
+
+- **Policy** (above), belt-and-braces: deny `create_automation` with
+  `argument_equals: {action_type: "wake_llm"}`. This works with the existing matcher because
+  `action_type` is a required argument, so it is always present. (`update_automation` cannot change
+  an automation's action type.)
+
+Why `script` is also the better Rule-of-Two shape regardless: the script author controls all tool
+calls deterministically, and LLM output derived from untrusted log content lands only in *data* —
+the note body, a summary field — never in control flow. An injection in a log message can at worst
+poison the summary text, not choose which tools run. (`handle_llm_callback` still does not honor a
+stored profile — its only profile switch is a hardcoded `reminder` lookup — so making `wake_llm`
+profile-aware remains Future Work; the capability flag closes the escape without it.)
 
 ### Triage Script Shape
 

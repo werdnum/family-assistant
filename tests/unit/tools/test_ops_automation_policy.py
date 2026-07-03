@@ -13,7 +13,7 @@ import pytest
 from family_assistant.actions import (
     ActionType,
     WakeLlmProfileError,
-    assert_wake_llm_runs_under_default,
+    assert_wake_llm_allowed,
 )
 from family_assistant.config_loader import load_config
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
@@ -28,34 +28,19 @@ if TYPE_CHECKING:
 # --- wake_llm guard helper ---
 
 
-def test_guard_allows_wake_llm_under_default() -> None:
-    # No raise when the stamped profile is the default.
-    assert_wake_llm_runs_under_default(
-        ActionType.WAKE_LLM, "default_assistant", "default_assistant"
-    )
+def test_guard_allows_wake_llm_when_permitted() -> None:
+    # No raise when the profile permits waking the LLM (the default).
+    assert_wake_llm_allowed(ActionType.WAKE_LLM, allow_wake_llm=True)
 
 
-def test_guard_allows_unstamped_wake_llm() -> None:
-    assert_wake_llm_runs_under_default(ActionType.WAKE_LLM, None, "default_assistant")
+def test_guard_ignores_scripts_even_when_wake_disabled() -> None:
+    # Scripts honor the stored profile, so action_type=script is always fine.
+    assert_wake_llm_allowed(ActionType.SCRIPT, allow_wake_llm=False)
 
 
-def test_guard_ignores_scripts() -> None:
-    # Scripts honor the stored profile, so a non-default profile is fine.
-    assert_wake_llm_runs_under_default(
-        ActionType.SCRIPT, "ops_automation", "default_assistant"
-    )
-
-
-def test_guard_refuses_wake_llm_under_confined_profile() -> None:
+def test_guard_refuses_wake_llm_from_confined_profile() -> None:
     with pytest.raises(WakeLlmProfileError):
-        assert_wake_llm_runs_under_default(
-            ActionType.WAKE_LLM, "ops_automation", "default_assistant"
-        )
-
-
-def test_guard_noop_when_default_unknown() -> None:
-    # Without a known default we cannot compare; do not raise.
-    assert_wake_llm_runs_under_default(ActionType.WAKE_LLM, "ops_automation", None)
+        assert_wake_llm_allowed(ActionType.WAKE_LLM, allow_wake_llm=False)
 
 
 # --- ops_automation shipped profile policy ---
@@ -118,4 +103,5 @@ def test_ops_profile_confines_note_writes(tmp_path: Path) -> None:
     pc = profile.processing_config
     assert pc.required_note_visibility_labels == ["ops_diagnostics"]
     assert pc.allowed_note_visibility_labels == ["ops_diagnostics"]
+    assert pc.allow_wake_llm is False
     assert profile.visibility_grants == ["ops_diagnostics"]

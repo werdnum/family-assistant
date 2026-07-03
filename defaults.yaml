@@ -1631,6 +1631,10 @@ service_profiles:
       default_note_visibility_labels: ["ops_diagnostics"]
       required_note_visibility_labels: ["ops_diagnostics"]
       allowed_note_visibility_labels: ["ops_diagnostics"]
+      # wake_llm runs under the default trusted profile, which would bypass this
+      # confinement, so it is disabled here: create_automation(wake_llm), script
+      # wake_llm(), and scheduled wake_llm are all refused for this profile.
+      allow_wake_llm: false
       prompts:
         system_prompt: |
           You are an unattended operational diagnostics automation for {user_name}'s Family Assistant.

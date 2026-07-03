@@ -138,6 +138,7 @@ class ProcessingConfig(BaseModel):
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
+    allow_wake_llm: bool = True
 
 
 class ToolsConfig(BaseModel):

@@ -1066,6 +1066,7 @@ class Assistant:
                 allowed_note_visibility_labels=(
                     profile_proc_conf.allowed_note_visibility_labels
                 ),
+                allow_wake_llm=profile_proc_conf.allow_wake_llm,
                 note_registry=note_registry,
                 greeting_wav_path=profile_proc_conf.greeting_wav_path,
             )

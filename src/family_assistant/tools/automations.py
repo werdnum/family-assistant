@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from family_assistant.actions import (
     WakeLlmProfileError,
-    assert_wake_llm_runs_under_default,
+    assert_wake_llm_allowed,
 )
 from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.tools.stored_scripts import (
@@ -497,20 +497,11 @@ async def create_automation_tool(
         validated_type = _validate_automation_type(automation_type)
 
         # wake_llm actions do not honor the creating profile at execution time, so
-        # a confined profile must not create one (it would run under the default
-        # trusted profile). Fail loudly at creation with a clear message.
+        # a confined profile (allow_wake_llm disabled) must not create one (it
+        # would run under the default trusted profile). Fail loudly at creation.
         if action_type == "wake_llm":
-            default_profile_id = (
-                exec_context.processing_service.app_config.default_service_profile_id
-                if exec_context.processing_service
-                else None
-            )
             try:
-                assert_wake_llm_runs_under_default(
-                    action_type,
-                    exec_context.processing_profile_id,
-                    default_profile_id,
-                )
+                assert_wake_llm_allowed(action_type, exec_context.allow_wake_llm)
             except WakeLlmProfileError as err:
                 return ToolResult(text=f"Error: {err}", data={"error": str(err)})
 
