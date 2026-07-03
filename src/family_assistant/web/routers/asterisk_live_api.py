@@ -1387,12 +1387,17 @@ class AsteriskLiveHandler:
             content = "\n".join(lines)
 
             if self.processing_service:
+                # Internal system writer: apply the profile's default labels, but
+                # do NOT enforce see-before-overwrite against the profile's read
+                # grants (visibility_grants=None). A profile like telephone_external
+                # labels transcripts outside its own grants, so enforcing the read
+                # check here would reject overwriting its own transcript notes.
                 cfg = self.processing_service.service_config
                 write_policy = NoteWritePolicy(
-                    visibility_grants=cfg.visibility_grants,
+                    visibility_grants=None,
                     default_labels=cfg.default_note_visibility_labels,
-                    required_labels=cfg.required_note_visibility_labels,
-                    allowed_labels=cfg.allowed_note_visibility_labels,
+                    required_labels=None,
+                    allowed_labels=None,
                 )
             else:
                 write_policy = NoteWritePolicy.UNCONSTRAINED

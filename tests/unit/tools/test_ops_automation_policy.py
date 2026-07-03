@@ -80,15 +80,38 @@ def test_ops_policy_allows_script_automation(tmp_path: Path) -> None:
 
 def test_ops_policy_allows_diagnostics_and_notes(tmp_path: Path) -> None:
     engine = _ops_policy_engine(tmp_path)
-    for name in ("read_error_logs", "add_or_update_note", "list_automations"):
+    for name in ("read_error_logs", "add_or_update_note"):
         assert (
             engine.evaluate(_descriptor(name)).decision == ToolPolicyDecision.ALLOW
         ), name
 
 
-def test_ops_policy_denies_outbound_and_delegation(tmp_path: Path) -> None:
+def test_ops_policy_denies_traceback_reads(tmp_path: Path) -> None:
     engine = _ops_policy_engine(tmp_path)
-    for name in ("send_message_to_user", "delegate_to_service"):
+    # Sanitized reads are allowed; explicit tracebacks are denied.
+    assert (
+        engine.evaluate(_descriptor("read_error_logs")).decision
+        == ToolPolicyDecision.ALLOW
+    )
+    assert (
+        engine.evaluate(
+            _descriptor("read_error_logs"),
+            arguments={"include_tracebacks": True},
+        ).decision
+        == ToolPolicyDecision.DENY
+    )
+
+
+def test_ops_policy_denies_automation_reads_and_outbound(tmp_path: Path) -> None:
+    engine = _ops_policy_engine(tmp_path)
+    # get_automation/list_automations read other profiles' automations, so they
+    # are not granted; outbound/delegation are denied by default.
+    for name in (
+        "get_automation",
+        "list_automations",
+        "send_message_to_user",
+        "delegate_to_service",
+    ):
         assert engine.evaluate(_descriptor(name)).decision == ToolPolicyDecision.DENY, (
             name
         )

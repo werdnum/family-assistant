@@ -262,25 +262,35 @@ service_profiles:
         - match:
             names:
               - "read_error_logs"
+            argument_equals:
+              include_tracebacks: true
+          decision: "deny"
+          priority: 20
+          description: "Sanitized logs only; tracebacks/extra_data can carry sensitive data."
+        - match:
+            names:
+              - "read_error_logs"
               - "add_or_update_note"
               - "create_automation"
-              - "list_automations"
-              - "get_automation"
           decision: "allow"
           priority: 10
 ```
 
 This profile can:
 
-- Read bounded diagnostic logs.
+- Read bounded, sanitized diagnostic logs (no tracebacks/extra_data).
 - Write notes only into `ops_diagnostics`.
-- Create and manage its own schedule automations, script actions only.
+- Create its own script automations.
 
 It cannot:
 
 - Read general family notes unless it receives those grants.
 - Write unrestricted notes.
-- Create `wake_llm` automations (see below).
+- Create `wake_llm` automations, or wake the LLM from a script (see below).
+- Read tracebacks/`extra_data` via `read_error_logs(include_tracebacks=True)` (denied by policy).
+- Enumerate or read other profiles' automations: `get_automation`/`list_automations` are **not**
+  granted, because `get_automation` fetches with `conversation_id=None` and returns inline script
+  bodies, which is broader than this profile's bounded access.
 - Delegate to `engineer` unless separately configured.
 - Send messages unless explicitly granted.
 
