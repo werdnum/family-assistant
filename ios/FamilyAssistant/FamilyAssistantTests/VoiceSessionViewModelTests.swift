@@ -46,6 +46,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
 private final class FakeAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
     var onInputLevel: (@Sendable (Double) -> Void)?
+    var onEngineFailure: ((Error) -> Void)?
     var startError: Error?
     private(set) var started = false
     private(set) var stopped = false
@@ -430,6 +431,21 @@ final class VoiceSessionViewModelTests: XCTestCase {
         try await waitUntil { self.reportedErrors.isEmpty == false }
     }
 
+    func testEngineFailureFailsSessionAndReports() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        audio.onEngineFailure?(VoiceAudioError.captureStalled)
+
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(model.phase, .failed("The microphone stopped delivering audio."))
+        XCTAssertEqual(reportedErrors.count, 1)
+        XCTAssertTrue(audio.stopped)
+        XCTAssertTrue(session.closed)
+    }
+
     func testToolCallCancellationSuppressesResponse() async throws {
         var toolStarted = false
         var toolReturned = false
@@ -453,5 +469,57 @@ final class VoiceSessionViewModelTests: XCTestCase {
         await Task.yield()
 
         XCTAssertTrue(session.sentToolResponses.isEmpty)
+    }
+}
+
+/// The capture-liveness watchdog's escalation policy (pure logic; the engine
+/// itself needs audio hardware and is exercised on-device).
+final class CaptureStallActionTests: XCTestCase {
+    func testHealthyCaptureDoesNothing() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(1),
+                stallThreshold: .seconds(10),
+                isInterrupted: false,
+                didAlreadyRestartForThisStall: false
+            ),
+            .wait
+        )
+    }
+
+    func testStallTriggersRestartFirst() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(11),
+                stallThreshold: .seconds(10),
+                isInterrupted: false,
+                didAlreadyRestartForThisStall: false
+            ),
+            .restart
+        )
+    }
+
+    func testStallAfterRestartFails() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(11),
+                stallThreshold: .seconds(10),
+                isInterrupted: false,
+                didAlreadyRestartForThisStall: true
+            ),
+            .fail
+        )
+    }
+
+    func testInterruptionSuppressesTheWatchdog() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(60),
+                stallThreshold: .seconds(10),
+                isInterrupted: true,
+                didAlreadyRestartForThisStall: true
+            ),
+            .wait
+        )
     }
 }

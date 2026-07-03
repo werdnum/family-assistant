@@ -142,6 +142,16 @@ what `@google/genai` sends; this is the single biggest unknown and is settled in
   playback. (Alternative: `AVAudioEngine.inputNode.setVoiceProcessingEnabled(true)`.)
 - Handle `AVAudioSession.interruptionNotification` (calls, Siri), `routeChangeNotification`
   (headphones/Bluetooth/CarPlay), and media-services-reset by tearing down and rebuilding the graph.
+- **`AVAudioEngineConfigurationChangeNotification` is load-bearing, not optional.** Engaging
+  voice-processing IO makes the engine stop itself right after `engine.start()` and post this
+  notification (`isRunning` silently flips false; nothing throws), so without a handler the very
+  first session start on a real device leaves a dead microphone under a UI that still says
+  "Listening…" (observed on TestFlight build 34: mic-in-use indicator lit only briefly at session
+  start). The handler rebuilds the graph — re-read the input format (voice processing changes it),
+  recreate the converter, re-attach the player node, reinstall the tap — and restarts. A
+  capture-liveness watchdog backstops any engine stop we fail to observe: stalled capture triggers
+  one rebuild, and a second consecutive stall fails the session visibly (reported via
+  `ErrorReporter`, so it is diagnosable from `/api/errors/`).
 - `UIBackgroundModes = ["audio"]` so the session continues when backgrounded/locked. This must be
   justified to App Review as an active voice-assistant conversation (it is).
 
