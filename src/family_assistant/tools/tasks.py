@@ -414,6 +414,10 @@ async def schedule_future_callback_tool(
         }
         if exec_context.user_id is not None:
             payload["created_by_user_id"] = exec_context.user_id
+        # A future callback continues the user's own conversation, so it runs
+        # under the originating profile rather than the worker default.
+        if exec_context.processing_profile_id is not None:
+            payload["processing_profile_id"] = exec_context.processing_profile_id
 
         await db_context.tasks.enqueue(
             task_id=task_id,

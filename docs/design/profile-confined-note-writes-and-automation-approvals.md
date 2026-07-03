@@ -258,7 +258,7 @@ service_profiles:
               action_type: "wake_llm"
           decision: "deny"
           priority: 20
-          description: "Script actions only; wake_llm does not honor the stored profile."
+          description: "Script actions only; this profile opts out of waking the LLM (allow_wake_llm=false)."
         - match:
             names:
               - "read_error_logs"
@@ -294,40 +294,54 @@ It cannot:
 - Delegate to `engineer` unless separately configured.
 - Send messages unless explicitly granted.
 
-### Script Actions Only
+### wake_llm Profile Routing (F0 fix)
 
-Automations under this profile must use `action_type="script"`. Two reasons:
+Historically `wake_llm` actions never threaded a profile: `execute_action` threaded
+`processing_profile_id` into the `script_execution` payload only, and `handle_llm_callback`'s single
+profile switch was a hardcoded `reminder` lookup. So **every** `wake_llm` turn ran under the task
+worker's default trusted profile — including event-listener wakes triggered by attacker-influenced
+email/webhook content, which is exactly the injectable [ABC] case the docs claimed `event_handler`
+protected against.
 
-1. **`wake_llm` does not honor the stored profile.** `execute_action` threads
-   `processing_profile_id` into the `script_execution` payload only; the `llm_callback` path never
-   receives it, and `handle_llm_callback` does not resolve the automation's profile (its only
-   profile switch is a hardcoded `reminder` lookup). A `wake_llm` automation created under
-   `ops_automation` would therefore execute under the task worker's default trusted profile — full
-   tools, no label confinement. (Note: the earlier provenance design's claim that `wake_llm` actions
-   run under a restricted `event_handler` profile is not substantiated by the runtime code; they run
-   under the default service.)
-2. Even with correct threading, `script` + `llm_json` is the better Rule-of-Two shape: the script
-   author controls all tool calls deterministically, and LLM output derived from untrusted log
-   content lands only in *data* — the note body, a summary field — never in control flow. An
-   injection in a log message can at worst poison the summary text, not choose which tools run.
+`wake_llm` now honors a threaded execution profile:
+
+- Every `llm_callback` enqueue point stamps `processing_profile_id`: `execute_action`,
+  `schedule_automations` (create / enable / reschedule / recurring advance), the script built-in
+  `_process_script_wake_llm`, and `schedule_future_callback`.
+- `handle_llm_callback` resolves it via `_resolve_execution_service` (shared with script execution):
+  a stamped non-default profile that cannot be resolved raises rather than silently downgrading to
+  the default. Reminders keep switching to the `reminder` profile.
+- **Routing** (see "wake_llm routing" decision):
+  - **Event listeners → `event_handler`** (restricted). Event triggers are untrusted and the woken
+    LLM is the injectable component, so `EventProcessor` routes event `wake_llm` to `event_handler`
+    regardless of who created the listener. (Event `script` actions still run under the creating
+    profile so their validated tool set matches execution.)
+  - **Schedule automations and `schedule_future_callback` → the originating (creating) profile** —
+    trusted, user-set-up triggers.
+  - **Reminders → `reminder`** (unchanged).
+
+### Script Actions Only (for `ops_automation`)
+
+`ops_automation` additionally sets `allow_wake_llm: false` so it cannot wake the LLM at all — not
+because wake_llm is broken (it now honors the profile), but because this profile's whole point is to
+produce *data* (a confined note), never a conversational turn. `script` + `llm_json` is the right
+Rule-of-Two shape: the script author controls all tool calls deterministically, and LLM output
+derived from untrusted log content lands only in data (the note body), never in control flow.
 
 Enforcement is a per-profile capability plus belt-and-braces policy:
 
-- **`allow_wake_llm` capability (new `ProcessingConfig` field, default `True`).** A profile that
-  must stay confined sets `allow_wake_llm: false`. This is the authoritative control, checked by a
-  shared `assert_wake_llm_allowed(action_type, allow_wake_llm)` guard at **every** point a wake can
-  be triggered:
+- **`allow_wake_llm` capability (`ProcessingConfig` field, default `True`).** Confined profiles set
+  `allow_wake_llm: false`. A shared `assert_wake_llm_allowed(action_type, allow_wake_llm)` guard
+  runs at **every** point a wake can be triggered:
 
   - `create_automation` (refuses creating a `wake_llm` automation),
   - `execute_action` (refuses enqueuing a `wake_llm` action — one-time schedules and event
     listeners),
-  - **`_process_script_wake_llm`** — the script built-in `wake_llm()`. This is the important one: an
-    allowed `action_type="script"` can still call Monty's `wake_llm()`, which drains into an
-    `llm_callback` with no `processing_profile_id` and runs under the default trusted profile.
-    Denying only `create_automation(wake_llm)` would leave this path open, so the same guard runs
-    before the script's accumulated wakes are enqueued.
+  - **`_process_script_wake_llm`** — the script built-in `wake_llm()`. This one matters: an allowed
+    `action_type="script"` can still call Monty's `wake_llm()`, so the guard runs before the
+    script's accumulated wakes are enqueued.
 
-  The capability is used instead of a "non-default profile" heuristic because full-capability
+  The capability (rather than a "non-default profile" heuristic) is used because full-capability
   non-default profiles (`event_handler`, `complex_tasks`) legitimately wake the LLM — only profiles
   that opt into confinement are blocked.
 
@@ -335,13 +349,6 @@ Enforcement is a per-profile capability plus belt-and-braces policy:
   `argument_equals: {action_type: "wake_llm"}`. This works with the existing matcher because
   `action_type` is a required argument, so it is always present. (`update_automation` cannot change
   an automation's action type.)
-
-Why `script` is also the better Rule-of-Two shape regardless: the script author controls all tool
-calls deterministically, and LLM output derived from untrusted log content lands only in *data* —
-the note body, a summary field — never in control flow. An injection in a log message can at worst
-poison the summary text, not choose which tools run. (`handle_llm_callback` still does not honor a
-stored profile — its only profile switch is a hardcoded `reminder` lookup — so making `wake_llm`
-profile-aware remains Future Work; the capability flag closes the escape without it.)
 
 ### Triage Script Shape
 
@@ -475,7 +482,9 @@ discovered during review, for whenever it is picked up:
 - **The update re-stamp collision.** The current "re-stamp on action_config change" logic must be
   removed/replaced before the column can mean "target execution profile" (partially addressed by
   Update Hardening above).
-- Cross-profile execution should remain script-only until `wake_llm` honors the stored profile.
+- `wake_llm` now honors a threaded execution profile (see "wake_llm Profile Routing"), so
+  cross-profile execution is no longer blocked on that; `event_handler`'s own tool set (F1) is a
+  separate follow-up.
 
 ## Residual Risks (Accepted)
 

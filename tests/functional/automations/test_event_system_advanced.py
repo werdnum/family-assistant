@@ -268,6 +268,9 @@ async def test_end_to_end_event_listener_wakes_llm(
         payload = safe_json_loads(callback_task["payload"])
         assert payload["interface_type"] == "telegram"
         assert payload["conversation_id"] == "test_chat_123"
+        # Event-triggered wake_llm routes to the restricted event_handler profile,
+        # not the (full-trust) listener creator profile.
+        assert payload["processing_profile_id"] == "event_handler"
         assert "callback_context" in payload
 
         callback_context = payload["callback_context"]
@@ -317,26 +320,42 @@ async def test_end_to_end_event_listener_wakes_llm(
     )
     await composite_provider.get_tool_definitions()
 
-    # Setup processing service
-    test_service_config = ProcessingServiceConfig(
-        prompts={"system_prompt": "Test system prompt"},
-        timezone=ZoneInfo("UTC"),
-        max_history_messages=5,
-        history_max_age_hours=24,
-        tools_config=ToolsConfig(),
-        delegation_security_level=DelegationSecurityLevel.CONFIRM,
-        id="test_event_listener_profile",
-    )
+    # Setup processing services: the worker default plus the restricted
+    # event_handler profile that event-triggered wake_llm turns route to.
+    def _make_config(profile_id: str) -> ProcessingServiceConfig:
+        return ProcessingServiceConfig(
+            prompts={"system_prompt": "Test system prompt"},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=5,
+            history_max_age_hours=24,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id=profile_id,
+        )
 
+    service_registry: dict[str, ProcessingService] = {}
     processing_service = ProcessingService(
         llm_client=llm_client,
         tools_provider=composite_provider,
-        service_config=test_service_config,
+        service_config=_make_config("default_assistant"),
         app_config=AppConfig(),
         context_providers=[],
         server_url=None,
         clock=None,
+        processing_services_registry=service_registry,
     )
+    event_handler_service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=composite_provider,
+        service_config=_make_config("event_handler"),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+        clock=None,
+        processing_services_registry=service_registry,
+    )
+    service_registry["default_assistant"] = processing_service
+    service_registry["event_handler"] = event_handler_service
 
     # Setup mock chat interface
     mock_chat_interface = AsyncMock(spec=ChatInterface)

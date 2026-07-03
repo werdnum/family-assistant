@@ -145,6 +145,11 @@ class LlmCallbackPayload(TypedDict, total=False):
     # for legacy tasks queued before this field existed, in which case confirm-gated
     # tools cannot be approved.
     created_by_user_id: str
+    # Profile the woken turn should run under. Event-listener wakes carry the
+    # restricted "event_handler" profile (untrusted trigger); schedule and
+    # future-callback wakes carry their originating profile. Absent for reminders
+    # (which switch to the "reminder" profile) and legacy tasks (run as default).
+    processing_profile_id: str
 
 
 class ScriptExecutionPayload(TypedDict, total=False):
@@ -536,7 +541,14 @@ async def handle_llm_callback(
     max_follow_ups = reminder_config.get("max_follow_ups", 2)
     current_attempt = reminder_config.get("current_attempt", 1)
 
-    # Switch to specialized reminder profile if available
+    # Determine the profile the woken turn runs under.
+    #  - Reminders switch to the specialized "reminder" profile (soft: falls back
+    #    to default if it is not registered).
+    #  - Otherwise honor the wake's stamped execution profile: event-listener
+    #    wakes carry the restricted "event_handler" profile (untrusted trigger),
+    #    schedule/future-callback wakes carry their originating profile. This is a
+    #    fail-loud resolve — a stamped non-default profile that cannot be resolved
+    #    raises rather than silently running under the full-trust default profile.
     if (
         is_reminder
         and processing_service
@@ -548,6 +560,16 @@ async def handle_llm_callback(
         if isinstance(reminder_service, ProcessingService):
             logger.info("Switching to 'reminder' profile for reminder task execution.")
             processing_service = reminder_service
+    elif not is_reminder and payload.get("processing_profile_id"):
+        resolved_service = _resolve_execution_service(
+            exec_context, payload.get("processing_profile_id")
+        )
+        if resolved_service is not None and resolved_service is not processing_service:
+            logger.info(
+                "Switching to '%s' profile for wake_llm task execution.",
+                payload.get("processing_profile_id"),
+            )
+            processing_service = resolved_service
 
     # Validate payload content
     if not callback_context:
@@ -3515,6 +3537,9 @@ async def _process_script_wake_llm(
     }
     if exec_context.user_id is not None:
         payload["created_by_user_id"] = exec_context.user_id
+    # The woken turn runs under the script's own (originating) profile.
+    if exec_context.processing_profile_id is not None:
+        payload["processing_profile_id"] = exec_context.processing_profile_id
 
     # Add attachments to payload if any were found
     if trigger_attachments:
@@ -3534,23 +3559,23 @@ async def _process_script_wake_llm(
     )
 
 
-def _resolve_script_execution_service(
+def _resolve_execution_service(
     exec_context: ToolExecutionContext,
     processing_profile_id: str | None,
 ) -> ProcessingService | None:
-    """Resolve the processing service a script should execute under.
+    """Resolve the processing service a task should execute under.
 
-    Scripts run under the profile that created the automation so that the tool
-    set used at validation time matches the tool set available at execution
-    time. Legacy automations created before provenance was tracked have no
-    recorded profile and fall back to the default processing service.
+    Used for both script execution (runs under the creating profile) and
+    profile-routed wake_llm turns (event listeners route to ``event_handler``;
+    schedule/future-callback wakes carry their originating profile). Tasks with
+    no recorded profile, or stamped with the default profile, fall back to the
+    default processing service.
 
-    An automation explicitly stamped with a non-default profile that can no
-    longer be resolved (e.g. the profile was renamed/removed) is **not**
-    downgraded to the default: the script was validated and stamped for specific
-    tools/visibility, so running it under a different policy could change its
-    capabilities or data access. Such cases raise so the task fails loudly
-    rather than executing under the wrong profile.
+    A task explicitly stamped with a non-default profile that can no longer be
+    resolved (e.g. the profile was renamed/removed) is **not** downgraded to the
+    default: it was stamped for specific tools/visibility, so running it under a
+    different policy could change its capabilities or data access. Such cases
+    raise so the task fails loudly rather than executing under the wrong profile.
     """
     default_service = exec_context.processing_service
     if (
@@ -3692,7 +3717,7 @@ async def handle_script_execution(
     # Resolve the processing profile the script was created under so that the
     # tools available here match those used to validate the script at creation
     # time. Legacy automations (no recorded profile) fall back to the default.
-    processing_service = _resolve_script_execution_service(
+    processing_service = _resolve_execution_service(
         exec_context, payload.get("processing_profile_id")
     )
     tools_provider = None

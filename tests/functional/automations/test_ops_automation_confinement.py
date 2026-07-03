@@ -6,10 +6,12 @@ update_automation denial against a real database.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from family_assistant.actions import (
     ActionType,
@@ -17,6 +19,7 @@ from family_assistant.actions import (
     execute_action,
 )
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     _process_script_wake_llm,  # noqa: PLC2701  # testing the script wake_llm guard
 )
@@ -143,6 +146,18 @@ async def test_create_wake_llm_automation_allowed_for_normal_profile(
         data = result.get_data()
         assert isinstance(data, dict)
         assert "error" not in data
+
+        # The scheduled wake carries its originating profile so handle_llm_callback
+        # runs the turn under it rather than the worker default.
+        rows = await db.fetch_all(
+            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+        )
+        assert rows
+        raw_payload = rows[0]["payload"]
+        payload = (
+            json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+        )
+        assert payload["processing_profile_id"] == "default_assistant"
 
 
 # --- script built-in wake_llm() escape closed for confined profiles ---

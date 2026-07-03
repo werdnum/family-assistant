@@ -30,6 +30,11 @@ from family_assistant.storage.types import (
 
 logger = logging.getLogger(__name__)
 
+# Restricted profile that event-triggered wake_llm turns run under. Event content
+# is untrusted (attacker-influenced email/webhook data), and the woken LLM is the
+# injectable component, so it must not run under a full-trust profile.
+EVENT_HANDLER_PROFILE_ID = "event_handler"
+
 
 class SourceHealthInfoDict(TypedDict, total=False):
     """Health info for an individual event source.
@@ -326,6 +331,17 @@ class EventProcessor:
         ):
             context["event_data"] = event_data
 
+        # Event triggers are untrusted (e.g. attacker-influenced email/webhook
+        # content). A wake_llm turn processes that content and is the injectable
+        # component, so it runs under the restricted "event_handler" profile
+        # rather than the listener creator's (often full-trust) profile. Script
+        # actions keep running under the creating profile so their validated tool
+        # set matches execution.
+        if action_type == ActionType.WAKE_LLM:
+            action_profile_id: str | None = EVENT_HANDLER_PROFILE_ID
+        else:
+            action_profile_id = listener.get("processing_profile_id")
+
         await execute_action(
             db_ctx=db_ctx,
             action_type=action_type,
@@ -333,7 +349,7 @@ class EventProcessor:
             conversation_id=listener["conversation_id"],
             interface_type=listener.get("interface_type", "telegram"),
             context=context,
-            processing_profile_id=listener.get("processing_profile_id"),
+            processing_profile_id=action_profile_id,
             created_by_user_id=listener.get("created_by_user_id"),
         )
 

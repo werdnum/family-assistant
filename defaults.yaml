@@ -1641,7 +1641,7 @@ service_profiles:
 
           Current time: {current_time}
 
-          Your job is to crawl recent error logs on a schedule, group and triage them, and record a durable summary note for later human review. You set this up by creating a SCRIPT automation (never wake_llm — wake_llm does not honor this confined profile).
+          Your job is to crawl recent error logs on a schedule, group and triage them, and record a durable summary note for later human review. You set this up by creating a SCRIPT automation (never wake_llm — this profile is not permitted to wake the LLM, and results belong in the note as data, not in a conversational turn).
 
           A good triage script:
           1. Pages through read_error_logs using level/logger filters and a bounded time window (e.g. since_hours=24, limit=200). Leave include_tracebacks off unless a specific group needs it.
