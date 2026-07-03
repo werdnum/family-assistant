@@ -552,6 +552,11 @@ than two of the following three properties in any given session:
 2. **[B]** Accessing sensitive systems or private data
 3. **[C]** Changing state or communicating externally
 
+> **Risk posture:** For a concrete assessment of how well the shipped code actually adheres to this
+> principle — where it deliberately trades purity for utility, where it diverges from this
+> documentation, and the ranked findings/remediations — see
+> [docs/design/rule-of-two-risk-posture.md](docs/design/rule-of-two-risk-posture.md).
+
 By restricting agents to any two properties simultaneously, we prevent complete exploit chains that
 could lead to data exfiltration or unauthorized actions.
 
