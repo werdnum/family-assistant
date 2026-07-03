@@ -46,6 +46,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
 private final class FakeAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
     var onInputLevel: (@Sendable (Double) -> Void)?
+    var onEngineFailure: ((Error) -> Void)?
     var startError: Error?
     private(set) var started = false
     private(set) var stopped = false
@@ -430,6 +431,21 @@ final class VoiceSessionViewModelTests: XCTestCase {
         try await waitUntil { self.reportedErrors.isEmpty == false }
     }
 
+    func testEngineFailureFailsSessionAndReports() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        audio.onEngineFailure?(VoiceAudioError.captureStalled)
+
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(model.phase, .failed("The microphone stopped delivering audio."))
+        XCTAssertEqual(reportedErrors.count, 1)
+        XCTAssertTrue(audio.stopped)
+        XCTAssertTrue(session.closed)
+    }
+
     func testToolCallCancellationSuppressesResponse() async throws {
         var toolStarted = false
         var toolReturned = false
@@ -453,5 +469,128 @@ final class VoiceSessionViewModelTests: XCTestCase {
         await Task.yield()
 
         XCTAssertTrue(session.sentToolResponses.isEmpty)
+    }
+}
+
+/// The capture-liveness watchdog's escalation policy (pure logic; the engine
+/// itself needs audio hardware and is exercised on-device).
+final class CaptureStallActionTests: XCTestCase {
+    func testHealthyCaptureDoesNothing() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(1),
+                stallThreshold: .seconds(10),
+                isInterrupted: false,
+                didAlreadyRestartForThisStall: false
+            ),
+            .wait
+        )
+    }
+
+    func testStallTriggersRestartFirst() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(11),
+                stallThreshold: .seconds(10),
+                isInterrupted: false,
+                didAlreadyRestartForThisStall: false
+            ),
+            .restart
+        )
+    }
+
+    func testStallAfterRestartFails() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(11),
+                stallThreshold: .seconds(10),
+                isInterrupted: false,
+                didAlreadyRestartForThisStall: true
+            ),
+            .fail
+        )
+    }
+
+    func testInterruptionSuppressesTheWatchdog() {
+        XCTAssertEqual(
+            CaptureStallAction.decide(
+                sinceLastCapture: .seconds(60),
+                stallThreshold: .seconds(10),
+                isInterrupted: true,
+                didAlreadyRestartForThisStall: true
+            ),
+            .wait
+        )
+    }
+}
+
+final class StallEscalationTests: XCTestCase {
+    private let threshold: Duration = .seconds(10)
+
+    /// A restart that never revives capture must escalate to a failure on the
+    /// next stall, not restart forever. `buildGraphAndStart()` seeds a fresh
+    /// `lastCaptureAt` on the rebuild, so the tick right after the restart sees a
+    /// small `sinceLastCapture` — but with no new capture, the escalation flag
+    /// must survive so the following stall fails.
+    func testRestartThatNeverRevivesFailsOnSecondStall() {
+        var escalation = StallEscalation(captureCount: 0)
+        // Grace window right after start: below threshold, capture never arrived.
+        XCTAssertEqual(step(&escalation, since: .seconds(5), count: 0), .wait)
+        // First real stall → restart.
+        XCTAssertEqual(step(&escalation, since: .seconds(11), count: 0), .restart)
+        // Rebuild seeded a fresh timestamp but capture still never fired.
+        XCTAssertEqual(step(&escalation, since: .seconds(5), count: 0), .wait)
+        // The next stall must fail, not restart again.
+        XCTAssertEqual(step(&escalation, since: .seconds(11), count: 0), .fail)
+    }
+
+    /// A genuine capture after a restart clears the escalation, so a later,
+    /// independent stall is treated as a fresh first stall (restart, not fail).
+    func testRealCaptureAfterRestartResetsEscalation() {
+        var escalation = StallEscalation(captureCount: 0)
+        XCTAssertEqual(step(&escalation, since: .seconds(11), count: 0), .restart)
+        // Capture resumes: counter advances while healthy → escalation clears.
+        XCTAssertEqual(step(&escalation, since: .seconds(1), count: 5), .wait)
+        // A new, unrelated stall later gets its own restart attempt.
+        XCTAssertEqual(step(&escalation, since: .seconds(11), count: 5), .restart)
+    }
+
+    /// The seeded rebuild timestamp alone must not reset escalation — only a real
+    /// capture (advancing counter) may. This is the precise regression guard.
+    func testSeededTimestampWithoutCaptureDoesNotResetEscalation() {
+        var escalation = StallEscalation(captureCount: 3)
+        XCTAssertEqual(step(&escalation, since: .seconds(11), count: 3), .restart)
+        // Below threshold but counter unchanged: escalation must NOT clear.
+        XCTAssertEqual(step(&escalation, since: .seconds(2), count: 3), .wait)
+        XCTAssertEqual(step(&escalation, since: .seconds(11), count: 3), .fail)
+    }
+
+    func testHealthyCaptureNeverEscalates() {
+        var escalation = StallEscalation(captureCount: 0)
+        for tick in 1 ... 5 {
+            XCTAssertEqual(step(&escalation, since: .seconds(1), count: UInt64(tick)), .wait)
+        }
+    }
+
+    func testInterruptionSuppressesEscalation() {
+        var escalation = StallEscalation(captureCount: 0)
+        XCTAssertEqual(
+            escalation.step(
+                sinceLastCapture: .seconds(30),
+                stallThreshold: threshold,
+                isInterrupted: true,
+                captureCount: 0
+            ),
+            .wait
+        )
+    }
+
+    private func step(_ escalation: inout StallEscalation, since: Duration, count: UInt64) -> CaptureStallAction {
+        escalation.step(
+            sinceLastCapture: since,
+            stallThreshold: threshold,
+            isInterrupted: false,
+            captureCount: count
+        )
     }
 }

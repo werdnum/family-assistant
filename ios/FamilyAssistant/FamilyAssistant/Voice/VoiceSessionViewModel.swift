@@ -105,6 +105,11 @@ final class VoiceSessionViewModel {
                 self.lastInputLevelAt = Date()
             }
         }
+        audio.onEngineFailure = { [weak self] error in
+            Task { @MainActor in
+                self?.fail(error)
+            }
+        }
     }
 
     /// Whether the session has reached a terminal phase.
@@ -337,6 +342,7 @@ final class VoiceSessionViewModel {
         timeoutTask = nil
         audio.onCapturedAudio = nil
         audio.onInputLevel = nil
+        audio.onEngineFailure = nil
         audioOut?.finish()
         audioOut = nil
         audioPumpTask?.cancel()
