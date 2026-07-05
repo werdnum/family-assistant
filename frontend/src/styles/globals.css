@@ -32,7 +32,9 @@
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
-    
+
+    --link: 221 83% 45%;
+
     --radius: 0.5rem;
 
     /* Legacy CSS variables for compatibility with existing components */
@@ -74,6 +76,8 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
+
+    --link: 213 94% 74%;
 
     /* Legacy CSS variables for dark mode */
     --bg: hsl(222.2, 84%, 4.9%);
@@ -127,5 +131,167 @@
   border-radius: 3px;
   font-size: 0.875em;
   word-break: break-all;
+}
+
+/*
+ * Tailwind's Preflight base layer resets margins, heading sizes/weights, list
+ * markers, and link colors on bare elements. Chat messages render raw markdown
+ * output (react-markdown), so without these rules paragraphs run together,
+ * headings look like body text, lists lose their bullets, and links are
+ * indistinguishable from surrounding text. Restore sensible defaults scoped to
+ * markdown content.
+ */
+.markdown-text p {
+  margin: 0.75em 0;
+  line-height: 1.6;
+}
+
+.markdown-text > :first-child {
+  margin-top: 0;
+}
+
+.markdown-text > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-text h1,
+.markdown-text h2,
+.markdown-text h3,
+.markdown-text h4,
+.markdown-text h5,
+.markdown-text h6 {
+  margin: 1.25em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.markdown-text h1 {
+  font-size: 1.5em;
+}
+
+.markdown-text h2 {
+  font-size: 1.3em;
+}
+
+.markdown-text h3 {
+  font-size: 1.15em;
+}
+
+.markdown-text h4 {
+  font-size: 1em;
+}
+
+.markdown-text h5,
+.markdown-text h6 {
+  font-size: 0.9em;
+}
+
+.markdown-text ul,
+.markdown-text ol {
+  margin: 0.75em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-text ul {
+  list-style: disc;
+}
+
+.markdown-text ol {
+  list-style: decimal;
+}
+
+.markdown-text li {
+  margin: 0.25em 0;
+}
+
+.markdown-text li > ul,
+.markdown-text li > ol {
+  margin: 0.25em 0;
+}
+
+/* GitHub-flavored task lists render a checkbox as the list marker. */
+.markdown-text li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.25em;
+}
+
+.markdown-text li > input[type='checkbox'] {
+  margin-right: 0.4em;
+}
+
+.markdown-text a {
+  color: hsl(var(--link));
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.markdown-text a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/*
+ * User messages render on a filled primary bubble (see UserMessage in
+ * Thread.tsx), where the themed link color has poor contrast. Inherit the
+ * bubble's foreground color there and rely on the underline for affordance.
+ */
+[data-testid='user-message-content'] .markdown-text a {
+  color: inherit;
+}
+
+/*
+ * The muted background used for code and table headers has almost no contrast
+ * against the filled primary bubble. Tint with the bubble's own foreground
+ * color instead so it stays legible in both light and dark themes.
+ */
+[data-testid='user-message-content'] .markdown-text .inline-code,
+[data-testid='user-message-content'] .markdown-text .code-block,
+[data-testid='user-message-content'] .markdown-text th {
+  background-color: color-mix(in srgb, hsl(var(--primary-foreground)) 15%, transparent);
+}
+
+[data-testid='user-message-content'] .markdown-text .code-block {
+  border-color: color-mix(in srgb, hsl(var(--primary-foreground)) 25%, transparent);
+}
+
+.markdown-text strong {
+  font-weight: 600;
+}
+
+.markdown-text em {
+  font-style: italic;
+}
+
+.markdown-text blockquote {
+  margin: 0.75em 0;
+  padding: 0.25em 0 0.25em 1em;
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+
+.markdown-text hr {
+  margin: 1.25em 0;
+  border: 0;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.markdown-text table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.75em 0;
+  border-collapse: collapse;
+}
+
+.markdown-text th,
+.markdown-text td {
+  padding: 0.4em 0.75em;
+  border: 1px solid hsl(var(--border));
+  text-align: left;
+}
+
+.markdown-text th {
+  background-color: hsl(var(--muted));
+  font-weight: 600;
 }
 
