@@ -29,7 +29,11 @@ from family_assistant.a2a.client import (
     A2APermanentError,
     A2ATaskNotFoundError,
 )
-from family_assistant.actions import ActionType, assert_wake_llm_allowed
+from family_assistant.actions import (
+    ActionType,
+    WakeLlmProfileError,
+    assert_wake_llm_allowed,
+)
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageAttachmentMetadata,
@@ -570,6 +574,28 @@ async def handle_llm_callback(
                 payload.get("processing_profile_id"),
             )
             processing_service = resolved_service
+
+    # A profile that may not wake the LLM must not run a woken turn even from an
+    # already-enqueued task (legacy queue entries, or the profile's config
+    # changed after the wake was scheduled). The creation-path guards cannot
+    # cover those, so re-check at execution time and fail loudly.
+    if not processing_service.service_config.allow_wake_llm:
+        raise WakeLlmProfileError(
+            f"Refusing queued llm_callback for profile "
+            f"'{processing_service.service_config.id}': the profile is not "
+            "permitted to wake the LLM (allow_wake_llm is disabled)."
+        )
+
+    # Re-point the execution context at the routed profile so everything
+    # rendered from it (e.g. the trigger timestamp's timezone) is consistent
+    # with the profile the turn actually runs under.
+    if processing_service is not exec_context.processing_service:
+        exec_context = replace(
+            exec_context,
+            processing_service=processing_service,
+            processing_profile_id=processing_service.service_config.id,
+            timezone=processing_service.service_config.timezone,
+        )
 
     # Validate payload content
     if not callback_context:

@@ -7,8 +7,10 @@ update_automation denial against a real database.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,19 +21,32 @@ from family_assistant.actions import (
     WakeLlmProfileError,
     execute_action,
 )
-from family_assistant.storage.context import DatabaseContext
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.interfaces import ChatInterface
+from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.tasks import enqueue_task, tasks_table
 from family_assistant.task_worker import (
+    TaskWorker,
     _process_script_wake_llm,  # noqa: PLC2701  # testing the script wake_llm guard
+    handle_llm_callback,
 )
+from family_assistant.tools import CompositeToolsProvider
 from family_assistant.tools.automations import (
     create_automation_tool,
     update_automation_tool,
 )
 from family_assistant.tools.tasks import schedule_future_callback_tool
 from family_assistant.tools.types import ToolExecutionContext
+from tests.helpers import wait_for_tasks_to_complete
+from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
+    import asyncio
+    from collections.abc import Callable
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.scripting.monty_engine import WakeRequest
@@ -338,3 +353,134 @@ async def test_wake_llm_update_refused_for_confined_profile(
         assert isinstance(data, dict)
         assert "error" in data
         assert "not permitted to wake the llm" in data["error"].lower()
+
+
+# --- execution-time wake guard and profile-consistent context in the worker ---
+
+
+def _worker_service(
+    *,
+    service_id: str,
+    allow_wake_llm: bool = True,
+    timezone: ZoneInfo | None = None,
+    registry: dict[str, ProcessingService] | None = None,
+) -> ProcessingService:
+    return ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[], default_response=LLMOutput(content="Acknowledged.")
+        ),
+        tools_provider=CompositeToolsProvider(providers=[]),
+        service_config=ProcessingServiceConfig(
+            id=service_id,
+            prompts={"system_prompt": "Test profile"},
+            timezone=timezone or ZoneInfo("UTC"),
+            max_history_messages=1,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+            allow_wake_llm=allow_wake_llm,
+        ),
+        app_config=AppConfig(),
+        context_providers=[],
+        server_url=None,
+        processing_services_registry=registry,
+    )
+
+
+@pytest.mark.asyncio
+async def test_queued_wake_refused_for_confined_profile(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """An already-enqueued llm_callback stamped with an allow_wake_llm=False
+    profile is refused at execution time (creation-path guards cannot cover
+    legacy queue entries or a config that changed after scheduling)."""
+    ops_service = _worker_service(service_id="ops_automation", allow_wake_llm=False)
+    default_service = _worker_service(
+        service_id="default_assistant",
+        registry={"ops_automation": ops_service},
+    )
+
+    worker, new_task_event, _shutdown_event = task_worker_manager(
+        default_service,
+        AsyncMock(spec=ChatInterface),
+    )
+    worker.register_task_handler("llm_callback", handle_llm_callback)
+
+    task_id = f"queued_wake_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as db_ctx:
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="llm_callback",
+            payload={
+                "conversation_id": "conv_queued_wake",
+                "interface_type": "telegram",
+                "callback_context": "diagnostics summary",
+                "scheduling_timestamp": datetime.now(UTC).isoformat(),
+                "processing_profile_id": "ops_automation",
+            },
+            max_retries_override=0,
+        )
+    new_task_event.set()
+
+    with pytest.raises(RuntimeError, match="Task.*failed"):
+        await wait_for_tasks_to_complete(
+            db_engine, task_types={"llm_callback"}, timeout_seconds=15
+        )
+
+
+@pytest.mark.asyncio
+async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """The trigger text of a profile-routed wake uses the routed profile's
+    timezone, not the worker default's."""
+    routed_service = _worker_service(
+        service_id="automation_creation",
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    default_service = _worker_service(
+        service_id="default_assistant",
+        registry={"automation_creation": routed_service},
+    )
+
+    worker, new_task_event, _shutdown_event = task_worker_manager(
+        default_service,
+        AsyncMock(spec=ChatInterface),
+    )
+    worker.register_task_handler("llm_callback", handle_llm_callback)
+
+    task_id = f"routed_wake_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as db_ctx:
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="llm_callback",
+            payload={
+                "conversation_id": "conv_routed_wake",
+                "interface_type": "telegram",
+                "callback_context": "scheduled follow-up",
+                "scheduling_timestamp": datetime.now(UTC).isoformat(),
+                "processing_profile_id": "automation_creation",
+            },
+            max_retries_override=0,
+        )
+    new_task_event.set()
+
+    await wait_for_tasks_to_complete(
+        db_engine, task_types={"llm_callback"}, timeout_seconds=15
+    )
+
+    async with get_db_context(engine=db_engine) as db_ctx:
+        rows = await db_ctx.fetch_all(
+            select(message_history_table.c.content).where(
+                message_history_table.c.conversation_id == "conv_routed_wake",
+                message_history_table.c.role == "system",
+            )
+        )
+    trigger_texts = [row["content"] for row in rows]
+    assert any("The time is now" in text for text in trigger_texts)
+    # Australia/Sydney renders as AEST/AEDT rather than the worker default UTC.
+    assert any("AE" in text for text in trigger_texts if "The time is now" in text)

@@ -39,7 +39,9 @@ class CallbackCapturingService:
     """Fake processing service that exercises the wakeup confirmation callback."""
 
     def __init__(self) -> None:
-        self.service_config = SimpleNamespace(id="callback_profile")
+        self.service_config = SimpleNamespace(
+            id="callback_profile", allow_wake_llm=True
+        )
         self.processing_services_registry: dict[str, object] = {}
         self.captured_callback: object = "unset"
         self.captured_user_id: object = "unset"
