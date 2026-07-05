@@ -1418,14 +1418,21 @@ class AsteriskLiveHandler:
                     required_labels=None,
                     allowed_labels=None,
                 )
+                # Pass the labels explicitly: omitted visibility_labels means
+                # "preserve existing" on an update, so a collision with an older
+                # unlabeled transcript would otherwise stay default-visible
+                # instead of being (re)stamped with the transcript label.
+                transcript_labels = cfg.default_note_visibility_labels
             else:
                 write_policy = NoteWritePolicy.UNCONSTRAINED
+                transcript_labels = None
 
             async with get_db_context(self.database_engine) as db_context:
                 await db_context.notes.add_or_update(
                     title=title,
                     content=content,
                     include_in_prompt=False,
+                    visibility_labels=transcript_labels,
                     write_policy=write_policy,
                 )
 

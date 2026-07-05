@@ -4,6 +4,7 @@ import tempfile
 import wave
 from array import array
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -15,6 +16,7 @@ from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.storage.context import get_db_context
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
 
 
@@ -397,6 +399,41 @@ class TestCallTranscriptSaving:
         assert len(notes) == 1
         note = notes[0]
 
+        assert note.visibility_labels == ["telephone_logs"]
+
+    async def test_restamps_labels_when_overwriting_unlabeled_note(
+        self, handler: AsteriskLiveHandler, db_engine: AsyncEngine
+    ) -> None:
+        """A title collision with an unlabeled note is re-stamped, not preserved.
+
+        Omitted visibility_labels means "preserve existing" in the repository,
+        so the writer passes the labels explicitly; otherwise a retry against a
+        pre-fix unlabeled transcript would stay default-visible.
+        """
+        handler.database_engine = db_engine
+        handler._transcript_segments = [("Caller", "Hello", 0.0)]
+
+        mock_service = MagicMock()
+        mock_service.service_config.default_note_visibility_labels = ["telephone_logs"]
+        mock_service.service_config.timezone = ZoneInfo("UTC")
+        handler.processing_service = mock_service
+
+        call_time = datetime.fromtimestamp(handler._call_start_time, tz=ZoneInfo("UTC"))
+        title = f"Call Transcript: 100 - {call_time.strftime('%Y-%m-%d %H:%M')}"
+        async with get_db_context(db_engine) as db:
+            await db.notes.add_or_update(
+                title=title,
+                content="pre-fix transcript",
+                visibility_labels=[],
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
+            )
+
+        await handler._save_call_transcript()
+
+        async with get_db_context(db_engine) as db:
+            note = await db.notes.get_by_title(title, visibility_grants=None)
+        assert note is not None
+        assert "[00:00] Caller: Hello" in note.content
         assert note.visibility_labels == ["telephone_logs"]
 
     async def test_title_includes_extension(
