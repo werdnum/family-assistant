@@ -1297,6 +1297,25 @@ class AsteriskLiveHandler:
                         attachment_registry=self.processing_service.attachment_registry,
                         camera_backend=self.processing_service.camera_backend,
                         tools_provider=self.processing_service.tools_provider,
+                        visibility_grants=(
+                            set(
+                                self.processing_service.service_config.visibility_grants
+                            )
+                            if self.processing_service.service_config.visibility_grants
+                            else None
+                        ),
+                        default_note_visibility_labels=(
+                            self.processing_service.service_config.default_note_visibility_labels
+                        ),
+                        required_note_visibility_labels=(
+                            self.processing_service.service_config.required_note_visibility_labels
+                        ),
+                        allowed_note_visibility_labels=(
+                            self.processing_service.service_config.allowed_note_visibility_labels
+                        ),
+                        allow_wake_llm=(
+                            self.processing_service.service_config.allow_wake_llm
+                        ),
                     )
 
                     result = await self.processing_service.tools_provider.execute_tool(
