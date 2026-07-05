@@ -9,6 +9,7 @@ from family_assistant.storage.repositories.notes import (
     DuplicateNoteError,
     NoteModel,
     NoteNotFoundError,
+    NoteWritePolicy,
 )
 from family_assistant.web.dependencies import get_db
 
@@ -65,6 +66,8 @@ async def create_or_update_note(
                 note.include_in_prompt,
                 attachment_ids=note.attachment_ids,
                 visibility_labels=note.visibility_labels,
+                # Admin management surface: bypasses visibility confinement by design.
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
         except NoteNotFoundError as err:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(err)) from err
@@ -85,6 +88,8 @@ async def create_or_update_note(
                 note.include_in_prompt,
                 attachment_ids=note.attachment_ids,
                 visibility_labels=note.visibility_labels,
+                # Admin management surface: bypasses visibility confinement by design.
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
         except IntegrityError as err:
             # Handle race condition where title was taken between check and create

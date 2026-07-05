@@ -14,6 +14,7 @@ import pytest
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
@@ -168,6 +169,7 @@ async def test_script_testing_simulates_actions_and_keeps_reads_real(
             title="Trip Checklist",
             content="Passport and tickets",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         tools_provider = _build_tools_provider(

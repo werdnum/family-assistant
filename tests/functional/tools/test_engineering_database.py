@@ -8,6 +8,7 @@ failing on an active PostgreSQL transaction.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -258,3 +259,177 @@ async def test_read_error_logs_negative_limit_clamped(
         data = result.get_data()
         assert isinstance(data, dict)
         assert data["filters"]["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_includes_traceback_omits_extra_data_by_default(
+    db_engine: AsyncEngine,
+) -> None:
+    """Tracebacks are always returned; extra_data is omitted unless requested."""
+    async with DatabaseContext(engine=db_engine) as db:
+        stmt = insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="boom",
+            traceback="Traceback (most recent call last): frame",
+            extra_data={"secret": "value"},
+        )
+        await db.execute_with_retry(stmt)
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 1
+        # Traceback (code structure, low risk) is always included.
+        assert (
+            data["logs"][0]["traceback"] == "Traceback (most recent call last): frame"
+        )
+        # extra_data (arbitrary logged JSON) is stripped by default.
+        assert "extra_data" not in data["logs"][0]
+        assert data["filters"]["include_extra_data"] is False
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_includes_extra_data_when_requested(
+    db_engine: AsyncEngine,
+) -> None:
+    async with DatabaseContext(engine=db_engine) as db:
+        stmt = insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="boom",
+            extra_data={"request_id": "abc123"},
+        )
+        await db.execute_with_retry(stmt)
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, include_extra_data=True)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["logs"][0]["extra_data"] == {"request_id": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_respects_since_hours(
+    db_engine: AsyncEngine,
+) -> None:
+    """since_hours excludes logs older than the window."""
+    now = datetime.now(UTC)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="recent",
+                timestamp=now - timedelta(hours=1),
+            )
+        )
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="old",
+                timestamp=now - timedelta(hours=48),
+            )
+        )
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, since_hours=24)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        messages = {log["message"] for log in data["logs"]}
+        assert "recent" in messages
+        assert "old" not in messages
+        assert data["filters"]["since_hours"] == 24
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_rejects_non_bool_extra_data_flag(
+    db_engine: AsyncEngine,
+) -> None:
+    """A truthy non-bool (e.g. the string "true" from a script kwarg) is rejected.
+
+    The policy matcher compares exact types, so a deny rule on
+    ``include_extra_data: true`` never fires for the string ``"true"``; the tool
+    must therefore refuse non-bool values instead of treating them as truthy.
+    """
+    async with DatabaseContext(engine=db_engine) as db:
+        stmt = insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="boom",
+            extra_data={"secret": "value"},
+        )
+        await db.execute_with_retry(stmt)
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(
+            exec_context,
+            include_extra_data="true",  # type: ignore[arg-type]  # exercising script-kwarg type bypass
+        )
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "boolean" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_default_window_excludes_old_logs(
+    db_engine: AsyncEngine,
+) -> None:
+    """The window is always bounded: omitting since_hours means 7 days, not all logs."""
+    now = datetime.now(UTC)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="recent",
+                timestamp=now - timedelta(hours=1),
+            )
+        )
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="ancient",
+                timestamp=now - timedelta(hours=200),
+            )
+        )
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        messages = {log["message"] for log in data["logs"]}
+        assert "recent" in messages
+        assert "ancient" not in messages
+        assert data["filters"]["since_hours"] == 168
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_rejects_non_positive_window(
+    db_engine: AsyncEngine,
+) -> None:
+    """Non-positive since_hours used to mean 'unbounded'; it is now rejected."""
+    async with DatabaseContext(engine=db_engine) as db:
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, since_hours=0)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "positive" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_caps_window_at_retention(
+    db_engine: AsyncEngine,
+) -> None:
+    """since_hours is capped at 720 (the 30-day retention default)."""
+    async with DatabaseContext(engine=db_engine) as db:
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, since_hours=100_000)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["filters"]["since_hours"] == 720

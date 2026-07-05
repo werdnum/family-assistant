@@ -51,6 +51,7 @@ from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.storage.context import get_db_context
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.web.audio_utils import StatefulResampler
 from family_assistant.web.dependencies import get_live_audio_client
@@ -1296,6 +1297,25 @@ class AsteriskLiveHandler:
                         attachment_registry=self.processing_service.attachment_registry,
                         camera_backend=self.processing_service.camera_backend,
                         tools_provider=self.processing_service.tools_provider,
+                        visibility_grants=(
+                            set(
+                                self.processing_service.service_config.visibility_grants
+                            )
+                            if self.processing_service.service_config.visibility_grants
+                            else None
+                        ),
+                        default_note_visibility_labels=(
+                            self.processing_service.service_config.default_note_visibility_labels
+                        ),
+                        required_note_visibility_labels=(
+                            self.processing_service.service_config.required_note_visibility_labels
+                        ),
+                        allowed_note_visibility_labels=(
+                            self.processing_service.service_config.allowed_note_visibility_labels
+                        ),
+                        allow_wake_llm=(
+                            self.processing_service.service_config.allow_wake_llm
+                        ),
                     )
 
                     result = await self.processing_service.tools_provider.execute_tool(
@@ -1385,16 +1405,35 @@ class AsteriskLiveHandler:
 
             content = "\n".join(lines)
 
-            visibility_labels: list[str] | None = None
             if self.processing_service:
-                visibility_labels = self.processing_service.service_config.default_note_visibility_labels
+                # Internal system writer: apply the profile's default labels, but
+                # do NOT enforce see-before-overwrite against the profile's read
+                # grants (visibility_grants=None). A profile like telephone_external
+                # labels transcripts outside its own grants, so enforcing the read
+                # check here would reject overwriting its own transcript notes.
+                cfg = self.processing_service.service_config
+                write_policy = NoteWritePolicy(
+                    visibility_grants=None,
+                    default_labels=cfg.default_note_visibility_labels,
+                    required_labels=None,
+                    allowed_labels=None,
+                )
+                # Pass the labels explicitly: omitted visibility_labels means
+                # "preserve existing" on an update, so a collision with an older
+                # unlabeled transcript would otherwise stay default-visible
+                # instead of being (re)stamped with the transcript label.
+                transcript_labels = cfg.default_note_visibility_labels
+            else:
+                write_policy = NoteWritePolicy.UNCONSTRAINED
+                transcript_labels = None
 
             async with get_db_context(self.database_engine) as db_context:
                 await db_context.notes.add_or_update(
                     title=title,
                     content=content,
                     include_in_prompt=False,
-                    visibility_labels=visibility_labels,
+                    visibility_labels=transcript_labels,
+                    write_policy=write_policy,
                 )
 
             logger.info(

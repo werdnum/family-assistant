@@ -297,19 +297,76 @@ async def render_add_or_update_note_confirmation(
     args: ToolArgumentsView,
     context: ToolExecutionContext,
 ) -> str:
-    """Render a confirmation prompt for creating or updating a note."""
-    _ = context
+    """Render a confirmation prompt for creating or updating a note.
+
+    Shows both the requested labels and the *effective* labels after the active
+    profile's write policy, so an approver never rubber-stamps a payload whose
+    visibility differs from what the runtime will actually persist.
+    """
     fields = [
         _confirmation_field("Title", args.get("title")),
         _confirmation_field("Append", args.get("append", False)),
         _confirmation_field("Include in prompt", args.get("include_in_prompt", False)),
         _confirmation_field("Content", args.get("content")),
     ]
-    if args.get("visibility_labels"):
-        fields.append(
-            _confirmation_field("Visibility labels", args["visibility_labels"])
+
+    requested_raw = args.get("visibility_labels")
+    requested_labels: list[str] | None = None
+    if isinstance(requested_raw, list):
+        requested_labels = [str(label) for label in requested_raw]
+        fields.append(_confirmation_field("Requested visibility labels", requested_raw))
+
+    fields.append(
+        _confirmation_field(
+            "Effective visibility labels",
+            await _effective_note_labels(args, context, requested_labels),
         )
+    )
     return "Please confirm you want to *save* this note:\n" + "\n".join(fields)
+
+
+async def _effective_note_labels(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+    requested_labels: list[str] | None,
+) -> str:
+    """Compute the labels a note write would actually persist, for display."""
+    # Local import: the notes repository transitively imports the tools package
+    # (repositories/__init__ -> schedule_automations -> task_worker -> tools),
+    # so a top-level import here would be circular.
+    from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+        NoteWritePolicyError,
+    )
+
+    write_policy = context.note_write_policy()
+    title = args.get("title")
+    existing = None
+    if isinstance(title, str) and context.db_context is not None:
+        existing = await context.db_context.notes.get_by_title(
+            title, visibility_grants=None
+        )
+        # Mirror the repository's see-before-overwrite check so the approver
+        # sees the rejection up front instead of approving a write that
+        # add_or_update will refuse: a restricted profile may not overwrite a
+        # note it cannot see.
+        if existing is not None and write_policy.visibility_grants is not None:
+            visible_existing = await context.db_context.notes.get_by_title(
+                title, visibility_grants=write_policy.visibility_grants
+            )
+            if visible_existing is None:
+                return (
+                    f"REJECTED by profile policy: cannot modify note '{title}' - "
+                    "insufficient visibility permissions."
+                )
+    try:
+        effective = write_policy.resolve_labels(
+            is_new_note=existing is None,
+            requested_labels=requested_labels,
+            existing_labels=existing.visibility_labels if existing else [],
+        )
+    except NoteWritePolicyError as err:
+        return f"REJECTED by profile policy: {err}"
+    return str(effective) if effective else "(unrestricted)"
 
 
 async def render_schedule_reminder_confirmation(

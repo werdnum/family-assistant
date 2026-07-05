@@ -303,7 +303,12 @@ You can ask the assistant a wide variety of things:
   automation" \*Test conditions before creating automations: \*"Show me recent events from home
   assistant" \*"Test if person.alex state changes to 'Home' would have triggered in the last day"
   \*You can also manage automations through the Web UI: navigate to the Automations section to view
-  all automations, see their execution history, and modify their conditions or scripts
+  all automations, see their execution history, and modify their conditions or scripts \*Event
+  triggers can carry content from outside your household (webhooks, email), so the assistant turn
+  they wake runs in a restricted event-handler mode. Any notes it saves are quarantined under the
+  `event_logs` visibility label and are not pulled into your main assistant's context — you can read
+  them in the Web UI. If you want event-driven results in a normally visible note, have a script
+  automation write the note instead of the woken assistant.
 
 - **Automated Script Actions for Events:** \*For simple, deterministic actions, you can now create
   script-based event automations that run instantly without waking the assistant: \*"Run a script to
@@ -321,6 +326,20 @@ You can ask the assistant a wide variety of things:
   action that normally needs your approval (like deleting a calendar event), it won't run silently
   in the background: a confirmation lands in Telegram or the Web UI, and the action only happens
   once you approve it.
+
+- **Unattended Operational Diagnostics (`ops_automation` profile):** \*A confined profile is
+  available for standing up a scheduled job that crawls recent error logs, triages them, and records
+  a summary note for later review — without giving that unattended job broad access. \*You set it up
+  by delegating to it from a trusted chat (for example: "Set up a daily log-triage automation");
+  delegation to `ops_automation` asks for your confirmation first. \*The profile is deliberately
+  narrow: it can read bounded diagnostics and write **only** notes labelled `ops_diagnostics` (a
+  restriction enforced in storage, so it cannot write elsewhere even if asked), and it can create
+  only script automations — never the kind that wake the full assistant. \*Its triage notes are
+  quarantined: they are not pulled into the main assistant's context automatically, so log text that
+  might contain injected content can't leak into a trusted conversation. You read the reports
+  yourself via the Web UI. \*Using it requires a deployment to grant the `ops_diagnostics` label to
+  the profiles that should read the reports; see
+  `docs/design/profile-confined-note-writes-and-automation-approvals.md`.
 
 ## 4. Working with Attachments
 

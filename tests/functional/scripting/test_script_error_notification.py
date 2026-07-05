@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 
 def _make_processing_service(
     tools_provider: CompositeToolsProvider,
+    *,
+    service_id: str = "event_handler",
+    allow_wake_llm: bool = True,
+    processing_services_registry: dict[str, ProcessingService] | None = None,
 ) -> ProcessingService:
     return ProcessingService(
         llm_client=RuleBasedMockLLMClient(
@@ -53,17 +57,19 @@ def _make_processing_service(
         ),
         tools_provider=tools_provider,
         service_config=ProcessingServiceConfig(
-            id="event_handler",
+            id=service_id,
             prompts={"system_prompt": "Event handler"},
             timezone=ZoneInfo("UTC"),
             max_history_messages=1,
             history_max_age_hours=1,
             tools_config=ToolsConfig(),
             delegation_security_level=DelegationSecurityLevel.BLOCKED,
+            allow_wake_llm=allow_wake_llm,
         ),
         app_config=AppConfig(),
         context_providers=[],
         server_url=None,
+        processing_services_registry=processing_services_registry,
     )
 
 
@@ -346,3 +352,118 @@ async def test_notification_contains_event_data(
     context = payload["callback_context"]
     assert "event listener listener_99" in context
     assert "sensor.temperature" in context
+
+
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
+@pytest.mark.asyncio
+async def test_confined_profile_failure_skips_llm_notification(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """A failed script stamped with an allow_wake_llm=False profile must not wake
+    any LLM: the error notification is an llm_callback and would otherwise run
+    with the failed script/error/event data in its prompt."""
+    tools_provider = await _make_tools_provider()
+    ops_service = _make_processing_service(
+        tools_provider,
+        service_id="ops_automation",
+        allow_wake_llm=False,
+    )
+    default_service = _make_processing_service(
+        tools_provider,
+        service_id="default_assistant",
+        processing_services_registry={"ops_automation": ops_service},
+    )
+
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        default_service,
+        AsyncMock(spec=ChatInterface),
+    )
+    worker.register_task_handler("script_execution", handle_script_execution)
+
+    task_id = f"test_confined_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as db_ctx:
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="script_execution",
+            payload={
+                "script_code": "this is not valid python!!!",
+                "conversation_id": "test_conv",
+                "interface_type": "telegram",
+                "processing_profile_id": "ops_automation",
+                "config": {},
+            },
+            max_retries_override=0,
+        )
+
+    new_task_event.set()
+
+    with pytest.raises(RuntimeError, match="Task.*failed"):
+        await wait_for_tasks_to_complete(
+            db_engine, task_types={"script_execution"}, timeout_seconds=15
+        )
+
+    notification_tasks = await _wait_for_notification_tasks(
+        db_engine, expected_count=1, timeout_seconds=1.0
+    )
+    assert len(notification_tasks) == 0, (
+        "Expected no LLM notification for an allow_wake_llm=False profile, "
+        f"found {len(notification_tasks)}"
+    )
+
+
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
+@pytest.mark.asyncio
+async def test_stamped_profile_carried_into_notification(
+    db_engine: AsyncEngine,
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """When the failed script's profile may wake the LLM, the notification is
+    stamped with that profile so the woken turn keeps its tool policy and
+    visibility confinement (never the worker's default trusted profile)."""
+    tools_provider = await _make_tools_provider()
+    creator_service = _make_processing_service(
+        tools_provider,
+        service_id="automation_creation",
+    )
+    default_service = _make_processing_service(
+        tools_provider,
+        service_id="default_assistant",
+        processing_services_registry={"automation_creation": creator_service},
+    )
+
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        default_service,
+        AsyncMock(spec=ChatInterface),
+    )
+    worker.register_task_handler("script_execution", handle_script_execution)
+
+    task_id = f"test_stamped_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as db_ctx:
+        await enqueue_task(
+            db_context=db_ctx,
+            task_id=task_id,
+            task_type="script_execution",
+            payload={
+                "script_code": "this is not valid python!!!",
+                "conversation_id": "test_conv",
+                "interface_type": "telegram",
+                "processing_profile_id": "automation_creation",
+                "config": {},
+            },
+            max_retries_override=0,
+        )
+
+    new_task_event.set()
+
+    with pytest.raises(RuntimeError, match="Task.*failed"):
+        await wait_for_tasks_to_complete(
+            db_engine, task_types={"script_execution"}, timeout_seconds=15
+        )
+
+    notification_tasks = await _wait_for_notification_tasks(db_engine)
+    assert len(notification_tasks) == 1
+    notif_payload = notification_tasks[0]["payload"]
+    assert notif_payload is not None
+    assert notif_payload["processing_profile_id"] == "automation_creation"

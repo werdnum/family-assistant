@@ -198,6 +198,7 @@ if TYPE_CHECKING:
     )
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.repositories.notes import NoteWritePolicy
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
@@ -341,6 +342,9 @@ class ToolExecutionContext:
     tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
     visibility_grants: set[str] | None = None
     default_note_visibility_labels: list[str] | None = None
+    required_note_visibility_labels: list[str] | None = None
+    allowed_note_visibility_labels: list[str] | None = None
+    allow_wake_llm: bool = True
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None
@@ -351,6 +355,27 @@ class ToolExecutionContext:
     (notably ``delegate_to_service``'s async handoff) must run synchronously and
     return their result directly so the script can use it.
     """
+
+    def note_write_policy(self) -> NoteWritePolicy:
+        """Derive the note write policy for the active profile from this context.
+
+        Every note writer in the tool layer routes through this so label
+        confinement is applied uniformly. The four fields flow from the active
+        profile's ``ProcessingConfig``.
+        """
+        # Local import: the notes repository transitively imports the tools
+        # package (repositories/__init__ -> schedule_automations -> task_worker
+        # -> tools), so a top-level import here would be circular.
+        from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+            NoteWritePolicy,
+        )
+
+        return NoteWritePolicy(
+            visibility_grants=self.visibility_grants,
+            default_labels=self.default_note_visibility_labels,
+            required_labels=self.required_note_visibility_labels,
+            allowed_labels=self.allowed_note_visibility_labels,
+        )
 
 
 @dataclass

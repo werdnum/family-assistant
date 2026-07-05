@@ -100,6 +100,35 @@ async def execute_tool_api(
         timezone=timezone,  # Pass fetched timezone
         request_confirmation_callback=None,  # No confirmation from API for now
         tools_provider=root_tools_provider,  # Pass root tools provider for execute_script
+        processing_profile_id=(
+            processing_service.service_config.id if processing_service else None
+        ),
+        visibility_grants=(
+            set(processing_service.service_config.visibility_grants)
+            if processing_service
+            and processing_service.service_config.visibility_grants
+            else None
+        ),
+        default_note_visibility_labels=(
+            processing_service.service_config.default_note_visibility_labels
+            if processing_service
+            else None
+        ),
+        required_note_visibility_labels=(
+            processing_service.service_config.required_note_visibility_labels
+            if processing_service
+            else None
+        ),
+        allowed_note_visibility_labels=(
+            processing_service.service_config.allowed_note_visibility_labels
+            if processing_service
+            else None
+        ),
+        allow_wake_llm=(
+            processing_service.service_config.allow_wake_llm
+            if processing_service
+            else True
+        ),
     )
 
     try:

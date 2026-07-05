@@ -6,6 +6,10 @@ import logging
 from datetime import UTC
 from typing import TYPE_CHECKING, Any, cast
 
+from family_assistant.actions import (
+    WakeLlmProfileError,
+    assert_wake_llm_allowed,
+)
 from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.tools.stored_scripts import (
     AUTOMATION_RUNTIME_GLOBALS,
@@ -492,6 +496,15 @@ async def create_automation_tool(
         # Validate automation_type first
         validated_type = _validate_automation_type(automation_type)
 
+        # wake_llm actions do not honor the creating profile at execution time, so
+        # a confined profile (allow_wake_llm disabled) must not create one (it
+        # would run under the default trusted profile). Fail loudly at creation.
+        if action_type == "wake_llm":
+            try:
+                assert_wake_llm_allowed(action_type, exec_context.allow_wake_llm)
+            except WakeLlmProfileError as err:
+                return ToolResult(text=f"Error: {err}", data={"error": str(err)})
+
         # Validate script action_config
         if action_type == "script":
             script_error = await validate_script_action_config(
@@ -846,6 +859,35 @@ async def update_automation_tool(
         if not existing:
             error_msg = f"Automation {automation_id} not found"
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+
+        # Cross-profile update denial: updating an automation re-stamps its
+        # execution provenance to the updating profile, which would silently move
+        # a confined automation (and its script) to full-trust execution. Refuse
+        # tool-path updates from a different profile than the owner and direct the
+        # caller to delegate. (The web admin API stays permissive, like the notes
+        # API.)
+        if (
+            existing.processing_profile_id is not None
+            and exec_context.processing_profile_id is not None
+            and existing.processing_profile_id != exec_context.processing_profile_id
+        ):
+            error_msg = (
+                f"Automation {automation_id} is owned by profile "
+                f"'{existing.processing_profile_id}' and cannot be updated from "
+                f"profile '{exec_context.processing_profile_id}'. Delegate to the "
+                "owning profile to change it."
+            )
+            return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+
+        # A profile that may not wake the LLM must not keep, retarget or
+        # reschedule an existing wake_llm automation either (the ownership check
+        # above still permits same-profile and legacy unstamped automations, and
+        # an action_config update re-stamps provenance to this profile).
+        if existing.action_type == "wake_llm":
+            try:
+                assert_wake_llm_allowed("wake_llm", exec_context.allow_wake_llm)
+            except WakeLlmProfileError as err:
+                return ToolResult(text=f"Error: {err}", data={"error": str(err)})
 
         # When a script automation's action_config (and therefore its script) is
         # being changed, validate the new config and its script against the

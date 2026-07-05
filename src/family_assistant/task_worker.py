@@ -29,6 +29,11 @@ from family_assistant.a2a.client import (
     A2APermanentError,
     A2ATaskNotFoundError,
 )
+from family_assistant.actions import (
+    ActionType,
+    WakeLlmProfileError,
+    assert_wake_llm_allowed,
+)
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageAttachmentMetadata,
@@ -144,6 +149,11 @@ class LlmCallbackPayload(TypedDict, total=False):
     # for legacy tasks queued before this field existed, in which case confirm-gated
     # tools cannot be approved.
     created_by_user_id: str
+    # Profile the woken turn should run under. Event-listener wakes carry the
+    # restricted "event_handler" profile (untrusted trigger); schedule and
+    # future-callback wakes carry their originating profile. Absent for reminders
+    # (which switch to the "reminder" profile) and legacy tasks (run as default).
+    processing_profile_id: str
 
 
 class ScriptExecutionPayload(TypedDict, total=False):
@@ -535,7 +545,14 @@ async def handle_llm_callback(
     max_follow_ups = reminder_config.get("max_follow_ups", 2)
     current_attempt = reminder_config.get("current_attempt", 1)
 
-    # Switch to specialized reminder profile if available
+    # Determine the profile the woken turn runs under.
+    #  - Reminders switch to the specialized "reminder" profile (soft: falls back
+    #    to default if it is not registered).
+    #  - Otherwise honor the wake's stamped execution profile: event-listener
+    #    wakes carry the restricted "event_handler" profile (untrusted trigger),
+    #    schedule/future-callback wakes carry their originating profile. This is a
+    #    fail-loud resolve — a stamped non-default profile that cannot be resolved
+    #    raises rather than silently running under the full-trust default profile.
     if (
         is_reminder
         and processing_service
@@ -547,6 +564,38 @@ async def handle_llm_callback(
         if isinstance(reminder_service, ProcessingService):
             logger.info("Switching to 'reminder' profile for reminder task execution.")
             processing_service = reminder_service
+    elif not is_reminder and payload.get("processing_profile_id"):
+        resolved_service = _resolve_execution_service(
+            exec_context, payload.get("processing_profile_id")
+        )
+        if resolved_service is not None and resolved_service is not processing_service:
+            logger.info(
+                "Switching to '%s' profile for wake_llm task execution.",
+                payload.get("processing_profile_id"),
+            )
+            processing_service = resolved_service
+
+    # A profile that may not wake the LLM must not run a woken turn even from an
+    # already-enqueued task (legacy queue entries, or the profile's config
+    # changed after the wake was scheduled). The creation-path guards cannot
+    # cover those, so re-check at execution time and fail loudly.
+    if not processing_service.service_config.allow_wake_llm:
+        raise WakeLlmProfileError(
+            f"Refusing queued llm_callback for profile "
+            f"'{processing_service.service_config.id}': the profile is not "
+            "permitted to wake the LLM (allow_wake_llm is disabled)."
+        )
+
+    # Re-point the execution context at the routed profile so everything
+    # rendered from it (e.g. the trigger timestamp's timezone) is consistent
+    # with the profile the turn actually runs under.
+    if processing_service is not exec_context.processing_service:
+        exec_context = replace(
+            exec_context,
+            processing_service=processing_service,
+            processing_profile_id=processing_service.service_config.id,
+            timezone=processing_service.service_config.timezone,
+        )
 
     # Validate payload content
     if not callback_context:
@@ -2725,6 +2774,21 @@ class TaskWorker:
                         if self.processing_service
                         else None
                     ),
+                    required_note_visibility_labels=(
+                        self.processing_service.service_config.required_note_visibility_labels
+                        if self.processing_service
+                        else None
+                    ),
+                    allowed_note_visibility_labels=(
+                        self.processing_service.service_config.allowed_note_visibility_labels
+                        if self.processing_service
+                        else None
+                    ),
+                    allow_wake_llm=(
+                        self.processing_service.service_config.allow_wake_llm
+                        if self.processing_service
+                        else True
+                    ),
                     confirmation_result_waiters=self.confirmation_result_waiters,
                     confirmation_ui_managers=getattr(
                         self,
@@ -2929,6 +2993,40 @@ class TaskWorker:
             )
             return
 
+        # The notification wakes an LLM with the failed script, error and
+        # (untrusted) event data in its prompt, so it must run under the same
+        # profile the script was confined to — never the worker's default
+        # trusted profile. A profile that is not permitted to wake the LLM at
+        # all (allow_wake_llm=False) gets no LLM notification either; the
+        # fixed-template push notification in _notify_task_failure still fires.
+        script_profile_id = payload_dict.get("processing_profile_id")
+        notify_service = self.processing_service
+        if (
+            script_profile_id
+            and self.processing_service
+            and script_profile_id != self.processing_service.service_config.id
+        ):
+            registry = self.processing_service.processing_services_registry
+            candidate = registry.get(script_profile_id) if registry else None
+            if not isinstance(candidate, ProcessingService):
+                logger.warning(
+                    "Skipping LLM error notification for task %s: stamped profile "
+                    "'%s' cannot be resolved; refusing to notify under the default "
+                    "trusted profile.",
+                    task["task_id"],
+                    script_profile_id,
+                )
+                return
+            notify_service = candidate
+        if notify_service and not notify_service.service_config.allow_wake_llm:
+            logger.info(
+                "Skipping LLM error notification for task %s: profile '%s' is not "
+                "permitted to wake the LLM (allow_wake_llm=False).",
+                task["task_id"],
+                script_profile_id or notify_service.service_config.id,
+            )
+            return
+
         conversation_id = payload_dict.get("conversation_id", "")
         interface_type = payload_dict.get("interface_type", "telegram")
 
@@ -2991,6 +3089,10 @@ class TaskWorker:
             callback_context=callback_context,
             scheduling_timestamp=datetime.now(UTC).isoformat(),
         )
+        # Run the notification turn under the script's own profile so its tool
+        # policy and visibility confinement carry over to the woken turn.
+        if script_profile_id:
+            notification_payload["processing_profile_id"] = script_profile_id
 
         try:
             await enqueue_task(
@@ -3357,6 +3459,13 @@ async def _process_script_wake_llm(
         listener_id: ID of the event listener that ran the script
     """
 
+    # A script's built-in wake_llm() enqueues an llm_callback that runs under the
+    # worker's default trusted profile (handle_llm_callback does not honor the
+    # stored profile). A script running under a confined profile (allow_wake_llm
+    # disabled) must therefore not be able to wake the default LLM. Refuse loudly
+    # rather than escalate, mirroring the create_automation/execute_action guard.
+    assert_wake_llm_allowed(ActionType.WAKE_LLM, exec_context.allow_wake_llm)
+
     listener_id = listener_id or "scheduled"
 
     # Extract attachment IDs from all wake contexts
@@ -3492,6 +3601,9 @@ async def _process_script_wake_llm(
     }
     if exec_context.user_id is not None:
         payload["created_by_user_id"] = exec_context.user_id
+    # The woken turn runs under the script's own (originating) profile.
+    if exec_context.processing_profile_id is not None:
+        payload["processing_profile_id"] = exec_context.processing_profile_id
 
     # Add attachments to payload if any were found
     if trigger_attachments:
@@ -3511,23 +3623,23 @@ async def _process_script_wake_llm(
     )
 
 
-def _resolve_script_execution_service(
+def _resolve_execution_service(
     exec_context: ToolExecutionContext,
     processing_profile_id: str | None,
 ) -> ProcessingService | None:
-    """Resolve the processing service a script should execute under.
+    """Resolve the processing service a task should execute under.
 
-    Scripts run under the profile that created the automation so that the tool
-    set used at validation time matches the tool set available at execution
-    time. Legacy automations created before provenance was tracked have no
-    recorded profile and fall back to the default processing service.
+    Used for both script execution (runs under the creating profile) and
+    profile-routed wake_llm turns (event listeners route to ``event_handler``;
+    schedule/future-callback wakes carry their originating profile). Tasks with
+    no recorded profile, or stamped with the default profile, fall back to the
+    default processing service.
 
-    An automation explicitly stamped with a non-default profile that can no
-    longer be resolved (e.g. the profile was renamed/removed) is **not**
-    downgraded to the default: the script was validated and stamped for specific
-    tools/visibility, so running it under a different policy could change its
-    capabilities or data access. Such cases raise so the task fails loudly
-    rather than executing under the wrong profile.
+    A task explicitly stamped with a non-default profile that can no longer be
+    resolved (e.g. the profile was renamed/removed) is **not** downgraded to the
+    default: it was stamped for specific tools/visibility, so running it under a
+    different policy could change its capabilities or data access. Such cases
+    raise so the task fails loudly rather than executing under the wrong profile.
     """
     default_service = exec_context.processing_service
     if (
@@ -3669,7 +3781,7 @@ async def handle_script_execution(
     # Resolve the processing profile the script was created under so that the
     # tools available here match those used to validate the script at creation
     # time. Legacy automations (no recorded profile) fall back to the default.
-    processing_service = _resolve_script_execution_service(
+    processing_service = _resolve_execution_service(
         exec_context, payload.get("processing_profile_id")
     )
     tools_provider = None
@@ -3700,6 +3812,13 @@ async def handle_script_execution(
             default_note_visibility_labels=(
                 processing_service.service_config.default_note_visibility_labels
             ),
+            required_note_visibility_labels=(
+                processing_service.service_config.required_note_visibility_labels
+            ),
+            allowed_note_visibility_labels=(
+                processing_service.service_config.allowed_note_visibility_labels
+            ),
+            allow_wake_llm=processing_service.service_config.allow_wake_llm,
             request_confirmation_callback=build_script_confirmation_callback(
                 payload.get("created_by_user_id")
             ),
@@ -3975,6 +4094,13 @@ async def _build_confirmation_execution_context(
         default_note_visibility_labels=(
             processing_service.service_config.default_note_visibility_labels
         ),
+        required_note_visibility_labels=(
+            processing_service.service_config.required_note_visibility_labels
+        ),
+        allowed_note_visibility_labels=(
+            processing_service.service_config.allowed_note_visibility_labels
+        ),
+        allow_wake_llm=processing_service.service_config.allow_wake_llm,
         note_registry=processing_service.service_config.note_registry,
         confirmation_result_waiters=exec_context.confirmation_result_waiters,
     )

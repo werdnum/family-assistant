@@ -1060,6 +1060,13 @@ class Assistant:
                     if profile_proc_conf.default_note_visibility_labels is not None
                     else self.config.notes_config.default_visibility_labels or None
                 ),
+                required_note_visibility_labels=(
+                    profile_proc_conf.required_note_visibility_labels
+                ),
+                allowed_note_visibility_labels=(
+                    profile_proc_conf.allowed_note_visibility_labels
+                ),
+                allow_wake_llm=profile_proc_conf.allow_wake_llm,
                 note_registry=note_registry,
                 greeting_wav_path=profile_proc_conf.greeting_wav_path,
             )
@@ -1273,6 +1280,10 @@ class Assistant:
                     timezone=ZoneInfo(
                         self.config.default_profile_settings.processing_config.timezone
                     ),
+                    profile_wake_llm_flags={
+                        profile.id: profile.processing_config.allow_wake_llm
+                        for profile in self.config.service_profiles
+                    },
                 )
                 logger.info(
                     f"Event processor initialized with {len(event_sources)} sources"

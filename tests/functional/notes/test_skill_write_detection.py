@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 
 SKILL_CONTENT = (
     "---\n"
@@ -33,6 +34,7 @@ async def test_skill_detected_on_create(db_engine: AsyncEngine) -> None:
             title="My Skill",
             content=SKILL_CONTENT,
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         note = await db.notes.get_by_title("My Skill", visibility_grants=None)
@@ -53,6 +55,7 @@ async def test_regular_note_not_detected_as_skill(db_engine: AsyncEngine) -> Non
             title="Regular Note",
             content="Just regular content.",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         note = await db.notes.get_by_title("Regular Note", visibility_grants=None)
@@ -75,6 +78,7 @@ async def test_skill_detection_updated_on_content_change(
         await db.notes.add_or_update(
             title="Changeable",
             content=SKILL_CONTENT,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         note = await db.notes.get_by_title("Changeable", visibility_grants=None)
         assert note is not None
@@ -84,6 +88,7 @@ async def test_skill_detection_updated_on_content_change(
         await db.notes.add_or_update(
             title="Changeable",
             content="Now just regular content.",
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         note = await db.notes.get_by_title("Changeable", visibility_grants=None)
         assert note is not None
@@ -100,10 +105,12 @@ async def test_get_skills_returns_only_skills(db_engine: AsyncEngine) -> None:
         await db.notes.add_or_update(
             title="Skill Note",
             content=SKILL_CONTENT,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Regular Note",
             content="Plain content.",
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         skills = await db.notes.get_skills(visibility_grants=None)
@@ -124,11 +131,13 @@ async def test_get_prompt_notes_excludes_skills(db_engine: AsyncEngine) -> None:
             title="Regular Prompt Note",
             content="Include me.",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Skill Note",
             content=SKILL_CONTENT,
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
@@ -150,11 +159,13 @@ async def test_get_excluded_notes_titles_excludes_skills(
             title="Hidden Regular Note",
             content="Hidden content.",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Hidden Skill",
             content=SKILL_CONTENT,
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         excluded = await db.notes.get_excluded_notes_titles(visibility_grants=None)

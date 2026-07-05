@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.web.app_creator import app as actual_app
 
 
@@ -16,10 +17,16 @@ async def test_notes_ui_endpoints_accessible(db_engine: AsyncEngine) -> None:
     async with DatabaseContext(engine=db_engine) as db_context:
         # Add test notes with different include_in_prompt values
         await db_context.notes.add_or_update(
-            title="Test Note", content="Test content", include_in_prompt=True
+            title="Test Note",
+            content="Test content",
+            include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db_context.notes.add_or_update(
-            title="Excluded Note", content="Excluded content", include_in_prompt=False
+            title="Excluded Note",
+            content="Excluded content",
+            include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Create test client

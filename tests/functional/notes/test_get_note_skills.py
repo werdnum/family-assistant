@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.skills import NoteRegistry, ParsedSkill
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.notes import get_note_tool
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
@@ -58,7 +59,10 @@ async def test_get_note_returns_db_note(db_engine: AsyncEngine) -> None:
 
     async with DatabaseContext(engine=db_engine) as db:
         await db.notes.add_or_update(
-            title="My Note", content="DB content.", include_in_prompt=True
+            title="My Note",
+            content="DB content.",
+            include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         exec_context = make_exec_context(db)
@@ -116,6 +120,7 @@ async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
             title="Research Assistant",
             content="DB version of research assistant.",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         exec_context = make_exec_context(db, note_registry=registry)

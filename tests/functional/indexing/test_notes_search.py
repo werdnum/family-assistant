@@ -24,6 +24,7 @@ from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import DocumentEmbeddingRecord, query_vectors
 from family_assistant.task_worker import TaskWorker
@@ -240,7 +241,9 @@ async def test_note_update_reindexing_e2e(
         # --- Step 1: Create Initial Note ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             result = await db_context.notes.add_or_update(
-                title=unique_note_title, content=initial_content
+                title=unique_note_title,
+                content=initial_content,
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
             assert result == "Success"
 
@@ -311,7 +314,9 @@ async def test_note_update_reindexing_e2e(
         # --- Step 2: Update Note Content ---
         async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
             result = await db_context.notes.add_or_update(
-                title=unique_note_title, content=updated_content
+                title=unique_note_title,
+                content=updated_content,
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
             assert result == "Success"
             logger.info("Updated note content")
@@ -491,6 +496,7 @@ async def test_notes_indexing_graceful_degradation(
             result = await db_context.notes.add_or_update(
                 title=unique_note_title,
                 content=LARGE_CONTENT,
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
             assert result == "Success"
 

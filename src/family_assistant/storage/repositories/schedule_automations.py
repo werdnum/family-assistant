@@ -246,6 +246,10 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
                 if created_by_user_id is not None:
                     payload["created_by_user_id"] = created_by_user_id
+                # Scheduled wakes run under their originating profile (a trusted,
+                # user-set-up trigger), honored by handle_llm_callback.
+                if processing_profile_id is not None:
+                    payload["processing_profile_id"] = processing_profile_id
             else:  # script
                 payload = _build_script_payload(
                     action_config=action_config,
@@ -489,6 +493,9 @@ class ScheduleAutomationsRepository(BaseRepository):
                 created_by = automation.get("created_by_user_id")
                 if created_by is not None:
                     enqueue_payload["created_by_user_id"] = created_by
+                enable_profile_id = automation.get("processing_profile_id")
+                if enable_profile_id is not None:
+                    enqueue_payload["processing_profile_id"] = enable_profile_id
             else:
                 enqueue_payload = _build_script_payload(
                     action_config=action_config,
@@ -942,6 +949,9 @@ class ScheduleAutomationsRepository(BaseRepository):
             created_by = automation.get("created_by_user_id")
             if created_by is not None:
                 payload["created_by_user_id"] = created_by
+            reschedule_profile_id = automation.get("processing_profile_id")
+            if reschedule_profile_id is not None:
+                payload["processing_profile_id"] = reschedule_profile_id
         else:  # script
             payload = _build_script_payload(
                 action_config=final_action_config,
@@ -1075,6 +1085,9 @@ class ScheduleAutomationsRepository(BaseRepository):
                 created_by = automation.get("created_by_user_id")
                 if created_by is not None:
                     recur_payload["created_by_user_id"] = created_by
+                recur_profile_id = automation.get("processing_profile_id")
+                if recur_profile_id is not None:
+                    recur_payload["processing_profile_id"] = recur_profile_id
             else:  # script
                 recur_payload = _build_script_payload(
                     action_config=action_config,

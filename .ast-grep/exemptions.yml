@@ -80,6 +80,23 @@ exemptions:
     ticket: null
 
   # ===========================================================================
+  # NoteWritePolicy.UNCONSTRAINED exemptions - Approved admin surfaces
+  # ===========================================================================
+  - rule: no-unconstrained-note-write-policy
+    files:
+      - src/family_assistant/storage/repositories/notes.py
+      - src/family_assistant/web/routers/notes_api.py
+      - src/family_assistant/web/routers/asterisk_live_api.py
+      - test_*.py
+    reason: |
+      NoteWritePolicy.UNCONSTRAINED is the deliberate opt-out for trusted admin surfaces.
+      notes.py defines the sentinel; the web notes API and the call-transcript writer bypass
+      visibility confinement by design; test files (test_*.py, matched at any depth) exercise
+      both confined and unconstrained writes. All other note writers must derive the policy
+      from the active profile.
+    ticket: null
+
+  # ===========================================================================
   # dict[str, Any] exemptions - Hook scripts with arbitrary JSON
   # ===========================================================================
   - rule: no-dict-any

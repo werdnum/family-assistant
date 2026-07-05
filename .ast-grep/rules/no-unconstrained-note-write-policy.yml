@@ -1,0 +1,28 @@
+id: no-unconstrained-note-write-policy
+language: python
+severity: error
+message: "NoteWritePolicy.UNCONSTRAINED bypasses note visibility confinement - restricted to approved admin surfaces"
+note: |
+  NoteWritePolicy.UNCONSTRAINED disables see-before-overwrite and default/required/allowed
+  label enforcement for a note write. It is the deliberate opt-out for trusted admin surfaces
+  (the web notes API, the call-transcript writer) that bypass visibility by design.
+
+  Every other note writer MUST derive the policy from the active profile via
+  ToolExecutionContext.note_write_policy() so label confinement stays a property of the storage
+  layer, not of a single caller.
+
+  ❌ INCORRECT - silently reopens the confinement hole:
+    await db_context.notes.add_or_update(..., write_policy=NoteWritePolicy.UNCONSTRAINED)
+
+  ✅ CORRECT - honor the active profile:
+    await db_context.notes.add_or_update(..., write_policy=exec_context.note_write_policy())
+
+  Approved locations (see .ast-grep/exemptions.yml): the NoteWritePolicy definition, the web
+  notes admin API, and the call-transcript writer. New admin surfaces that genuinely need the
+  bypass must be added there with a justification, so the opt-out stays greppable and reviewed.
+
+  For a one-off approved call site, add an inline exemption with a reason:
+    # ast-grep-ignore: no-unconstrained-note-write-policy - admin surface, bypass by design
+    write_policy=NoteWritePolicy.UNCONSTRAINED
+rule:
+  pattern: NoteWritePolicy.UNCONSTRAINED

@@ -775,11 +775,13 @@ async def workspace_import_note_tool(
         if not note_title:
             note_title = full_path.stem  # filename without extension
 
-        # Create/update the note
+        # Create/update the note. Honor the active profile's write policy so an
+        # imported note lands in the same confined labels as a tool-written one.
         await db_context.notes.add_or_update(
             title=note_title,
             content=content,
             include_in_prompt=note_include_in_prompt,
+            write_policy=exec_context.note_write_policy(),
         )
 
         logger.info(f"Imported note '{note_title}' from {path}")

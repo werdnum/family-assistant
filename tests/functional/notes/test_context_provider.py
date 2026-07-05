@@ -13,6 +13,7 @@ from family_assistant.context_providers import NotesContextProvider
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 
 
 async def get_test_db_context(engine: AsyncEngine) -> DatabaseContext:
@@ -42,16 +43,19 @@ async def test_notes_context_provider_respects_include_in_prompt(
             title="Visible Note 1",
             content="This should appear in context",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Hidden Note 1",
             content="This should NOT appear in context",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Visible Note 2",
             content="This should also appear in context",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Create context provider
@@ -107,11 +111,13 @@ async def test_notes_context_provider_empty_when_all_excluded(
             title="Hidden Note A",
             content="Excluded content A",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Hidden Note B",
             content="Excluded content B",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Create context provider
@@ -167,6 +173,7 @@ async def test_notes_context_provider_mixed_visibility(
                 title=title,
                 content=content,
                 include_in_prompt=include,
+                write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
 
     # Create context provider
@@ -228,21 +235,25 @@ async def test_notes_context_provider_shows_excluded_notes_list(
             title="Public Note 1",
             content="This is visible content",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Secret Note A",
             content="Hidden content A",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Private Data B",
             content="Hidden content B",
             include_in_prompt=False,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Public Note 2",
             content="Another visible note",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Create context provider with excluded notes format
@@ -300,11 +311,13 @@ async def test_notes_context_provider_no_excluded_list_when_all_included(
             title="Note 1",
             content="Content 1",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
         await db.notes.add_or_update(
             title="Note 2",
             content="Content 2",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Create context provider
@@ -380,6 +393,7 @@ async def test_notes_context_provider_with_attachments(
             content="Monday through Friday morning meetings",
             include_in_prompt=True,
             attachment_ids=[attachment_id_1, attachment_id_2],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Create note without attachments for comparison
@@ -387,6 +401,7 @@ async def test_notes_context_provider_with_attachments(
             title="Shopping List",
             content="Milk, Bread, Eggs",
             include_in_prompt=True,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Create context provider with attachment registry
@@ -458,6 +473,7 @@ async def test_notes_context_provider_handles_missing_attachments(
             content="This note references a missing attachment",
             include_in_prompt=True,
             attachment_ids=["non-existent-attachment-id"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
     # Create context provider
@@ -532,6 +548,7 @@ async def test_notes_clearing_attachments_with_empty_list(
             content="This note has an attachment",
             include_in_prompt=True,
             attachment_ids=[attachment_id],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Verify attachment was added
@@ -547,6 +564,7 @@ async def test_notes_clearing_attachments_with_empty_list(
             content="This note has an attachment",
             include_in_prompt=True,
             attachment_ids=[],  # Empty list should clear attachments
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Verify attachments were cleared
@@ -604,6 +622,7 @@ async def test_notes_preserving_attachments_when_not_specified(
             content="Original content",
             include_in_prompt=True,
             attachment_ids=[attachment_id],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Verify attachment was added
@@ -617,6 +636,7 @@ async def test_notes_preserving_attachments_when_not_specified(
             content="Updated content",
             include_in_prompt=True,
             # attachment_ids not specified - should preserve existing
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
         )
 
         # Verify attachments were preserved
