@@ -372,6 +372,13 @@ readers too: a triage note whose content was influenced by injected log text can
 trusted assistant's prompt context automatically. Humans read the report via the web UI, and
 anything acted on crosses the trust boundary through them.
 
+This binary quarantine — the label is simply never granted to the default assistant — is the
+coarsest available setting, and the right one today. Once taint-aware sink policy exists (see
+"Relationship to the Provenance/Taint Roadmap" below), a graduated alternative becomes possible:
+labelled content may enter the trusted assistant's context, but its presence escalates
+external-communication/egress tools to confirm for the remainder of the turn. That keeps the
+diagnostics report usable in conversation without opening an unattended exfiltration path.
+
 ## Design Part 3: Bounded Diagnostic Read Tool
 
 `read_error_logs` currently supports `level`/`logger_name`/`limit` only. Add a bounded time filter
@@ -494,6 +501,28 @@ discovered during review, for whenever it is picked up:
   cross-profile execution is no longer blocked on that; `event_handler`'s own tool set (F1) is a
   separate follow-up.
 
+## Relationship to the Provenance/Taint Roadmap
+
+This design implements confinement **statically**: each confined profile declares its
+required/allowed labels by hand, and reader-side quarantine is a manual grant decision. That is the
+right V1, but it should be read as the manual precursor of a more general mechanism — automatic
+provenance propagation, where artifacts (notes, tickets, automations) inherit labels derived from
+the provenance/taint of the turn context that wrote them, and profiles shrink to declarations of
+label *policy*: which labels they may read, and which they must stamp on writes.
+
+`NoteWritePolicy` is deliberately the chokepoint that propagation will attach to. When turn-level
+provenance state exists, the policy derivation moves from static profile config to computed turn
+taint, with no repository or call-site changes required.
+
+Related dormant substrate: tools already carry `OUTPUT_UNTRUSTED` tags (`tools/metadata.py`) with no
+runtime consumer. A turn-level taint state that consumes them — escalating high-bandwidth,
+attacker-addressable egress sinks to confirm when untrusted output is in context — is the read-side
+counterpart of this design's write-side confinement.
+
+The acceptance test for that future work: the next confined ambient agent (for example, a mailbox
+digester) must cost only a YAML profile stanza. If it requires new Python beyond a data connector,
+the propagation layer is not finished.
+
 ## Residual Risks (Accepted)
 
 - The web notes and automations APIs remain unfiltered admin surfaces; `UNCONSTRAINED` is explicit
@@ -507,7 +536,10 @@ discovered during review, for whenever it is picked up:
   file noisy or duplicate tickets. Accepted while the destination is private and human-read; the
   hardening ladder in Part 4 is the remedy if it bites.
 - Escalation destination quarantine (private, and no bots acting on filed tickets) is a deployment
-  configuration property, not enforceable from this codebase.
+  configuration property, not enforceable from this codebase. Artifact-level provenance propagation
+  (see "Relationship to the Provenance/Taint Roadmap" above) is what would make the "no bots act on
+  these tickets" rule enforceable in code — a ticket stamped with `ops_automation` provenance can be
+  refused as input to any automation.
 
 ## Recommended Rollout
 
