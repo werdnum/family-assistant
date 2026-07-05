@@ -2967,6 +2967,40 @@ class TaskWorker:
             )
             return
 
+        # The notification wakes an LLM with the failed script, error and
+        # (untrusted) event data in its prompt, so it must run under the same
+        # profile the script was confined to — never the worker's default
+        # trusted profile. A profile that is not permitted to wake the LLM at
+        # all (allow_wake_llm=False) gets no LLM notification either; the
+        # fixed-template push notification in _notify_task_failure still fires.
+        script_profile_id = payload_dict.get("processing_profile_id")
+        notify_service = self.processing_service
+        if (
+            script_profile_id
+            and self.processing_service
+            and script_profile_id != self.processing_service.service_config.id
+        ):
+            registry = self.processing_service.processing_services_registry
+            candidate = registry.get(script_profile_id) if registry else None
+            if not isinstance(candidate, ProcessingService):
+                logger.warning(
+                    "Skipping LLM error notification for task %s: stamped profile "
+                    "'%s' cannot be resolved; refusing to notify under the default "
+                    "trusted profile.",
+                    task["task_id"],
+                    script_profile_id,
+                )
+                return
+            notify_service = candidate
+        if notify_service and not notify_service.service_config.allow_wake_llm:
+            logger.info(
+                "Skipping LLM error notification for task %s: profile '%s' is not "
+                "permitted to wake the LLM (allow_wake_llm=False).",
+                task["task_id"],
+                script_profile_id or notify_service.service_config.id,
+            )
+            return
+
         conversation_id = payload_dict.get("conversation_id", "")
         interface_type = payload_dict.get("interface_type", "telegram")
 
@@ -3029,6 +3063,10 @@ class TaskWorker:
             callback_context=callback_context,
             scheduling_timestamp=datetime.now(UTC).isoformat(),
         )
+        # Run the notification turn under the script's own profile so its tool
+        # policy and visibility confinement carry over to the woken turn.
+        if script_profile_id:
+            notification_payload["processing_profile_id"] = script_profile_id
 
         try:
             await enqueue_task(
