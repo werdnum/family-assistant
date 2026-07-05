@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import tzinfo
 from typing import Any, TypedDict, cast
 
@@ -76,6 +76,7 @@ class EventProcessor:
         config: EventConditionEvaluatorConfig | None = None,
         get_db_context_func: Callable[[], DatabaseContext] | None = None,
         timezone: tzinfo | None = None,
+        profile_wake_llm_flags: Mapping[str, bool] | None = None,
     ) -> None:
         """
         Initialize event processor.
@@ -87,8 +88,13 @@ class EventProcessor:
             config: Optional configuration for script execution
             get_db_context_func: Function to get database context with engine
             timezone: Timezone for condition script time API functions.
+            profile_wake_llm_flags: Mapping of profile id -> allow_wake_llm, used
+                to refuse wake_llm listeners whose *origin* profile may not wake
+                the LLM (creation-path guards cannot cover pre-existing or
+                admin-created listeners). None disables the check.
         """
         self.sources = sources
+        self.profile_wake_llm_flags = profile_wake_llm_flags
         self.event_storage = EventStorage(
             sample_interval_hours, get_db_context_func=get_db_context_func
         )
@@ -338,6 +344,25 @@ class EventProcessor:
         # actions keep running under the creating profile so their validated tool
         # set matches execution.
         if action_type == ActionType.WAKE_LLM:
+            # The event_handler routing must not launder a wake the origin
+            # profile may not perform: creation of wake_llm listeners is denied
+            # for allow_wake_llm=False profiles, but pre-existing or
+            # admin-created listeners bypass that, so re-check the origin here.
+            # Skip this listener only — other listeners for the event still run.
+            origin_profile_id = listener.get("processing_profile_id")
+            if (
+                origin_profile_id is not None
+                and self.profile_wake_llm_flags is not None
+                and self.profile_wake_llm_flags.get(origin_profile_id) is not True
+            ):
+                logger.error(
+                    "Refusing wake_llm for event listener %s: its origin profile "
+                    "'%s' is not permitted to wake the LLM (allow_wake_llm is "
+                    "disabled or the profile is no longer configured).",
+                    listener["id"],
+                    origin_profile_id,
+                )
+                return
             action_profile_id: str | None = EVENT_HANDLER_PROFILE_ID
         else:
             action_profile_id = listener.get("processing_profile_id")

@@ -1280,6 +1280,10 @@ class Assistant:
                     timezone=ZoneInfo(
                         self.config.default_profile_settings.processing_config.timezone
                     ),
+                    profile_wake_llm_flags={
+                        profile.id: profile.processing_config.allow_wake_llm
+                        for profile in self.config.service_profiles
+                    },
                 )
                 logger.info(
                     f"Event processor initialized with {len(event_sources)} sources"

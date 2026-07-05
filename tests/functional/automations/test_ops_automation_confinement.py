@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,7 @@ from family_assistant.actions import (
 )
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import DatabaseContext, get_db_context
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.events.processor import EventListenerDict
     from family_assistant.scripting.monty_engine import WakeRequest
 
 
@@ -484,3 +486,76 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
     assert any("The time is now" in text for text in trigger_texts)
     # Australia/Sydney renders as AEST/AEDT rather than the worker default UTC.
     assert any("AE" in text for text in trigger_texts if "The time is now" in text)
+
+
+# --- event-listener origin wake guard ---
+
+
+def _wake_listener(*, origin_profile_id: str | None) -> dict[str, object]:
+    return {
+        "id": 1,
+        "name": "Confined Wake Listener",
+        "source_id": "webhook",
+        "conversation_id": "conv_event_wake",
+        "interface_type": "telegram",
+        "action_type": "wake_llm",
+        "action_config": {"context": "event fired"},
+        "processing_profile_id": origin_profile_id,
+        "created_by_user_id": "user-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_event_listener_wake_refused_for_confined_origin(
+    db_engine: AsyncEngine,
+) -> None:
+    """The event_handler routing must not launder a wake the origin profile may
+    not perform: a listener stamped with an allow_wake_llm=False profile is
+    skipped instead of enqueueing an llm_callback."""
+    processor = EventProcessor(
+        sources={},
+        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        profile_wake_llm_flags={"ops_automation": False},
+    )
+    async with DatabaseContext(engine=db_engine) as db:
+        await processor._execute_action_in_context(  # noqa: SLF001 - exercising the guard directly
+            db,
+            cast(
+                "EventListenerDict", _wake_listener(origin_profile_id="ops_automation")
+            ),
+            {"event": "data"},
+        )
+        rows = await db.fetch_all(
+            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+        )
+        assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_event_listener_wake_allowed_origin_routes_to_event_handler(
+    db_engine: AsyncEngine,
+) -> None:
+    processor = EventProcessor(
+        sources={},
+        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        profile_wake_llm_flags={"default_assistant": True},
+    )
+    async with DatabaseContext(engine=db_engine) as db:
+        await processor._execute_action_in_context(  # noqa: SLF001 - exercising the guard directly
+            db,
+            cast(
+                "EventListenerDict",
+                _wake_listener(origin_profile_id="default_assistant"),
+            ),
+            {"event": "data"},
+        )
+        rows = await db.fetch_all(
+            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+        )
+        assert len(rows) == 1
+        raw_payload = rows[0]["payload"]
+        payload = (
+            json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+        )
+        # Untrusted trigger: the woken turn runs under the restricted profile.
+        assert payload["processing_profile_id"] == "event_handler"
