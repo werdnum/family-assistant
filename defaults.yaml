@@ -753,15 +753,27 @@ service_profiles:
       - "/chart"
   - id: "event_handler"
     description: "Restricted assistant profile for automated script-event integration. Uses Gemini 3 Flash with read-only and non-destructive tools only."
+    # Write-side quarantine: event wakes carry untrusted trigger content (email,
+    # webhooks), so notes written by this profile are confined to 'event_logs',
+    # which is deliberately NOT granted to the default assistant. An injected
+    # event can therefore never plant or overwrite a note that later enters the
+    # trusted assistant's prompt context. 'default' stays granted for reads;
+    # 'event_logs' is granted so the handler can read back its own notes.
+    visibility_grants: ["default", "event_logs"]
     processing_config:
       provider: "google"
       llm_model: "gemini-3.5-flash"
+      # Notes written while handling an untrusted event are confined to the
+      # event_logs label (floor and ceiling), enforced in the repository.
+      default_note_visibility_labels: ["event_logs"]
+      required_note_visibility_labels: ["event_logs"]
+      allowed_note_visibility_labels: ["event_logs"]
       # Auto-load system documentation into this profile's system prompt
       # include_system_docs:
       #   - "USER_GUIDE.md"
       #   - "scripting.md"
       prompts:
-        system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context.\n\nCurrent time: {current_time}\n\n{aggregated_other_context}"
+        system_prompt: "You are an automated event handler assistant. You are responding to events from scripts and automations. Provide clear, concise responses focused on the event context.\n\nNotes you save are automatically confined to the event_logs visibility label (they are not visible to the main assistant); do not try to make them broadly visible, and do not try to modify notes outside that label.\n\nCurrent time: {current_time}\n\n{aggregated_other_context}"
       max_history_messages: 1 # Minimal history for event processing
       history_max_age_hours: 0.5 # 30 minutes - events are typically immediate
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
@@ -1491,6 +1503,14 @@ service_profiles:
           decision: "confirm"
           priority: 99
           description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
+        - match:
+            names:
+              - "delegate_to_service"
+            argument_equals:
+              target_service_id: "ops_automation"
+          decision: "confirm"
+          priority: 99
+          description: "Delegating setup work to the ops_automation profile is allowed but requires user confirmation (the human approval boundary for standing up an unattended automation)."
         - match:
             names:
               - "delete_calendar_event"

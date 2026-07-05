@@ -303,7 +303,12 @@ You can ask the assistant a wide variety of things:
   automation" \*Test conditions before creating automations: \*"Show me recent events from home
   assistant" \*"Test if person.alex state changes to 'Home' would have triggered in the last day"
   \*You can also manage automations through the Web UI: navigate to the Automations section to view
-  all automations, see their execution history, and modify their conditions or scripts
+  all automations, see their execution history, and modify their conditions or scripts \*Event
+  triggers can carry content from outside your household (webhooks, email), so the assistant turn
+  they wake runs in a restricted event-handler mode. Any notes it saves are quarantined under the
+  `event_logs` visibility label and are not pulled into your main assistant's context — you can read
+  them in the Web UI. If you want event-driven results in a normally visible note, have a script
+  automation write the note instead of the woken assistant.
 
 - **Automated Script Actions for Events:** \*For simple, deterministic actions, you can now create
   script-based event automations that run instantly without waking the assistant: \*"Run a script to

@@ -128,3 +128,48 @@ def test_ops_profile_confines_note_writes(tmp_path: Path) -> None:
     assert pc.allowed_note_visibility_labels == ["ops_diagnostics"]
     assert pc.allow_wake_llm is False
     assert profile.visibility_grants == ["ops_diagnostics"]
+
+
+def test_complex_tasks_requires_confirmation_for_ops_delegation(
+    tmp_path: Path,
+) -> None:
+    """The /complex profile is an allowed delegation source for ops_automation,
+    so it must carry the same confirm gate as the default profile (the human
+    approval boundary for standing up an unattended automation)."""
+    config = load_config(
+        defaults_file_path="defaults.yaml",
+        config_file_path=str(tmp_path / "missing-config.yaml"),
+    )
+    profile = next(p for p in config.service_profiles if p.id == "complex_tasks")
+    assert profile.tools_policy is not None
+    engine = PolicyEngine.from_policy_config(profile.tools_policy)
+    evaluation = engine.evaluate(
+        _descriptor("delegate_to_service"),
+        arguments={"target_service_id": "ops_automation"},
+    )
+    assert evaluation.decision == ToolPolicyDecision.CONFIRM
+
+
+def test_event_handler_note_writes_confined(tmp_path: Path) -> None:
+    """Event wakes carry untrusted trigger content, so notes written by the
+    event_handler profile are quarantined to event_logs (floor and ceiling),
+    which the default assistant does not read."""
+    config = load_config(
+        defaults_file_path="defaults.yaml",
+        config_file_path=str(tmp_path / "missing-config.yaml"),
+    )
+    profile = next(p for p in config.service_profiles if p.id == "event_handler")
+    pc = profile.processing_config
+    assert pc.default_note_visibility_labels == ["event_logs"]
+    assert pc.required_note_visibility_labels == ["event_logs"]
+    assert pc.allowed_note_visibility_labels == ["event_logs"]
+    # The handler can read back its own quarantined notes.
+    assert profile.visibility_grants is not None
+    assert "event_logs" in profile.visibility_grants
+    # Reader-side quarantine: no other shipped profile is granted event_logs.
+    for other in config.service_profiles:
+        if other.id == "event_handler":
+            continue
+        assert other.visibility_grants is None or "event_logs" not in (
+            other.visibility_grants
+        ), other.id
