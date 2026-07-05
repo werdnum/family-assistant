@@ -7,6 +7,7 @@ update_automation denial against a real database.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -27,6 +28,7 @@ from family_assistant.tools.automations import (
     create_automation_tool,
     update_automation_tool,
 )
+from family_assistant.tools.tasks import schedule_future_callback_tool
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -258,3 +260,81 @@ async def test_same_profile_update_allowed(db_engine: AsyncEngine) -> None:
         data = result.get_data()
         assert isinstance(data, dict)
         assert "error" not in data
+
+
+# --- schedule_future_callback wake guard ---
+
+
+@pytest.mark.asyncio
+async def test_schedule_future_callback_refused_for_confined_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _exec_context(
+            db,
+            conversation_id="conv_future_cb",
+            processing_profile_id="ops_automation",
+            allow_wake_llm=False,
+        )
+        result = await schedule_future_callback_tool(
+            exec_context=ctx,
+            callback_time=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            context="wake later",
+        )
+        assert result is not None
+        assert result.startswith("Error:")
+        assert "not permitted to wake the LLM" in result
+
+        # Nothing was enqueued.
+        rows = await db.fetch_all(
+            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+        )
+        assert rows == []
+
+
+# --- update_automation wake guard for existing wake_llm automations ---
+
+
+@pytest.mark.asyncio
+async def test_wake_llm_update_refused_for_confined_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confined profile may not keep or reschedule an existing wake_llm automation.
+
+    The cross-profile ownership check does not fire for legacy (unstamped)
+    automations, so the wake guard must refuse the update instead.
+    """
+    async with DatabaseContext(engine=db_engine) as db:
+        legacy_ctx = _exec_context(
+            db,
+            conversation_id="conv_wake_update",
+            processing_profile_id=None,
+        )
+        created = await create_automation_tool(
+            exec_context=legacy_ctx,
+            name="Legacy Wake",
+            automation_type="schedule",
+            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+            action_type="wake_llm",
+            action_config={"context": "wake up"},
+        )
+        created_data = created.get_data()
+        assert isinstance(created_data, dict)
+        automation_id = int(created_data["id"])
+
+        confined_ctx = _exec_context(
+            db,
+            conversation_id="conv_wake_update",
+            processing_profile_id="ops_automation",
+            allow_wake_llm=False,
+        )
+        result = await update_automation_tool(
+            exec_context=confined_ctx,
+            automation_id=automation_id,
+            automation_type="schedule",
+            action_config={"context": "hijacked wake"},
+        )
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "not permitted to wake the llm" in data["error"].lower()

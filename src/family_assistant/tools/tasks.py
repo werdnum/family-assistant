@@ -16,7 +16,12 @@ from dateutil.parser import isoparse
 from sqlalchemy import select, update
 
 from family_assistant import storage
-from family_assistant.actions import ActionType, execute_action
+from family_assistant.actions import (
+    ActionType,
+    WakeLlmProfileError,
+    assert_wake_llm_allowed,
+    execute_action,
+)
 from family_assistant.tools.automations import validate_action_scripts
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
@@ -377,6 +382,13 @@ async def schedule_future_callback_tool(
         callback_time: ISO 8601 formatted datetime string (including timezone).
         context: The context/prompt for the future LLM callback.
     """
+    # A future callback is a wake_llm in disguise: it enqueues an llm_callback
+    # that runs a model turn later. A profile that may not wake the LLM must be
+    # refused here too, not only in schedule_action/create_automation.
+    try:
+        assert_wake_llm_allowed(ActionType.WAKE_LLM, exec_context.allow_wake_llm)
+    except WakeLlmProfileError as err:
+        return f"Error: {err}"
 
     # Get interface_type, conversation_id, and db_context from the execution context object
     interface_type = exec_context.interface_type

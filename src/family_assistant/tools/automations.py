@@ -879,6 +879,16 @@ async def update_automation_tool(
             )
             return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+        # A profile that may not wake the LLM must not keep, retarget or
+        # reschedule an existing wake_llm automation either (the ownership check
+        # above still permits same-profile and legacy unstamped automations, and
+        # an action_config update re-stamps provenance to this profile).
+        if existing.action_type == "wake_llm":
+            try:
+                assert_wake_llm_allowed("wake_llm", exec_context.allow_wake_llm)
+            except WakeLlmProfileError as err:
+                return ToolResult(text=f"Error: {err}", data={"error": str(err)})
+
         # When a script automation's action_config (and therefore its script) is
         # being changed, validate the new config and its script against the
         # updating profile's tools and re-stamp creator provenance, so the
