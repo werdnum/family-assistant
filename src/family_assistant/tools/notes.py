@@ -43,6 +43,9 @@ async def add_or_update_note_tool(
     Returns:
         A string indicating success or failure
     """
+    # Local import: the notes repository transitively imports the tools package
+    # (repositories/__init__ -> schedule_automations -> task_worker -> tools),
+    # so a top-level import here would be circular.
     from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
         NoteWritePolicyError,
     )

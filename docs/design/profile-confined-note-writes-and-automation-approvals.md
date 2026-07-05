@@ -174,12 +174,18 @@ Performed inside the repository for `add_or_update` (and analogously for `rename
    - New note + omitted `visibility_labels`: use `write_policy.default_labels` if set, otherwise
      `[]`.
    - Explicit `visibility_labels`: use the explicit value.
-3. Compute final labels:
+3. If the note already exists and the policy is confined (has `required_labels` or
+   `allowed_labels`), the existing note's current labels must already satisfy the confinement: every
+   required label present, no label beyond the ceiling. Otherwise deny. Without this, a title
+   collision with an unrestricted note (empty labels, so visible to everyone and passing step 1)
+   would append the required labels and silently pull an unrelated user note into the quarantine
+   space — a confined writer may only update notes already inside its confinement.
+4. Compute final labels:
    - `final_labels = base_labels union write_policy.required_labels`
-4. Validate final labels:
+5. Validate final labels:
    - If `write_policy.allowed_labels` is set, every final label must be included in it.
    - If validation fails, raise; the tool layer surfaces this as a tool error. Do not write.
-5. Persist `final_labels`.
+6. Persist `final_labels`.
 
 Examples:
 
@@ -233,6 +239,10 @@ runtime applies another. Implementation note: confirmation renderers (`tools/con
 currently receive only tool arguments, so the effective labels must be computed before rendering
 (the same `NoteWritePolicy` derivation, applied to the requested labels) and passed to the renderer,
 or the renderer signature must gain context.
+
+The renderer also mirrors the repository's see-before-overwrite check: when the target title belongs
+to a note the active profile cannot see, the prompt reports the rejection up front instead of
+showing effective labels for a write that will be refused after approval anyway.
 
 ## Design Part 2: Maintenance Profile
 
@@ -320,6 +330,24 @@ protected against.
   - **Schedule automations and `schedule_future_callback` → the originating (creating) profile** —
     trusted, user-set-up triggers.
   - **Reminders → `reminder`** (unchanged).
+  - **Script failure notifications → the failed script's profile.** The error-summary `llm_callback`
+    embeds the failed script, error, and (untrusted) event data, so
+    `_enqueue_script_error_notification` stamps it with the script's stored profile. If that profile
+    sets `allow_wake_llm: false` (or can no longer be resolved), the LLM notification is skipped
+    entirely — the fixed-template push notification still fires — so a crashing confined script
+    cannot wake the trusted default profile.
+
+Because routing sends event-triggered wakes to `event_handler`, that profile's note writes are
+quarantined too: `event_handler` carries `event_logs` as its default/required/allowed note labels,
+and no other shipped profile is granted `event_logs`. A prompt-injected event can therefore not
+plant or overwrite a note that the trusted assistant would later load into its prompt context — the
+same reader-side quarantine pattern as `ops_diagnostics`.
+
+The `allow_wake_llm` guard is enforced at **every** wake trigger point, not just automation
+creation: `create_automation(action_type="wake_llm")`, `update_automation` of an existing `wake_llm`
+automation (which would otherwise let a confined profile keep or reschedule a same-profile/legacy
+wake), `execute_action`, `schedule_action`, `schedule_future_callback`, and the script built-in
+`wake_llm()`.
 
 ### Script Actions Only (for `ops_automation`)
 
