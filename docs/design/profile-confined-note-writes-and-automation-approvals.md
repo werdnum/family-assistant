@@ -187,6 +187,12 @@ Performed inside the repository for `add_or_update` (and analogously for `rename
    - If validation fails, raise; the tool layer surfaces this as a tool error. Do not write.
 6. Persist `final_labels`.
 
+Steps 1 and 3 are also re-asserted **atomically with the write** (as the WHERE of the
+`ON CONFLICT DO UPDATE` on PostgreSQL, and of the conflict-recovery UPDATE on SQLite): the preflight
+reads cannot see a same-title row inserted by another transaction in the meantime, so without this a
+title race would overwrite a row the preflight would have rejected. A conflict update excluded by
+the policy WHERE (rowcount 0) raises instead of writing.
+
 Examples:
 
 | Profile Config                                              | Tool Args     | Final Labels      | Result  |
@@ -347,7 +353,11 @@ The `allow_wake_llm` guard is enforced at **every** wake trigger point, not just
 creation: `create_automation(action_type="wake_llm")`, `update_automation` of an existing `wake_llm`
 automation (which would otherwise let a confined profile keep or reschedule a same-profile/legacy
 wake), `execute_action`, `schedule_action`, `schedule_future_callback`, and the script built-in
-`wake_llm()`.
+`wake_llm()`. It is also re-checked at **execution time** for wakes the creation guards cannot
+cover: `handle_llm_callback` refuses an already-enqueued wake whose stamped profile now disallows
+waking, and the `EventProcessor` refuses a `wake_llm` listener whose *origin* profile disallows
+waking before routing it to `event_handler` (pre-existing or admin-created listeners never passed a
+creation guard).
 
 ### Script Actions Only (for `ops_automation`)
 

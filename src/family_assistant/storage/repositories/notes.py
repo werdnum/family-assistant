@@ -238,30 +238,79 @@ class NotesRepository(BaseRepository):
         if visibility_grants is None:
             return stmt
 
-        grants_list = sorted(visibility_grants)
+        return stmt.where(self._labels_subset_condition(sorted(visibility_grants)))
 
+    def _labels_subset_condition(
+        self, target_labels: list[str]
+    ) -> sa.ColumnElement[bool]:
+        """SQL condition: the row's visibility labels are a subset of ``target_labels``.
+
+        Empty labels ([]) always pass (the empty set is a subset of anything).
+        """
         if self._db.engine.dialect.name == "postgresql":
-            grants_json = json.dumps(grants_list)
-            stmt = stmt.where(
-                sa.cast(notes_table.c.visibility_labels, JSONB).contained_by(
-                    sa.cast(sa.literal(grants_json), JSONB)
-                )
+            return sa.cast(notes_table.c.visibility_labels, JSONB).contained_by(
+                sa.cast(sa.literal(json.dumps(target_labels)), JSONB)
             )
-        else:
-            # SQLite: empty labels always pass, non-empty checked with json_each
-            stmt = stmt.where(
-                sa.or_(
-                    notes_table.c.visibility_labels == "[]",
-                    ~sa.exists(
-                        sa
-                        .select(sa.literal(1))
-                        .select_from(sa.func.json_each(notes_table.c.visibility_labels))
-                        .where(sa.column("value").notin_(grants_list))
-                    ),
-                )
-            )
+        if not target_labels:
+            return notes_table.c.visibility_labels == "[]"
+        # SQLite: empty labels always pass, non-empty checked with json_each
+        return sa.or_(
+            notes_table.c.visibility_labels == "[]",
+            ~sa.exists(
+                sa
+                .select(sa.literal(1))
+                .select_from(sa.func.json_each(notes_table.c.visibility_labels))
+                .where(sa.column("value").notin_(target_labels))
+            ),
+        )
 
-        return stmt
+    def _labels_superset_condition(
+        self, required_labels: list[str]
+    ) -> sa.ColumnElement[bool]:
+        """SQL condition: the row's visibility labels contain every required label."""
+        if self._db.engine.dialect.name == "postgresql":
+            return sa.cast(notes_table.c.visibility_labels, JSONB).contains(
+                sa.cast(sa.literal(json.dumps(required_labels)), JSONB)
+            )
+        return sa.and_(*[
+            sa.exists(
+                sa
+                .select(sa.literal(1))
+                .select_from(sa.func.json_each(notes_table.c.visibility_labels))
+                .where(sa.column("value") == label)
+            )
+            for label in required_labels
+        ])
+
+    def _writable_under_policy_condition(
+        self, write_policy: NoteWritePolicy
+    ) -> sa.ColumnElement[bool] | None:
+        """SQL predicate: an existing row may be overwritten under ``write_policy``.
+
+        Mirrors the preflight checks (see-before-overwrite plus the
+        current-label confinement of ``resolve_labels``) so they hold
+        *atomically* with the write: applied as the conflict-update WHERE, a
+        same-title row inserted by another transaction after the preflight
+        cannot be overwritten if the preflight would have rejected it. None
+        means the policy places no constraint on overwrites (unconditional
+        update, the pre-confinement behavior).
+        """
+        conditions: list[sa.ColumnElement[bool]] = []
+        if write_policy.visibility_grants is not None:
+            conditions.append(
+                self._labels_subset_condition(sorted(write_policy.visibility_grants))
+            )
+        if write_policy.required_labels:
+            conditions.append(
+                self._labels_superset_condition(list(write_policy.required_labels))
+            )
+        if write_policy.allowed_labels is not None:
+            conditions.append(
+                self._labels_subset_condition(sorted(write_policy.allowed_labels))
+            )
+        if not conditions:
+            return None
+        return sa.and_(*conditions)
 
     async def get_all(
         self,
@@ -480,12 +529,26 @@ class NotesRepository(BaseRepository):
                     "skill_description": stmt.excluded.skill_description,
                     "updated_at": stmt.excluded.updated_at,
                 }
+                # The policy checks above are only a preflight: a same-title row
+                # inserted by another transaction after the preflight would
+                # otherwise be overwritten unconditionally. Re-assert the policy
+                # as the conflict-update WHERE so it holds atomically with the
+                # write; a rowcount of 0 means the conflicting row is outside
+                # the policy (or was raced), so refuse instead of overwriting.
+                writable = self._writable_under_policy_condition(write_policy)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["title"],  # The unique constraint column
                     set_=update_dict,
+                    where=writable,
                 )
                 # Use execute_with_retry as commit is handled by context manager
-                await self._db.execute_with_retry(stmt)
+                result = await self._db.execute_with_retry(stmt)
+                if writable is not None and result.rowcount == 0:  # type: ignore[attr-defined]
+                    raise NoteWritePolicyError(
+                        f"Cannot modify note '{title}' - a concurrently written "
+                        "note with this title is outside the active profile's "
+                        "write policy."
+                    )
                 self._logger.info(
                     f"Successfully added/updated note: {title} (using ON CONFLICT)"
                 )
@@ -542,9 +605,21 @@ class NotesRepository(BaseRepository):
                             updated_at=now,
                         )
                     )
+                    # Re-assert the write policy atomically with the update (the
+                    # preflight cannot see a row another transaction inserted in
+                    # the meantime); see the ON CONFLICT WHERE in the pg branch.
+                    writable = self._writable_under_policy_condition(write_policy)
+                    if writable is not None:
+                        update_stmt = update_stmt.where(writable)
                     # Execute update within the same transaction context
                     result = await self._db.execute_with_retry(update_stmt)
                     if result.rowcount == 0:  # type: ignore[attr-defined]
+                        if writable is not None:
+                            raise NoteWritePolicyError(
+                                f"Cannot modify note '{title}' - a concurrently "
+                                "written note with this title is outside the "
+                                "active profile's write policy."
+                            ) from e
                         # This could happen if the note was deleted between the failed INSERT and this UPDATE
                         self._logger.error(
                             f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently."

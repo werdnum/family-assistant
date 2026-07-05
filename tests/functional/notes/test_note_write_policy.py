@@ -5,6 +5,7 @@ visibility confinement is enforced in the repository so every write path is
 covered, not just the add_or_update_note tool.
 """
 
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import (
+    NotesRepository,
     NoteWritePolicy,
     NoteWritePolicyError,
 )
@@ -366,3 +368,69 @@ async def test_confirmation_prompt_reports_hidden_note_rejection(
         )
         assert "REJECTED by profile policy" in prompt
         assert "insufficient visibility permissions" in prompt
+
+
+@pytest.mark.asyncio
+async def test_policy_enforced_atomically_on_title_race(db_engine: AsyncEngine) -> None:
+    """A same-title note created after the preflight cannot be overwritten.
+
+    Simulates the race deterministically: the note exists in the database, but
+    the preflight read is patched to see nothing (as if another transaction
+    inserted it between the preflight and the upsert). The policy is re-asserted
+    as the conflict-update WHERE, so the write must be refused, not applied.
+    """
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Raced Note",
+            content="hidden family content",
+            visibility_labels=["family"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+    with (
+        mock.patch.object(
+            NotesRepository, "get_by_title", new=mock.AsyncMock(return_value=None)
+        ),
+        pytest.raises(NoteWritePolicyError, match="concurrently"),
+    ):
+        async with DatabaseContext(engine=db_engine) as db:
+            await db.notes.add_or_update(
+                title="Raced Note",
+                content="ops findings",
+                write_policy=_confined_policy(),
+            )
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Raced Note", visibility_grants=None)
+        assert note is not None
+        assert note.content == "hidden family content"
+        assert note.visibility_labels == ["family"]
+
+
+@pytest.mark.asyncio
+async def test_atomic_policy_allows_racing_in_confinement_note(
+    db_engine: AsyncEngine,
+) -> None:
+    """The conflict-update WHERE permits overwriting a raced note that is
+    already inside the writer's confinement."""
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Raced Ops Note",
+            content="previous findings",
+            visibility_labels=["ops_diagnostics"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+    with mock.patch.object(
+        NotesRepository, "get_by_title", new=mock.AsyncMock(return_value=None)
+    ):
+        async with DatabaseContext(engine=db_engine) as db:
+            await db.notes.add_or_update(
+                title="Raced Ops Note",
+                content="new findings",
+                write_policy=_confined_policy(),
+            )
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Raced Ops Note", visibility_grants=None)
+        assert note is not None
+        assert note.content == "new findings"
+        assert note.visibility_labels == ["ops_diagnostics"]
