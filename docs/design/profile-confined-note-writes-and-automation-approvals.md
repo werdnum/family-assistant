@@ -417,7 +417,7 @@ read_error_logs(
     level: str | None = None,
     logger_name: str | None = None,
     limit: int = 50,
-    since_hours: int | None = None,
+    since_hours: int = 168,
     include_extra_data: bool = False,
 )
 ```
@@ -436,7 +436,10 @@ defaults are not enforceable: the policy matcher fails on *missing* keys, so a d
 makes the passive behavior the safe one; the `engineer` profile — an interactive, human-supervised
 context — passes `include_extra_data=True` explicitly when needed.
 
-The recommended triage window is `since_hours=24, limit=200`.
+The recency window is bounded for the same reason: `since_hours` defaults to 168 (7 days), is capped
+at 720 (30 days — the error-log retention default), and rejects non-positive or non-integer values,
+so an unattended profile cannot widen its diagnostics surface by simply omitting the argument (which
+no deny rule could catch). The recommended triage window is `since_hours=24, limit=200`.
 
 ## Design Part 4: Escalation Beyond the Note
 

@@ -372,3 +372,64 @@ async def test_read_error_logs_rejects_non_bool_extra_data_flag(
         assert isinstance(data, dict)
         assert "error" in data
         assert "boolean" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_default_window_excludes_old_logs(
+    db_engine: AsyncEngine,
+) -> None:
+    """The window is always bounded: omitting since_hours means 7 days, not all logs."""
+    now = datetime.now(UTC)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="recent",
+                timestamp=now - timedelta(hours=1),
+            )
+        )
+        await db.execute_with_retry(
+            insert(error_logs_table).values(
+                logger_name="test.module",
+                level="ERROR",
+                message="ancient",
+                timestamp=now - timedelta(hours=200),
+            )
+        )
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        messages = {log["message"] for log in data["logs"]}
+        assert "recent" in messages
+        assert "ancient" not in messages
+        assert data["filters"]["since_hours"] == 168
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_rejects_non_positive_window(
+    db_engine: AsyncEngine,
+) -> None:
+    """Non-positive since_hours used to mean 'unbounded'; it is now rejected."""
+    async with DatabaseContext(engine=db_engine) as db:
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, since_hours=0)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "positive" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_caps_window_at_retention(
+    db_engine: AsyncEngine,
+) -> None:
+    """since_hours is capped at 720 (the 30-day retention default)."""
+    async with DatabaseContext(engine=db_engine) as db:
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(exec_context, since_hours=100_000)
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["filters"]["since_hours"] == 720

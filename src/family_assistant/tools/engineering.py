@@ -312,7 +312,7 @@ async def read_error_logs(
     level: str | None = None,
     logger_name: str | None = None,
     limit: int = 50,
-    since_hours: int | None = None,
+    since_hours: int = 168,
     include_extra_data: bool = False,
 ) -> ToolResult:
     """Read application error logs from the database.
@@ -322,7 +322,12 @@ async def read_error_logs(
         level: Optional filter by log level (e.g. 'ERROR', 'WARNING').
         logger_name: Optional filter by logger name.
         limit: Maximum number of logs to return (default 50, max 200).
-        since_hours: Optional time window - only return logs from the last N hours.
+        since_hours: Recency window - only return logs from the last N hours.
+            Always bounded: defaults to 168 (7 days), capped at 720 (30 days,
+            the error-log retention default), and must be a positive integer.
+            The bound is global rather than per-profile because the policy
+            matcher cannot fire on an omitted argument, so an unbounded default
+            could not be denied for confined profiles.
         include_extra_data: When False (the default), the freeform ``extra_data``
             field is stripped from the results. Unlike the message and traceback
             (developer-authored text and code-structure), ``extra_data`` is
@@ -348,6 +353,20 @@ async def read_error_logs(
         )
         return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
 
+    # Same strict validation as include_extra_data: script kwargs bypass schema
+    # coercion, so a non-int (or a non-positive value that used to mean
+    # "unbounded") must be rejected rather than silently widening the window.
+    if isinstance(since_hours, bool) or not isinstance(since_hours, int):
+        error_msg = (
+            "since_hours must be a positive integer number of hours, got "
+            f"{type(since_hours).__name__}: {since_hours!r}"
+        )
+        return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+    if since_hours <= 0:
+        error_msg = f"since_hours must be positive, got {since_hours}"
+        return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+    since_hours = min(since_hours, 720)
+
     logger.info(
         "read_error_logs: level=%s, logger=%s, limit=%d, since_hours=%s, extra_data=%s",
         level,
@@ -359,10 +378,8 @@ async def read_error_logs(
 
     limit = max(1, min(limit, 200))
 
-    since: datetime | None = None
-    if since_hours is not None and since_hours > 0:
-        now = exec_context.clock.now() if exec_context.clock else datetime.now(UTC)
-        since = now - timedelta(hours=since_hours)
+    now = exec_context.clock.now() if exec_context.clock else datetime.now(UTC)
+    since = now - timedelta(hours=since_hours)
 
     db_context = exec_context.db_context
     logs = await db_context.error_logs.get_all(
@@ -941,7 +958,12 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "since_hours": {
                         "type": "integer",
-                        "description": "Only return logs from the last N hours.",
+                        "description": (
+                            "Only return logs from the last N hours. Must be a "
+                            "positive integer; defaults to 168 (7 days) and is "
+                            "capped at 720 (30 days, the log retention limit)."
+                        ),
+                        "default": 168,
                     },
                     "include_extra_data": {
                         "type": "boolean",
