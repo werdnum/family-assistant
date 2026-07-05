@@ -380,8 +380,6 @@ async def test_confined_profile_failure_skips_llm_notification(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     task_id = f"test_confined_{uuid.uuid4().hex[:8]}"
     async with get_db_context(engine=db_engine) as db_ctx:
@@ -440,8 +438,6 @@ async def test_stamped_profile_carried_into_notification(
         AsyncMock(spec=ChatInterface),
     )
     worker.register_task_handler("script_execution", handle_script_execution)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start and register handler
-    await asyncio.sleep(0.1)
 
     task_id = f"test_stamped_{uuid.uuid4().hex[:8]}"
     async with get_db_context(engine=db_engine) as db_ctx:
