@@ -129,8 +129,42 @@ class NoteWritePolicy:
 
         Raises:
             NoteWritePolicyError: if the resulting labels are not a subset of
-                ``allowed_labels`` (when that ceiling is set).
+                ``allowed_labels`` (when that ceiling is set), or if a confined
+                policy (one with a floor or ceiling) targets an existing note
+                whose current labels already fall outside that confinement.
         """
+        # A confined writer may only update notes that are already inside its
+        # confinement. Without this, updating a note that is currently
+        # unrestricted (or otherwise visible) would append the required labels
+        # and silently pull an unrelated user note into the quarantine space on
+        # a title collision.
+        if not is_new_note and (
+            self.required_labels or self.allowed_labels is not None
+        ):
+            missing_floor = [
+                label
+                for label in (self.required_labels or [])
+                if label not in existing_labels
+            ]
+            over_ceiling = (
+                [
+                    label
+                    for label in existing_labels
+                    if label not in set(self.allowed_labels)
+                ]
+                if self.allowed_labels is not None
+                else []
+            )
+            if missing_floor or over_ceiling:
+                raise NoteWritePolicyError(
+                    "Cannot modify this note: its current visibility labels "
+                    f"{sorted(existing_labels)} are outside the active profile's "
+                    "write confinement "
+                    f"(required: {sorted(self.required_labels or [])}, "
+                    f"allowed: {sorted(self.allowed_labels) if self.allowed_labels is not None else 'any'}). "
+                    "Choose a different title instead of relabeling an existing note."
+                )
+
         if requested_labels is not None:
             base = list(requested_labels)
         elif is_new_note:

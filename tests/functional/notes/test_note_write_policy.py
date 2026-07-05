@@ -17,6 +17,9 @@ from family_assistant.storage.repositories.notes import (
     NoteWritePolicy,
     NoteWritePolicyError,
 )
+from family_assistant.tools.confirmation import (
+    render_add_or_update_note_confirmation,
+)
 from family_assistant.tools.notes import add_or_update_note_tool
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -110,6 +113,28 @@ def test_resolve_labels_preserves_existing_on_update_when_omitted() -> None:
     ) == ["ops_diagnostics"]
 
 
+def test_resolve_labels_refuses_update_of_unrestricted_note() -> None:
+    # A confined writer may not relabel an existing unrestricted note into its
+    # quarantine space on a title collision (required floor missing).
+    policy = _confined_policy()
+    with pytest.raises(NoteWritePolicyError):
+        policy.resolve_labels(
+            is_new_note=False, requested_labels=None, existing_labels=[]
+        )
+
+
+def test_resolve_labels_refuses_update_of_note_over_ceiling() -> None:
+    # An existing note carrying labels beyond the ceiling is off-limits even if
+    # the floor label is present.
+    policy = _confined_policy()
+    with pytest.raises(NoteWritePolicyError):
+        policy.resolve_labels(
+            is_new_note=False,
+            requested_labels=None,
+            existing_labels=["ops_diagnostics", "family"],
+        )
+
+
 # ---------------------------------------------------------------------------
 # Repository enforcement (covers bypass paths that skip the tool layer)
 # ---------------------------------------------------------------------------
@@ -187,6 +212,38 @@ async def test_repository_see_before_overwrite_enforced(
         note = await db.notes.get_by_title("Family Note", visibility_grants=None)
         assert note is not None
         assert note.content == "private family content"
+
+
+@pytest.mark.asyncio
+async def test_repository_refuses_relabeling_unrestricted_note(
+    db_engine: AsyncEngine,
+) -> None:
+    """A confined writer colliding with an unrestricted note must not hijack it.
+
+    The unrestricted note passes see-before-overwrite (empty labels are visible
+    to everyone), but appending the required label would silently move the user's
+    note into the quarantine space, so the write is refused instead.
+    """
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Shopping List",
+            content="user content",
+            visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+    async with DatabaseContext(engine=db_engine) as db:
+        with pytest.raises(NoteWritePolicyError):
+            await db.notes.add_or_update(
+                title="Shopping List",
+                content="ops findings",
+                write_policy=_confined_policy(),
+            )
+    async with DatabaseContext(engine=db_engine) as db:
+        note = await db.notes.get_by_title("Shopping List", visibility_grants=None)
+        assert note is not None
+        assert note.content == "user content"
+        assert note.visibility_labels == []
 
 
 @pytest.mark.asyncio
@@ -279,3 +336,33 @@ def test_context_note_write_policy_reflects_fields() -> None:
     assert policy.default_labels == ["ops_diagnostics"]
     assert policy.required_labels == ["ops_diagnostics"]
     assert policy.allowed_labels == ["ops_diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_prompt_reports_hidden_note_rejection(
+    db_engine: AsyncEngine,
+) -> None:
+    """The confirmation renderer mirrors see-before-overwrite: a confirm-gated
+    write targeting a note the profile cannot see shows the rejection up front
+    instead of effective labels the write will never reach."""
+    await cleanup_notes(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.notes.add_or_update(
+            title="Family Note",
+            content="private",
+            visibility_labels=["family"],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+    async with DatabaseContext(engine=db_engine) as db:
+        ctx = _make_tool_context(
+            db,
+            visibility_grants={"ops_diagnostics"},
+            default_labels=["ops_diagnostics"],
+            required_labels=["ops_diagnostics"],
+            allowed_labels=["ops_diagnostics"],
+        )
+        prompt = await render_add_or_update_note_confirmation(
+            {"title": "Family Note", "content": "overwrite attempt"}, ctx
+        )
+        assert "REJECTED by profile policy" in prompt
+        assert "insufficient visibility permissions" in prompt

@@ -331,6 +331,9 @@ async def _effective_note_labels(
     requested_labels: list[str] | None,
 ) -> str:
     """Compute the labels a note write would actually persist, for display."""
+    # Local import: the notes repository transitively imports the tools package
+    # (repositories/__init__ -> schedule_automations -> task_worker -> tools),
+    # so a top-level import here would be circular.
     from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
         NoteWritePolicyError,
     )
@@ -342,6 +345,19 @@ async def _effective_note_labels(
         existing = await context.db_context.notes.get_by_title(
             title, visibility_grants=None
         )
+        # Mirror the repository's see-before-overwrite check so the approver
+        # sees the rejection up front instead of approving a write that
+        # add_or_update will refuse: a restricted profile may not overwrite a
+        # note it cannot see.
+        if existing is not None and write_policy.visibility_grants is not None:
+            visible_existing = await context.db_context.notes.get_by_title(
+                title, visibility_grants=write_policy.visibility_grants
+            )
+            if visible_existing is None:
+                return (
+                    f"REJECTED by profile policy: cannot modify note '{title}' - "
+                    "insufficient visibility permissions."
+                )
     try:
         effective = write_policy.resolve_labels(
             is_new_note=existing is None,
