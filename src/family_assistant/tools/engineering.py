@@ -337,6 +337,17 @@ async def read_error_logs(
         ToolResult with error log entries. Tracebacks are always included (they are
         call stack / source structure, not data); only ``extra_data`` is gated.
     """
+    # Script kwargs bypass schema coercion, and the policy matcher compares
+    # exact types, so a truthy non-bool like "true" would slip past a deny rule
+    # on `include_extra_data: true` while still enabling the field below.
+    # Reject anything that is not a real bool.
+    if not isinstance(include_extra_data, bool):
+        error_msg = (
+            "include_extra_data must be a boolean (true/false), got "
+            f"{type(include_extra_data).__name__}: {include_extra_data!r}"
+        )
+        return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+
     logger.info(
         "read_error_logs: level=%s, logger=%s, limit=%d, since_hours=%s, extra_data=%s",
         level,

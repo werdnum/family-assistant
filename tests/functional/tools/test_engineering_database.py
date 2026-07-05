@@ -342,3 +342,33 @@ async def test_read_error_logs_respects_since_hours(
         assert "recent" in messages
         assert "old" not in messages
         assert data["filters"]["since_hours"] == 24
+
+
+@pytest.mark.asyncio
+async def test_read_error_logs_rejects_non_bool_extra_data_flag(
+    db_engine: AsyncEngine,
+) -> None:
+    """A truthy non-bool (e.g. the string "true" from a script kwarg) is rejected.
+
+    The policy matcher compares exact types, so a deny rule on
+    ``include_extra_data: true`` never fires for the string ``"true"``; the tool
+    must therefore refuse non-bool values instead of treating them as truthy.
+    """
+    async with DatabaseContext(engine=db_engine) as db:
+        stmt = insert(error_logs_table).values(
+            logger_name="test.module",
+            level="ERROR",
+            message="boom",
+            extra_data={"secret": "value"},
+        )
+        await db.execute_with_retry(stmt)
+
+        exec_context = _make_exec_context(db)
+        result = await read_error_logs(
+            exec_context,
+            include_extra_data="true",  # type: ignore[arg-type]  # exercising script-kwarg type bypass
+        )
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert "error" in data
+        assert "boolean" in data["error"]
