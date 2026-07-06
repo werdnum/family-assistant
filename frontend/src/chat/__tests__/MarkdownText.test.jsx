@@ -33,4 +33,78 @@ describe('MarkdownText', () => {
     expect(codeElement).toBeTruthy();
     expect(codeElement?.textContent?.trim()).toBe('const x = 1;');
   });
+
+  it('wraps output in a markdown-text container for scoped styling', () => {
+    const { container } = render(<MarkdownText text="hello" />);
+
+    expect(container.querySelector('.markdown-text')).toBeTruthy();
+  });
+
+  it('renders separate paragraphs for blank-line-separated text', () => {
+    const text = 'First paragraph.\n\nSecond paragraph.';
+    const { container } = render(<MarkdownText text={text} />);
+
+    const paragraphs = container.querySelectorAll('.markdown-text > p');
+    expect(paragraphs.length).toBe(2);
+    expect(paragraphs[0]?.textContent).toBe('First paragraph.');
+    expect(paragraphs[1]?.textContent).toBe('Second paragraph.');
+  });
+
+  it('renders links as safe external anchors', () => {
+    const text = 'See the [family calendar](https://example.com/cal).';
+    const { container } = render(<MarkdownText text={text} />);
+
+    const link = container.querySelector('a');
+    expect(link).toBeTruthy();
+    expect(link?.getAttribute('href')).toBe('https://example.com/cal');
+    expect(link?.getAttribute('target')).toBe('_blank');
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(link?.textContent).toBe('family calendar');
+  });
+
+  it('renders unordered lists with list items', () => {
+    const text = '- Apples\n- Oranges\n- Pears';
+    const { container } = render(<MarkdownText text={text} />);
+
+    const list = container.querySelector('ul');
+    expect(list).toBeTruthy();
+    expect(list?.querySelectorAll('li').length).toBe(3);
+  });
+
+  it('renders ordered lists', () => {
+    const text = '1. First\n2. Second';
+    const { container } = render(<MarkdownText text={text} />);
+
+    const list = container.querySelector('ol');
+    expect(list).toBeTruthy();
+    expect(list?.querySelectorAll('li').length).toBe(2);
+  });
+
+  it('renders headings', () => {
+    const text = '# Big title\n\nSome body text.';
+    const { container } = render(<MarkdownText text={text} />);
+
+    const heading = container.querySelector('h1');
+    expect(heading).toBeTruthy();
+    expect(heading?.textContent).toBe('Big title');
+  });
+
+  it('renders blockquotes', () => {
+    const text = '> Remember to arrive early.';
+    const { container } = render(<MarkdownText text={text} />);
+
+    const quote = container.querySelector('blockquote');
+    expect(quote).toBeTruthy();
+    expect(quote?.textContent?.trim()).toBe('Remember to arrive early.');
+  });
+
+  it('renders GitHub-flavored markdown tables', () => {
+    const text = '| Item | Done |\n| --- | --- |\n| Tent | yes |';
+    const { container } = render(<MarkdownText text={text} />);
+
+    const table = container.querySelector('table');
+    expect(table).toBeTruthy();
+    expect(table?.querySelectorAll('th').length).toBe(2);
+    expect(table?.querySelectorAll('tbody td').length).toBe(2);
+  });
 });
