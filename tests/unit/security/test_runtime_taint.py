@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
@@ -516,6 +517,17 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     assert isinstance(result, ToolResult)
     assert result.get_text() == "opened url"
     assert "requested=confirm effective=audit mode=observe" in caplog.text
+    would_enforce_errors = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+        and "Runtime taint WOULD ENFORCE" in record.getMessage()
+    ]
+    assert len(would_enforce_errors) == 1
+    would_enforce_message = would_enforce_errors[0].getMessage()
+    assert "would_be=confirm" in would_enforce_message
+    assert "max_tier=unknown_external" in would_enforce_message
+    assert "do-not-store" not in would_enforce_message
     policy_events = [
         event for event in audit_events if event["event_type"] == "policy_evaluation"
     ]
@@ -532,6 +544,31 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
         "value_types": {"secret": "str", "url": "str"},
     }
     assert "do-not-store" not in json.dumps(policy_event["arguments_summary_json"])
+
+
+@pytest.mark.asyncio
+async def test_allowed_tool_does_not_emit_would_enforce_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    provider = _tainting_provider()
+    tracker = _unknown_external_tracker()
+    async with get_db_context(db_engine) as db_context:
+        context = _minimal_context(db_context, tracker)
+
+        result = await provider.execute_tool(
+            "trusted_tool", {}, context, "call_trusted"
+        )
+
+    assert isinstance(result, ToolResult)
+    would_enforce_errors = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+        and "Runtime taint WOULD ENFORCE" in record.getMessage()
+    ]
+    assert would_enforce_errors == []
 
 
 @pytest.mark.asyncio

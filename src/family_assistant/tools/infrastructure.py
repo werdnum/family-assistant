@@ -28,6 +28,7 @@ from family_assistant.security.taint import (
     TaintPolicyConfig,
     TaintPolicyEvaluation,
     TaintPolicyEvaluator,
+    TaintPolicyMode,
     TaintPolicyOutcome,
     TurnTaintState,
     derive_tool_result_taint_source,
@@ -1033,6 +1034,25 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 evaluation.mode.value,
                 evaluation.reason,
             )
+            if (
+                evaluation.mode is TaintPolicyMode.OBSERVE
+                and evaluation.requested_outcome is not evaluation.effective_outcome
+            ):
+                # Observe mode downgraded a gating outcome (confirm/deny/redact) to
+                # audit. Surface it at ERROR so a dry run can be reviewed from the
+                # error-log / diagnostics endpoints before enabling enforce mode.
+                logger.error(
+                    "Runtime taint WOULD ENFORCE (observe mode, not blocked): "
+                    "tool=%s call_id=%s conversation=%s sink=%s would_be=%s "
+                    "max_tier=%s reason=%s",
+                    name,
+                    call_id,
+                    context.conversation_id,
+                    evaluation.sink_class.value,
+                    evaluation.requested_outcome.value,
+                    state.max_tier.config_value,
+                    evaluation.reason,
+                )
             await self._record_policy_evaluation_audit(
                 descriptor=descriptor,
                 context=context,
