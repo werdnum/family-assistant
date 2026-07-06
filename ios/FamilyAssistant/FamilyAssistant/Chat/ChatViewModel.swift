@@ -96,6 +96,10 @@ final class ChatViewModel {
     @ObservationIgnored private var representedPersistedUserInputEchoCounts: [UserInputEchoKey: Int] = [:]
     @ObservationIgnored private var importedDraftFileURLByAttachmentID: [String: URL] = [:]
     @ObservationIgnored private var lastProcessedInitialPrompt: String?
+    // A prompt seeded into the composer at init (share extension / App Intent)
+    // that bootstrap should auto-send. Distinct from whatever the user later
+    // types into the launch composer, which must never be auto-submitted.
+    @ObservationIgnored private var launchSeededDraftPrompt: String?
     @ObservationIgnored private var opensGeneratedLaunchDraft = false
     // Highest stream seq applied for the active conversation, threaded into the
     // follow subscribe's `ack_seq` and the `/ack` POST after a turn_ended so the
@@ -233,6 +237,7 @@ final class ChatViewModel {
             self.conversationID = Self.generateConversationID()
             conversationSelection = self.conversationID
             draftText = initialPrompt
+            launchSeededDraftPrompt = initialPrompt
             persistConversationID()
         } else if let conversationID {
             // Explicit route / deep link: open that thread regardless of age.
@@ -280,8 +285,14 @@ final class ChatViewModel {
             lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt
             await sendDraft()
-        } else if shouldProcessInitialPrompt(draftText) {
-            lastProcessedInitialPrompt = draftText
+        } else if let seeded = launchSeededDraftPrompt,
+                  shouldProcessInitialPrompt(seeded),
+                  draftText == seeded {
+            // Only auto-send a draft that was seeded at launch and is still
+            // untouched. bootstrap's fetches await, and the composer may already
+            // be focused, so a word the user typed in the meantime must not be
+            // submitted for them.
+            lastProcessedInitialPrompt = seeded
             await sendDraft()
         }
     }
