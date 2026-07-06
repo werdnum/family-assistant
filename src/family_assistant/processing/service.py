@@ -42,7 +42,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping
+    from collections.abc import AsyncIterator, Mapping, Sequence
     from datetime import datetime
 
     from family_assistant.camera.protocol import CameraBackend
@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
+    from family_assistant.security.taint import TaintSource
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
@@ -741,6 +742,7 @@ class ProcessingService:
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -769,6 +771,7 @@ class ProcessingService:
             camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
+            initial_taint_sources=initial_taint_sources,
         )
 
     async def process_message_stream(
@@ -786,6 +789,7 @@ class ProcessingService:
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -814,6 +818,7 @@ class ProcessingService:
             camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
+            initial_taint_sources=initial_taint_sources,
         ):
             yield item
 
@@ -840,6 +845,7 @@ class ProcessingService:
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
         save_history_with_isolated_context: bool | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -934,6 +940,7 @@ class ProcessingService:
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
                 mid_turn_input_provider=mid_turn_input_provider,
+                initial_taint_sources=initial_taint_sources,
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 
@@ -1034,6 +1041,7 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         turn_id: str | None = None,
         reuse_existing_user_row: bool = False,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1108,6 +1116,7 @@ class ProcessingService:
                         request_confirmation_callback=request_confirmation_callback,
                         subconversation_id=subconversation_id,
                         mid_turn_input_provider=mid_turn_input_provider,
+                        initial_taint_sources=initial_taint_sources,
                     ):
                         yield event  # noqa: ASYNC119
 

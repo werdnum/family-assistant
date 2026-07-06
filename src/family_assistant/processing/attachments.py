@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, timedelta
 
 import aiofiles
@@ -500,6 +501,7 @@ Call attach_to_response with your selected attachment IDs."""
         tool_name: str,
         conversation_id: str,
         call_id: str,
+        taint_metadata: Mapping[str, object] | None = None,
     ) -> tuple[str, str | None]:
         """
         Check if a tool result is too large and convert it to an attachment if necessary.
@@ -548,6 +550,14 @@ Call attach_to_response with your selected attachment IDs."""
                 f"tool='{tool_name}', bytes={len(content_bytes)}, threshold={THRESHOLD_BYTES}"
             )
         file_extension = get_file_extension_from_mime_type(mime_type)
+        attachment_metadata: dict[str, object] = {
+            "tool_call_id": call_id,
+            "auto_display": True,
+            "large_result_auto_convert": True,
+        }
+        if taint_metadata is not None:
+            attachment_metadata["taint_metadata"] = taint_metadata
+
         registered_metadata = (
             await self.attachment_registry.store_and_register_tool_attachment(
                 file_content=content_bytes,
@@ -556,11 +566,7 @@ Call attach_to_response with your selected attachment IDs."""
                 tool_name=tool_name,
                 description=f"Large output from {tool_name}",
                 conversation_id=conversation_id,
-                metadata={
-                    "tool_call_id": call_id,
-                    "auto_display": True,
-                    "large_result_auto_convert": True,
-                },
+                metadata=attachment_metadata,
                 db_context=db_context,
             )
         )

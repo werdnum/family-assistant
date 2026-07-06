@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from family_assistant.llm.content_parts import ContentPartDict
+    from family_assistant.security.taint import TaintMetadata
 
 __all__ = [
     "TERMINAL_DELEGATION_STATUSES",
@@ -42,6 +43,7 @@ class DelegationRunCreate(TypedDict, total=False):
     subconversation_id: Required[str]
     request_text: Required[str]
     content_parts_json: Required[list[ContentPartDict]]
+    taint_state_json: TaintMetadata | None
     user_id: str | None
     user_name: str | None
     source_turn_id: str | None
@@ -66,6 +68,7 @@ class DelegationRunDict(TypedDict):
     subconversation_id: str
     request_text: str
     content_parts_json: list[ContentPartDict]
+    taint_state_json: TaintMetadata | None
     handed_off_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
@@ -482,6 +485,7 @@ class DelegationRunsRepository(BaseRepository):
             subconversation_id=row["subconversation_id"],
             request_text=row["request_text"],
             content_parts_json=self._json_list(row["content_parts_json"]),
+            taint_state_json=self._json_mapping(row.get("taint_state_json")),
             handed_off_at=row.get("handed_off_at"),
             started_at=row.get("started_at"),
             completed_at=row.get("completed_at"),
@@ -511,6 +515,14 @@ class DelegationRunsRepository(BaseRepository):
                 else []
             )
         return []
+
+    @staticmethod
+    def _json_mapping(value: Any) -> TaintMetadata | None:  # noqa: ANN401
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = json.loads(value)
+        return cast("TaintMetadata", value) if isinstance(value, dict) else None
 
     @staticmethod
     def _json_str_list(value: Any) -> list[str] | None:  # noqa: ANN401

@@ -90,6 +90,10 @@ message_history_table = Table(
         "provider_metadata", JSON().with_variant(JSONB, "postgresql"), nullable=True
     ),  # Provider-specific metadata for round-trip (e.g., thought signatures)
     Column(
+        "taint_metadata_json", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),
+    Column("taint_metadata_version", String(64), nullable=True),
+    Column(
         "is_internal", Boolean, nullable=False, default=False, server_default="false"
     ),
 )
@@ -120,6 +124,9 @@ async def add_message_to_history(
     subconversation_id: str | None = None,  # Added: Subconversation ID for delegation
     # ast-grep-ignore: no-dict-any - Serialized JSON for database storage, not deserialized typed objects
     attachments: list[dict[str, Any]] | None = None,
+    # ast-grep-ignore: no-dict-any - Runtime taint metadata is persisted as compact JSON
+    taint_metadata_json: dict[str, Any] | None = None,
+    taint_metadata_version: str | None = None,
 ) -> int | None:
     """Adds a message to the history table, including optional fields."""
     # Returns the internal_id of the inserted message, or None on error
@@ -133,6 +140,7 @@ async def add_message_to_history(
         "tool_calls": tool_calls,
         "reasoning_info": reasoning_info,
         "attachments": attachments,
+        "taint_metadata_json": taint_metadata_json,
     }
     for field_name, field_value in json_fields_to_check.items():
         if field_value is not None:
@@ -169,6 +177,8 @@ async def add_message_to_history(
                 processing_profile_id=processing_profile_id,  # Store profile ID
                 subconversation_id=subconversation_id,  # Store subconversation ID
                 attachments=attachments,  # Store attachment metadata
+                taint_metadata_json=taint_metadata_json,
+                taint_metadata_version=taint_metadata_version,
             )  # Close .values()
             .returning(message_history_table.c.internal_id)  # Specify returning clause
         )  # Close statement assignment parenthesis
@@ -260,6 +270,8 @@ async def get_recent_history(
             message_history_table.c.error_traceback,
             message_history_table.c.tool_call_id,
             message_history_table.c.processing_profile_id,  # Added profile ID
+            message_history_table.c.taint_metadata_json,
+            message_history_table.c.taint_metadata_version,
         ]
 
         # Step 1: Initial fetch of candidate messages based on limit and max_age

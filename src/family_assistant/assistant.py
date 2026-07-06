@@ -68,6 +68,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.security.taint import merge_taint_policy_config
 from family_assistant.services.apns import APNsService, load_apns_auth_key
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
@@ -121,6 +122,7 @@ from family_assistant.tools import (
     PolicyEnforcingToolsProvider,
     PolicyEngine,
     PolicyRule,
+    TaintTrackingToolsProvider,
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -920,13 +922,20 @@ class Assistant:
                 policy_engine=policy_engine,
                 confirmation_timeout=confirmation_timeout,
             )
-            profile_tools_provider = policy_provider
+            profile_tools_provider = TaintTrackingToolsProvider(
+                policy_provider,
+                taint_policy=merge_taint_policy_config(
+                    base=self.config.taint_policy,
+                    profile=profile_conf.taint_policy,
+                ),
+                confirmation_timeout=confirmation_timeout,
+            )
             on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
             on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
             profile_on_demand_view: OnDemandToolsView | None = None
             if on_demand_tool_names or on_demand_mcp_ids:
                 profile_on_demand_view = OnDemandToolsView(
-                    wrapped_provider=policy_provider,
+                    wrapped_provider=profile_tools_provider,
                     on_demand_tool_names=on_demand_tool_names,
                     on_demand_mcp_server_ids=on_demand_mcp_ids,
                 )
@@ -1180,6 +1189,7 @@ class Assistant:
         self.email_indexer = EmailIndexer(
             pipeline=self.document_indexer.pipeline,
             attachment_registry=self.attachment_registry,
+            app_config=self.config,
         )
         self.notes_indexer = NotesIndexer(pipeline=self.document_indexer.pipeline)
         logger.info("DocumentIndexer, EmailIndexer, and NotesIndexer initialized.")

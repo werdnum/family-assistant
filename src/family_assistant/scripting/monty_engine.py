@@ -474,11 +474,16 @@ class MontyEngine:
                 kwargs, execution_context, tool_definition
             )
 
-            result = await self.tools_provider.execute_tool(
-                name=tool_name,
-                arguments=processed_kwargs,
-                context=execution_context,
-            )
+            original_snapshot = execution_context.taint_policy_snapshot
+            execution_context.taint_policy_snapshot = None
+            try:
+                result = await self.tools_provider.execute_tool(
+                    name=tool_name,
+                    arguments=processed_kwargs,
+                    context=execution_context,
+                )
+            finally:
+                execution_context.taint_policy_snapshot = original_snapshot
 
             logger.debug(f"Tool '{tool_name}' executed successfully (async)")
             return await self._format_tool_result_async(

@@ -17,17 +17,22 @@ from family_assistant.processing.protocol import (
     PendingPoll,
     RemoteSubmission,
 )
+from family_assistant.security.taint import A2A_TAINT_METADATA_KEY, TurnTaintState
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from family_assistant.a2a.client import A2AClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import MessageAttachmentMetadata
     from family_assistant.processing.types import (
         ChatInteractionResult,
+        MidTurnInputProvider,
         RemoteServiceConfig,
         RequestConfirmationCallback,
     )
+    from family_assistant.security.taint import TaintSource
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
@@ -67,6 +72,14 @@ class RemoteA2AService:
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
+        mid_turn_input_provider: MidTurnInputProvider | None = None,
+        turn_id: str | None = None,
+        thread_root_id: int | None = None,
+        trigger_is_internal: bool = False,
+        pinned_history_message_ids: list[int] | None = None,
+        trigger_role: Literal["user", "system"] = "user",
+        save_history_with_isolated_context: bool | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> ChatInteractionResult:
         """Send the request to the remote A2A agent and return the result."""
         from family_assistant.processing.types import (  # noqa: PLC0415 - runtime import for .error()
@@ -81,11 +94,26 @@ class RemoteA2AService:
             context_id,
         )
         _ = confirmation_ui_managers
+        _ = mid_turn_input_provider
+        _ = turn_id
+        _ = thread_root_id
+        _ = trigger_is_internal
+        _ = pinned_history_message_ids
+        _ = trigger_role
+        _ = save_history_with_isolated_context
+
+        metadata: dict[str, object] | None = None
+        if initial_taint_sources:
+            state = TurnTaintState.empty()
+            for source in initial_taint_sources:
+                state = state.add_source(source)
+            metadata = {A2A_TAINT_METADATA_KEY: state.to_metadata()}
 
         try:
             task = await self._client.send_message(
                 trigger_content_parts,
                 context_id=context_id,
+                metadata=metadata,
             )
         except A2AClientError as exc:
             logger.error(

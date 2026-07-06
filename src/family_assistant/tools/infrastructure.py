@@ -24,6 +24,14 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.security.taint import (
+    TaintPolicyConfig,
+    TaintPolicyEvaluation,
+    TaintPolicyEvaluator,
+    TaintPolicyOutcome,
+    TurnTaintState,
+    derive_tool_result_taint_source,
+)
 from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.confirmation import confirmation_payload_block_reason
 from family_assistant.tools.metadata import (
@@ -36,15 +44,20 @@ from family_assistant.tools.types import (
     CalendarConfig,
     ConfirmationOutcome,
     RequestConfirmationCallback,
+    ToolArguments,
     ToolDefinition,
     ToolExecutionContext,
     ToolResult,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.storage.types import (
+        TaintAuditArgumentsSummary,
+        TaintAuditSourceSummary,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -915,6 +928,298 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
 
         return await self.wrapped_provider.execute_tool(
             name, arguments, context, call_id
+        )
+
+    async def close(self) -> None:
+        """Close the wrapped provider."""
+        await self.wrapped_provider.close()
+
+
+def _taint_audit_sources(state: TurnTaintState) -> list[TaintAuditSourceSummary]:
+    metadata = state.to_metadata()
+    return [
+        {
+            "source_type": source["source_type"],
+            "source_id": source["source_id"],
+            "tier": source["tier"],
+            "labels": source["labels"],
+            "reason": source["reason"],
+        }
+        for source in metadata.get("sources", [])
+    ]
+
+
+def _summarize_tool_arguments(
+    arguments: Mapping[str, object],
+) -> TaintAuditArgumentsSummary:
+    """Return an audit-safe shape summary for tool arguments."""
+    keys = sorted(str(key) for key in arguments)
+    return {
+        "keys": keys,
+        "value_types": {
+            str(key): type(value).__name__ for key, value in sorted(arguments.items())
+        },
+    }
+
+
+class TaintTrackingToolsProvider(ToolsProvider):
+    """Wraps another provider with runtime taint policy and result tracking."""
+
+    def __init__(
+        self,
+        wrapped_provider: ToolsProvider,
+        taint_policy: TaintPolicyConfig | None = None,
+        confirmation_timeout: float = 3600.0,
+    ) -> None:
+        if not isinstance(wrapped_provider, ToolDescriptorProvider):
+            msg = (
+                "TaintTrackingToolsProvider requires a wrapped provider that "
+                "supports tool descriptors."
+            )
+            raise ValueError(msg)
+        self.wrapped_provider = wrapped_provider
+        self._descriptor_provider = wrapped_provider
+        self._taint_policy_config = taint_policy or TaintPolicyConfig()
+        self._taint_evaluator = TaintPolicyEvaluator(self._taint_policy_config)
+        self.confirmation_timeout = confirmation_timeout
+
+    async def get_tool_definitions(
+        self,
+        *,
+        can_confirm: bool = True,
+    ) -> list[ToolDefinition]:
+        """Return wrapped tool definitions unchanged."""
+        return await get_tool_definitions_for_advertisement(
+            self.wrapped_provider,
+            can_confirm=can_confirm,
+        )
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        """Return wrapped tool descriptors unchanged."""
+        return await self._descriptor_provider.get_tool_descriptors()
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        """Return the wrapped descriptor for a tool."""
+        return await self._descriptor_provider.get_tool_descriptor(name)
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        """Execute a tool and merge result taint into the turn tracker."""
+        descriptor = await self._descriptor_provider.get_tool_descriptor(name)
+        if descriptor is not None and context.taint_tracker is not None:
+            state = (
+                context.taint_policy_snapshot
+                if context.taint_policy_snapshot is not None
+                else context.taint_tracker.snapshot()
+            )
+            evaluation = self._taint_evaluator.evaluate_tool(
+                descriptor=descriptor,
+                state=state,
+            )
+            logger.info(
+                "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
+                "requested=%s effective=%s mode=%s reason=%s",
+                name,
+                call_id,
+                evaluation.sink_class.value,
+                evaluation.requested_outcome.value,
+                evaluation.effective_outcome.value,
+                evaluation.mode.value,
+                evaluation.reason,
+            )
+            await self._record_policy_evaluation_audit(
+                descriptor=descriptor,
+                context=context,
+                call_id=call_id,
+                arguments=arguments,
+                state=state,
+                evaluation=evaluation,
+            )
+            if evaluation.effective_outcome is TaintPolicyOutcome.DENY:
+                raise ToolPolicyDeniedError(name, evaluation.reason)
+            if evaluation.effective_outcome is TaintPolicyOutcome.REDACT:
+                raise ToolPolicyDeniedError(
+                    name,
+                    f"{evaluation.reason}; redaction outcomes are not executable yet",
+                )
+            if evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM:
+                confirmed = await self._request_taint_confirmation(
+                    name=name,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    reason=evaluation.reason,
+                )
+                if confirmed is not None:
+                    return confirmed
+
+        try:
+            result = await self.wrapped_provider.execute_tool(
+                name,
+                arguments,
+                context,
+                call_id,
+            )
+        except Exception:
+            if descriptor is not None:
+                recorded_state = self._record_result_taint(
+                    descriptor=descriptor,
+                    context=context,
+                    call_id=call_id,
+                )
+                if recorded_state is not None:
+                    await self._record_result_taint_audit(
+                        descriptor=descriptor,
+                        context=context,
+                        call_id=call_id,
+                        state=recorded_state,
+                    )
+            raise
+
+        if descriptor is not None:
+            recorded_state = self._record_result_taint(
+                descriptor=descriptor,
+                context=context,
+                call_id=call_id,
+            )
+            if recorded_state is not None:
+                await self._record_result_taint_audit(
+                    descriptor=descriptor,
+                    context=context,
+                    call_id=call_id,
+                    state=recorded_state,
+                )
+        return result
+
+    async def _request_taint_confirmation(
+        self,
+        *,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        reason: str,
+    ) -> str | ToolResult | None:
+        if context.request_confirmation_callback is None:
+            raise ToolPolicyDeniedError(
+                name,
+                f"{reason}; confirmation required but unavailable",
+            )
+
+        block_reason = confirmation_payload_block_reason(name, arguments)
+        if block_reason is not None:
+            logger.info(
+                "Refusing taint confirm-gated tool '%s': %s", name, block_reason
+            )
+            return ToolResult(text=block_reason, attachments=None)
+
+        resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
+        if context.tools_provider is None:
+            context.tools_provider = self
+        outcome = await context.request_confirmation_callback(
+            interface_type=context.interface_type,
+            conversation_id=context.conversation_id,
+            turn_id=context.turn_id,
+            tool_name=name,
+            call_id=resolved_call_id,
+            tool_args=cast("ToolArguments", arguments),
+            timeout_seconds=self.confirmation_timeout,
+            context=context,
+        )
+        if outcome.kind == "approved":
+            return None
+        return _confirmation_outcome_to_tool_result(name=name, outcome=outcome)
+
+    async def _record_policy_evaluation_audit(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+        call_id: str | None,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        state: TurnTaintState,
+        evaluation: TaintPolicyEvaluation,
+    ) -> None:
+        await context.db_context.taint_audit_events.add(
+            event_id=str(uuid.uuid4()),
+            event_type="policy_evaluation",
+            conversation_id=context.conversation_id,
+            turn_id=context.turn_id,
+            processing_profile_id=context.processing_profile_id,
+            subconversation_id=context.subconversation_id,
+            tool_name=descriptor.name,
+            tool_call_id=call_id,
+            sink_class=evaluation.sink_class.value,
+            max_tier=state.max_tier.config_value,
+            sources=_taint_audit_sources(state),
+            requested_outcome=evaluation.requested_outcome.value,
+            effective_outcome=evaluation.effective_outcome.value,
+            mode=evaluation.mode.value,
+            reason=evaluation.reason,
+            arguments_summary=_summarize_tool_arguments(arguments),
+        )
+
+    def _record_result_taint(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+        call_id: str | None,
+    ) -> TurnTaintState | None:
+        source = derive_tool_result_taint_source(
+            descriptor=descriptor,
+            call_id=call_id,
+            default_unspecified_tool_output_tier=(
+                self._taint_policy_config.default_unspecified_tool_output_tier
+            ),
+        )
+        if source is None or context.taint_tracker is None:
+            return None
+
+        state = context.taint_tracker.add_source(source)
+        metadata = state.to_metadata()
+        context.tool_result_taint_metadata[call_id or descriptor.name] = metadata
+        logger.info(
+            "Tool result taint recorded: tool=%s call_id=%s max_tier=%s",
+            descriptor.name,
+            call_id,
+            state.max_tier.config_value,
+        )
+        return state
+
+    async def _record_result_taint_audit(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state: TurnTaintState,
+    ) -> None:
+        await context.db_context.taint_audit_events.add(
+            event_id=str(uuid.uuid4()),
+            event_type="result_taint",
+            conversation_id=context.conversation_id,
+            turn_id=context.turn_id,
+            processing_profile_id=context.processing_profile_id,
+            subconversation_id=context.subconversation_id,
+            tool_name=descriptor.name,
+            tool_call_id=call_id,
+            sink_class=None,
+            max_tier=state.max_tier.config_value,
+            sources=_taint_audit_sources(state),
+            requested_outcome=None,
+            effective_outcome=None,
+            mode=self._taint_evaluator.mode.value,
+            reason=f"Recorded taint metadata for tool '{descriptor.name}' output.",
+            arguments_summary=None,
         )
 
     async def close(self) -> None:

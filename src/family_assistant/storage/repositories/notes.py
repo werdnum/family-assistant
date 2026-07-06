@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, ClassVar
@@ -30,6 +31,8 @@ class NoteModel(BaseModel):
     is_skill: bool = False
     skill_name: str | None = None
     skill_description: str | None = None
+    # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
+    provenance_metadata: dict[str, Any] | None = None
 
 
 class NoteRow(NoteModel):
@@ -52,6 +55,19 @@ def _parse_json_list(value: str | list[str] | None) -> list[str]:
         return []
 
 
+def _merge_unique_labels(
+    base_labels: list[str],
+    additional_labels: list[str] | None,
+) -> list[str]:
+    if not additional_labels:
+        return base_labels
+    merged = list(base_labels)
+    for label in additional_labels:
+        if label not in merged:
+            merged.append(label)
+    return merged
+
+
 # ast-grep-ignore: no-dict-any - dict[str, Any] from DatabaseContext.fetch_all/fetch_one
 def _row_to_note_model(row: dict[str, Any]) -> NoteModel:
     """Convert a database row dict to a NoteModel."""
@@ -64,6 +80,7 @@ def _row_to_note_model(row: dict[str, Any]) -> NoteModel:
         is_skill=row.get("is_skill", False),
         skill_name=row.get("skill_name"),
         skill_description=row.get("skill_description"),
+        provenance_metadata=row.get("provenance_metadata_json"),
     )
 
 
@@ -207,6 +224,7 @@ _NOTE_COLUMNS = [
     notes_table.c.is_skill,
     notes_table.c.skill_name,
     notes_table.c.skill_description,
+    notes_table.c.provenance_metadata_json,
 ]
 
 
@@ -414,6 +432,7 @@ class NotesRepository(BaseRepository):
                 is_skill=row.get("is_skill", False),
                 skill_name=row.get("skill_name"),
                 skill_description=row.get("skill_description"),
+                provenance_metadata=row.get("provenance_metadata_json"),
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
             )
@@ -448,6 +467,9 @@ class NotesRepository(BaseRepository):
         visibility_labels: list[str] | None = None,
         *,
         write_policy: NoteWritePolicy,
+        additional_visibility_labels: list[str] | None = None,
+        # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
+        provenance_metadata: Mapping[str, object] | None = None,
     ) -> str:
         """Adds a new note or updates an existing note with the given title (upsert).
 
@@ -495,6 +517,21 @@ class NotesRepository(BaseRepository):
             requested_labels=visibility_labels,
             existing_labels=existing_note.visibility_labels if existing_note else [],
         )
+        if additional_visibility_labels:
+            visibility_labels_to_use = write_policy.resolve_labels(
+                is_new_note=existing_note is None,
+                requested_labels=_merge_unique_labels(
+                    visibility_labels_to_use, additional_visibility_labels
+                ),
+                existing_labels=existing_note.visibility_labels
+                if existing_note
+                else [],
+            )
+
+        if provenance_metadata is None and existing_note:
+            provenance_metadata_to_use = existing_note.provenance_metadata
+        else:
+            provenance_metadata_to_use = provenance_metadata
 
         # Serialize to JSON strings
         attachment_ids_json = json.dumps(attachment_ids_to_use)
@@ -515,6 +552,7 @@ class NotesRepository(BaseRepository):
                     is_skill=is_skill,
                     skill_name=skill_name,
                     skill_description=skill_description,
+                    provenance_metadata_json=provenance_metadata_to_use,
                     created_at=now,
                     updated_at=now,
                 )
@@ -527,6 +565,7 @@ class NotesRepository(BaseRepository):
                     "is_skill": stmt.excluded.is_skill,
                     "skill_name": stmt.excluded.skill_name,
                     "skill_description": stmt.excluded.skill_description,
+                    "provenance_metadata_json": stmt.excluded.provenance_metadata_json,
                     "updated_at": stmt.excluded.updated_at,
                 }
                 # The policy checks above are only a preflight: a same-title row
@@ -575,6 +614,7 @@ class NotesRepository(BaseRepository):
                     is_skill=is_skill,
                     skill_name=skill_name,
                     skill_description=skill_description,
+                    provenance_metadata_json=provenance_metadata_to_use,
                     created_at=now,
                     updated_at=now,
                 )
@@ -602,6 +642,7 @@ class NotesRepository(BaseRepository):
                             is_skill=is_skill,
                             skill_name=skill_name,
                             skill_description=skill_description,
+                            provenance_metadata_json=provenance_metadata_to_use,
                             updated_at=now,
                         )
                     )
@@ -668,6 +709,8 @@ class NotesRepository(BaseRepository):
         visibility_labels: list[str] | None = None,
         *,
         write_policy: NoteWritePolicy,
+        # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
+        provenance_metadata: Mapping[str, object] | None = None,
     ) -> str:
         """Renames a note and updates its content, preserving the primary key.
 
@@ -736,6 +779,11 @@ class NotesRepository(BaseRepository):
                 existing_labels=existing_note.visibility_labels,
             )
 
+            if provenance_metadata is None:
+                provenance_metadata_to_use = existing_note.provenance_metadata
+            else:
+                provenance_metadata_to_use = provenance_metadata
+
             # Serialize to JSON strings
             attachment_ids_json = json.dumps(attachment_ids_to_use)
             visibility_labels_json = json.dumps(visibility_labels_to_use)
@@ -756,6 +804,7 @@ class NotesRepository(BaseRepository):
                     is_skill=is_skill,
                     skill_name=skill_name,
                     skill_description=skill_description,
+                    provenance_metadata_json=provenance_metadata_to_use,
                     updated_at=func.now(),
                 )
             )

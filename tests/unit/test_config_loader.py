@@ -854,6 +854,30 @@ class TestResolveServiceProfile:
         # Timezone should still be from defaults
         assert result["processing_config"]["timezone"] == "UTC"
 
+    def test_profile_taint_policy_overrides_are_preserved(self) -> None:
+        """Profile-level runtime taint policy must survive profile resolution."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "max_iterations": 10},
+            "tools_config": {},
+            "taint_policy": {
+                "mode": "observe",
+                "matrix_overrides": {"unknown_external": {"sandbox_network": "deny"}},
+            },
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "taint_policy": {
+                "mode": "enforce",
+                "matrix_overrides": {"unknown_external": {"artifact_write": "confirm"}},
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["taint_policy"] == profile_def["taint_policy"]
+
     def test_profile_without_processing_config_inherits_timezone(self) -> None:
         """Profile without processing_config inherits timezone from defaults."""
         default_settings: dict[str, Any] = {

@@ -12,6 +12,8 @@ from typing import Any, TypedDict, cast
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from family_assistant.config_models import AppConfig
+from family_assistant.email_intake.taint import email_provenance_metadata
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.indexing.types import (
     EmailAttachmentInfo,
@@ -112,7 +114,12 @@ class EmailDocument(Document):
         return None
 
     @classmethod
-    def from_row(cls, row: Mapping[str, Any]) -> "EmailDocument":
+    def from_row(
+        cls,
+        row: Mapping[str, Any],
+        *,
+        provenance_metadata: dict[str, object] | None = None,
+    ) -> "EmailDocument":
         """
         Creates an EmailDocument instance from a SQLAlchemy RowMapping (or compatible mapping)
         representing a row from the received_emails table.
@@ -138,6 +145,8 @@ class EmailDocument(Document):
                 base_metadata[key] = value  # type: ignore
         if (headers_json := row.get("headers_json")) is not None:
             base_metadata["headers"] = headers_json
+        if provenance_metadata is not None:
+            base_metadata.update(cast("EmailMetadata", provenance_metadata))
 
         # Prefer stripped_text for cleaner content
         content = row.get("stripped_text") or row.get("body_plain")
@@ -175,6 +184,7 @@ async def _register_or_reuse_email_attachment(
     email_db_id: int,
     message_id_header: str,
     attachment: AttachmentData,
+    provenance_metadata: dict[str, object],
 ) -> str | None:
     """Register an email attachment or return the canonical id if one already
     exists for ``(source_type="email", source_id, storage_path)``.
@@ -236,6 +246,7 @@ async def _register_or_reuse_email_attachment(
                 "original_filename": attachment.filename,
                 "email_message_id": message_id_header,
                 "email_db_id": email_db_id,
+                **provenance_metadata,
             },
         )
     except IntegrityError:
@@ -272,6 +283,7 @@ async def _register_resolvable_email_attachment(
     email_db_id: int,
     message_id_header: str,
     attachment: AttachmentData,
+    provenance_metadata: dict[str, object],
 ) -> str | None:
     """Register a single email attachment whose file has been verified on disk.
 
@@ -290,6 +302,7 @@ async def _register_resolvable_email_attachment(
         email_db_id=email_db_id,
         message_id_header=message_id_header,
         attachment=attachment,
+        provenance_metadata=provenance_metadata,
     )
 
 
@@ -303,6 +316,7 @@ class EmailIndexer:
         self,
         pipeline: IndexingPipeline,
         attachment_registry: AttachmentRegistry,
+        app_config: AppConfig | None = None,
     ) -> None:
         """Initialize the EmailIndexer.
 
@@ -317,6 +331,7 @@ class EmailIndexer:
         """
         self.pipeline = pipeline
         self.attachment_registry = attachment_registry
+        self.app_config = app_config or AppConfig()
         logger.info("EmailIndexer initialized with an IndexingPipeline instance.")
 
     def _resolve_email_attachment_path(
@@ -393,8 +408,16 @@ class EmailIndexer:
             return
 
         # --- 2. Create Document Object ---
+        provenance_metadata = email_provenance_metadata(
+            email_db_id=email_db_id,
+            email_row=email_row,
+            app_config=self.app_config,
+        )
         try:
-            email_doc = EmailDocument.from_row(email_row)
+            email_doc = EmailDocument.from_row(
+                email_row,
+                provenance_metadata=provenance_metadata,
+            )
         except ValueError as e:
             logger.error(f"Failed to create EmailDocument for DB ID {email_db_id}: {e}")
             raise  # Re-raise to mark task as failed
@@ -429,6 +452,10 @@ class EmailIndexer:
         # --- 5. Prepare Initial Content for Pipeline ---
         initial_items: list[IndexableContent] = []
         if email_doc.content_plain:
+            body_metadata = {
+                "original_source": "email_body",
+                **provenance_metadata,
+            }
             # The pipeline will handle title extraction, chunking, summarizing, etc.
             # Provide the raw plain text body.
             plain_text_item = IndexableContent(
@@ -436,9 +463,7 @@ class EmailIndexer:
                 embedding_type="raw_body_text",
                 mime_type="text/plain",
                 source_processor="EmailIndexer.handle_index_email",
-                metadata=cast(
-                    "IndexableContentMetadata", {"original_source": "email_body"}
-                ),
+                metadata=cast("IndexableContentMetadata", body_metadata),
             )
             initial_items.append(plain_text_item)
 
@@ -552,6 +577,7 @@ class EmailIndexer:
                         email_db_id=email_db_id,
                         message_id_header=email_doc.source_id,
                         attachment=att,
+                        provenance_metadata=provenance_metadata,
                     )
                     if resolved_id is None:
                         # Concurrent registration race left no discoverable
@@ -588,6 +614,7 @@ class EmailIndexer:
                             "attachment_id": att.attachment_id,
                             "chunk_index_offset": (attachment_index + 1)
                             * chunk_index_spacing,
+                            **provenance_metadata,
                         },
                     ),
                     ref=resolved_path,

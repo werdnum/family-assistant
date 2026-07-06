@@ -1,3 +1,5 @@
+# pylint: disable=no-name-in-module
+
 import asyncio
 import contextlib
 import json
@@ -442,6 +444,9 @@ def _require_confirmation_for_test_tool(
     processing_service = fix.processing_service
     assert processing_service is not None
     provider = processing_service.tools_provider
+    policy_provider = find_provider_by_type(provider, PolicyEnforcingToolsProvider)
+    if policy_provider is not None:
+        provider = policy_provider
 
     if hasattr(provider, "_tools_requiring_confirmation"):
         provider._tools_requiring_confirmation.add(tool_name)  # type: ignore[attr-defined]

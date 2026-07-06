@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 
 from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.vector_search import (
     MetadataFilter,
     VectorSearchQuery,
@@ -270,6 +271,13 @@ async def get_message_history_tool(
             embedding_generator=effective_embedding_generator,
             history_query=history_query,
         )
+        returned_rows = await _collect_returned_history_rows(
+            exec_context=exec_context,
+            rows=rows,
+            include_context=include_context,
+            history_query=history_query,
+        )
+        _merge_message_history_taint(exec_context, returned_rows)
         data = {
             "search_mode": search_mode,
             "scope": scope,
@@ -336,6 +344,50 @@ async def _execute_message_history_query(
     for row in structured_rows:
         rows_by_id.setdefault(row["internal_id"], row)
     return list(rows_by_id.values())[: max(min(history_query.limit, 100), 1)]
+
+
+async def _collect_returned_history_rows(
+    *,
+    exec_context: ToolExecutionContext,
+    rows: list[MessageHistoryRow],
+    include_context: int,
+    history_query: MessageHistoryQuery,
+) -> list[MessageHistoryRow]:
+    bounded_context = min(max(include_context, 0), 3)
+    if not bounded_context:
+        return rows
+    returned: list[MessageHistoryRow] = []
+    seen_internal_ids: set[int] = set()
+    for row in rows:
+        context_rows = (
+            await exec_context.db_context.message_history.get_context_around_message(
+                row,
+                per_side=bounded_context,
+                access_query=history_query,
+            )
+        )
+        for context_row in context_rows:
+            internal_id = context_row["internal_id"]
+            if internal_id in seen_internal_ids:
+                continue
+            seen_internal_ids.add(internal_id)
+            returned.append(context_row)
+    return returned
+
+
+def _merge_message_history_taint(
+    exec_context: ToolExecutionContext,
+    rows: list[MessageHistoryRow],
+) -> None:
+    if exec_context.taint_tracker is None:
+        return
+    for row in rows:
+        taint_metadata = row.get("taint_metadata")
+        if taint_metadata is None:
+            continue
+        row_state = TurnTaintState.from_metadata(taint_metadata, from_history=True)
+        for source in row_state.sources:
+            exec_context.taint_tracker.add_source(source, from_history=True)
 
 
 async def _semantic_message_history_rows(

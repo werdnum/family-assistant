@@ -37,6 +37,11 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.google_types import GeminiProviderMetadata
     from family_assistant.llm.tool_call import ToolCallItem
+    from family_assistant.security.taint import (
+        TaintMetadata,
+        TurnTaintState,
+        TurnTaintTracker,
+    )
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
@@ -152,6 +157,8 @@ class ToolExecutor:
         home_assistant_client: HomeAssistantClientWrapper | None,
         camera_backend: CameraBackend | None,
         event_sources: EventSourcesById | None,
+        taint_tracker: TurnTaintTracker | None,
+        taint_policy_snapshot: TurnTaintState | None,
     ) -> ToolExecutionContext:
         chat_interfaces_dict = chat_interfaces
         if chat_interfaces_dict is None and chat_interface:
@@ -188,6 +195,8 @@ class ToolExecutor:
             allowed_note_visibility_labels=self.config.allowed_note_visibility_labels,
             allow_wake_llm=self.config.allow_wake_llm,
             note_registry=self.config.note_registry,
+            taint_tracker=taint_tracker,
+            taint_policy_snapshot=taint_policy_snapshot,
         )
 
     @staticmethod
@@ -308,6 +317,7 @@ class ToolExecutor:
         function_name: str,
         conversation_id: str,
         call_id: str,
+        taint_metadata: TaintMetadata | None,
     ) -> tuple[str, list[str]]:
         """Convert oversized text results into attachment references."""
         (
@@ -319,6 +329,7 @@ class ToolExecutor:
             function_name,
             conversation_id,
             call_id,
+            taint_metadata,
         )
         if auto_attachment_id is None:
             return new_content, []
@@ -332,6 +343,7 @@ class ToolExecutor:
         function_name: str,
         conversation_id: str,
         call_id: str,
+        taint_metadata: TaintMetadata | None,
     ) -> tuple[list[dict[str, str | int | None]], list[str]]:
         """Store/normalize ToolResult attachments for streaming and history."""
         attachments_data: list[dict[str, str | int | None]] = []
@@ -346,6 +358,13 @@ class ToolExecutor:
 
             if attachment.content and self.attachment_registry:
                 file_extension = get_file_extension_from_mime_type(attachment.mime_type)
+                metadata: dict[str, object] = {
+                    "tool_call_id": call_id,
+                    "auto_display": True,
+                }
+                if taint_metadata is not None:
+                    metadata["taint_metadata"] = taint_metadata
+
                 registered_metadata = (
                     await self.attachment_registry.store_and_register_tool_attachment(
                         file_content=attachment.content,
@@ -355,10 +374,7 @@ class ToolExecutor:
                         description=attachment.description
                         or f"Output from {function_name}",
                         conversation_id=conversation_id,
-                        metadata={
-                            "tool_call_id": call_id,
-                            "auto_display": True,
-                        },
+                        metadata=metadata,
                     )
                 )
 
@@ -391,6 +407,7 @@ class ToolExecutor:
         conversation_id: str,
         call_id: str,
         provider_metadata: GeminiProviderMetadata | ProviderMetadataDict | None,
+        taint_metadata: TaintMetadata | None,
     ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
         """Convert ToolResult into stream payload, message, and attachment IDs."""
         content_for_stream = result.get_text()
@@ -400,6 +417,7 @@ class ToolExecutor:
             function_name=function_name,
             conversation_id=conversation_id,
             call_id=call_id,
+            taint_metadata=taint_metadata,
         )
         if auto_attachment_ids:
             # Result data is now persisted as attachment; keep content as hint text.
@@ -417,6 +435,7 @@ class ToolExecutor:
                 function_name=function_name,
                 conversation_id=conversation_id,
                 call_id=call_id,
+                taint_metadata=taint_metadata,
             )
             auto_attachment_ids.extend(new_attachment_ids)
 
@@ -425,6 +444,7 @@ class ToolExecutor:
             call_id,
             function_name,
             provider_metadata=provider_metadata,
+            taint_metadata=taint_metadata,
         )
 
         if auto_attachment_ids:
@@ -453,6 +473,7 @@ class ToolExecutor:
         function_name: str,
         conversation_id: str,
         call_id: str,
+        taint_metadata: TaintMetadata | None,
     ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
         """Convert plain string-like tool output into stream/message payload."""
         content_for_stream = str(result)
@@ -462,6 +483,7 @@ class ToolExecutor:
             function_name=function_name,
             conversation_id=conversation_id,
             call_id=call_id,
+            taint_metadata=taint_metadata,
         )
         return (
             content_for_stream,
@@ -493,6 +515,8 @@ class ToolExecutor:
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
+        taint_policy_snapshot: TurnTaintState | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
@@ -579,6 +603,8 @@ class ToolExecutor:
                 home_assistant_client=home_assistant_client,
                 camera_backend=camera_backend,
                 event_sources=event_sources,
+                taint_tracker=taint_tracker,
+                taint_policy_snapshot=taint_policy_snapshot,
             )
 
             result_or_error = await self._execute_tool_with_error_mapping(
@@ -597,6 +623,9 @@ class ToolExecutor:
             explicit_attachment_ids: list[str] | None = None
 
             if isinstance(result, ToolResult):
+                result_taint_metadata = (
+                    tool_execution_context.tool_result_taint_metadata.get(call_id)
+                )
                 (
                     content_for_stream,
                     llm_message,
@@ -609,8 +638,12 @@ class ToolExecutor:
                     conversation_id=conversation_id,
                     call_id=call_id,
                     provider_metadata=tool_call_item_obj.provider_metadata,
+                    taint_metadata=result_taint_metadata,
                 )
             else:
+                result_taint_metadata = (
+                    tool_execution_context.tool_result_taint_metadata.get(call_id)
+                )
                 (
                     content_for_stream,
                     llm_message,
@@ -622,7 +655,12 @@ class ToolExecutor:
                     function_name=function_name,
                     conversation_id=conversation_id,
                     call_id=call_id,
+                    taint_metadata=result_taint_metadata,
                 )
+                if result_taint_metadata is not None:
+                    llm_message = llm_message.model_copy(
+                        update={"taint_metadata": result_taint_metadata}
+                    )
 
             if function_name == "attach_to_response":
                 (

@@ -49,6 +49,13 @@ from family_assistant.a2a.types import (
 )
 from family_assistant.llm.content_parts import ContentPartDict, text_content
 from family_assistant.processing import DelegatableService, ProcessingService
+from family_assistant.security.taint import (
+    A2A_TAINT_METADATA_KEY,
+    TaintMetadata,
+    TaintSource,
+    TurnTaintState,
+    coerce_taint_metadata,
+)
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.repositories.a2a_tasks import A2ATaskRow
 from family_assistant.web.dependencies import get_current_user, get_db
@@ -397,6 +404,7 @@ async def _execute_and_persist_send(
         user_id=user_id,
         chat_interfaces=chat_interfaces,
         confirmation_ui_managers=confirmation_ui_managers,
+        initial_taint_sources=_initial_taint_sources_from_message(message),
     )
 
     if result.has_error:
@@ -863,6 +871,7 @@ async def _stream_message(
                     trigger_interface_message_id=message.message_id,
                     user_name=user_id,
                     user_id=user_id,
+                    initial_taint_sources=_initial_taint_sources_from_message(message),
                 ):
                     # Check for cooperative cancellation between chunks
                     if cancel_event.is_set():
@@ -1006,6 +1015,17 @@ def _resolve_service(request: Request, message: Message) -> ProcessingService | 
     if default_service:
         return default_service
     return None
+
+
+def _initial_taint_sources_from_message(message: Message) -> tuple[TaintSource, ...]:
+    """Restore FA runtime taint from A2A message metadata, when present."""
+    if not message.metadata:
+        return ()
+    raw_taint = message.metadata.get(A2A_TAINT_METADATA_KEY)
+    taint_metadata: TaintMetadata | None = coerce_taint_metadata(raw_taint)
+    if taint_metadata is None:
+        return ()
+    return TurnTaintState.from_metadata(taint_metadata).sources
 
 
 def _row_to_task(row: A2ATaskRow) -> Task:

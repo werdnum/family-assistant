@@ -22,6 +22,12 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.repositories.message_history import (
     MessageHistoryAccessDeniedError,
@@ -429,6 +435,45 @@ async def test_get_message_history_tool_returns_structured_json(
     data = cast("dict[str, Any]", result.data)
     assert data["result_count"] == 1
     assert data["results"][0]["content"] == "The passports are in the blue folder"
+
+
+@pytest.mark.asyncio
+async def test_get_message_history_tool_merges_returned_row_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    """Reading tainted stored history should reintroduce taint into the turn."""
+    tracker = InMemoryTurnTaintTracker()
+    taint_source = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="email-123",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset({"source_unknown_external"}),
+        reason="Stored email reply taint.",
+    )
+    taint_metadata = InMemoryTurnTaintTracker().add_source(taint_source).to_metadata()
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.message_history.add_message(
+            AssistantMessage(
+                content="External email said the pickup code is 1234.",
+                taint_metadata=taint_metadata,
+            ),
+            interface_type="test",
+            conversation_id="current",
+            timestamp=datetime.now(UTC),
+            turn_id="turn-email",
+            user_id="user-a",
+            processing_profile_id="default",
+        )
+
+        result = await get_message_history_tool(
+            exec_context=_build_exec_context(db, taint_tracker=tracker),
+            query="pickup code",
+            roles=["assistant"],
+        )
+
+    data = cast("dict[str, Any]", result.data)
+    assert data["result_count"] == 1
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 @pytest.mark.asyncio
@@ -1035,6 +1080,7 @@ def _build_exec_context(
     db: DatabaseContext,
     *,
     embedding_generator: MockEmbeddingGenerator | None = None,
+    taint_tracker: InMemoryTurnTaintTracker | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="test",
@@ -1052,4 +1098,5 @@ def _build_exec_context(
         timezone=ZoneInfo("UTC"),
         processing_profile_id="default",
         embedding_generator=embedding_generator,
+        taint_tracker=taint_tracker,
     )

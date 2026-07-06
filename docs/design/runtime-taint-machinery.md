@@ -13,6 +13,11 @@ profiles can use label policy as an actual boundary. The same approach is extend
 lives at chokepoints, labels and taint propagate automatically, and profiles declare policy rather
 than reimplementing confinement logic.
 
+The companion confinement baseline is a prerequisite for this design. If implementation starts from
+a branch or target `main` that does not yet contain it, land/rebase that work first rather than
+restating artifact propagation against the older `default_note_visibility_labels`-only tool
+behavior; doing so would recreate the bypass that the companion work is meant to close.
+
 ## Problem
 
 The codebase has most of the static pieces needed for prompt-injection containment:
@@ -890,6 +895,17 @@ Do not expose internal jargon such as "tier 3" as the primary user-facing explan
 structured tier in audit logs.
 
 ## Implementation Plan
+
+### Phase 0: Companion Confinement Baseline
+
+- Ensure repository-level note write confinement has landed:
+  - `NoteWritePolicy` is a required repository write parameter,
+  - `ToolExecutionContext` can derive write policy from the active profile,
+  - `wake_llm` and automation execution preserve processing-profile provenance,
+  - confined profiles can declare required and allowed note labels.
+- If this baseline is absent, implement it first. Runtime artifact propagation depends on these
+  chokepoints; building propagation directly into individual note tools would preserve the old
+  bypass paths.
 
 ### Phase 1: Foundation and Observe-Only State
 

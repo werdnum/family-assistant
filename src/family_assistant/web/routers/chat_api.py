@@ -33,6 +33,7 @@ from family_assistant.services.confirmation_service import (
     ConfirmationExpiredError,
     ConfirmationNotFoundError,
     ConfirmationService,
+    build_confirmation_policy_fingerprint,
     create_durable_confirmation,
 )
 from family_assistant.services.confirmation_waiters import (
@@ -1789,6 +1790,11 @@ async def api_chat_send_message(
         timeout_seconds: float,
         context: ToolExecutionContext,
     ) -> ConfirmationOutcome:
+        taint_state_json = (
+            context.taint_tracker.snapshot().to_metadata()
+            if context.taint_tracker is not None
+            else None
+        )
         durable_request = await create_durable_confirmation(
             confirmation_service=api_confirmation_service,
             db_context=context.db_context,
@@ -1802,6 +1808,16 @@ async def api_chat_send_message(
             timeout_seconds=timeout_seconds,
             turn_id=turn_id,
             now=datetime.now(UTC),
+            processing_profile_id=context.processing_profile_id,
+            origin_interface_type=context.interface_type,
+            origin_conversation_id=context.conversation_id,
+            taint_state_json=taint_state_json,
+            approval_policy_fingerprint=build_confirmation_policy_fingerprint(
+                tool_name=tool_name,
+                tool_call_id=call_id,
+                processing_profile_id=context.processing_profile_id,
+                taint_state_json=taint_state_json,
+            ),
         )
         return ConfirmationOutcome(
             kind="completed",

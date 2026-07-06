@@ -25,6 +25,7 @@ from family_assistant.services.confirmation_service import (
     ConfirmationAuthorizationError,
     ConfirmationError,
     ConfirmationNotFoundError,
+    build_confirmation_policy_fingerprint,
 )
 from family_assistant.services.confirmation_wait import (
     ConfirmationWaitStrategy,
@@ -34,6 +35,7 @@ from family_assistant.tools.types import ConfirmationOutcome
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 
 if TYPE_CHECKING:
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.confirmation_service import ConfirmationService
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
@@ -69,6 +71,8 @@ class WebConfirmationUIManager:
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
+        taint_state_json: TaintMetadata | None = None,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationOutcome:
         """Create, deliver and await a durable web confirmation."""
         if target_user_id is None:
@@ -90,6 +94,13 @@ class WebConfirmationUIManager:
             confirmation_prompt=prompt_text,
             expires_at=expires_at,
             decision_only=not wait_for_durable_execution,
+            taint_state_json=taint_state_json,
+            approval_policy_fingerprint=build_confirmation_policy_fingerprint(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                processing_profile_id=processing_profile_id,
+                taint_state_json=taint_state_json,
+            ),
         )
         request_id = durable_request["id"]
         if wait_for_durable_execution:

@@ -8,14 +8,48 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintMetadata,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+class NoteProvenanceMetadata(TypedDict):
+    """Stored note provenance metadata owned by note writes."""
+
+    taint_metadata: TaintMetadata
+    provenance_labels: list[str]
+
+
+_TAINT_LABELS_BY_TIER: dict[SourceTrustTier, str] = {
+    SourceTrustTier.KNOWN_CONTACT: "source_known_contact",
+    SourceTrustTier.RECOGNIZED_MACHINE: "source_recognized_machine",
+    SourceTrustTier.UNKNOWN_EXTERNAL: "source_unknown_external",
+}
+
+
+def _note_provenance_from_taint(
+    exec_context: ToolExecutionContext,
+) -> NoteProvenanceMetadata | None:
+    """Return durable provenance metadata for the current turn taint."""
+    if exec_context.taint_tracker is None:
+        return None
+    state = exec_context.taint_tracker.snapshot()
+    label = _TAINT_LABELS_BY_TIER.get(state.max_tier)
+    if label is None:
+        return None
+    return {"taint_metadata": state.to_metadata(), "provenance_labels": [label]}
 
 
 async def add_or_update_note_tool(
@@ -58,6 +92,8 @@ async def add_or_update_note_tool(
     # path is covered, not just this tool.
     write_policy = exec_context.note_write_policy()
 
+    provenance_metadata = _note_provenance_from_taint(exec_context)
+
     # Validate attachment IDs if provided
     # None means "preserve existing", empty list means "clear all attachments"
     valid_attachment_ids: list[str] | None = None
@@ -91,6 +127,7 @@ async def add_or_update_note_tool(
             attachment_ids=valid_attachment_ids,  # None preserves existing, [] clears
             visibility_labels=visibility_labels,
             write_policy=write_policy,
+            provenance_metadata=provenance_metadata,
         )
         attachment_info = (
             f" with {len(valid_attachment_ids)} attachment(s)"
@@ -277,6 +314,21 @@ async def get_note_tool(
             }
         )
 
+    provenance_metadata = note.provenance_metadata
+    if exec_context.taint_tracker is not None and isinstance(provenance_metadata, dict):
+        taint_metadata = provenance_metadata.get("taint_metadata")
+        note_taint_state = TurnTaintState.from_metadata(taint_metadata)
+        if note_taint_state.max_tier > SourceTrustTier.TRUSTED_USER:
+            exec_context.taint_tracker.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.NOTE,
+                    source_id=note.title,
+                    tier=note_taint_state.max_tier,
+                    labels=frozenset(note.visibility_labels),
+                    reason=f"Note '{note.title}' carries stored provenance taint.",
+                )
+            )
+
     # Parse attachment_ids from the note
     attachment_ids_raw = note.attachment_ids
     attachment_ids: list[str] = []
@@ -299,6 +351,7 @@ async def get_note_tool(
         "content": note.content,
         "include_in_prompt": note.include_in_prompt,
         "attachment_count": len(attachment_ids),
+        "provenance_labels": note.visibility_labels,
     }
 
     # Fetch attachment metadata and content

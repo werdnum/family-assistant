@@ -32,6 +32,10 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
+from family_assistant.security.taint import (
+    TAINT_METADATA_VERSION,
+    coerce_taint_metadata,
+)
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
@@ -772,6 +776,7 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None
         error_traceback: str | None = None
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None
+        taint_metadata = getattr(message, "taint_metadata", None)
 
         raw_content = getattr(message, "content", None)
         if raw_content is None or isinstance(raw_content, str):
@@ -817,6 +822,7 @@ class MessageHistoryRepository(BaseRepository):
             is_internal=is_internal,
             tool_name=tool_name,
             provider_metadata=provider_metadata,
+            taint_metadata=taint_metadata,
         )
 
     async def _insert_message(
@@ -840,6 +846,8 @@ class MessageHistoryRepository(BaseRepository):
         is_internal: bool = False,
         tool_name: str | None = None,
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None,
+        # ast-grep-ignore: no-dict-any - Runtime taint metadata is persisted as compact JSON
+        taint_metadata: dict[str, Any] | None = None,
     ) -> int | None:
         """
         Internal method that serializes and inserts a message into the database.
@@ -889,6 +897,10 @@ class MessageHistoryRepository(BaseRepository):
             "is_internal": is_internal,
             "tool_name": tool_name,
             "provider_metadata": serialized_provider_metadata,
+            "taint_metadata_json": taint_metadata,
+            "taint_metadata_version": TAINT_METADATA_VERSION
+            if taint_metadata is not None
+            else None,
             "user_id": user_id,
         }
 
@@ -913,6 +925,8 @@ class MessageHistoryRepository(BaseRepository):
                 "is_internal",
                 "tool_name",
                 "provider_metadata",
+                "taint_metadata_json",
+                "taint_metadata_version",
                 "user_id",
             }
         }
@@ -2030,6 +2044,8 @@ class MessageHistoryRepository(BaseRepository):
 
             msg["provider_metadata"] = provider_metadata
 
+        msg["taint_metadata"] = coerce_taint_metadata(msg.get("taint_metadata_json"))
+
         # Convert dict to typed LLMMessage
         return self._dict_to_typed_message(msg)
 
@@ -2133,6 +2149,8 @@ class MessageHistoryRepository(BaseRepository):
             # (it has a different structure than tool-call-level provider_metadata)
             msg["provider_metadata"] = provider_metadata
 
+        msg["taint_metadata"] = coerce_taint_metadata(msg.get("taint_metadata_json"))
+
         return cast("MessageHistoryRow", msg)
 
     # ast-grep-ignore: no-dict-any - intermediate dict from raw SQLAlchemy row, typed fields accessed by key
@@ -2199,6 +2217,7 @@ class MessageHistoryRepository(BaseRepository):
                 content=msg.get("content"),
                 tool_calls=msg.get("tool_calls"),
                 provider_metadata=msg.get("provider_metadata"),
+                taint_metadata=msg.get("taint_metadata"),
             )
         elif role == "tool":
             return ToolMessage(
@@ -2206,6 +2225,7 @@ class MessageHistoryRepository(BaseRepository):
                 content=msg.get("content") or "",
                 name=msg.get("tool_name") or "",
                 error_traceback=msg.get("error_traceback"),
+                taint_metadata=msg.get("taint_metadata"),
             )
         elif role == "system":
             content = msg.get("content") or ""

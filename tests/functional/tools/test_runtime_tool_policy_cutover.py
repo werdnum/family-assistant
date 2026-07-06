@@ -9,6 +9,7 @@ from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.tools import (
     PolicyEnforcingToolsProvider,
+    find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
@@ -119,7 +120,10 @@ async def test_assistant_profile_tools_are_policy_enforced(
 
         service = assistant.default_processing_service
         assert service is not None
-        assert isinstance(service.tools_provider, PolicyEnforcingToolsProvider)
+        assert (
+            find_provider_by_type(service.tools_provider, PolicyEnforcingToolsProvider)
+            is not None
+        )
 
         without_confirm = await get_tool_definitions_for_advertisement(
             service.tools_provider,

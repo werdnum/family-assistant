@@ -5,18 +5,15 @@ This module provides a context manager and utilities for database operations,
 enabling dependency injection for testing and centralizing retry logic.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import random
-from collections.abc import Callable
-from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from sqlalchemy import TextClause, event
-from sqlalchemy.engine import CursorResult  # CursorResult added
+from sqlalchemy import event
 from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-from sqlalchemy.sql import Delete, Insert, Select, Update
 
 # PostgreSQL SQLSTATE codes - the authoritative way to identify error types
 # See: https://www.postgresql.org/docs/current/errcodes-appendix.html
@@ -27,7 +24,14 @@ PGCODE_SERIALIZATION_FAILURE = "40001"  # Concurrent transaction conflict
 PGCODE_DEADLOCK_DETECTED = "40P01"  # Two processes blocked each other
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from contextlib import AbstractAsyncContextManager
+    from types import TracebackType
+
+    from sqlalchemy import TextClause
+    from sqlalchemy.engine import CursorResult
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+    from sqlalchemy.sql import Delete, Insert, Select, Update
 
     from family_assistant.storage.repositories import (
         AutomationsRepository,
@@ -42,6 +46,7 @@ if TYPE_CHECKING:
         PushSubscriptionRepository,
         ScheduleAutomationsRepository,
         ScriptsRepository,
+        TaintAuditEventsRepository,
         TasksRepository,
         VectorRepository,
         WorkerTasksRepository,
@@ -177,8 +182,9 @@ class DatabaseContext:
         self._worker_tasks = None
         self._a2a_tasks = None
         self._scripts = None
+        self._taint_audit_events = None
 
-    async def __aenter__(self) -> "DatabaseContext":
+    async def __aenter__(self) -> DatabaseContext:
         """Enter the async context manager, starting a transaction."""
         if self._transaction_cm is not None:
             # This shouldn't happen if used correctly with 'async with'
@@ -214,7 +220,7 @@ class DatabaseContext:
         """Whether this context can safely use a nested isolated write context."""
         return self.engine.dialect.name == "postgresql"
 
-    def create_isolated_context(self) -> "DatabaseContext":
+    def create_isolated_context(self) -> DatabaseContext:
         """Create a new context sharing this context's engine settings."""
         return DatabaseContext(
             engine=self.engine,
@@ -393,7 +399,7 @@ class DatabaseContext:
         return callback
 
     @property
-    def notes(self) -> "NotesRepository":
+    def notes(self) -> NotesRepository:
         """Get the notes repository instance."""
         if self._notes is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -404,7 +410,7 @@ class DatabaseContext:
         return self._notes
 
     @property
-    def tasks(self) -> "TasksRepository":
+    def tasks(self) -> TasksRepository:
         """Get the tasks repository instance."""
         if self._tasks is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -415,7 +421,7 @@ class DatabaseContext:
         return self._tasks
 
     @property
-    def message_history(self) -> "MessageHistoryRepository":
+    def message_history(self) -> MessageHistoryRepository:
         """Get the message history repository instance."""
         if self._message_history is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -426,7 +432,7 @@ class DatabaseContext:
         return self._message_history
 
     @property
-    def email(self) -> "EmailRepository":
+    def email(self) -> EmailRepository:
         """Get the email repository instance."""
         if self._email is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -437,7 +443,7 @@ class DatabaseContext:
         return self._email
 
     @property
-    def delegation_runs(self) -> "DelegationRunsRepository":
+    def delegation_runs(self) -> DelegationRunsRepository:
         """Get the delegation runs repository instance."""
         if self._delegation_runs is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -448,7 +454,7 @@ class DatabaseContext:
         return self._delegation_runs
 
     @property
-    def confirmation_requests(self) -> "ConfirmationRequestsRepository":
+    def confirmation_requests(self) -> ConfirmationRequestsRepository:
         """Get the confirmation requests repository instance."""
         if self._confirmation_requests is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -459,7 +465,7 @@ class DatabaseContext:
         return self._confirmation_requests
 
     @property
-    def error_logs(self) -> "ErrorLogsRepository":
+    def error_logs(self) -> ErrorLogsRepository:
         """Get the error logs repository instance."""
         if self._error_logs is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -470,7 +476,7 @@ class DatabaseContext:
         return self._error_logs
 
     @property
-    def events(self) -> "EventsRepository":
+    def events(self) -> EventsRepository:
         """Get the events repository instance."""
         if self._events is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -481,7 +487,7 @@ class DatabaseContext:
         return self._events
 
     @property
-    def vector(self) -> "VectorRepository":
+    def vector(self) -> VectorRepository:
         """Get the vector repository instance."""
         if self._vector is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -492,7 +498,7 @@ class DatabaseContext:
         return self._vector
 
     @property
-    def schedule_automations(self) -> "ScheduleAutomationsRepository":
+    def schedule_automations(self) -> ScheduleAutomationsRepository:
         """Get the schedule automations repository instance."""
         if self._schedule_automations is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -503,7 +509,7 @@ class DatabaseContext:
         return self._schedule_automations
 
     @property
-    def automations(self) -> "AutomationsRepository":
+    def automations(self) -> AutomationsRepository:
         """Get the unified automations repository instance."""
         if self._automations is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -514,7 +520,7 @@ class DatabaseContext:
         return self._automations
 
     @property
-    def push_subscriptions(self) -> "PushSubscriptionRepository":
+    def push_subscriptions(self) -> PushSubscriptionRepository:
         """Get the push subscriptions repository instance."""
         if self._push_subscriptions is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -525,7 +531,7 @@ class DatabaseContext:
         return self._push_subscriptions
 
     @property
-    def ios_push_tokens(self) -> "IosPushTokenRepository":
+    def ios_push_tokens(self) -> IosPushTokenRepository:
         """Get the iOS push tokens repository instance."""
         if self._ios_push_tokens is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -536,7 +542,7 @@ class DatabaseContext:
         return self._ios_push_tokens
 
     @property
-    def worker_tasks(self) -> "WorkerTasksRepository":
+    def worker_tasks(self) -> WorkerTasksRepository:
         """Get the worker tasks repository instance."""
         if self._worker_tasks is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -547,7 +553,7 @@ class DatabaseContext:
         return self._worker_tasks
 
     @property
-    def a2a_tasks(self) -> "A2ATasksRepository":
+    def a2a_tasks(self) -> A2ATasksRepository:
         """Get the A2A tasks repository instance."""
         if self._a2a_tasks is None:
             from family_assistant.storage.repositories.a2a_tasks import (  # noqa: PLC0415
@@ -558,7 +564,7 @@ class DatabaseContext:
         return self._a2a_tasks
 
     @property
-    def scripts(self) -> "ScriptsRepository":
+    def scripts(self) -> ScriptsRepository:
         """Get the scripts repository instance."""
         if self._scripts is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
@@ -567,6 +573,17 @@ class DatabaseContext:
 
             self._scripts = ScriptsRepository(self)
         return self._scripts
+
+    @property
+    def taint_audit_events(self) -> TaintAuditEventsRepository:
+        """Get the runtime taint audit events repository instance."""
+        if self._taint_audit_events is None:
+            from family_assistant.storage.repositories import (  # noqa: PLC0415
+                TaintAuditEventsRepository,
+            )
+
+            self._taint_audit_events = TaintAuditEventsRepository(self)
+        return self._taint_audit_events
 
     async def init_vector_db(self) -> None:
         """Initialize vector database components."""

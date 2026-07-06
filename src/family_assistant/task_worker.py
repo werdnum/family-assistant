@@ -52,6 +52,11 @@ from family_assistant.scripting import (
     ScriptTimeoutError,
 )
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    TaintSource,
+    TurnTaintState,
+)
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.services import short_error_summary
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
@@ -113,6 +118,15 @@ from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _taint_sources_from_delegation_run(
+    run: DelegationRunDict,
+) -> tuple[TaintSource, ...]:
+    """Return parent taint sources persisted with an async delegation run."""
+    if run["taint_state_json"] is None:
+        return ()
+    return TurnTaintState.from_metadata(run["taint_state_json"]).sources
 
 
 class ReminderConfig(TypedDict, total=False):
@@ -1098,6 +1112,7 @@ class TaskWorker:
                     confirmation_ui_managers=exec_context.confirmation_ui_managers,
                     request_confirmation_callback=request_confirmation_callback,
                     subconversation_id=run["subconversation_id"],
+                    initial_taint_sources=_taint_sources_from_delegation_run(run),
                 )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught
@@ -2030,6 +2045,7 @@ class TaskWorker:
                 trigger_role="system",
                 save_history_with_isolated_context=False,
                 turn_id=wake_turn_id,
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
             message_internal_id = (
                 await self._deliver_source_profile_delegation_response(
@@ -4028,6 +4044,14 @@ async def _build_confirmation_execution_context(
         )
 
     tools_provider = processing_service.tools_provider
+    taint_state = (
+        TurnTaintState.from_metadata(request["taint_state_json"])
+        if request["taint_state_json"] is not None
+        else None
+    )
+    taint_tracker = (
+        InMemoryTurnTaintTracker(taint_state) if taint_state is not None else None
+    )
 
     async def approved_confirmation_callback(
         interface_type: str,
@@ -4103,6 +4127,8 @@ async def _build_confirmation_execution_context(
         allow_wake_llm=processing_service.service_config.allow_wake_llm,
         note_registry=processing_service.service_config.note_registry,
         confirmation_result_waiters=exec_context.confirmation_result_waiters,
+        taint_tracker=taint_tracker,
+        taint_policy_snapshot=taint_state,
     )
 
 

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError  # Use broader exception
 
@@ -58,6 +60,11 @@ notes_table = Table(
         Boolean,
         nullable=False,
         server_default="false",
+    ),
+    Column(
+        "provenance_metadata_json",
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
     ),
     Column("skill_name", String, nullable=True),
     Column("skill_description", String, nullable=True),

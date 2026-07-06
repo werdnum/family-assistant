@@ -4,6 +4,7 @@ Tests fundamental email ingestion, indexing, and vector query retrieval.
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -446,6 +447,25 @@ async def test_email_indexing_and_query_e2e(
             query_results = None
             async with DatabaseContext(engine=pg_vector_db_engine) as db:
                 logger.info(f"Querying vectors using text: '{TEST_QUERY_TEXT}'")
+                doc_row = await db.fetch_one(
+                    select(
+                        DocumentRecord.doc_metadata,
+                        DocumentRecord.visibility_labels,
+                    ).where(DocumentRecord.source_id == TEST_EMAIL_MESSAGE_ID)
+                )
+                assert doc_row is not None
+                doc_metadata = doc_row["doc_metadata"]
+                assert doc_metadata is not None
+                assert doc_metadata["source_trust_tier"] == "unknown_external"
+                assert doc_metadata["source_type"] == "email"
+                assert doc_metadata["provenance_labels"] == ["source_unknown_external"]
+                assert doc_metadata["taint_metadata"]["max_tier"] == (
+                    "unknown_external"
+                )
+                visibility_labels = doc_row["visibility_labels"]
+                if isinstance(visibility_labels, str):
+                    visibility_labels = json.loads(visibility_labels)
+                assert visibility_labels == []
                 query_results = await query_vectors(
                     db,
                     query_embedding=query_embedding,  # Use the mock query embedding

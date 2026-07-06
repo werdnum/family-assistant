@@ -1,6 +1,6 @@
 """Unit tests for large tool-result handling in AttachmentProcessor."""
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
@@ -13,7 +13,11 @@ from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.tool_execution import ToolExecutor
 from family_assistant.processing.types import ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.tools.types import ToolAttachment, ToolResult
 from family_assistant.utils.clock import SystemClock
+
+if TYPE_CHECKING:
+    from family_assistant.security.taint import TaintMetadata
 
 
 def _create_processor(
@@ -167,3 +171,115 @@ async def test_handle_large_result_keeps_text_plain_for_non_json_shape() -> None
     assert attachment_id == "att_txt_1"
     call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
     assert call_kwargs["content_type"] == "text/plain"
+
+
+@pytest.mark.asyncio
+async def test_handle_large_result_persists_taint_metadata() -> None:
+    """Auto-converted large results should carry result taint in attachment metadata."""
+    mock_registry = Mock()
+    mock_registry.store_and_register_tool_attachment = AsyncMock(
+        return_value=Mock(attachment_id="att_taint_1")
+    )
+    processor = _create_processor(
+        attachment_registry=cast("AttachmentRegistry", mock_registry)
+    )
+    taint_metadata = cast(
+        "TaintMetadata",
+        {
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "sources": [],
+        },
+    )
+
+    _, attachment_id = await processor.handle_large_result(
+        db_context=Mock(),
+        content="tainted-" + ("Z" * 4096),
+        tool_name="test_tool",
+        conversation_id="conv_taint",
+        call_id="call_taint",
+        taint_metadata=taint_metadata,
+    )
+
+    assert attachment_id == "att_taint_1"
+    call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
+    assert call_kwargs["metadata"]["taint_metadata"] == taint_metadata
+
+
+@pytest.mark.asyncio
+async def test_tool_result_attachment_registration_persists_taint_metadata() -> None:
+    """Explicit ToolResult attachments should carry result taint in registry metadata."""
+    mock_registry = Mock()
+    mock_registry.store_and_register_tool_attachment = AsyncMock(
+        return_value=Mock(
+            attachment_id="att_explicit_1",
+            content_url="memory://att_explicit_1",
+        )
+    )
+    processor = _create_processor(
+        attachment_registry=cast("AttachmentRegistry", mock_registry),
+        threshold_kb=100,
+    )
+    executor = ToolExecutor(
+        tools_provider=AsyncMock(),
+        config=ProcessingServiceConfig(
+            id="test",
+            prompts={},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+        ),
+        attachment_processor=processor,
+        attachment_registry=cast("AttachmentRegistry", mock_registry),
+        clock=SystemClock(),
+    )
+    taint_metadata = cast(
+        "TaintMetadata",
+        {
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "sources": [],
+        },
+    )
+
+    (
+        _,
+        llm_message,
+        stream_metadata,
+        attachment_ids,
+    ) = await executor._build_output_for_tool_result(  # noqa: SLF001
+        db_context=Mock(),
+        result=ToolResult(
+            text="small result",
+            attachments=[
+                ToolAttachment(
+                    content=b"tainted attachment",
+                    mime_type="text/plain",
+                    description="external text",
+                )
+            ],
+        ),
+        function_name="test_tool",
+        conversation_id="conv_explicit",
+        call_id="call_explicit",
+        provider_metadata=None,
+        taint_metadata=taint_metadata,
+    )
+
+    assert attachment_ids == ["att_explicit_1"]
+    assert llm_message.taint_metadata == taint_metadata
+    assert stream_metadata == {
+        "attachments": [
+            {
+                "type": "tool_result",
+                "mime_type": "text/plain",
+                "description": "external text",
+                "content_url": "memory://att_explicit_1",
+                "attachment_id": "att_explicit_1",
+            }
+        ]
+    }
+    call_kwargs = mock_registry.store_and_register_tool_attachment.await_args.kwargs
+    assert call_kwargs["metadata"]["taint_metadata"] == taint_metadata

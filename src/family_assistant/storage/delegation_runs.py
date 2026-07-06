@@ -41,6 +41,7 @@ delegation_runs_table = Table(
     Column(
         "content_parts_json", JSON().with_variant(JSONB, "postgresql"), nullable=False
     ),
+    Column("taint_state_json", JSON().with_variant(JSONB, "postgresql"), nullable=True),
     Column("handed_off_at", DateTime(timezone=True), nullable=True),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("completed_at", DateTime(timezone=True), nullable=True),

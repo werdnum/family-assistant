@@ -260,6 +260,11 @@ email_intake:
   enable_actions: false
   # Local service profile used for action-capable email processing.
   action_profile_id: "email_intake"
+  # Optional trust-tier allowlists for runtime taint. A sender only gets the
+  # lower tier when the normalized sender address is listed here AND the stored
+  # DMARC result is "pass"; all other email content is unknown_external.
+  known_contact_sender_addresses: []
+  recognized_machine_sender_addresses: []
   # Optional outbound Mailgun Messages API settings for email replies.
   # The email interface only replies to the inbound sender when that address is
   # explicitly mapped to the target user in users[].email_intake.sender_addresses.
@@ -271,6 +276,29 @@ email_intake:
   max_raw_request_bytes: 26214400
   max_attachment_bytes: 10485760
   max_total_attachment_bytes: 26214400
+
+# --- Runtime Taint Policy ---
+# Tracks whether the current turn has incorporated untrusted external content
+# such as inbound email, browser snapshots, or untrusted tool output. Tool
+# execution is evaluated against a sink-class matrix so untrusted content cannot
+# silently broaden private reads, write artifacts, delegate, browse, run networked
+# workers, or send messages without the configured outcome.
+taint_policy:
+  # observe records audit events and stores provenance, but converts confirm/deny
+  # decisions to audit. Switch to enforce after reviewing audit behavior.
+  mode: "observe"
+  high_taint_tier: "unknown_external"
+  default_unspecified_tool_output_tier: "unknown_external"
+  # Deployment-level minimum outcomes that profile overrides cannot relax.
+  operator_minimum: {}
+  # Optional full matrix replacement/extension by source tier and sink class.
+  matrix: {}
+  # Optional targeted overrides merged after the default matrix.
+  matrix_overrides: {}
+  artifact_labels:
+    known_contact: ["source_known_contact"]
+    recognized_machine: ["source_recognized_machine"]
+    unknown_external: ["source_unknown_external"]
 # --- Skills Configuration ---
 # Directories for file-based skills (loaded at startup, shown in skill catalog).
 # builtin_dir defaults to the package's skills/builtin/ directory when not set.

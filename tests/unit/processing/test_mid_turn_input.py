@@ -130,4 +130,7 @@ async def test_mid_turn_input_is_injected_after_tool_result(
         and "Actually use the newer instruction" in str(message.content)
         for message in generated_messages
     )
-    assert generated_messages[-1] == AssistantMessage(content="updated answer")
+    assert isinstance(generated_messages[-1], AssistantMessage)
+    assert generated_messages[-1].content == "updated answer"
+    assert generated_messages[-1].taint_metadata is not None
+    assert generated_messages[-1].taint_metadata.get("max_tier") == "trusted_user"

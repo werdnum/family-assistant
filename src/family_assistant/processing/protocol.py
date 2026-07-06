@@ -11,15 +11,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import MessageAttachmentMetadata
     from family_assistant.processing.types import (
         ChatInteractionResult,
+        MidTurnInputProvider,
         ProcessingServiceConfig,
         RemoteServiceConfig,
         RequestConfirmationCallback,
     )
+    from family_assistant.security.taint import TaintSource
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
@@ -54,6 +58,14 @@ class DelegatableService(Protocol):
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         trigger_attachments: list[MessageAttachmentMetadata] | None = None,
         subconversation_id: str | None = None,
+        mid_turn_input_provider: MidTurnInputProvider | None = None,
+        turn_id: str | None = None,
+        thread_root_id: int | None = None,
+        trigger_is_internal: bool = False,
+        pinned_history_message_ids: list[int] | None = None,
+        trigger_role: Literal["user", "system"] = "user",
+        save_history_with_isolated_context: bool | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> ChatInteractionResult: ...
 
 

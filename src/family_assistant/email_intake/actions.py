@@ -12,6 +12,7 @@ from family_assistant.email_intake.outbound import (
     OutboundEmailDeliveryError,
     email_conversation_id,
 )
+from family_assistant.email_intake.taint import email_initial_taint_source
 from family_assistant.llm.messages import text_content
 from family_assistant.services.deferred_tool_confirmation import (
     create_deferred_tool_confirmation,
@@ -196,6 +197,11 @@ async def handle_email_intake_action(
 
     processing_service = _resolve_email_processing_service(exec_context)
     conversation_id = email_conversation_id(email_db_id)
+    initial_taint_source = email_initial_taint_source(
+        email_db_id=email_db_id,
+        email_row=email_row,
+        app_config=processing_service.app_config,
+    )
     email_interface: ChatInterface | None = None
     if exec_context.chat_interfaces is not None:
         email_interface = exec_context.chat_interfaces.get("email")
@@ -233,6 +239,7 @@ async def handle_email_intake_action(
         chat_interfaces=exec_context.chat_interfaces,
         confirmation_ui_managers=exec_context.confirmation_ui_managers,
         request_confirmation_callback=confirmation_callback,
+        initial_taint_sources=(initial_taint_source,),
     )
     if result.text_reply and email_interface is not None:
         text_reply = result.text_reply
