@@ -92,6 +92,108 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testBootstrapDoesNotAutoSendUserTypedLaunchDraft() async {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .text("")
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        // Launch focuses the composer. The user starts typing their first word
+        // while bootstrap's profile/conversation fetches are still in flight, so
+        // the draft is non-empty by the time bootstrap reaches its send check.
+        model.draftText = "hello"
+
+        await model.bootstrap()
+
+        XCTAssertEqual(
+            model.draftText,
+            "hello",
+            "A word the user typed into the launch composer must not be auto-submitted by bootstrap."
+        )
+        XCTAssertTrue(
+            model.messages.isEmpty,
+            "Bootstrap must not start a turn from the user's in-progress launch draft."
+        )
+    }
+
+    func testBootstrapAutoSendsUntouchedLaunchSeededDraft() async throws {
+        let model = makeViewModel(conversationID: nil, initialPrompt: "Remember the milk")
+        let conversationID = try XCTUnwrap(model.conversationID)
+        var streamedTurnID = "turn-seeded"
+        ChatMockBackendURLProtocol.respond { request in
+            let method = request.httpMethod ?? "GET"
+            let path = request.url?.path ?? ""
+            switch (method, path) {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .text("")
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"\#(conversationID)","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/stream"):
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"\(conversationID)",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Remember the milk","timestamp":"2026-06-08T12:00:00Z"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        await model.bootstrap()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(
+            model.draftText,
+            "",
+            "A launch-seeded draft the user left untouched should be auto-sent."
+        )
+        XCTAssertTrue(
+            model.messages.contains { $0.role == .user && $0.text == "Remember the milk" },
+            "The seeded prompt should have been submitted as the user's message."
+        )
+    }
+
     func testLaunchWithoutActivityTimestampOpensNewChat() {
         UserDefaults.standard.set("web_conv_legacy", forKey: "lastConversationId")
         UserDefaults.standard.removeObject(forKey: "lastConversationActiveAt")
@@ -6647,6 +6749,7 @@ final class ChatViewModelTests: XCTestCase {
 
     private func makeViewModel(
         conversationID: String?,
+        initialPrompt: String? = nil,
         startsNewConversation: Bool = false,
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
@@ -6659,7 +6762,7 @@ final class ChatViewModelTests: XCTestCase {
         return ChatViewModel(
             authManager: authManager,
             conversationID: conversationID,
-            initialPrompt: nil,
+            initialPrompt: initialPrompt,
             startsNewConversation: startsNewConversation,
             liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
