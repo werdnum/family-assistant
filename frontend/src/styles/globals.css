@@ -253,6 +253,16 @@
   border-color: color-mix(in srgb, hsl(var(--primary-foreground)) 25%, transparent);
 }
 
+/*
+ * Blockquotes default to muted-foreground, which has poor contrast on the
+ * filled primary bubble. Inherit the bubble foreground and tint the accent
+ * border from it so quoted user text stays legible in both themes.
+ */
+[data-testid='user-message-content'] .markdown-text blockquote {
+  color: inherit;
+  border-left-color: color-mix(in srgb, hsl(var(--primary-foreground)) 40%, transparent);
+}
+
 .markdown-text strong {
   font-weight: 600;
 }
@@ -293,5 +303,42 @@
 .markdown-text th {
   background-color: hsl(var(--muted));
   font-weight: 600;
+}
+
+/*
+ * custom.css (imported after this file in the chat bundle) rewrites bare
+ * `table` elements into a stacked card layout on mobile: it blocks the row
+ * groups, hides `th`, and injects `td::before` labels. Those bare-element
+ * rules would otherwise leak into markdown tables, dropping the header row and
+ * showing stray ": " prefixes. Re-assert normal table rendering (kept
+ * horizontally scrollable by the `.markdown-text table` block above) for
+ * markdown content, relying on the higher `.markdown-text` specificity.
+ */
+@media (max-width: 768px) {
+  .markdown-text thead {
+    display: table-header-group;
+  }
+
+  .markdown-text tbody {
+    display: table-row-group;
+  }
+
+  .markdown-text tr {
+    display: table-row;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+  }
+
+  .markdown-text th,
+  .markdown-text td {
+    display: table-cell;
+  }
+
+  .markdown-text td::before {
+    content: none;
+  }
 }
 
