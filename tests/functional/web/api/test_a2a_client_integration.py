@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -24,10 +24,30 @@ from family_assistant.a2a.client import (
 )
 from family_assistant.a2a.remote_service import RemoteA2AService
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
+from family_assistant.a2a.types import (
+    Artifact,
+    Message,
+    Part,
+    Role,
+    Task,
+    TaskState,
+    TaskStatus,
+    TextPart,
+)
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.llm.content_parts import text_content
+from family_assistant.llm.content_parts import ContentPartDict, text_content
 from family_assistant.processing import PENDING, ChatInteractionResult
 from family_assistant.processing.types import RemoteServiceConfig
+from family_assistant.security.taint import (
+    A2A_TAINT_METADATA_KEY,
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
+from family_assistant.web.routers.a2a_api import (
+    _initial_taint_sources_from_message,  # noqa: PLC2701 - regression test covers server-side metadata restore
+)
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 
 if TYPE_CHECKING:
@@ -82,6 +102,146 @@ async def remote_service(
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
     )
     return RemoteA2AService(service_config=config, client=a2a_client_wrapper)
+
+
+class _CapturingA2AClient:
+    def __init__(self) -> None:
+        self.captured_metadata: dict[str, object] | None = None
+
+    async def send_message(
+        self,
+        content_parts: list[ContentPartDict],
+        *,
+        context_id: str | None = None,
+        task_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> Task:
+        _ = content_parts
+        _ = task_id
+        self.captured_metadata = metadata
+        return Task(
+            id="captured-task",
+            context_id=context_id or "captured-context",
+            status=TaskStatus(state=TaskState.completed),
+            artifacts=[
+                Artifact(
+                    artifact_id="captured-artifact",
+                    parts=[Part(root=TextPart(text="remote ok"))],
+                )
+            ],
+        )
+
+    async def submit(
+        self,
+        content_parts: list[ContentPartDict],
+        *,
+        context_id: str | None = None,
+        task_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> Task:
+        _ = content_parts
+        _ = task_id
+        self.captured_metadata = metadata
+        return Task(
+            id="captured-async-task",
+            context_id=context_id or "captured-context",
+            status=TaskStatus(state=TaskState.submitted),
+        )
+
+
+@pytest.mark.asyncio
+async def test_remote_a2a_preserves_runtime_taint_metadata(
+    api_db_context: DatabaseContext,
+) -> None:
+    source = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="message-123",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset({"source_unknown_external"}),
+        reason="external email",
+    )
+    client = _CapturingA2AClient()
+    service = RemoteA2AService(
+        service_config=RemoteServiceConfig(
+            id="remote_test_profile",
+            description="Test remote A2A profile",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        ),
+        client=cast("A2AClientWrapper", client),
+    )
+
+    result = await service.handle_chat_interaction(
+        db_context=api_db_context,
+        interface_type="test",
+        conversation_id="tainted-conversation",
+        trigger_content_parts=[text_content("Summarize this email")],
+        trigger_interface_message_id=None,
+        user_name="test_user",
+        initial_taint_sources=[source],
+    )
+
+    assert not result.has_error
+    assert client.captured_metadata is not None
+    raw_taint = client.captured_metadata[A2A_TAINT_METADATA_KEY]
+    assert isinstance(raw_taint, dict)
+    assert TurnTaintState.from_metadata(raw_taint).sources == (source,)
+
+    message = Message(
+        role=Role.user,
+        parts=[Part(root=TextPart(text="Summarize this email"))],
+        message_id="message-123",
+        metadata=client.captured_metadata,
+    )
+    assert _initial_taint_sources_from_message(message) == (source,)
+
+
+def test_inbound_a2a_without_taint_metadata_defaults_to_peer_floor() -> None:
+    message = Message(
+        role=Role.user,
+        parts=[Part(root=TextPart(text="hello from peer"))],
+        message_id="peer-message-123",
+        metadata=None,
+    )
+
+    sources = _initial_taint_sources_from_message(message)
+
+    assert len(sources) == 1
+    assert sources[0].source_id == "peer-message-123"
+    assert sources[0].tier is SourceTrustTier.RECOGNIZED_MACHINE
+    assert sources[0].source_type is TaintSourceType.MANUAL
+
+
+@pytest.mark.asyncio
+async def test_remote_a2a_async_submit_preserves_runtime_taint_metadata() -> None:
+    source = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="message-123",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset({"source_unknown_external"}),
+        reason="external email",
+    )
+    client = _CapturingA2AClient()
+    service = RemoteA2AService(
+        service_config=RemoteServiceConfig(
+            id="remote_test_profile",
+            description="Test remote A2A profile",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        ),
+        client=cast("A2AClientWrapper", client),
+    )
+
+    submission = await service.submit_async(
+        [text_content("Summarize this email")],
+        conversation_id="tainted-conversation",
+        subconversation_id=None,
+        initial_taint_sources=[source],
+    )
+
+    assert submission.remote_task_id == "captured-async-task"
+    assert client.captured_metadata is not None
+    raw_taint = client.captured_metadata[A2A_TAINT_METADATA_KEY]
+    assert isinstance(raw_taint, dict)
+    assert TurnTaintState.from_metadata(raw_taint).sources == (source,)
 
 
 class TestA2AClientIntegration:

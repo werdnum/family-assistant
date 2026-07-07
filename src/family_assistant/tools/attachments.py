@@ -6,6 +6,11 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from family_assistant.security.taint import TaintSourceType
+from family_assistant.tools.taint_helpers import (
+    merge_artifact_taint_into_context,
+    record_sensitive_read,
+)
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
@@ -49,7 +54,8 @@ ATTACHMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "read_text_attachment",
             "description": (
                 "Read text content from an attachment with optional filtering and pagination. "
-                "Use this to explore large text files or tool results that were auto-converted to attachments."
+                "Use this to explore large text files or tool results that were auto-converted to attachments. "
+                "Stored attachment provenance is tracked internally; using external-source content may make later writes, browsing, worker execution, or outgoing messages require approval."
             ),
             "parameters": {
                 "type": "object",
@@ -117,6 +123,24 @@ async def read_text_attachment_tool(
         return ToolResult(text="Error: Attachment registry not available.")
 
     try:
+        attachment_metadata = await exec_context.attachment_registry.get_attachment(
+            db_context, attachment_id_str
+        )
+        record_sensitive_read(
+            exec_context,
+            kind="attachments",
+            qualifier=f"text:{attachment_id_str}",
+            surfaced_ids=[attachment_id_str],
+        )
+        if attachment_metadata is not None:
+            merge_artifact_taint_into_context(
+                exec_context,
+                provenance_metadata=attachment_metadata.metadata,
+                fallback_source_type=TaintSourceType.ATTACHMENT,
+                fallback_source_id=attachment_id_str,
+                fallback_reason="Attachment read provenance.",
+            )
+
         # Fetch attachment content
         content_bytes = await exec_context.attachment_registry.get_attachment_content(
             db_context, attachment_id_str

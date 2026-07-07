@@ -52,6 +52,11 @@ from family_assistant.scripting import (
     ScriptTimeoutError,
 )
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    TaintSource,
+    TurnTaintState,
+)
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.services import short_error_summary
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
@@ -86,6 +91,9 @@ if TYPE_CHECKING:
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing.utils import get_file_extension_from_mime_type
+from family_assistant.services.confirmation_service import (
+    build_confirmation_policy_fingerprint,
+)
 from family_assistant.services.deferred_tool_confirmation import (
     build_deferred_confirmation_callback,
 )
@@ -113,6 +121,15 @@ from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _taint_sources_from_delegation_run(
+    run: DelegationRunDict,
+) -> tuple[TaintSource, ...]:
+    """Return parent taint sources persisted with an async delegation run."""
+    if run["taint_state_json"] is None:
+        return ()
+    return TurnTaintState.from_metadata(run["taint_state_json"]).sources
 
 
 class ReminderConfig(TypedDict, total=False):
@@ -1098,6 +1115,7 @@ class TaskWorker:
                     confirmation_ui_managers=exec_context.confirmation_ui_managers,
                     request_confirmation_callback=request_confirmation_callback,
                     subconversation_id=run["subconversation_id"],
+                    initial_taint_sources=_taint_sources_from_delegation_run(run),
                 )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught
@@ -1206,6 +1224,7 @@ class TaskWorker:
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1321,6 +1340,7 @@ class TaskWorker:
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1801,6 +1821,11 @@ class TaskWorker:
                 if source_row is not None:
                     source_message_internal_id = source_row["internal_id"]
 
+            taint_state_json = (
+                context.taint_tracker.snapshot().to_metadata()
+                if context.taint_tracker is not None
+                else None
+            )
             return await confirmation_manager.request_confirmation(
                 conversation_id=run["conversation_id"],
                 interface_type=run["interface_type"],
@@ -1813,6 +1838,8 @@ class TaskWorker:
                 tool_call_id=call_id,
                 source_message_internal_id=source_message_internal_id,
                 wait_for_durable_execution=False,
+                taint_state_json=taint_state_json,
+                processing_profile_id=context.processing_profile_id,
             )
 
         return request_confirmation
@@ -2030,6 +2057,7 @@ class TaskWorker:
                 trigger_role="system",
                 save_history_with_isolated_context=False,
                 turn_id=wake_turn_id,
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
             message_internal_id = (
                 await self._deliver_source_profile_delegation_response(
@@ -2795,6 +2823,7 @@ class TaskWorker:
                         "confirmation_ui_managers",
                         None,
                     ),
+                    taint_tracker=InMemoryTurnTaintTracker(),
                 )
                 # --- Execute Handler with Context ---
                 logger.debug(
@@ -4028,6 +4057,14 @@ async def _build_confirmation_execution_context(
         )
 
     tools_provider = processing_service.tools_provider
+    taint_state = (
+        TurnTaintState.from_metadata(request["taint_state_json"])
+        if request["taint_state_json"] is not None
+        else None
+    )
+    taint_tracker = (
+        InMemoryTurnTaintTracker(taint_state) if taint_state is not None else None
+    )
 
     async def approved_confirmation_callback(
         interface_type: str,
@@ -4103,6 +4140,8 @@ async def _build_confirmation_execution_context(
         allow_wake_llm=processing_service.service_config.allow_wake_llm,
         note_registry=processing_service.service_config.note_registry,
         confirmation_result_waiters=exec_context.confirmation_result_waiters,
+        taint_tracker=taint_tracker,
+        taint_policy_snapshot=taint_state,
     )
 
 
@@ -4392,6 +4431,19 @@ async def handle_confirmation_tool_execution(
             source_row,
             processing_service,
         )
+        approval_policy_fingerprint = request["approval_policy_fingerprint"]
+        if approval_policy_fingerprint is not None:
+            expected_fingerprint = build_confirmation_policy_fingerprint(
+                tool_name=request["tool_name"],
+                tool_call_id=request["tool_call_id"],
+                processing_profile_id=execution_context.processing_profile_id,
+                taint_state_json=request["taint_state_json"],
+            )
+            if approval_policy_fingerprint != expected_fingerprint:
+                raise RuntimeError(
+                    "Approved confirmation policy fingerprint no longer matches "
+                    "the execution context"
+                )
         tools_provider = _get_processing_tools_provider(execution_context)
         call_id = request["tool_call_id"] or request["id"]
 

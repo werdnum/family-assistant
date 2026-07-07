@@ -20,6 +20,9 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 from family_assistant.llm.google_types import GeminiProviderMetadata
+from family_assistant.security.taint import (
+    TaintMetadata,  # noqa: TCH001 - Pydantic resolves this TypedDict at runtime
+)
 from family_assistant.tools.types import (  # noqa: TCH001  # Pydantic needs runtime import for field validation
     ToolAttachment,
     ToolResult,
@@ -168,6 +171,7 @@ class UserMessage(BaseModel):
 
     role: Literal["user"] = "user"
     content: str | list[ContentPart]
+    taint_metadata: TaintMetadata | None = None
 
     # Optional: For provider-specific pre-converted format (e.g., Google GenAI)
     # Excluded from serialization as it's only used during provider conversion
@@ -188,6 +192,7 @@ class AssistantMessage(BaseModel):
     tool_calls: list[ToolCallItem] | None = None
     # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
     provider_metadata: Any | None = None
+    taint_metadata: TaintMetadata | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -220,6 +225,7 @@ class ToolMessage(BaseModel):
     error_traceback: str | None = None
     # Provider-specific metadata (e.g., Gemini thought signatures)
     provider_metadata: GeminiProviderMetadata | ProviderMetadataDict | None = None
+    taint_metadata: TaintMetadata | None = None
 
     # IMPORTANT: Preserve the original ToolResult for better tracking and debugging
     # This field is excluded from serialization and used internally
@@ -330,7 +336,11 @@ def _serialize_tool_call_item(tool_call: ToolCallItem) -> dict[str, object]:
     return tc_dict
 
 
-def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
+def message_to_json_dict(
+    msg: LLMMessage,
+    *,
+    include_taint_metadata: bool = False,
+) -> dict[str, object]:
     """
     Convert a message to a fully serialized dictionary suitable for JSON encoding.
 
@@ -338,7 +348,7 @@ def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
     making the result safe for json.dumps().
     """
     if isinstance(msg, UserMessage):
-        return {
+        user_message_dict: dict[str, object] = {
             "role": "user",
             "content": [
                 part.model_dump(mode="json", exclude_none=True) for part in msg.content
@@ -346,6 +356,9 @@ def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
             if isinstance(msg.content, list)
             else msg.content,
         }
+        if include_taint_metadata and msg.taint_metadata is not None:
+            user_message_dict["taint_metadata"] = msg.taint_metadata
+        return user_message_dict
 
     if isinstance(msg, AssistantMessage):
         tool_calls = (
@@ -367,6 +380,8 @@ def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
         }
         if provider_metadata is not None:
             message_dict["provider_metadata"] = provider_metadata
+        if include_taint_metadata and msg.taint_metadata is not None:
+            message_dict["taint_metadata"] = msg.taint_metadata
         return message_dict
 
     if isinstance(msg, ToolMessage):
@@ -385,6 +400,8 @@ def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
         }
         if provider_metadata is not None:
             tool_message_dict["provider_metadata"] = provider_metadata
+        if include_taint_metadata and msg.taint_metadata is not None:
+            tool_message_dict["taint_metadata"] = msg.taint_metadata
         return tool_message_dict
 
     if isinstance(msg, SystemMessage):
@@ -405,14 +422,18 @@ def message_to_json_dict(msg: LLMMessage) -> dict[str, object]:
 
 
 # Backwards-compatible alias for callers still expecting message_to_dict
-def message_to_dict(msg: LLMMessage) -> dict[str, object]:
+def message_to_dict(
+    msg: LLMMessage,
+    *,
+    include_taint_metadata: bool = False,
+) -> dict[str, object]:
     """
     Serialize a typed LLMMessage to a JSON-safe dict.
 
     This intentionally accepts only typed message objects to keep APIs strict;
     callers must perform deserialization before invoking this helper.
     """
-    return message_to_json_dict(msg)
+    return message_to_json_dict(msg, include_taint_metadata=include_taint_metadata)
 
 
 # ast-grep-ignore: no-dict-any - Generic deserialization function
@@ -455,6 +476,7 @@ def tool_result_to_llm_message(
     tool_call_id: str,
     function_name: str,
     provider_metadata: GeminiProviderMetadata | ProviderMetadataDict | None = None,
+    taint_metadata: TaintMetadata | None = None,
 ) -> ToolMessage:
     """
     Convert a ToolResult to a ToolMessage for LLM consumption.
@@ -466,6 +488,7 @@ def tool_result_to_llm_message(
         tool_call_id: The tool call ID
         function_name: The function name
         provider_metadata: Provider-specific metadata (e.g., Gemini thought signature)
+        taint_metadata: Runtime taint metadata for this tool result.
 
     Returns:
         ToolMessage with attachments for provider processing
@@ -493,6 +516,7 @@ def tool_result_to_llm_message(
         content=result.get_text(),  # Use fallback mechanism
         name=function_name,
         provider_metadata=serialized_provider_metadata,
+        taint_metadata=taint_metadata,
         tool_result=result,  # Preserve original ToolResult for debugging
         _attachments=result.attachments,  # Pass attachments to provider (using alias)
         attachments=attachments_metadata,  # Store metadata in database

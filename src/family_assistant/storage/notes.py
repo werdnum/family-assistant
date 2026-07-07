@@ -4,11 +4,13 @@ Handles storage and retrieval of notes.
 
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -21,6 +23,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError  # Use broader exception
 
@@ -59,6 +62,11 @@ notes_table = Table(
         nullable=False,
         server_default="false",
     ),
+    Column(
+        "provenance_metadata_json",
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    ),
     Column("skill_name", String, nullable=True),
     Column("skill_description", String, nullable=True),
     Column(
@@ -88,6 +96,7 @@ class NoteDocument(Document):
     _created_at: datetime
     _updated_at: datetime
     _visibility_labels: list[str] = field(default_factory=list)
+    _provenance_metadata: Mapping[str, object] | None = None
 
     @property
     def id(self) -> int | None:
@@ -120,11 +129,14 @@ class NoteDocument(Document):
     @property
     # ast-grep-ignore: no-dict-any - note metadata has mixed value types for indexing
     def metadata(self) -> dict[str, Any] | None:
-        return {
+        metadata: dict[str, object] = {
             "title": self._title,
             "created_at": self._created_at.isoformat(),
             "updated_at": self._updated_at.isoformat(),
         }
+        if self._provenance_metadata is not None:
+            metadata.update(self._provenance_metadata)
+        return metadata
 
     @property
     def visibility_labels(self) -> list[str] | None:

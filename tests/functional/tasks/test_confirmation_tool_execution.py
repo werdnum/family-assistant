@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
+from types import SimpleNamespace  # pylint: disable=no-name-in-module
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -359,6 +359,7 @@ async def _create_request(
     tool_args: ToolArguments | None = None,
     origin_interface_type: str | None = None,
     origin_conversation_id: str | None = None,
+    approval_policy_fingerprint: str | None = None,
 ) -> str:
     resolved_tool_args: ToolArguments = (
         tool_args if tool_args is not None else {"value": "payload"}
@@ -373,6 +374,7 @@ async def _create_request(
         expires_at=datetime_now_utc() + timedelta(hours=1),
         origin_interface_type=origin_interface_type,
         origin_conversation_id=origin_conversation_id,
+        approval_policy_fingerprint=approval_policy_fingerprint,
     )
     return request["id"]
 
@@ -639,6 +641,46 @@ async def test_confirmation_execution_failure_notifies_without_live_waiter(
     assert status == "failed"
     assert error is not None
     assert "tool exploded" in error
+
+
+@pytest.mark.asyncio
+async def test_confirmation_execution_rejects_mismatched_approval_fingerprint(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+        approval_policy_fingerprint="stale-approval-context",
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    chat_interface = RecordingChatInterface()
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await db.execute_with_retry(
+            update(tasks_table)
+            .where(tasks_table.c.task_id == task_id)
+            .values(max_retries=0)
+        )
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+        allow_failures=True,
+    )
+
+    assert provider.calls == []
+    status, error = await _task_status(db_engine, task_id)
+    assert status == "failed"
+    assert error is not None
+    assert "fingerprint no longer matches" in error
+    assert chat_interface.messages
+    assert (
+        "Error executing approved tool 'record_tool'" in chat_interface.messages[0][1]
+    )
 
 
 @pytest.mark.asyncio

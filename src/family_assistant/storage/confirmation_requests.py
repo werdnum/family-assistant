@@ -53,6 +53,15 @@ confirmation_requests_table = Table(
     Column("resolved_by_user_id", String(255), nullable=True),
     Column("resolved_via_interface", String(50), nullable=True),
     Column("execution_task_id", String(255), nullable=True, unique=True),
+    Column(
+        "taint_state_json",
+        JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),
+        nullable=True,
+    ),
+    Column("sink_class", String(64), nullable=True),
+    Column("static_policy_reason", Text, nullable=True),
+    Column("taint_policy_reason", Text, nullable=True),
+    Column("approval_policy_fingerprint", String(255), nullable=True),
     # When True, approval resumes a caller that executes the tool inline (e.g. a
     # delegated run waiting on the decision) rather than enqueueing a
     # confirmation_tool_execution task. Stored durably so the approval endpoint

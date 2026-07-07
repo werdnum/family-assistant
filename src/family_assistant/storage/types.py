@@ -11,6 +11,7 @@ if TYPE_CHECKING:
         ProviderMetadataDict,
     )
     from family_assistant.llm.tool_call import ToolCallItem
+    from family_assistant.security.taint import TaintMetadata
 
 MatchConditions = dict[str, str | int | float | bool]
 
@@ -134,6 +135,46 @@ class ErrorLogRow(TypedDict):
     extra_data: dict[str, Any] | None
 
 
+class TaintAuditSourceSummary(TypedDict):
+    """Compact taint source summary persisted in audit rows."""
+
+    source_type: str
+    source_id: str | None
+    tier: str
+    labels: list[str]
+    reason: str
+
+
+class TaintAuditArgumentsSummary(TypedDict):
+    """Audit-safe summary of tool argument shape."""
+
+    keys: list[str]
+    value_types: dict[str, str]
+
+
+class TaintAuditEventRow(TypedDict):
+    """Type definition for durable runtime taint audit events."""
+
+    event_id: str
+    created_at: datetime
+    event_type: str
+    conversation_id: str
+    turn_id: str | None
+    processing_profile_id: str | None
+    subconversation_id: str | None
+    tool_name: str
+    tool_call_id: str | None
+    sink_class: str | None
+    max_tier: str
+    sources_json: list[TaintAuditSourceSummary]
+    requested_outcome: str | None
+    effective_outcome: str | None
+    mode: str | None
+    reason: str
+    arguments_summary_json: TaintAuditArgumentsSummary | None
+    artifact_id: str | None
+
+
 class ListenerExecutionStatsDict(TypedDict):
     """Type definition for listener execution statistics."""
 
@@ -180,6 +221,9 @@ class MessageHistoryRow(TypedDict):
     attachments: "list[MessageAttachmentMetadata] | None"
     tool_name: str | None
     provider_metadata: "ProviderMetadataDict | GeminiProviderMetadata | None"
+    taint_metadata_json: "TaintMetadata | None"
+    taint_metadata_version: str | None
+    taint_metadata: "TaintMetadata | None"
     is_internal: bool
 
 

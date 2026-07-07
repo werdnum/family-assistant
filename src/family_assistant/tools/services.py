@@ -13,6 +13,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from family_assistant.llm.content_parts import attachment_content, text_content
+from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.confirmation import (
     MAX_DELEGATION_REQUEST_CHARS,
@@ -113,6 +114,20 @@ def _resolve_handoff_wait_seconds(
 
 def _delegation_status_poll_seconds(exec_context: ToolExecutionContext) -> float:
     return max(0.05, _tools_config(exec_context).delegate_status_poll_seconds)
+
+
+def _current_taint_metadata(exec_context: ToolExecutionContext) -> TaintMetadata | None:
+    if exec_context.taint_tracker is None:
+        return None
+    return exec_context.taint_tracker.snapshot().to_metadata()
+
+
+def _taint_sources_from_metadata(
+    metadata: TaintMetadata | None,
+) -> tuple[TaintSource, ...]:
+    if metadata is None:
+        return ()
+    return TurnTaintState.from_metadata(metadata).sources
 
 
 def _terminal_delegation_run(run: DelegationRunDict | None) -> bool:
@@ -260,6 +275,9 @@ async def _synchronous_delegation_result(
             confirmation_ui_managers=exec_context.confirmation_ui_managers,
             request_confirmation_callback=exec_context.request_confirmation_callback,
             subconversation_id=subconversation_id,
+            initial_taint_sources=_taint_sources_from_metadata(
+                _current_taint_metadata(exec_context)
+            ),
         )
     except Exception as e:
         logger.error(
@@ -737,6 +755,7 @@ async def delegate_to_service_tool(
         handoff_after_seconds,
         delivery_hint,
     )
+    taint_state_json = _current_taint_metadata(exec_context)
 
     logger.info(
         "Enqueuing delegated request to service profile '%s' with %d content parts "
@@ -763,6 +782,7 @@ async def delegate_to_service_tool(
                 "subconversation_id": subconversation_id,
                 "request_text": user_request,
                 "content_parts_json": content_parts,
+                "taint_state_json": taint_state_json,
             })
             await isolated_db.tasks.enqueue(
                 task_id=task_id,

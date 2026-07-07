@@ -101,7 +101,10 @@ class FakeConfirmationUIManager:
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
+        taint_state_json: object | None = None,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationOutcome:
+        _ = (taint_state_json, processing_profile_id)
         self.requests.append(
             FakeConfirmationRequest(
                 conversation_id=conversation_id,
@@ -2127,8 +2130,9 @@ class FakePollableService:
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        initial_taint_sources: object | None = None,
     ) -> RemoteSubmission:
-        _ = content_parts
+        _ = (content_parts, initial_taint_sources)
         error = self._submit_error
         if self._submit_errors is not None:
             error = self._submit_errors.pop(0) if self._submit_errors else None

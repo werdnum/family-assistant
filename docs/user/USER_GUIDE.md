@@ -144,7 +144,10 @@ You can ask the assistant a wide variety of things:
   communication channel. The assistant ignores instructions embedded inside forwarded content — only
   your direct request controls what it does. If the email came through a recipient-only alias
   without a mapped forwarding sender, confirmations can still be created, but the assistant won't
-  email a reply.
+  email a reply. Email-originated summaries, notes, indexed documents, and attachment text keep
+  source-provenance labels internally. If later work uses that external content and then tries to
+  write data, browse attacker-controlled pages, run networked worker code, or send a message, the
+  assistant may ask for approval even when the current wording sounds harmless.
 
 - **Forward Email to Index a Linked Document:** If the email points to a document you want to keep
   (a shared PDF, a Drive/Dropbox/iCloud link, a long article), the assistant can propose fetching
@@ -508,6 +511,12 @@ When the assistant needs to perform important actions, you'll be asked to confir
   runs later once you approve, just like the email and automation-script flows above. (For older
   reminders scheduled before this was added, the assistant has no record of who to ask, so a
   confirm-gated action is reported as "not run" instead.)
+- **External-source safety:** The assistant tracks when a turn has incorporated external or
+  sender-controlled content, such as forwarded email, indexed email attachments, document reads, or
+  untrusted tool output. That source label follows saved notes, indexed documents, attachment
+  read-back, delegated work, and pending confirmations. Depending on the operator's policy, later
+  actions that combine that content with private data or external effects may be audited, require
+  approval, or be blocked.
 - **Why this matters:** This gives you full control over what the assistant does and prevents
   unintended actions
 

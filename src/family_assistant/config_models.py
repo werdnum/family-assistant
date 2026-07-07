@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
+from .security.taint import TaintPolicyConfig
 from .tools.policy import (
     ToolPolicyConfig,  # noqa: TC001 - Pydantic resolves this model at runtime
 )
@@ -251,6 +252,7 @@ class ServiceProfile(BaseModel):
     processing_config: ProcessingConfig = Field(default_factory=ProcessingConfig)
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
+    taint_policy: TaintPolicyConfig | None = None
     operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
@@ -266,6 +268,7 @@ class DefaultProfileSettings(BaseModel):
     processing_config: ProcessingConfig = Field(default_factory=ProcessingConfig)
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     tools_policy: ToolPolicyConfig | None = None
+    taint_policy: TaintPolicyConfig | None = None
     operator_tools_policy: ToolPolicyConfig | None = Field(default=None, exclude=True)
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
@@ -721,6 +724,8 @@ class EmailIntakeConfig(BaseModel):
     mailgun_signature_max_age_seconds: int = Field(default=300, gt=0)
     allowed_sender_addresses: list[str] = Field(default_factory=list)
     allowed_recipient_addresses: list[str] = Field(default_factory=list)
+    known_contact_sender_addresses: list[str] = Field(default_factory=list)
+    recognized_machine_sender_addresses: list[str] = Field(default_factory=list)
     require_authenticated_sender: bool = False
     require_user_mapping: bool = False
     enable_actions: bool = False
@@ -1316,6 +1321,7 @@ class AppConfig(BaseSettings):
     # wholesale). Use this for tools that must be available in all contexts, such
     # as report_technical_problem. Operator policy can still override these.
     global_tools_policy: ToolPolicyConfig | None = None
+    taint_policy: TaintPolicyConfig = Field(default_factory=TaintPolicyConfig)
 
     # Feature configurations
     calendar_config: CalendarConfig = Field(default_factory=CalendarConfig)

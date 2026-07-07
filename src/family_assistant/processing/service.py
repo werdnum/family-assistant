@@ -23,6 +23,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -42,7 +43,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping
+    from collections.abc import AsyncIterator, Mapping, Sequence
     from datetime import datetime
 
     from family_assistant.camera.protocol import CameraBackend
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
+    from family_assistant.security.taint import TaintMetadata, TaintSource
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
@@ -60,6 +62,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _taint_metadata_from_sources(
+    sources: Sequence[TaintSource] | None,
+) -> TaintMetadata:
+    state = TurnTaintState.empty()
+    for source in sources or ():
+        state = state.add_source(source)
+    return state.to_metadata()
 
 
 class ProcessingService:
@@ -611,7 +622,8 @@ class ProcessingService:
         save_history_with_isolated_context: bool = True,
         trigger_role: Literal["user", "system"] = "user",
         reuse_existing_user_row: bool = False,
-    ) -> tuple[int | None, list[LLMMessage]]:
+        initial_taint_sources: Sequence[TaintSource] | None = None,
+    ) -> tuple[int | None, list[LLMMessage], tuple[TaintSource, ...]]:
         """Build the full pre-LLM turn state shared by sync and streaming flows."""
         thread_root_id_for_turn = thread_root_id
         if thread_root_id_for_turn is None:
@@ -626,10 +638,14 @@ class ProcessingService:
         actual_interface_message_id = trigger_interface_message_id or f"temp_{turn_id}"
 
         trigger_message: LLMMessage
+        trigger_taint_metadata = _taint_metadata_from_sources(initial_taint_sources)
         if trigger_role == "system":
             trigger_message = SystemMessage(content=user_content_for_history)
         else:
-            trigger_message = UserMessage(content=user_content_for_history)
+            trigger_message = UserMessage(
+                content=user_content_for_history,
+                taint_metadata=trigger_taint_metadata,
+            )
         # When the caller already persisted this turn's user message, reuse it
         # instead of inserting a duplicate. The web endpoint does this before
         # launching the (cancellable) producer task, so a Stop that cancels the
@@ -691,6 +707,9 @@ class ProcessingService:
             logger.warning("Pruned %d leading messages from LLM history.", pruned_count)
 
         aggregated_other_context_str = await self.context_preparer.aggregate_context()
+        context_taint_sources = (
+            await self.context_preparer.aggregate_context_taint_sources()
+        )
         if thread_attachments_context:
             if aggregated_other_context_str:
                 aggregated_other_context_str += "\n\n" + thread_attachments_context
@@ -724,7 +743,7 @@ class ProcessingService:
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
             messages_for_llm
         )
-        return thread_root_id_for_turn, typed_messages_for_llm
+        return thread_root_id_for_turn, typed_messages_for_llm, context_taint_sources
 
     async def process_message(
         self,
@@ -741,6 +760,7 @@ class ProcessingService:
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -769,6 +789,7 @@ class ProcessingService:
             camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
+            initial_taint_sources=initial_taint_sources,
         )
 
     async def process_message_stream(
@@ -786,6 +807,7 @@ class ProcessingService:
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -814,6 +836,7 @@ class ProcessingService:
             camera_backend=self.camera_backend,
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
+            initial_taint_sources=initial_taint_sources,
         ):
             yield item
 
@@ -840,6 +863,7 @@ class ProcessingService:
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
         save_history_with_isolated_context: bool | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -896,6 +920,7 @@ class ProcessingService:
             (
                 thread_root_id_for_turn,
                 typed_messages_for_llm,
+                context_taint_sources,
             ) = await self._prepare_turn_messages_for_llm(
                 db_context,
                 interface_type=interface_type,
@@ -913,6 +938,7 @@ class ProcessingService:
                 pinned_history_message_ids=pinned_history_message_ids,
                 save_history_with_isolated_context=use_isolated_history_writes,
                 trigger_role=trigger_role,
+                initial_taint_sources=initial_taint_sources,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
@@ -934,6 +960,10 @@ class ProcessingService:
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
                 mid_turn_input_provider=mid_turn_input_provider,
+                initial_taint_sources=(
+                    *context_taint_sources,
+                    *(initial_taint_sources or ()),
+                ),
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 
@@ -1034,6 +1064,7 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         turn_id: str | None = None,
         reuse_existing_user_row: bool = False,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1078,6 +1109,7 @@ class ProcessingService:
                     (
                         thread_root_id_for_turn,
                         typed_messages_for_llm,
+                        context_taint_sources,
                     ) = await self._prepare_turn_messages_for_llm(
                         db_context,
                         interface_type=interface_type,
@@ -1108,6 +1140,10 @@ class ProcessingService:
                         request_confirmation_callback=request_confirmation_callback,
                         subconversation_id=subconversation_id,
                         mid_turn_input_provider=mid_turn_input_provider,
+                        initial_taint_sources=(
+                            *context_taint_sources,
+                            *(initial_taint_sources or ()),
+                        ),
                     ):
                         yield event  # noqa: ASYNC119
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractAsyncContextManager
 
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.notifier import Notifier
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.repositories.confirmation_requests import (
@@ -51,6 +54,27 @@ class ConfirmationAlreadyResolvedError(ConfirmationError):
     """Raised when a request has already been resolved incompatibly."""
 
 
+def build_confirmation_policy_fingerprint(
+    *,
+    tool_name: str,
+    tool_call_id: str | None,
+    processing_profile_id: str | None,
+    taint_state_json: TaintMetadata | None,
+) -> str:
+    """Build a stable fingerprint for the approval context."""
+    payload = {
+        "tool_name": tool_name,
+        "tool_call_id": tool_call_id,
+        "processing_profile_id": processing_profile_id,
+        "taint_version": taint_state_json.get("version") if taint_state_json else None,
+        "taint_max_tier": (
+            taint_state_json.get("max_tier") if taint_state_json else None
+        ),
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 class ConfirmationService:
     """Service that owns durable confirmation transactions and authorization."""
 
@@ -76,6 +100,11 @@ class ConfirmationService:
         processing_profile_id: str | None = None,
         origin_interface_type: str | None = None,
         origin_conversation_id: str | None = None,
+        taint_state_json: TaintMetadata | None = None,
+        sink_class: str | None = None,
+        static_policy_reason: str | None = None,
+        taint_policy_reason: str | None = None,
+        approval_policy_fingerprint: str | None = None,
         decision_only: bool = False,
     ) -> ConfirmationRequestRow:
         """Create a durable pending confirmation request.
@@ -98,6 +127,11 @@ class ConfirmationService:
                 processing_profile_id=processing_profile_id,
                 origin_interface_type=origin_interface_type,
                 origin_conversation_id=origin_conversation_id,
+                taint_state_json=taint_state_json,
+                sink_class=sink_class,
+                static_policy_reason=static_policy_reason,
+                taint_policy_reason=taint_policy_reason,
+                approval_policy_fingerprint=approval_policy_fingerprint,
                 decision_only=decision_only,
             )
         # Notify only after the request transaction has committed, so a recipient that immediately
@@ -356,6 +390,11 @@ async def create_durable_confirmation(
     processing_profile_id: str | None = None,
     origin_interface_type: str | None = None,
     origin_conversation_id: str | None = None,
+    taint_state_json: TaintMetadata | None = None,
+    sink_class: str | None = None,
+    static_policy_reason: str | None = None,
+    taint_policy_reason: str | None = None,
+    approval_policy_fingerprint: str | None = None,
 ) -> ConfirmationRequestRow:
     """Record a durable pending confirmation for a tool that needs approval.
 
@@ -385,4 +424,9 @@ async def create_durable_confirmation(
         processing_profile_id=processing_profile_id,
         origin_interface_type=origin_interface_type,
         origin_conversation_id=origin_conversation_id,
+        taint_state_json=taint_state_json,
+        sink_class=sink_class,
+        static_policy_reason=static_policy_reason,
+        taint_policy_reason=taint_policy_reason,
+        approval_policy_fingerprint=approval_policy_fingerprint,
     )

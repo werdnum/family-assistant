@@ -14,6 +14,7 @@ from .notes import NotesRepository
 from .push_subscription import PushSubscriptionRepository
 from .schedule_automations import ScheduleAutomationsRepository
 from .scripts import ScriptsRepository
+from .taint_audit import TaintAuditEventsRepository
 from .tasks import TasksRepository
 from .vector import VectorRepository
 from .worker_tasks import WorkerTasksRepository
@@ -33,6 +34,7 @@ __all__ = [
     "PushSubscriptionRepository",
     "ScheduleAutomationsRepository",
     "ScriptsRepository",
+    "TaintAuditEventsRepository",
     "TasksRepository",
     "VectorRepository",
     "WorkerTasksRepository",

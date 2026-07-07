@@ -44,7 +44,7 @@ async def test_tools_page_loads(
 
     # Check that Tools link exists in navigation
     # First open the Internal menu since Tools is in a dropdown
-    internal_menu = page.locator("button:has-text('Internal')")
+    internal_menu = page.get_by_role("button", name="Internal", exact=True)
     if await internal_menu.is_visible():
         await internal_menu.click()
         # Wait for the Tools link to become visible in the dropdown

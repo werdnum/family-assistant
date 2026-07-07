@@ -12,6 +12,7 @@ from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.tools.types import ToolArguments, ToolArgumentsView
 
 ConfirmationStatus = Literal["pending", "approved", "rejected", "expired"]
@@ -38,6 +39,11 @@ class ConfirmationRequestRow(TypedDict):
     resolved_by_user_id: str | None
     resolved_via_interface: str | None
     execution_task_id: str | None
+    taint_state_json: TaintMetadata | None
+    sink_class: str | None
+    static_policy_reason: str | None
+    taint_policy_reason: str | None
+    approval_policy_fingerprint: str | None
     decision_only: bool
 
 
@@ -58,6 +64,11 @@ class ConfirmationRequestsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         origin_interface_type: str | None = None,
         origin_conversation_id: str | None = None,
+        taint_state_json: TaintMetadata | None = None,
+        sink_class: str | None = None,
+        static_policy_reason: str | None = None,
+        taint_policy_reason: str | None = None,
+        approval_policy_fingerprint: str | None = None,
         decision_only: bool = False,
     ) -> ConfirmationRequestRow:
         """Create a pending confirmation request."""
@@ -79,6 +90,11 @@ class ConfirmationRequestsRepository(BaseRepository):
                 processing_profile_id=processing_profile_id,
                 origin_interface_type=origin_interface_type,
                 origin_conversation_id=origin_conversation_id,
+                taint_state_json=taint_state_json,
+                sink_class=sink_class,
+                static_policy_reason=static_policy_reason,
+                taint_policy_reason=taint_policy_reason,
+                approval_policy_fingerprint=approval_policy_fingerprint,
                 expires_at=expires_at,
                 created_at=now,
                 updated_at=now,

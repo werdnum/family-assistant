@@ -18,6 +18,7 @@ from family_assistant.services.confirmation_service import (
     ConfirmationError,
     ConfirmationExpiredError,
     ConfirmationNotFoundError,
+    build_confirmation_policy_fingerprint,
 )
 from family_assistant.services.confirmation_wait import (
     ConfirmationWaitStrategy,
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from telegram import Update
     from telegram.ext import Application, ContextTypes
 
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.confirmation_service import ConfirmationService
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
@@ -289,6 +291,8 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
+        taint_state_json: TaintMetadata | None = None,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationOutcome:
         """Sends confirmation message and waits for user response or timeout."""
         effective_timeout = min(timeout, self.confirmation_timeout)
@@ -329,6 +333,14 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 confirmation_prompt=prompt_text,
                 expires_at=datetime.now(UTC) + timedelta(seconds=effective_timeout),
                 decision_only=not wait_for_durable_execution,
+                processing_profile_id=processing_profile_id,
+                taint_state_json=taint_state_json,
+                approval_policy_fingerprint=build_confirmation_policy_fingerprint(
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    processing_profile_id=processing_profile_id,
+                    taint_state_json=taint_state_json,
+                ),
             )
             confirm_uuid = request["id"]
             if wait_for_durable_execution:

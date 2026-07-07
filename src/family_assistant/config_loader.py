@@ -798,6 +798,9 @@ def resolve_service_profile(
     if "tools_policy" in profile_def:
         resolved["tools_policy"] = profile_def["tools_policy"]
 
+    if "taint_policy" in profile_def:
+        resolved["taint_policy"] = profile_def["taint_policy"]
+
     # Merge chat_id_to_name_map
     if "chat_id_to_name_map" in profile_def and isinstance(
         profile_def["chat_id_to_name_map"], dict

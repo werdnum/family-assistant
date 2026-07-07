@@ -16,6 +16,11 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    TurnTaintState,
+    merge_history_taint,
+)
 from family_assistant.tools import (
     collect_system_prompt_addition,
     get_tool_definitions_for_advertisement,
@@ -29,13 +34,14 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
+    from family_assistant.security.taint import TaintSource
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById, ToolDefinition
@@ -173,6 +179,7 @@ class LLMStreamingLoop:
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -205,6 +212,7 @@ class LLMStreamingLoop:
             camera_backend=camera_backend,
             event_sources=event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
+            initial_taint_sources=initial_taint_sources,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -237,6 +245,7 @@ class LLMStreamingLoop:
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -267,6 +276,10 @@ class LLMStreamingLoop:
             else None
         )
         activated_on_demand: frozenset[str] = frozenset()
+        initial_taint_state = merge_history_taint(messages)
+        for source in initial_taint_sources or ():
+            initial_taint_state = initial_taint_state.add_source(source)
+        taint_tracker = InMemoryTurnTaintTracker(initial_taint_state)
 
         async def refresh_on_demand_tools() -> tuple[list[ToolDefinition], str | None]:
             """Re-compute the tool list and system prompt addition for this turn.
@@ -508,6 +521,7 @@ class LLMStreamingLoop:
                 content=final_content,
                 tool_calls=effective_tool_calls,
                 provider_metadata=serialized_provider_metadata,
+                taint_metadata=taint_tracker.snapshot().to_metadata(),
             )
 
             # Yield a synthetic "done" event with the complete assistant message
@@ -596,6 +610,7 @@ class LLMStreamingLoop:
             llm_context_assistant_message = AssistantMessage(
                 content=final_content,
                 tool_calls=effective_tool_calls,
+                taint_metadata=taint_tracker.snapshot().to_metadata(),
             )
             messages.append(llm_context_assistant_message)
 
@@ -702,9 +717,11 @@ class LLMStreamingLoop:
 
             # Execute tool calls in parallel
             tool_response_messages_for_llm = []
+            pre_batch_taint_snapshot = taint_tracker.snapshot()
 
             async def _execute_tool_call(
                 tool_call: ToolCallItem,
+                taint_policy_snapshot: TurnTaintState = pre_batch_taint_snapshot,
             ) -> ToolExecutionResult:
                 return await self.tool_executor.execute(
                     tool_call,
@@ -723,6 +740,8 @@ class LLMStreamingLoop:
                     home_assistant_client=home_assistant_client,
                     camera_backend=camera_backend,
                     event_sources=event_sources,
+                    taint_tracker=taint_tracker,
+                    taint_policy_snapshot=taint_policy_snapshot,
                 )
 
             tool_execution_tasks = [

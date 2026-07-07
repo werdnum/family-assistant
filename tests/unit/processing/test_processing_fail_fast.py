@@ -179,7 +179,11 @@ async def test_prepare_turn_messages_uses_isolated_writes() -> None:
         side_effect=lambda messages: messages
     )
 
-    thread_root_id, typed_messages = await service._prepare_turn_messages_for_llm(  # noqa: SLF001
+    (
+        thread_root_id,
+        typed_messages,
+        context_taint_sources,
+    ) = await service._prepare_turn_messages_for_llm(  # noqa: SLF001
         db_context=MagicMock(),
         interface_type="test",
         conversation_id="conv_prepare_isolated",
@@ -195,6 +199,7 @@ async def test_prepare_turn_messages_uses_isolated_writes() -> None:
 
     assert thread_root_id == 123
     assert typed_messages == []
+    assert context_taint_sources == ()
     assert save_history_mock.await_args is not None
     assert save_history_mock.await_args.kwargs["save_with_isolated_context"] is True
 

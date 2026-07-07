@@ -12,13 +12,14 @@ import logging
 import os
 import pathlib
 import uuid
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import aiofiles
 import filetype  # type: ignore[import-untyped]
 from sqlalchemy import select, text, update
 
 from family_assistant.indexing.ingestion import process_document_ingestion_request
+from family_assistant.security.taint import TaintSourceType
 from family_assistant.storage.email import (
     parse_attachment_infos,
     received_emails_table,
@@ -27,6 +28,10 @@ from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
+)
+from family_assistant.tools.taint_helpers import (
+    merge_artifact_taint_into_context,
+    record_sensitive_read,
 )
 from family_assistant.tools.types import (
     ToolAttachment,
@@ -56,6 +61,19 @@ logger = logging.getLogger(__name__)
 _SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES = ["message_history"]
 
 
+def _coerce_doc_metadata(value: object) -> dict[str, object]:
+    """Return document metadata from dialect-specific JSON row values."""
+    if isinstance(value, dict):
+        return cast("dict[str, object]", value)
+    if isinstance(value, str):
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return cast("dict[str, object]", loaded) if isinstance(loaded, dict) else {}
+    return {}
+
+
 # Tool Definitions
 DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
@@ -68,7 +86,8 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "On success, returns 'Found relevant documents:' followed by numbered results with Title, Source, Document ID, optional original file availability (📎), Metadata, and Snippet. "
                 "When original files (PDFs, images) are available, they are indicated with 📎 symbol and file info. Use get_full_document_content to retrieve the actual file. "
                 "If no results found, returns 'No relevant documents found matching the query and filters.'. "
-                "On error, returns 'Error: Failed to execute document search. [error details]' or 'Error: Query text cannot be empty.' or 'Error: Failed to generate embedding for the query.'."
+                "On error, returns 'Error: Failed to execute document search. [error details]' or 'Error: Query text cannot be empty.' or 'Error: Failed to generate embedding for the query.'. "
+                "Returned document provenance is tracked internally; using external-source results may make later writes, browsing, worker execution, or outgoing messages require approval."
             ),
             "parameters": {
                 "type": "object",
@@ -117,6 +136,7 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "If only text content is available, returns the full text content (raw content if available, or reconstructed from chunks). "
                 "For email documents, the result also includes an `attachments` list with `attachment_id` values for each email attachment; "
                 "pass those IDs to `read_text_attachment` or `get_attachment_info` to inspect attachment contents. "
+                "The document's stored source provenance is tracked internally; using external-source content may make later writes, browsing, worker execution, or outgoing messages require approval. "
                 "For legacy emails ingested before registry integration, the first call may return `attachment_id: null` for some entries — the returned text will describe the action needed (e.g. triggering a reindex) without prescribing a specific tool, since the write tool is only enabled in some profiles. "
                 "If document exists but no content available, returns 'Error: Document [id] found, but no content is available.'. "
                 "If document not found, returns 'Error: Document with ID [id] not found.'. "
@@ -339,6 +359,27 @@ async def search_documents_tool(
         if not results:
             return "No relevant documents found matching the query and filters."
 
+        surfaced_ids = [
+            str(res["document_id"]) for res in results if res.get("document_id")
+        ]
+        record_sensitive_read(
+            exec_context,
+            kind="documents",
+            qualifier=f"search:{query[:200]}",
+            surfaced_ids=surfaced_ids,
+        )
+        for res in results:
+            metadata = _coerce_doc_metadata(res.get("doc_metadata"))
+            if metadata:
+                doc_id = res.get("document_id")
+                merge_artifact_taint_into_context(
+                    exec_context,
+                    provenance_metadata=metadata,
+                    fallback_source_type=TaintSourceType.DOCUMENT,
+                    fallback_source_id=str(doc_id) if doc_id is not None else None,
+                    fallback_reason="Indexed document search result provenance.",
+                )
+
         formatted_results = ["Found relevant documents:"]
         for i, res in enumerate(results):
             title = res.get("title") or "Untitled Document"
@@ -432,10 +473,24 @@ async def get_full_document_content_tool(
                 return f"Error: Document with ID {document_id} not found."
 
         file_path = doc_result["file_path"]
-        doc_metadata = doc_result.get("doc_metadata") or {}
+        doc_metadata = _coerce_doc_metadata(doc_result.get("doc_metadata"))
         title = doc_result.get("title")
         source_type = doc_result.get("source_type")
         source_id = doc_result.get("source_id")
+        if isinstance(doc_metadata, dict):
+            record_sensitive_read(
+                exec_context,
+                kind="documents",
+                qualifier=f"full:{document_id}",
+                surfaced_ids=[str(document_id)],
+            )
+            merge_artifact_taint_into_context(
+                exec_context,
+                provenance_metadata=doc_metadata,
+                fallback_source_type=TaintSourceType.DOCUMENT,
+                fallback_source_id=str(document_id),
+                fallback_reason="Full indexed document read provenance.",
+            )
 
         email_attachments_summary: list[EmailAttachmentSummary] | None = None
         if source_type == "email" and source_id:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
@@ -192,6 +192,11 @@ if TYPE_CHECKING:
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.processing import ProcessingService
+    from family_assistant.security.taint import (
+        TaintMetadata,
+        TurnTaintState,
+        TurnTaintTracker,
+    )
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
@@ -355,6 +360,9 @@ class ToolExecutionContext:
     (notably ``delegate_to_service``'s async handoff) must run synchronously and
     return their result directly so the script can use it.
     """
+    taint_tracker: TurnTaintTracker | None = None
+    taint_policy_snapshot: TurnTaintState | None = None
+    tool_result_taint_metadata: dict[str, TaintMetadata] = field(default_factory=dict)
 
     def note_write_policy(self) -> NoteWritePolicy:
         """Derive the note write policy for the active profile from this context.

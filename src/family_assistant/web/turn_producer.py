@@ -170,6 +170,11 @@ async def run_turn_producer(
             if source_row is not None:
                 source_message_internal_id = source_row["internal_id"]
 
+        taint_state_json = (
+            context.taint_tracker.snapshot().to_metadata()
+            if context.taint_tracker is not None
+            else None
+        )
         return await web_confirmation_ui_manager.request_confirmation(
             conversation_id=conversation_id,
             interface_type=interface_type,
@@ -181,6 +186,8 @@ async def run_turn_producer(
             target_user_id=user_id,
             tool_call_id=call_id,
             source_message_internal_id=source_message_internal_id,
+            taint_state_json=taint_state_json,
+            processing_profile_id=context.processing_profile_id,
         )
 
     try:

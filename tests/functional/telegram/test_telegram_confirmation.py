@@ -1,3 +1,5 @@
+# pylint: disable=no-name-in-module
+
 import asyncio
 import contextlib
 import json
@@ -15,13 +17,21 @@ from telegram import Update
 # Import mock LLM helpers
 from family_assistant.config_models import AppConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+    build_confirmation_policy_fingerprint,
 )
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.telegram.ui import (
     PendingTelegramConfirmation,
@@ -75,6 +85,7 @@ class RecordingConfirmationService:
         self.approve_calls: list[tuple[str, str, str]] = []
         self.reject_calls: list[tuple[str, str, str]] = []
         self.expire_calls = 0
+        self.last_created_request: dict[str, object] | None = None
 
     async def create_request(
         self,
@@ -88,17 +99,23 @@ class RecordingConfirmationService:
         confirmation_prompt: str,
         expires_at: datetime,
         decision_only: bool = False,
+        processing_profile_id: str | None = None,
+        taint_state_json: dict[str, object] | None = None,
+        approval_policy_fingerprint: str | None = None,
     ) -> dict[str, object]:
-        _ = (
-            target_user_id,
-            tool_name,
-            tool_args,
-            tool_call_id,
-            source_message_internal_id,
-            confirmation_prompt,
-            expires_at,
-            decision_only,
-        )
+        self.last_created_request = {
+            "target_user_id": target_user_id,
+            "tool_name": tool_name,
+            "tool_args": tool_args,
+            "tool_call_id": tool_call_id,
+            "source_message_internal_id": source_message_internal_id,
+            "confirmation_prompt": confirmation_prompt,
+            "expires_at": expires_at,
+            "decision_only": decision_only,
+            "processing_profile_id": processing_profile_id,
+            "taint_state_json": taint_state_json,
+            "approval_policy_fingerprint": approval_policy_fingerprint,
+        }
         return {"id": self.created_request_id}
 
     async def approve_and_enqueue_execution(
@@ -291,6 +308,81 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
 
 
 @pytest.mark.asyncio
+async def test_durable_telegram_confirmation_persists_taint_policy_context() -> None:
+    confirmation_service = RecordingConfirmationService()
+    confirmation_waiters = ConfirmationResultWaiterRegistry()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=RecordingTelegramBot())),
+        confirmation_timeout=0.2,
+        confirmation_service=cast("Any", confirmation_service),
+        confirmation_result_waiters=confirmation_waiters,
+    )
+    taint_state_json = (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="message-123",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset({"source_unknown_external"}),
+                reason="external email",
+            )
+        )
+        .to_metadata()
+    )
+
+    confirmation_task = asyncio.create_task(
+        manager.request_confirmation(
+            conversation_id=str(USER_CHAT_ID),
+            interface_type="telegram",
+            turn_id="turn-id",
+            prompt_text="Confirm test action",
+            tool_name="record_tool",
+            tool_args={"value": "test"},
+            timeout=0.2,
+            target_user_id=str(USER_ID),
+            tool_call_id="call-id",
+            source_message_internal_id=1,
+            taint_state_json=taint_state_json,
+            processing_profile_id="runtime-taint-test",
+        )
+    )
+
+    await wait_for_condition(
+        lambda: confirmation_service.last_created_request is not None,
+        timeout=2.0,
+        description="durable Telegram confirmation request to be stored",
+    )
+    assert confirmation_service.last_created_request is not None
+    assert (
+        confirmation_service.last_created_request["taint_state_json"]
+        == taint_state_json
+    )
+    assert (
+        confirmation_service.last_created_request["processing_profile_id"]
+        == "runtime-taint-test"
+    )
+    assert confirmation_service.last_created_request[
+        "approval_policy_fingerprint"
+    ] == build_confirmation_policy_fingerprint(
+        tool_name="record_tool",
+        tool_call_id="call-id",
+        processing_profile_id="runtime-taint-test",
+        taint_state_json=taint_state_json,
+    )
+
+    pending = manager.pending_confirmations[confirmation_service.created_request_id]
+    await manager._reject_confirmation(
+        confirmation_service.created_request_id,
+        USER_ID,
+        pending,
+    )
+    outcome = await confirmation_task
+    assert outcome.kind == "rejected"
+
+
+@pytest.mark.asyncio
 async def test_durable_telegram_confirmation_approval_uses_canonical_user_id() -> None:
     """Telegram callback authorization should use the same canonical id as storage."""
     canonical_user_id = "andrew@example.com"
@@ -442,6 +534,9 @@ def _require_confirmation_for_test_tool(
     processing_service = fix.processing_service
     assert processing_service is not None
     provider = processing_service.tools_provider
+    policy_provider = find_provider_by_type(provider, PolicyEnforcingToolsProvider)
+    if policy_provider is not None:
+        provider = policy_provider
 
     if hasattr(provider, "_tools_requiring_confirmation"):
         provider._tools_requiring_confirmation.add(tool_name)  # type: ignore[attr-defined]
@@ -881,6 +976,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
 
     # --- 3. Mock LLM: first call returns a tool call, second returns text ---
     tool_call_id = f"call_keyboard_{uuid.uuid4()}"
+    note_title = f"Deadlock Test {uuid.uuid4()}"
+    note_content = "content"
     cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
         (
             lambda kwargs: (
@@ -895,8 +992,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
                         function=ToolCallFunction(
                             name=TOOL_NAME_SENSITIVE,
                             arguments=json.dumps({
-                                "title": "Deadlock Test",
-                                "content": "content",
+                                "title": note_title,
+                                "content": note_content,
                             }),
                         ),
                     )
@@ -989,6 +1086,10 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         assert any("added" in t.lower() or "note" in t.lower() for t in texts), (
             f"Expected final response after confirmation, got: {texts}"
         )
+        async with DatabaseContext(engine=fix.assistant.database_engine) as db:
+            note = await db.notes.get_by_title(note_title, visibility_grants=None)
+        assert note is not None
+        assert note.content == note_content
 
     finally:
         policy_provider._policy_engine.evaluate_for_execution = original_eval  # type: ignore[assignment]

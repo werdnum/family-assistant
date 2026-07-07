@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import AppConfig
     from family_assistant.processing import DelegatableService, ProcessingService
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.confirmation_service import ConfirmationService
     from family_assistant.services.confirmation_waiters import (
@@ -220,6 +221,8 @@ class TelegramService:
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
+        taint_state_json: TaintMetadata | None = None,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationOutcome:
         """Public method to request confirmation, called by policy enforcement."""
         # Delegate directly to the confirmation manager
@@ -236,6 +239,8 @@ class TelegramService:
                 tool_call_id=tool_call_id,
                 source_message_internal_id=source_message_internal_id,
                 wait_for_durable_execution=wait_for_durable_execution,
+                taint_state_json=taint_state_json,
+                processing_profile_id=processing_profile_id,
             )
         else:
             logger.error(

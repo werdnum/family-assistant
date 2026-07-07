@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from family_assistant.services.confirmation_service import (
     ConfirmationService,
+    build_confirmation_policy_fingerprint,
     create_durable_confirmation,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
@@ -166,6 +167,11 @@ async def create_deferred_tool_confirmation(
         db_context_factory=lambda: get_db_context(engine=context.db_context.engine)
     )
     now = context.clock.now() if context.clock is not None else datetime.now(UTC)
+    taint_state_json = (
+        context.taint_tracker.snapshot().to_metadata()
+        if context.taint_tracker is not None
+        else None
+    )
     request = await create_durable_confirmation(
         confirmation_service=confirmation_service,
         db_context=context.db_context,
@@ -180,6 +186,13 @@ async def create_deferred_tool_confirmation(
         processing_profile_id=context.processing_profile_id,
         origin_interface_type=context.interface_type,
         origin_conversation_id=context.conversation_id,
+        taint_state_json=taint_state_json,
+        approval_policy_fingerprint=build_confirmation_policy_fingerprint(
+            tool_name=tool_name,
+            tool_call_id=call_id,
+            processing_profile_id=context.processing_profile_id,
+            taint_state_json=taint_state_json,
+        ),
     )
     request_id = str(request["id"])
     logger.info(

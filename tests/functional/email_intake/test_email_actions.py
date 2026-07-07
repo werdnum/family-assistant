@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -22,7 +22,7 @@ from family_assistant.email_intake.outbound import (
     email_conversation_id,
 )
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import ToolMessage
+from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.services.user_identity import UserIdentityResolver
@@ -115,12 +115,15 @@ class FakeTelegramConfirmationUIManager:
         turn_id: str | None,
         prompt_text: str,
         tool_name: str,
-        tool_args: dict[str, object],
+        # ast-grep-ignore: no-dict-any - confirmation requests carry arbitrary tool arguments
+        tool_args: dict[str, Any],
         timeout: float,
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
+        taint_state_json: object | None = None,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationOutcome:
         _ = (
             conversation_id,
@@ -134,6 +137,8 @@ class FakeTelegramConfirmationUIManager:
             tool_call_id,
             source_message_internal_id,
             wait_for_durable_execution,
+            taint_state_json,
+            processing_profile_id,
         )
         return ConfirmationOutcome(kind="failed", result="unexpected wait")
 
@@ -665,6 +670,72 @@ async def test_email_action_delivery_failure_does_not_retry_completed_turn(
 
 @pytest.mark.asyncio
 @pytest.mark.postgres
+async def test_email_action_seeds_unknown_external_taint_on_saved_reply(
+    db_engine: AsyncEngine,
+) -> None:
+    app_config = AppConfig.model_validate({
+        "telegram_enabled": False,
+        "model": "mock-model",
+        "embedding_model": "mock-deterministic-embedder",
+        "embedding_dimensions": 10,
+        "users": [
+            {
+                "id": "buyer@example.com",
+                "email_intake": {"sender_addresses": ["buyer@example.com"]},
+            }
+        ],
+        "email_intake": {
+            "enable_actions": True,
+            "action_profile_id": "email_intake",
+            "outbound_from_address": "assistant@example.net",
+        },
+    })
+    email_interface = _email_chat_interface(
+        db_engine=db_engine,
+        outbound_client=FakeOutboundEmailClient(),
+        app_config=app_config,
+    )
+    service = _build_email_processing_service(
+        app_config,
+        RuleBasedMockLLMClient(
+            rules=[(_first_turn, LLMOutput(content="I found soccer tickets."))]
+        ),
+    )
+    email_db_id = await _store_email(db_engine)
+
+    async with DatabaseContext(engine=db_engine) as db:
+        await handle_email_intake_action(
+            _execution_context(
+                db=db,
+                service=service,
+                email_interface=email_interface,
+                email_db_id=email_db_id,
+            ),
+            {"email_db_id": email_db_id},
+        )
+        messages = await db.message_history.get_recent(
+            interface_type="email",
+            conversation_id=email_conversation_id(email_db_id),
+            processing_profile_id="email_intake",
+        )
+
+    assistant_messages = [
+        message
+        for message in messages
+        if isinstance(message, AssistantMessage) and message.content
+    ]
+    assert assistant_messages
+    taint_metadata = assistant_messages[-1].taint_metadata
+    assert taint_metadata is not None
+    assert taint_metadata.get("max_tier") == "unknown_external"
+    sources = taint_metadata.get("sources")
+    assert isinstance(sources, list)
+    assert sources[-1]["source_type"] == "email"
+    assert sources[-1]["source_id"] == str(email_db_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
 async def test_email_action_creates_durable_confirmation_and_replies_by_email(
     db_engine: AsyncEngine,
 ) -> None:
@@ -742,6 +813,9 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
         assert request["tool_name"] == "add_or_update_note"
         assert request["tool_args_json"]["title"] == "Soccer tickets"
         assert "From your email" in request["confirmation_prompt"]
+        assert request["taint_state_json"] is not None
+        assert request["taint_state_json"].get("max_tier") == "unknown_external"
+        assert request["approval_policy_fingerprint"]
         note_content = request["tool_args_json"]["content"]
         assert isinstance(note_content, str)
         assert "Special instruction for agents" not in note_content
@@ -858,6 +932,14 @@ async def test_approved_email_confirmation_executes_exact_tool_and_notifies_send
             visibility_grants=None,
         )
         assert note is not None
+        assert note.visibility_labels == []
+        assert note.provenance_metadata is not None
+        assert note.provenance_metadata.get("provenance_labels") == [
+            "source_unknown_external"
+        ]
+        taint_metadata = note.provenance_metadata.get("taint_metadata")
+        assert isinstance(taint_metadata, dict)
+        assert taint_metadata.get("max_tier") == "unknown_external"
         assert "2026-06-10 19:30" in note.content
 
     assert len(outbound_client.sent) == 2
