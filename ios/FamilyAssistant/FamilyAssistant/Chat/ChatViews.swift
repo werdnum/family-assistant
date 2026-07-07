@@ -234,20 +234,21 @@ private struct ChatThreadView: View {
 
     private var messageScrollArea: some View {
         // Auto-follow is centralized in `StickyBottomScroll`: it lands at the
-        // bottom on appear and follows new content, but only when the gate below
-        // allows — a passive reply that arrives while the user has scrolled up to
-        // read history must not yank them down (nor force a non-settling
-        // bottom-anchored re-measure that trips the scene-update watchdog). The
-        // trigger fires only while the scene is active so a background layout
-        // pass never scrolls.
+        // bottom on appear and follows new content only while the user is near
+        // the bottom — a passive reply that arrives while they have scrolled up
+        // to read history must not yank them down (nor force a non-settling
+        // bottom-anchored re-measure that trips the scene-update watchdog).
+        // Sending a message is a user-initiated event that always pins to the
+        // bottom, signalled explicitly via `scrollToLatestRequestID` (it can't be
+        // inferred from the last bubble, which is the assistant loading
+        // placeholder right after a send). `followTrigger` is gated on the active
+        // scene so a background layout pass never scrolls; `forceFollowTrigger` is
+        // not — it only ever changes on a user send (always active), and gating it
+        // would make it fire on the nil→value flip when returning to the
+        // foreground, yanking a user who had scrolled up.
         StickyBottomScroll(
             followTrigger: scenePhase == .active ? viewModel.visibleGroupedMessages.last?.id : nil,
-            shouldFollow: { isNearBottom in
-                ChatViewModel.shouldAutoScrollToLatest(
-                    newestRole: viewModel.visibleGroupedMessages.last?.role,
-                    isNearBottom: isNearBottom
-                )
-            }
+            forceFollowTrigger: viewModel.scrollToLatestRequestID
         ) {
             LazyVStack(spacing: 14) {
                 if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
@@ -448,8 +449,10 @@ struct ChatMessageListLayoutProbe: View {
 /// Near-bottom is tracked with a zero-height sentinel at the end of the content:
 /// it is laid out only when the true bottom is on screen, so its appearance
 /// state is exactly "is the user at the bottom". `shouldFollow` receives that
-/// state and returns whether to follow; callers can widen the rule (e.g. always
-/// follow a message the user just sent — see `ChatViewModel.shouldAutoScrollToLatest`).
+/// state and returns whether to follow. A user-initiated event that should
+/// always pin to the bottom regardless of scroll position (e.g. the user
+/// sending a message) is signalled separately via `forceFollowTrigger`, because
+/// that intent is an event, not something derivable from the content.
 /// See docs/design/ios-chat-layout-watchdog-crash.md.
 struct StickyBottomScroll<Content: View>: View {
     /// Changes whenever new content that may warrant a follow has arrived (the
@@ -457,8 +460,12 @@ struct StickyBottomScroll<Content: View>: View {
     /// callers can suppress following (e.g. while the scene is inactive) by
     /// passing `nil`.
     let followTrigger: AnyHashable?
-    /// Given whether the user is currently near the bottom, whether to follow.
-    /// Defaults to "only when near the bottom".
+    /// Changes whenever a user-initiated event should scroll to the bottom
+    /// unconditionally (ignoring `shouldFollow`) — e.g. the user just sent a
+    /// message and expects to see it. `nil`/unchanged never scrolls.
+    let forceFollowTrigger: AnyHashable?
+    /// Given whether the user is currently near the bottom, whether to follow a
+    /// `followTrigger` change. Defaults to "only when near the bottom".
     let shouldFollow: (_ isNearBottom: Bool) -> Bool
     @ViewBuilder let content: () -> Content
 
@@ -466,10 +473,12 @@ struct StickyBottomScroll<Content: View>: View {
 
     init(
         followTrigger: AnyHashable?,
+        forceFollowTrigger: AnyHashable? = nil,
         shouldFollow: @escaping (_ isNearBottom: Bool) -> Bool = { $0 },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.followTrigger = followTrigger
+        self.forceFollowTrigger = forceFollowTrigger
         self.shouldFollow = shouldFollow
         self.content = content
     }
@@ -497,6 +506,12 @@ struct StickyBottomScroll<Content: View>: View {
             }
             .onChange(of: followTrigger) {
                 guard followTrigger != nil, shouldFollow(isNearBottom) else {
+                    return
+                }
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+            .onChange(of: forceFollowTrigger) {
+                guard forceFollowTrigger != nil else {
                     return
                 }
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)

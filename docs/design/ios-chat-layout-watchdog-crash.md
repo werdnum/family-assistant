@@ -240,20 +240,30 @@ place:
 
 - **Never animate the follow scroll** (kills the M5-cause-#2 shape wherever it recurs, including
   voice).
-- **Only follow when the gate allows.** A zero-height bottom sentinel tracks "is the user at the
-  bottom" (`onAppear`/`onDisappear`); the gate is
-  `ChatViewModel.shouldAutoScrollToLatest(newestRole:isNearBottom:)`: a bubble the user *just sent*
-  always follows, a *passive* arrival (streamed reply, tool step, synced message) follows only when
-  they are near the bottom — so a reply never yanks a reader who scrolled up.
+- **Only follow a passive arrival when near the bottom.** A zero-height bottom sentinel tracks "is
+  the user at the bottom" (`onAppear`/`onDisappear`); a *passive* arrival (streamed reply, tool step,
+  synced message; `followTrigger` = the newest bubble's id) follows only when they are near the
+  bottom — so a reply never yanks a reader who scrolled up.
+- **A local send always pins to the bottom, signalled explicitly.** Sending is a user-initiated
+  event and must scroll into view even from scrolled-up. It can *not* be inferred from the last
+  bubble's role: `sendDraft()` appends the user bubble **and** an assistant loading placeholder, so
+  the newest bubble is `.assistant` right after a send. The view model bumps
+  `scrollToLatestRequestID` in `sendDraft()`, and the view drives it as
+  `StickyBottomScroll.forceFollowTrigger` (an unconditional, un-gated scroll). `forceFollowTrigger`
+  is deliberately **not** scene-phase-gated — it only ever changes on a send (always active), and
+  gating it would fire it on the `nil → value` flip when returning to the foreground, re-introducing
+  the yank.
 
-**Coverage.** `ChatViewModelTests.testAutoScrollFollows*` locks the gate policy purely (fast, no
-hosting; verified red against the old always-follow behavior).
-`ChatLayoutBudgetTests.testStickyBottomScroll*` hosts the real `StickyBottomScroll`, scrolls it up,
-changes the trigger, and asserts a denied follow does **not** jump to the bottom while an allowed one
-does (the two are mutually validating — the allow case proves the follow mechanism fires, so the deny
-case is non-vacuous). The existing `testFollowUpAfterToolTurnStaysResponsive` /
-`testNativeChatSendsAndStreamsResponse` UI tests continue to cover open-lands-at-bottom and
-send-follows in the real app.
+**Coverage.** `ChatViewModelTests.testSendDraftRequestsScrollToLatest…` asserts a send bumps the
+force signal (the local-send case a role heuristic misses). `ChatLayoutBudgetTests.testStickyBottomScroll*`
+hosts the real `StickyBottomScroll`, scrolls it up, and asserts: a *denied* passive follow does not
+jump to the bottom, an *allowed* one does, and a *force* trigger scrolls even when the gate denies
+(the deny/allow pair is mutually validating — the allow case proves the follow mechanism fires, so
+the deny case is non-vacuous). These UIKit-hosted tests wait on the observed scroll state via a
+run-loop poll (`waitUntil`), never a fixed sleep, and wait for the initial land to settle before
+scrolling up so a late `onAppear` scroll can't masquerade as a follow. The existing
+`testFollowUpAfterToolTurnStaysResponsive` / `testNativeChatSendsAndStreamsResponse` UI tests
+continue to cover open-lands-at-bottom and send-follows in the real app.
 
 ## Verification
 

@@ -900,6 +900,10 @@ final class ChatViewModel {
         )
         messages.append(userMessage)
         messages.append(assistantMessage)
+        // A local send always scrolls into view, even if the user had scrolled
+        // up: the newest bubble is now the assistant loading placeholder, so the
+        // near-bottom auto-follow gate can't recognize this as user-initiated.
+        requestScrollToLatest()
         draftText = ""
         cleanupTemporaryImports(for: draftAttachments)
         draftAttachments = []
@@ -2997,31 +3001,25 @@ final class ChatViewModel {
         displayedMessageLimit += Self.displayedMessagePageSize
     }
 
-    /// Whether the message list should auto-scroll to the newest bubble when the
-    /// rendered set changes.
+    /// Bumped when the user takes an action that should scroll the thread to the
+    /// newest message unconditionally (currently: sending a message). The chat
+    /// view observes it as `StickyBottomScroll.forceFollowTrigger`.
     ///
-    /// A bubble the user just sent (the newest bubble is theirs) always scrolls
-    /// into view — they initiated it and expect to see it. A *passive* arrival
-    /// (a streamed reply, a tool step, a message synced from another device)
-    /// only scrolls when the user is already near the bottom.
-    ///
-    /// This is the single gate for auto-follow: a reply landing while the user
-    /// has scrolled up to read history must NOT yank them down. Beyond the UX,
-    /// the yank is a layout-watchdog hazard — a programmatic
-    /// `scrollTo(.bottom)` fired while the user is scrolled into (or dragging
-    /// through) history forces the `LazyVStack` to re-resolve its bottom anchor
-    /// and re-measure backwards over the visible rows without settling, which
-    /// overruns the 10s scene-update watchdog (0x8BADF00D,
-    /// scratch/FamilyAssistant-2026-07-07-090155.ips). See
-    /// docs/design/ios-chat-layout-watchdog-crash.md.
-    nonisolated static func shouldAutoScrollToLatest(
-        newestRole: ChatMessageRole?,
-        isNearBottom: Bool
-    ) -> Bool {
-        guard let newestRole else {
-            return false
-        }
-        return newestRole == .user || isNearBottom
+    /// This is separate from the near-bottom auto-follow gate: a passive arrival
+    /// (streamed reply, tool step, message synced from another device) only
+    /// follows when the user is near the bottom, so a reply landing while they
+    /// have scrolled up to read history never yanks them — the yank is also a
+    /// layout-watchdog hazard, forcing the `LazyVStack` into a non-settling
+    /// bottom-anchored re-measure (0x8BADF00D,
+    /// scratch/FamilyAssistant-2026-07-07-090155.ips). A local send, by contrast,
+    /// must always pin to the bottom, and that intent is an event — it can't be
+    /// inferred from the last bubble, which is the assistant loading placeholder
+    /// right after a send. See docs/design/ios-chat-layout-watchdog-crash.md.
+    private(set) var scrollToLatestRequestID = 0
+
+    /// Request an unconditional scroll to the newest message on the next render.
+    private func requestScrollToLatest() {
+        scrollToLatestRequestID += 1
     }
 
     /// Collapse the tool calls an agentic turn made across several backend
