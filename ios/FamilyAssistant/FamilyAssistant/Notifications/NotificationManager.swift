@@ -245,7 +245,11 @@ final class NotificationManager {
             let rawPath = "/\(host)\(url.path)"
             var components = URLComponents()
             components.path = rawPath
-            components.query = url.query
+            // `url.query` is already percent-encoded; assigning it to `query`
+            // (which expects an unencoded string) double-encodes it, turning
+            // familyassistant://chat?q=fix%20this into the literal prompt
+            // "fix%20this".
+            components.percentEncodedQuery = url.query
             if let path = normalizeNavigationPath(components.string ?? rawPath) {
                 pendingNavigationPath = path
                 return true
