@@ -72,6 +72,17 @@ final class NotificationManagerTests: XCTestCase {
         XCTAssertEqual(manager.pendingNavigationPath, "/notes/edit/School")
     }
 
+    /// The scheme URL's query is already percent-encoded; rebuilding the
+    /// app-relative path must not encode it a second time, or a link like
+    /// familyassistant://chat?q=fix%20this sends the literal prompt
+    /// "fix%20this".
+    func testHandleDeepLinkPreservesPercentEncodedQueryExactlyOnce() throws {
+        let manager = NotificationManager()
+
+        XCTAssertTrue(manager.handleDeepLink(try XCTUnwrap(URL(string: "familyassistant://chat?q=fix%20this"))))
+        XCTAssertEqual(manager.pendingNavigationPath, "/chat?q=fix%20this")
+    }
+
     func testHandleDeepLinkRejectsProtocolRelativePathQueryWithoutHostFallback() throws {
         let manager = NotificationManager()
 

@@ -51,6 +51,37 @@ enum UITestConfiguration {
         )
         UserDefaults.standard.set(false, forKey: "fa_notifications_enabled")
         UserDefaults.standard.removeObject(forKey: "fa_apns_device_token")
+
+        injectSharedFileIfRequested()
+    }
+
+    /// Simulates a file "Open in Family Assistant" hand-off at cold launch:
+    /// writes the named file to disk and buffers its URL in `OpenURLCenter`,
+    /// exactly where the scene delegate would put a real
+    /// `UIOpenURLContext`-delivered document before the UI exists. Everything
+    /// downstream (dispatch → SharedAttachmentInbox import → chat navigation →
+    /// draft upload) runs the production code path.
+    private static func injectSharedFileIfRequested() {
+        guard let filename = ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_UITEST_SHARED_FILE"] else {
+            return
+        }
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("UITestSharedFiles", isDirectory: true)
+            .appendingPathComponent(filename)
+        do {
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("shared file for UI tests".utf8).write(to: fileURL)
+        } catch {
+            fatalError("Could not stage UI-test shared file: \(error)")
+        }
+        // `FamilyAssistantApp.init` runs on the main thread before any scene
+        // connects, so this mirrors a cold-launch URL delivery.
+        MainActor.assumeIsolated {
+            OpenURLCenter.shared.receive([fileURL])
+        }
     }
 
     private static func applyLiveBackendConfiguration() {
@@ -218,6 +249,8 @@ private final class UITestBackendURLProtocol: URLProtocol {
             return .json(#"{"confirmations":[]}"#)
         case ("POST", "/api/v1/chat/turns"):
             return startChatTurn(from: request)
+        case ("POST", "/api/attachments/upload"):
+            return attachmentUploadResponse(from: request)
         case ("GET", "/api/notes"), ("GET", "/api/notes/"):
             return encode(lock.withLock { notes.values.sorted { $0.title < $1.title } })
         case ("POST", "/api/notes"), ("POST", "/api/notes/"):
@@ -251,6 +284,31 @@ private final class UITestBackendURLProtocol: URLProtocol {
             }
             return .json(#"{"detail":"Unhandled UI test route."}"#, statusCode: 404)
         }
+    }
+
+    /// Echoes the uploaded file's multipart filename and content type back so
+    /// tests can assert on the specific attachment they added.
+    private static func attachmentUploadResponse(from request: URLRequest) -> UITestResponse {
+        let body = String(data: request.bodyData, encoding: .isoLatin1) ?? ""
+        let filename = firstMatch(of: #"filename="([^"]+)""#, in: body) ?? "uploaded-file"
+        let contentType = firstMatch(of: #"Content-Type: (\S+)"#, in: body) ?? "application/octet-stream"
+        return encode(UITestUploadResponse(
+            attachmentID: "44444444-4444-4444-4444-444444444444",
+            filename: filename,
+            contentType: contentType,
+            size: request.bodyData.count,
+            url: "/api/attachments/44444444-4444-4444-4444-444444444444"
+        ))
+    }
+
+    private static func firstMatch(of pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text)
+        else {
+            return nil
+        }
+        return String(text[range])
     }
 
     private static func startChatTurn(from request: URLRequest) -> UITestResponse {
@@ -700,6 +758,22 @@ private struct UITestAttachment: Codable {
         case contentURL = "content_url"
         case mimeType = "mime_type"
         case size
+    }
+}
+
+private struct UITestUploadResponse: Encodable {
+    let attachmentID: String
+    let filename: String
+    let contentType: String
+    let size: Int
+    let url: String
+
+    enum CodingKeys: String, CodingKey {
+        case attachmentID = "attachment_id"
+        case filename
+        case contentType = "content_type"
+        case size
+        case url
     }
 }
 

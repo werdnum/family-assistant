@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 final class FamilyAssistantUITests: XCTestCase {
@@ -191,6 +192,93 @@ final class FamilyAssistantUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["Native reply to Deep link"].waitForExistence(timeout: 20))
         attachScreenshot(named: "native-chat-initial-prompt")
+    }
+
+    /// Regression test for external URL delivery. The app installs a custom
+    /// scene delegate for home-screen quick actions, which replaces SwiftUI's
+    /// internal scene delegate — the one that feeds `.onOpenURL`. URLs opened
+    /// from outside the app (the `familyassistant://` scheme, and file "Open in
+    /// Family Assistant" hand-offs, which use the same delivery path) must
+    /// therefore be forwarded by the custom scene delegate; before that
+    /// forwarding existed this test timed out because the deep link was
+    /// silently dropped.
+    func testExternalURLOpenRoutesIntoChat() {
+        XCTAssertTrue(app.navigationBars["Notes"].waitForExistence(timeout: Self.readyTimeout))
+
+        XCUIDevice.shared.system.open(URL(string: "familyassistant://chat?q=External%20link")!)
+        confirmOpenLinkAlertIfNeeded()
+
+        XCTAssertTrue(
+            app.staticTexts["Native reply to External link"].waitForExistence(timeout: 20),
+            "Externally opened familyassistant:// URL was not routed into the chat tab."
+        )
+        attachScreenshot(named: "external-url-open-chat")
+    }
+
+    /// Taps "Open" on the system confirmation alert that can accompany an
+    /// externally requested custom-scheme open. The alert is SpringBoard's, so
+    /// it is not part of `app`'s element tree.
+    private func confirmOpenLinkAlertIfNeeded() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let openButton = springboard.buttons["Open"]
+        if openButton.waitForExistence(timeout: 5) {
+            openButton.tap()
+        }
+    }
+
+    /// End-to-end coverage for the file "Open in Family Assistant" hand-off:
+    /// a file staged into `OpenURLCenter` at cold launch (where the scene
+    /// delegate puts real document opens) must pull the app onto the Chat tab
+    /// with the file uploaded as a draft attachment.
+    func testSharedFileOpensChatWithDraftAttachment() {
+        app.terminate()
+        app = XCUIApplication()
+        app.launchArguments = ["--ui-testing"]
+        app.launchEnvironment = [
+            "FAMILY_ASSISTANT_UITEST_INITIAL_PATH": "/notes",
+            "FAMILY_ASSISTANT_UITEST_SHARED_FILE": "trip-itinerary.txt",
+        ]
+        app.launch()
+
+        // The share must win over the /notes launch route and land on Chat.
+        XCTAssertTrue(
+            app.staticTexts["trip-itinerary.txt"].waitForExistence(timeout: Self.readyTimeout),
+            "Shared file never appeared as a chat draft attachment."
+        )
+        XCTAssertTrue(app.tabBars.firstMatch.buttons["Chat"].isSelected)
+        attachScreenshot(named: "shared-file-draft-attachment")
+    }
+
+    /// Pasting a copied image via the composer's paste control must create a
+    /// draft attachment (the TextField itself only accepts text pastes).
+    func testPastingImageAttachesDraftAttachment() {
+        UIPasteboard.general.image = solidTestImage()
+        relaunch(initialPath: "/chat")
+
+        let composer = app.textFields["chat-composer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: Self.readyTimeout))
+
+        let pasteButton = app.descendants(matching: .any)
+            .matching(identifier: "chat-paste-button").firstMatch
+        XCTAssertTrue(pasteButton.waitForExistence(timeout: 10))
+        pasteButton.tap()
+
+        let draftChip = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'draft-attachment-'"))
+            .firstMatch
+        XCTAssertTrue(
+            draftChip.waitForExistence(timeout: 20),
+            "Pasted image never appeared as a chat draft attachment."
+        )
+        attachScreenshot(named: "pasted-image-draft-attachment")
+    }
+
+    private func solidTestImage() -> UIImage {
+        let size = CGSize(width: 8, height: 8)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
     }
 
     func testTabBarSwitchesBetweenFeatureTabs() {

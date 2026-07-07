@@ -73,6 +73,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 }
 
+/// Installed via `UISceneConfiguration.delegateClass`, which replaces SwiftUI's
+/// internal scene delegate. That internal delegate is what feeds `.onOpenURL`,
+/// so this class must forward every URL-open event (custom-scheme deep links
+/// and file "Open in Family Assistant" hand-offs) into `OpenURLCenter`, from
+/// which `FamilyAssistantApp` dispatches them. Dropping either hook silently
+/// breaks external URL opens.
 final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
     func scene(
         _ scene: UIScene,
@@ -82,6 +88,7 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
         if let shortcutItem = connectionOptions.shortcutItem {
             _ = HomeScreenShortcutRouter.handle(shortcutItem)
         }
+        Self.forwardOpenedURLs(connectionOptions.urlContexts)
     }
 
     func windowScene(
@@ -90,6 +97,27 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
         completionHandler: @escaping (Bool) -> Void
     ) {
         completionHandler(HomeScreenShortcutRouter.handle(shortcutItem))
+    }
+
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        Self.forwardOpenedURLs(URLContexts)
+    }
+
+    private static func forwardOpenedURLs(_ contexts: Set<UIOpenURLContext>) {
+        forwardOpenedURLs(contexts.map(\.url))
+    }
+
+    static func forwardOpenedURLs(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                OpenURLCenter.shared.receive(urls)
+            }
+        } else {
+            Task { @MainActor in
+                OpenURLCenter.shared.receive(urls)
+            }
+        }
     }
 }
 

@@ -183,6 +183,39 @@ final class AppRouter {
     }
 }
 
+/// Buffers URLs the OS asks the app to open (custom-scheme deep links and
+/// file "Open in Family Assistant" hand-offs) until the SwiftUI layer is ready
+/// to dispatch them.
+///
+/// The app installs a custom `UIWindowSceneDelegate`
+/// (`HomeScreenShortcutSceneDelegate`) for home-screen quick actions. Setting
+/// `UISceneConfiguration.delegateClass` replaces SwiftUI's internal scene
+/// delegate — the object that feeds `.onOpenURL` — so opened URLs must instead
+/// be captured by the custom delegate and forwarded here, where
+/// `FamilyAssistantApp` drains them with its full dependencies (auth,
+/// notifications, shared-attachment inbox) in hand. Mirrors the
+/// `IntentNavigationCenter` hand-off pattern.
+@MainActor
+@Observable
+final class OpenURLCenter {
+    static let shared = OpenURLCenter()
+
+    private(set) var pendingURLs: [URL] = []
+
+    init() {}
+
+    func receive(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        pendingURLs.append(contentsOf: urls)
+    }
+
+    /// Returns and clears any buffered URLs.
+    func consumePendingURLs() -> [URL] {
+        defer { pendingURLs = [] }
+        return pendingURLs
+    }
+}
+
 struct SharedAttachmentBatch: Equatable, Identifiable {
     let id: String
     let fileURLs: [URL]
