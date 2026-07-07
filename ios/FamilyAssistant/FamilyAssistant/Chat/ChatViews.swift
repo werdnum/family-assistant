@@ -233,58 +233,50 @@ private struct ChatThreadView: View {
     }
 
     private var messageScrollArea: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 14) {
-                    if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
-                        ContentUnavailableView {
-                            Label("Ask Family Assistant", systemImage: "sparkles")
-                        } description: {
-                            Text("Start with a message or attach a file.")
-                        }
-                        .padding(.top, 80)
-                    }
-                    if viewModel.hasEarlierMessages {
-                        Button("Load earlier messages") {
-                            viewModel.showEarlierMessages()
-                        }
-                        .font(.subheadline)
-                        .padding(.vertical, 4)
-                        .accessibilityIdentifier("chat-load-earlier")
-                    }
-                    ForEach(viewModel.visibleGroupedMessages) { message in
-                        MessageBubble(message: message, viewModel: viewModel)
-                            .id(message.id)
-                            .accessibilityIdentifier("chat-message-\(message.id)")
-                    }
-                }
-                .padding()
+        // Auto-follow is centralized in `StickyBottomScroll`: it lands at the
+        // bottom on appear and follows new content, but only when the gate below
+        // allows — a passive reply that arrives while the user has scrolled up to
+        // read history must not yank them down (nor force a non-settling
+        // bottom-anchored re-measure that trips the scene-update watchdog). The
+        // trigger fires only while the scene is active so a background layout
+        // pass never scrolls.
+        StickyBottomScroll(
+            followTrigger: scenePhase == .active ? viewModel.visibleGroupedMessages.last?.id : nil,
+            shouldFollow: { isNearBottom in
+                ChatViewModel.shouldAutoScrollToLatest(
+                    newestRole: viewModel.visibleGroupedMessages.last?.role,
+                    isNearBottom: isNearBottom
+                )
             }
-            .overlay {
-                if viewModel.isLoadingMessages && viewModel.messages.isEmpty {
-                    ProgressView("Loading messages...")
+        ) {
+            LazyVStack(spacing: 14) {
+                if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
+                    ContentUnavailableView {
+                        Label("Ask Family Assistant", systemImage: "sparkles")
+                    } description: {
+                        Text("Start with a message or attach a file.")
+                    }
+                    .padding(.top, 80)
                 }
-            }
-            .onAppear {
-                // The thread can mount already populated (restored thread, or
-                // returning from a backgrounded scene where the list was skipped),
-                // in which case the last-message onChange below never fires. Land
-                // at the bottom so the latest message is visible.
-                if let lastID = viewModel.visibleGroupedMessages.last?.id {
-                    proxy.scrollTo(lastID, anchor: .bottom)
+                if viewModel.hasEarlierMessages {
+                    Button("Load earlier messages") {
+                        viewModel.showEarlierMessages()
+                    }
+                    .font(.subheadline)
+                    .padding(.vertical, 4)
+                    .accessibilityIdentifier("chat-load-earlier")
+                }
+                ForEach(viewModel.visibleGroupedMessages) { message in
+                    MessageBubble(message: message, viewModel: viewModel)
+                        .id(message.id)
+                        .accessibilityIdentifier("chat-message-\(message.id)")
                 }
             }
-            .onChange(of: viewModel.visibleGroupedMessages.last?.id) { _, newValue in
-                guard scenePhase == .active, let lastID = newValue else {
-                    return
-                }
-                // Scroll without animation. Animating scrollTo(bottom) past a very
-                // tall bubble makes the LazyVStack re-place/re-apply its rows on
-                // every animation frame without settling — a main-thread wedge that
-                // trips the scene-update watchdog. The jump is acceptable; the
-                // suspend-watchdog concern that previously required gating here is
-                // already handled by not driving layout while inactive (above).
-                proxy.scrollTo(lastID, anchor: .bottom)
+            .padding()
+        }
+        .overlay {
+            if viewModel.isLoadingMessages && viewModel.messages.isEmpty {
+                ProgressView("Loading messages...")
             }
         }
     }
@@ -433,6 +425,85 @@ struct ChatMessageListLayoutProbe: View {
     }
 }
 #endif
+
+/// A vertically scrolling container that keeps the newest content pinned to the
+/// bottom as it grows — but only when the caller's `shouldFollow` gate allows,
+/// and NEVER with animation.
+///
+/// This is the single choke point for every auto-following list in the app (the
+/// chat thread and the voice transcript), mirroring how `MarkdownRenderBudget`
+/// is the single choke point for per-message layout cost. Both invariants exist
+/// to keep the app clear of the scene-update layout watchdog (0x8BADF00D), which
+/// is a *class* of bug rather than one shape:
+///
+/// - **Never animate the follow scroll.** An animated `scrollTo(.bottom)` past a
+///   tall row re-places the `LazyVStack` on every animation frame without
+///   settling — a main-thread wedge. (This is why the voice transcript, which
+///   previously animated on every streamed token, is routed through here.)
+/// - **Only follow when the gate allows.** A passive arrival while the user has
+///   scrolled up must not fire a bottom-anchored `scrollTo`, which forces the
+///   `LazyVStack` to re-resolve its anchor and re-measure backwards over the
+///   visible rows without converging (scratch/FamilyAssistant-2026-07-07-090155.ips).
+///
+/// Near-bottom is tracked with a zero-height sentinel at the end of the content:
+/// it is laid out only when the true bottom is on screen, so its appearance
+/// state is exactly "is the user at the bottom". `shouldFollow` receives that
+/// state and returns whether to follow; callers can widen the rule (e.g. always
+/// follow a message the user just sent — see `ChatViewModel.shouldAutoScrollToLatest`).
+/// See docs/design/ios-chat-layout-watchdog-crash.md.
+struct StickyBottomScroll<Content: View>: View {
+    /// Changes whenever new content that may warrant a follow has arrived (the
+    /// newest row's id, its streamed text, …). A `nil` value never follows, so
+    /// callers can suppress following (e.g. while the scene is inactive) by
+    /// passing `nil`.
+    let followTrigger: AnyHashable?
+    /// Given whether the user is currently near the bottom, whether to follow.
+    /// Defaults to "only when near the bottom".
+    let shouldFollow: (_ isNearBottom: Bool) -> Bool
+    @ViewBuilder let content: () -> Content
+
+    @State private var isNearBottom = true
+
+    init(
+        followTrigger: AnyHashable?,
+        shouldFollow: @escaping (_ isNearBottom: Bool) -> Bool = { $0 },
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.followTrigger = followTrigger
+        self.shouldFollow = shouldFollow
+        self.content = content
+    }
+
+    /// Stable id of the bottom sentinel. Scrolling to it (anchor `.bottom`)
+    /// places the last real row fully on screen.
+    private static var bottomAnchorID: String { "sticky-bottom-anchor" }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                content()
+                Color.clear
+                    .frame(height: 1)
+                    .id(Self.bottomAnchorID)
+                    .accessibilityHidden(true)
+                    .onAppear { isNearBottom = true }
+                    .onDisappear { isNearBottom = false }
+            }
+            .onAppear {
+                // The list can mount already populated (a restored thread, or
+                // returning from a backgrounded scene). Land at the bottom so the
+                // newest content is visible. No animation.
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+            .onChange(of: followTrigger) {
+                guard followTrigger != nil, shouldFollow(isNearBottom) else {
+                    return
+                }
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+        }
+    }
+}
 
 private struct ChatComposerView: View {
     var viewModel: ChatViewModel

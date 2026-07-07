@@ -2997,6 +2997,33 @@ final class ChatViewModel {
         displayedMessageLimit += Self.displayedMessagePageSize
     }
 
+    /// Whether the message list should auto-scroll to the newest bubble when the
+    /// rendered set changes.
+    ///
+    /// A bubble the user just sent (the newest bubble is theirs) always scrolls
+    /// into view — they initiated it and expect to see it. A *passive* arrival
+    /// (a streamed reply, a tool step, a message synced from another device)
+    /// only scrolls when the user is already near the bottom.
+    ///
+    /// This is the single gate for auto-follow: a reply landing while the user
+    /// has scrolled up to read history must NOT yank them down. Beyond the UX,
+    /// the yank is a layout-watchdog hazard — a programmatic
+    /// `scrollTo(.bottom)` fired while the user is scrolled into (or dragging
+    /// through) history forces the `LazyVStack` to re-resolve its bottom anchor
+    /// and re-measure backwards over the visible rows without settling, which
+    /// overruns the 10s scene-update watchdog (0x8BADF00D,
+    /// scratch/FamilyAssistant-2026-07-07-090155.ips). See
+    /// docs/design/ios-chat-layout-watchdog-crash.md.
+    nonisolated static func shouldAutoScrollToLatest(
+        newestRole: ChatMessageRole?,
+        isNearBottom: Bool
+    ) -> Bool {
+        guard let newestRole else {
+            return false
+        }
+        return newestRole == .user || isNearBottom
+    }
+
     /// Collapse the tool calls an agentic turn made across several backend
     /// assistant messages into a single bubble, so the thread shows one tool
     /// group per turn rather than one collapsible box per backend message. This

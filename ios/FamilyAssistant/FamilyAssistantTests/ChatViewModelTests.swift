@@ -293,6 +293,39 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(grouped.last?.toolCalls.map(\.id), ["a", "b"])
     }
 
+    // MARK: - Auto-follow gate (scene-update layout watchdog)
+
+    func testAutoScrollFollowsAMessageTheUserJustSentEvenWhenScrolledUp() {
+        // The newest bubble is the user's own send: scroll it into view wherever
+        // they were, because they initiated it and expect to see it.
+        XCTAssertTrue(ChatViewModel.shouldAutoScrollToLatest(newestRole: .user, isNearBottom: false))
+        XCTAssertTrue(ChatViewModel.shouldAutoScrollToLatest(newestRole: .user, isNearBottom: true))
+    }
+
+    func testAutoScrollFollowsAPassiveArrivalOnlyWhenNearBottom() {
+        // A passive arrival (streamed reply, tool step, message synced from
+        // another device) follows when the user is already at the bottom...
+        for role in [ChatMessageRole.assistant, .tool, .system, .error] {
+            XCTAssertTrue(
+                ChatViewModel.shouldAutoScrollToLatest(newestRole: role, isNearBottom: true),
+                "\(role) should follow when the user is at the bottom"
+            )
+            // ...but must NOT yank a user who has scrolled up to read history.
+            // That yank is the reported crash: a bottom-anchored scrollTo forces
+            // a non-settling backward re-measure of the LazyVStack and trips the
+            // scene-update watchdog (scratch/FamilyAssistant-2026-07-07-090155.ips).
+            XCTAssertFalse(
+                ChatViewModel.shouldAutoScrollToLatest(newestRole: role, isNearBottom: false),
+                "\(role) must not yank a user who scrolled up"
+            )
+        }
+    }
+
+    func testAutoScrollDoesNothingForAnEmptyThread() {
+        XCTAssertFalse(ChatViewModel.shouldAutoScrollToLatest(newestRole: nil, isNearBottom: true))
+        XCTAssertFalse(ChatViewModel.shouldAutoScrollToLatest(newestRole: nil, isNearBottom: false))
+    }
+
     private func plainMessage(index: Int) -> ChatMessage {
         ChatMessage(
             id: "msg_\(index)",
