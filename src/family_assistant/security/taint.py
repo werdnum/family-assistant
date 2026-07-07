@@ -244,7 +244,20 @@ class TurnTaintState:
                 ),
                 from_history=from_history,
             )
-        state = replace(state, max_tier=max(state.max_tier, max_tier))
+        if max_tier > state.max_tier:
+            state = state.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.MANUAL,
+                    source_id=None,
+                    tier=max_tier,
+                    labels=frozenset(),
+                    reason=(
+                        "Persisted taint metadata max_tier exceeded retained "
+                        "source summaries."
+                    ),
+                ),
+                from_history=from_history,
+            )
         if from_history and state.max_tier >= SourceTrustTier.UNKNOWN_EXTERNAL:
             state = replace(state, history_high_taint_present=True)
         return state
@@ -322,6 +335,35 @@ class InMemoryTurnTaintTracker:
         """Synchronously merge a source into the tracker."""
         self._state = self._state.add_source(source, from_history=from_history)
         return self._state
+
+
+def merge_taint_state_into_tracker(
+    tracker: TurnTaintTracker,
+    state: TurnTaintState,
+    *,
+    from_history: bool = False,
+) -> TurnTaintState:
+    """Merge a deserialized taint state without losing persisted max_tier."""
+    merged = tracker.snapshot()
+    for source in state.sources:
+        merged = merged.add_source(source, from_history=from_history)
+    if state.max_tier > merged.max_tier:
+        merged = merged.add_source(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=state.max_tier,
+                labels=frozenset(),
+                reason=(
+                    "Merged taint state max_tier exceeded retained source summaries."
+                ),
+            ),
+            from_history=from_history,
+        )
+    if state.history_high_taint_present and not merged.history_high_taint_present:
+        merged = replace(merged, history_high_taint_present=True)
+    tracker.replace(merged)
+    return merged
 
 
 class TaintPolicyConfig(BaseModel):
@@ -577,7 +619,12 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         return SinkClass.HOME_LOCAL
     if "sensitive_data" in tag_values and "read_only" in tag_values:
         return SinkClass.SENSITIVE_READ_BROADENING
-    return SinkClass.USER_LOCAL
+    logger.warning(
+        "Tool '%s' has no sink-class metadata; defaulting to arbitrary external "
+        "message for runtime taint policy.",
+        descriptor.name,
+    )
+    return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
 
 
 def _default_taint_matrix() -> dict[
@@ -670,7 +717,12 @@ def derive_tool_result_taint_source(
         )
         logger.warning(reason)
     else:
-        return None
+        tier = default_unspecified_tool_output_tier
+        reason = (
+            f"Tool '{descriptor.name}' has no output trust metadata; defaulting "
+            f"to {tier.config_value} for runtime taint."
+        )
+        logger.warning(reason)
 
     return TaintSource(
         source_type=TaintSourceType.TOOL_OUTPUT,

@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Literal
 
 from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import (
+    TurnTaintState,
+    merge_taint_state_into_tracker,
+)
 from family_assistant.storage.vector_search import (
     MetadataFilter,
     VectorSearchQuery,
@@ -386,8 +389,11 @@ def _merge_message_history_taint(
         if taint_metadata is None:
             continue
         row_state = TurnTaintState.from_metadata(taint_metadata, from_history=True)
-        for source in row_state.sources:
-            exec_context.taint_tracker.add_source(source, from_history=True)
+        merge_taint_state_into_tracker(
+            exec_context.taint_tracker,
+            row_state,
+            from_history=True,
+        )
 
 
 async def _semantic_message_history_rows(

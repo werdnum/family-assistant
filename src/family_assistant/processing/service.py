@@ -612,7 +612,7 @@ class ProcessingService:
         save_history_with_isolated_context: bool = True,
         trigger_role: Literal["user", "system"] = "user",
         reuse_existing_user_row: bool = False,
-    ) -> tuple[int | None, list[LLMMessage]]:
+    ) -> tuple[int | None, list[LLMMessage], tuple[TaintSource, ...]]:
         """Build the full pre-LLM turn state shared by sync and streaming flows."""
         thread_root_id_for_turn = thread_root_id
         if thread_root_id_for_turn is None:
@@ -692,6 +692,9 @@ class ProcessingService:
             logger.warning("Pruned %d leading messages from LLM history.", pruned_count)
 
         aggregated_other_context_str = await self.context_preparer.aggregate_context()
+        context_taint_sources = (
+            await self.context_preparer.aggregate_context_taint_sources()
+        )
         if thread_attachments_context:
             if aggregated_other_context_str:
                 aggregated_other_context_str += "\n\n" + thread_attachments_context
@@ -725,7 +728,7 @@ class ProcessingService:
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
             messages_for_llm
         )
-        return thread_root_id_for_turn, typed_messages_for_llm
+        return thread_root_id_for_turn, typed_messages_for_llm, context_taint_sources
 
     async def process_message(
         self,
@@ -902,6 +905,7 @@ class ProcessingService:
             (
                 thread_root_id_for_turn,
                 typed_messages_for_llm,
+                context_taint_sources,
             ) = await self._prepare_turn_messages_for_llm(
                 db_context,
                 interface_type=interface_type,
@@ -940,7 +944,10 @@ class ProcessingService:
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
                 mid_turn_input_provider=mid_turn_input_provider,
-                initial_taint_sources=initial_taint_sources,
+                initial_taint_sources=(
+                    *context_taint_sources,
+                    *(initial_taint_sources or ()),
+                ),
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 
@@ -1086,6 +1093,7 @@ class ProcessingService:
                     (
                         thread_root_id_for_turn,
                         typed_messages_for_llm,
+                        context_taint_sources,
                     ) = await self._prepare_turn_messages_for_llm(
                         db_context,
                         interface_type=interface_type,
@@ -1116,7 +1124,10 @@ class ProcessingService:
                         request_confirmation_callback=request_confirmation_callback,
                         subconversation_id=subconversation_id,
                         mid_turn_input_provider=mid_turn_input_provider,
-                        initial_taint_sources=initial_taint_sources,
+                        initial_taint_sources=(
+                            *context_taint_sources,
+                            *(initial_taint_sources or ()),
+                        ),
                     ):
                         yield event  # noqa: ASYNC119
 

@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from opentelemetry import trace
 
-from family_assistant.context_providers import ContextProvider
+from family_assistant.context_providers import ContextProvider, TaintedContextProvider
 from family_assistant.llm.messages import (
     AssistantMessage,
     ErrorMessage,
@@ -11,6 +11,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
 )
 from family_assistant.processing.types import ContextPreparerConfig
+from family_assistant.security.taint import TaintSource
 from family_assistant.utils.clock import Clock
 
 from .utils import assistant_message_has_thought_signature
@@ -113,6 +114,20 @@ class ContextPreparer:
             # Join all non-empty fragments (i.e., filter out empty strings from individual providers' lists)
             # separated by double newlines for clarity.
             return "\n\n".join(filter(None, all_fragments)).strip()
+
+    async def aggregate_context_taint_sources(self) -> tuple[TaintSource, ...]:
+        """Gather taint sources introduced by context providers."""
+        sources: list[TaintSource] = []
+        for provider in self.context_providers:
+            if not isinstance(provider, TaintedContextProvider):
+                continue
+            try:
+                sources.extend(await provider.get_context_taint_sources())
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Context provider '{provider.name}' failed to provide taint sources"
+                ) from exc
+        return tuple(sources)
 
     async def format_history(
         self, history_messages: list[LLMMessage]

@@ -79,6 +79,7 @@ class NotesIndexer:
                 _created_at=note_row.created_at,
                 _updated_at=note_row.updated_at,
                 _visibility_labels=note_row.visibility_labels,
+                _provenance_metadata=note_row.provenance_metadata,
             )
         except ValueError as e:
             logger.error(f"Failed to create NoteDocument for ID {note_id}: {e}")
@@ -117,7 +118,7 @@ class NotesIndexer:
                 embedding_type="raw_note_text",  # A type for processors to pick up
                 mime_type="text/plain",
                 source_processor="NotesIndexer.handle_index_note",
-                metadata={"source": "note", "title": note_doc.title},
+                metadata=note_doc.metadata or {},
             )
             initial_items.append(note_text_item)
 

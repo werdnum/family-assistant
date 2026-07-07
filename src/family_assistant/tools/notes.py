@@ -16,6 +16,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    merge_taint_state_into_tracker,
 )
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
@@ -200,9 +201,10 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Retrieve a specific note by its title to check its content, prompt inclusion status, and attachments. "
                 "Returns the note's title, content, whether it's included in the system prompt, and any associated attachments.\n\n"
                 "Returns: A JSON string containing a dict with the note information. "
-                "If note exists, returns {'exists': true, 'title': [title], 'content': [full content], 'include_in_prompt': [boolean], 'attachment_count': [integer]}. "
+                "If note exists, returns {'exists': true, 'title': [title], 'content': [full content], 'include_in_prompt': [boolean], 'attachment_count': [integer], 'provenance_labels': [labels]}. "
                 "If note not found, returns {'exists': false, 'title': [title], 'content': null, 'include_in_prompt': null, 'attachment_count': 0}. "
-                "Attachments are returned as multimodal content that vision models can see."
+                "Attachments are returned as multimodal content that vision models can see. "
+                "When present, provenance_labels describe stored source provenance, not access-control visibility labels."
             ),
             "parameters": {
                 "type": "object",
@@ -319,14 +321,17 @@ async def get_note_tool(
         taint_metadata = provenance_metadata.get("taint_metadata")
         note_taint_state = TurnTaintState.from_metadata(taint_metadata)
         if note_taint_state.max_tier > SourceTrustTier.TRUSTED_USER:
-            exec_context.taint_tracker.add_source(
-                TaintSource(
-                    source_type=TaintSourceType.NOTE,
-                    source_id=note.title,
-                    tier=note_taint_state.max_tier,
-                    labels=frozenset(note.visibility_labels),
-                    reason=f"Note '{note.title}' carries stored provenance taint.",
-                )
+            merge_taint_state_into_tracker(
+                exec_context.taint_tracker,
+                note_taint_state.add_source(
+                    TaintSource(
+                        source_type=TaintSourceType.NOTE,
+                        source_id=note.title,
+                        tier=note_taint_state.max_tier,
+                        labels=frozenset(note.visibility_labels),
+                        reason=f"Note '{note.title}' carries stored provenance taint.",
+                    )
+                ),
             )
 
     # Parse attachment_ids from the note
@@ -351,7 +356,11 @@ async def get_note_tool(
         "content": note.content,
         "include_in_prompt": note.include_in_prompt,
         "attachment_count": len(attachment_ids),
-        "provenance_labels": note.visibility_labels,
+        "provenance_labels": (
+            provenance_metadata.get("provenance_labels", [])
+            if isinstance(provenance_metadata, dict)
+            else []
+        ),
     }
 
     # Fetch attachment metadata and content

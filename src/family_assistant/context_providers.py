@@ -1,13 +1,19 @@
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from zoneinfo import ZoneInfo
 
 import httpx
 
 from family_assistant import (
     calendar_integration,  # For calendar functions
+)
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
 )
 from family_assistant.storage.context import DatabaseContext
 
@@ -60,6 +66,15 @@ class ContextProvider(Protocol):
             Returns an empty list if no context is available or an error occurs
             (errors should be logged by the provider).
         """
+        ...
+
+
+@runtime_checkable
+class TaintedContextProvider(Protocol):
+    """Optional interface for context providers that surface stored taint."""
+
+    async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
+        """Return taint sources introduced by the context fragments."""
         ...
 
 
@@ -240,6 +255,44 @@ class NotesContextProvider(ContextProvider):
             )
             return []
         return fragments
+
+    async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
+        """Return provenance taint for notes auto-included in the system prompt."""
+        sources: list[TaintSource] = []
+        try:
+            async with await self._get_db_context_func() as db_context:
+                prompt_notes = await db_context.notes.get_prompt_notes(
+                    visibility_grants=self._visibility_grants
+                )
+                for note in prompt_notes:
+                    provenance_metadata = note.provenance_metadata
+                    if not isinstance(provenance_metadata, dict):
+                        continue
+                    state = TurnTaintState.from_metadata(
+                        provenance_metadata.get("taint_metadata")
+                    )
+                    if state.max_tier <= SourceTrustTier.TRUSTED_USER:
+                        continue
+                    sources.extend(state.sources)
+                    sources.append(
+                        TaintSource(
+                            source_type=TaintSourceType.NOTE,
+                            source_id=note.title,
+                            tier=state.max_tier,
+                            labels=frozenset(note.visibility_labels),
+                            reason=(
+                                f"Prompt-included note '{note.title}' carries "
+                                "stored provenance taint."
+                            ),
+                        )
+                    )
+        except Exception as e:
+            logger.error(
+                f"[{self.name}] Failed to get notes context taint: {e}",
+                exc_info=True,
+            )
+            return ()
+        return tuple(sources)
 
 
 class HomeAssistantContextProvider(ContextProvider):

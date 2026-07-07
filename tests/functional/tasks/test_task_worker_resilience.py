@@ -7,7 +7,7 @@ import contextlib
 import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
+from types import SimpleNamespace  # pylint: disable=no-name-in-module
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -304,6 +304,50 @@ async def test_successful_handler_completes(
         assert task["status"] == "done", (
             f"Expected status 'done', got '{task['status']}'"
         )
+
+
+@pytest.mark.asyncio
+async def test_task_worker_context_includes_taint_tracker(
+    task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
+) -> None:
+    """Task, automation, and script handlers must not run taint-blind."""
+    worker, new_task_event, _shutdown_event = task_worker_manager(
+        processing_service=MagicMock(),
+        chat_interface=MagicMock(),
+    )
+    engine = worker.engine
+    assert engine is not None
+    received_contexts: list[ToolExecutionContext] = []
+
+    async def handler(
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
+        exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
+        payload: dict[str, Any],
+    ) -> None:
+        received_contexts.append(exec_context)
+
+    worker.register_task_handler("captures_context", handler)
+
+    async with DatabaseContext(engine=engine) as db_context:
+        await db_context.tasks.enqueue(
+            task_id="taint_context_test",
+            task_type="captures_context",
+            payload={},
+        )
+
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
+    await asyncio.sleep(0.1)
+    new_task_event.set()
+
+    await wait_for_tasks_to_complete(
+        engine=engine,
+        timeout_seconds=10.0,
+        task_ids={"taint_context_test"},
+    )
+
+    assert len(received_contexts) == 1
+    assert received_contexts[0].taint_tracker is not None
 
 
 @pytest.mark.asyncio

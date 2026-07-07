@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
@@ -72,12 +73,20 @@ async def _unspecified_tool(**_kwargs: object) -> ToolResult:
     return ToolResult(text="legacy output")
 
 
+async def _missing_metadata_tool(**_kwargs: object) -> ToolResult:
+    return ToolResult(text="legacy output without metadata")
+
+
 async def _browser_tool(**_kwargs: object) -> ToolResult:
     return ToolResult(text="opened url")
 
 
 async def _worker_tool(**_kwargs: object) -> ToolResult:
     return ToolResult(text="worker output")
+
+
+async def _home_tool(**_kwargs: object) -> ToolResult:
+    return ToolResult(text="home state")
 
 
 def _registration(
@@ -127,6 +136,21 @@ def _tainting_provider() -> TaintTrackingToolsProvider:
                         {
                             "type": "function",
                             "function": {
+                                "name": "missing_metadata_tool",
+                                "description": "Run a legacy tool.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_missing_metadata_tool,
+                    metadata=make_local_tool_metadata([ToolTag.READ_ONLY]),
+                ),
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
                                 "name": "browser_tool",
                                 "description": "Open a browser URL.",
                                 "parameters": {"type": "object", "properties": {}},
@@ -155,6 +179,24 @@ def _tainting_provider() -> TaintTrackingToolsProvider:
                     metadata=make_local_tool_metadata([
                         ToolTag.WORKER,
                         ToolTag.CODE_EXECUTION,
+                        ToolTag.OUTPUT_TRUSTED,
+                    ]),
+                ),
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "home_tool",
+                                "description": "Read local home state.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_home_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.HOME_AUTOMATION,
                         ToolTag.OUTPUT_TRUSTED,
                     ]),
                 ),
@@ -354,6 +396,42 @@ def test_profile_taint_policy_can_make_operator_minimum_stricter() -> None:
     )
 
 
+def test_taint_metadata_round_trip_preserves_compacted_max_tier() -> None:
+    state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="dropped-high-source",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="High-tier source compacted out of retained summaries.",
+        )
+    )
+    for index in range(12):
+        state = state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.USER_MESSAGE,
+                source_id=f"low-source-{index}",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason="Lower-tier retained source.",
+            )
+        )
+
+    metadata = state.to_metadata(max_sources=12)
+    assert metadata.get("max_tier") == SourceTrustTier.UNKNOWN_EXTERNAL.config_value
+    metadata_sources = metadata.get("sources")
+    assert metadata_sources is not None
+    assert {source["tier"] for source in metadata_sources} == {
+        SourceTrustTier.KNOWN_CONTACT.config_value
+    }
+
+    restored = TurnTaintState.from_metadata(metadata)
+
+    assert restored.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert restored.sources[-1].tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert "max_tier exceeded retained source summaries" in restored.sources[-1].reason
+
+
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
     None
 ):
@@ -406,6 +484,16 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
             )
         )
         is SinkClass.ARTIFACT_WRITE
+    )
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "legacy_unclassified_tool",
+                ToolTag.READ_ONLY,
+                ToolTag.OUTPUT_TRUSTED,
+            )
+        )
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     )
     assert (
         resolve_tool_sink_class(
@@ -496,6 +584,31 @@ async def test_unspecified_tool_output_uses_configured_default_tier(
 
 
 @pytest.mark.asyncio
+async def test_missing_tool_output_metadata_defaults_to_unknown_external(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provider = _tainting_provider()
+    tracker = InMemoryTurnTaintTracker()
+    async with get_db_context(db_engine) as db_context:
+        context = _minimal_context(db_context, tracker)
+
+        await provider.execute_tool(
+            "missing_metadata_tool",
+            {},
+            context,
+            "call_missing_metadata",
+        )
+
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert (
+        context.tool_result_taint_metadata["call_missing_metadata"].get("max_tier")
+        == "unknown_external"
+    )
+    assert "no output trust metadata" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_attacker_addressable_egress_is_observed_before_enforcement(
     db_engine: AsyncEngine,
     caplog: pytest.LogCaptureFixture,
@@ -557,9 +670,7 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
     async with get_db_context(db_engine) as db_context:
         context = _minimal_context(db_context, tracker)
 
-        result = await provider.execute_tool(
-            "trusted_tool", {}, context, "call_trusted"
-        )
+        result = await provider.execute_tool("home_tool", {}, context, "call_home")
 
     assert isinstance(result, ToolResult)
     would_enforce_errors = [
@@ -765,6 +876,38 @@ async def test_tainted_note_write_stores_label_and_reread_restores_taint(
 
     assert note_result.data is not None
     assert read_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_prompt_included_note_surfaces_stored_provenance_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    write_tracker = _unknown_external_tracker()
+    async with get_db_context(db_engine) as db_context:
+        write_context = _minimal_context(db_context, write_tracker)
+        result = await add_or_update_note_tool(
+            exec_context=write_context,
+            title="Prompt external digest",
+            content="External content copied into a prompt note.",
+            include_in_prompt=True,
+        )
+        assert "successfully" in result
+
+    async def get_context() -> Any:  # noqa: ANN401 - repository context manager
+        return get_db_context(db_engine)
+
+    provider = NotesContextProvider(get_context, prompts={})
+
+    fragments = await provider.get_context_fragments()
+    sources = await provider.get_context_taint_sources()
+
+    assert any("Prompt external digest" in fragment for fragment in fragments)
+    assert any(
+        source.source_type is TaintSourceType.NOTE
+        and source.source_id == "Prompt external digest"
+        and source.tier is SourceTrustTier.UNKNOWN_EXTERNAL
+        for source in sources
+    )
 
 
 @pytest.mark.asyncio

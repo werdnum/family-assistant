@@ -10,6 +10,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    merge_taint_state_into_tracker,
 )
 
 if TYPE_CHECKING:
@@ -58,8 +59,7 @@ def merge_artifact_taint_into_context(
     raw_taint_metadata = provenance_metadata.get("taint_metadata")
     state = TurnTaintState.from_metadata(raw_taint_metadata)
     if state.sources:
-        for source in state.sources:
-            tracker.add_source(source)
+        merge_taint_state_into_tracker(tracker, state)
         return
 
     raw_tier = provenance_metadata.get("source_trust_tier")
