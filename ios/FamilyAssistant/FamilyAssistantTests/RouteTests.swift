@@ -319,6 +319,38 @@ final class RouteTests: XCTestCase {
         XCTAssertFalse(sharedImportExists(named: source.lastPathComponent))
     }
 
+    // MARK: - Opened-URL hand-off
+
+    @MainActor
+    func testOpenURLCenterBuffersAndConsumesInOrder() throws {
+        let center = OpenURLCenter()
+        let first = try XCTUnwrap(URL(string: "familyassistant://chat?q=hello"))
+        let second = try XCTUnwrap(URL(string: "file:///tmp/shared.pdf"))
+
+        XCTAssertEqual(center.consumePendingURLs(), [])
+        center.receive([first])
+        center.receive([second])
+        XCTAssertEqual(center.pendingURLs, [first, second])
+
+        XCTAssertEqual(center.consumePendingURLs(), [first, second])
+        XCTAssertTrue(center.pendingURLs.isEmpty)
+        XCTAssertEqual(center.consumePendingURLs(), [])
+    }
+
+    /// The custom quick-action scene delegate replaces SwiftUI's internal scene
+    /// delegate, so it is the only receiver of URL-open events. It must forward
+    /// them into `OpenURLCenter.shared` for the app to see them at all.
+    @MainActor
+    func testSceneDelegateForwardsOpenedURLsToSharedCenter() throws {
+        _ = OpenURLCenter.shared.consumePendingURLs()
+        defer { _ = OpenURLCenter.shared.consumePendingURLs() }
+        let url = try XCTUnwrap(URL(string: "familyassistant://chat?q=forwarded"))
+
+        HomeScreenShortcutSceneDelegate.forwardOpenedURLs([url])
+
+        XCTAssertEqual(OpenURLCenter.shared.pendingURLs, [url])
+    }
+
     // MARK: - More catalog nav-divergence guard
 
     /// Guards the More destination set against silent drift from the canonical

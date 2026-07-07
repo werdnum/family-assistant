@@ -49,21 +49,36 @@ struct FamilyAssistantApp: App {
             .task {
                 await ErrorReporter.shared.flushPersisted()
             }
-            .onOpenURL { url in
+            // URL opens arrive via OpenURLCenter, not `.onOpenURL`: the custom
+            // scene delegate installed for home-screen quick actions
+            // (`HomeScreenShortcutSceneDelegate`) replaces SwiftUI's internal
+            // scene delegate, so `.onOpenURL` never fires. The `.task` drains
+            // URLs delivered before the first render (cold launches); the
+            // `.onChange` drains later arrivals.
+            .task {
+                await dispatchOpenedURLs()
+            }
+            .onChange(of: OpenURLCenter.shared.pendingURLs) {
                 Task { @MainActor in
-                    if SharedAttachmentInbox.canReceive(url) {
-                        sharedAttachmentInbox.receive(urls: [url])
-                        return
-                    }
-                    if URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                        .queryItems?
-                        .contains(where: { $0.name == "code" }) == true
-                    {
-                        await authManager.handleCallback(url: url)
-                    } else {
-                        _ = notificationManager.handleDeepLink(url)
-                    }
+                    await dispatchOpenedURLs()
                 }
             }
+    }
+
+    private func dispatchOpenedURLs() async {
+        for url in OpenURLCenter.shared.consumePendingURLs() {
+            if SharedAttachmentInbox.canReceive(url) {
+                sharedAttachmentInbox.receive(urls: [url])
+                continue
+            }
+            if URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?
+                .contains(where: { $0.name == "code" }) == true
+            {
+                await authManager.handleCallback(url: url)
+            } else {
+                _ = notificationManager.handleDeepLink(url)
+            }
+        }
     }
 }
