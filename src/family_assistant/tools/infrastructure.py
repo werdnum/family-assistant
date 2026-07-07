@@ -1133,15 +1133,27 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     f"{evaluation.reason}; redaction outcomes are not executable yet",
                 )
             if evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM:
-                confirmed = await self._request_taint_confirmation(
+                state_before_confirmation = (
+                    context.taint_tracker.snapshot()
+                    if context.taint_tracker is not None
+                    else None
+                )
+                confirmation_result = await self._request_taint_confirmation(
                     name=name,
                     arguments=arguments,
                     context=context,
                     call_id=call_id,
                     reason=evaluation.reason,
                 )
-                if confirmed is not None:
-                    return confirmed
+                if confirmation_result is not None:
+                    if descriptor is not None:
+                        await self._record_result_taint_and_audit(
+                            descriptor=descriptor,
+                            context=context,
+                            call_id=call_id,
+                            state_before_execution=state_before_confirmation,
+                        )
+                    return confirmation_result
 
         state_before_execution = (
             context.taint_tracker.snapshot()
@@ -1157,35 +1169,21 @@ class TaintTrackingToolsProvider(ToolsProvider):
             )
         except Exception:
             if descriptor is not None:
-                recorded_state = self._record_result_taint(
+                await self._record_result_taint_and_audit(
                     descriptor=descriptor,
                     context=context,
                     call_id=call_id,
                     state_before_execution=state_before_execution,
                 )
-                if recorded_state is not None:
-                    await self._record_result_taint_audit(
-                        descriptor=descriptor,
-                        context=context,
-                        call_id=call_id,
-                        state=recorded_state,
-                    )
             raise
 
         if descriptor is not None:
-            recorded_state = self._record_result_taint(
+            await self._record_result_taint_and_audit(
                 descriptor=descriptor,
                 context=context,
                 call_id=call_id,
                 state_before_execution=state_before_execution,
             )
-            if recorded_state is not None:
-                await self._record_result_taint_audit(
-                    descriptor=descriptor,
-                    context=context,
-                    call_id=call_id,
-                    state=recorded_state,
-                )
         return result
 
     async def _merge_argument_taint_into_context(
@@ -1258,6 +1256,8 @@ class TaintTrackingToolsProvider(ToolsProvider):
         )
         if outcome.kind == "approved":
             return None
+        if outcome.kind == "completed":
+            return outcome.result or ToolResult(text="", attachments=None)
         return _confirmation_outcome_to_tool_result(name=name, outcome=outcome)
 
     async def _record_policy_evaluation_audit(
@@ -1335,6 +1335,28 @@ class TaintTrackingToolsProvider(ToolsProvider):
             state.max_tier.config_value,
         )
         return state
+
+    async def _record_result_taint_and_audit(
+        self,
+        *,
+        descriptor: ToolDescriptor,
+        context: ToolExecutionContext,
+        call_id: str | None,
+        state_before_execution: TurnTaintState | None,
+    ) -> None:
+        recorded_state = self._record_result_taint(
+            descriptor=descriptor,
+            context=context,
+            call_id=call_id,
+            state_before_execution=state_before_execution,
+        )
+        if recorded_state is not None:
+            await self._record_result_taint_audit(
+                descriptor=descriptor,
+                context=context,
+                call_id=call_id,
+                state=recorded_state,
+            )
 
     async def _record_result_taint_audit(
         self,

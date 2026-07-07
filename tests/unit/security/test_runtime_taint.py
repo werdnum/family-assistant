@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Self, cast
 from zoneinfo import ZoneInfo
@@ -56,7 +56,11 @@ from family_assistant.tools.notes import (
     get_note_tool,
     list_notes_tool,
 )
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolExecutionContext,
+    ToolResult,
+)
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     MatcherArgs,
     RuleBasedMockLLMClient,
@@ -1298,6 +1302,82 @@ async def test_tainted_schema_attachment_argument_without_id_name_is_merged(
     assert policy_events[0]["tool_name"] == "transform_like_tool"
     assert policy_events[0]["requested_outcome"] == "confirm"
     assert policy_events[0]["effective_outcome"] == "audit"
+
+
+@pytest.mark.asyncio
+async def test_completed_taint_confirmation_records_result_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "confirmed_browser_untrusted",
+                                "description": "Fetch external content after approval.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_browser_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.BROWSER,
+                        ToolTag.OUTPUT_UNTRUSTED,
+                    ]),
+                )
+            ]
+        ),
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.MANUAL,
+            source_id="recognized-machine",
+            tier=SourceTrustTier.RECOGNIZED_MACHINE,
+            labels=frozenset({"source_recognized_machine"}),
+            reason="test recognized machine source",
+        )
+    )
+
+    async def _completed_confirmation(
+        **_kwargs: object,
+    ) -> ConfirmationOutcome:
+        return ConfirmationOutcome(
+            kind="completed",
+            result=ToolResult(text="confirmed external output"),
+        )
+
+    async with get_db_context(db_engine) as db_context:
+        context = replace(
+            _minimal_context(db_context, tracker),
+            request_confirmation_callback=_completed_confirmation,
+        )
+        result = await provider.execute_tool(
+            "confirmed_browser_untrusted",
+            {},
+            context,
+            "call_confirmed_external",
+        )
+        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "confirmed external output"
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    result_taint_metadata = context.tool_result_taint_metadata[
+        "call_confirmed_external"
+    ]
+    assert result_taint_metadata.get("max_tier") == "unknown_external"
+    result_events = [
+        event for event in audit_events if event["event_type"] == "result_taint"
+    ]
+    assert len(result_events) == 1
+    assert result_events[0]["tool_name"] == "confirmed_browser_untrusted"
+    assert result_events[0]["max_tier"] == "unknown_external"
 
 
 @pytest.mark.asyncio
