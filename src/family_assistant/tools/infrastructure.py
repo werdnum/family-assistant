@@ -30,10 +30,14 @@ from family_assistant.security.taint import (
     TaintPolicyEvaluator,
     TaintPolicyMode,
     TaintPolicyOutcome,
+    TaintSourceType,
     TurnTaintState,
     derive_tool_result_taint_source,
 )
-from family_assistant.tools.attachment_utils import process_attachment_arguments
+from family_assistant.tools.attachment_utils import (
+    is_attachment_id,
+    process_attachment_arguments,
+)
 from family_assistant.tools.confirmation import confirmation_payload_block_reason
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -41,6 +45,7 @@ from family_assistant.tools.metadata import (
     build_local_tool_descriptors,
 )
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
+from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
 from family_assistant.tools.types import (
     CalendarConfig,
     ConfirmationOutcome,
@@ -963,6 +968,40 @@ def _summarize_tool_arguments(
     }
 
 
+def _collect_attachment_argument_ids(
+    value: object,
+    *,
+    in_attachment_slot: bool = False,
+) -> set[str]:
+    if isinstance(value, dict):
+        attachment_ids: set[str] = set()
+        for key, child in value.items():
+            child_key = str(key).lower()
+            child_in_attachment_slot = in_attachment_slot or (
+                "attachment" in child_key and "id" in child_key
+            )
+            attachment_ids.update(
+                _collect_attachment_argument_ids(
+                    child,
+                    in_attachment_slot=child_in_attachment_slot,
+                )
+            )
+        return attachment_ids
+    if isinstance(value, list | tuple):
+        attachment_ids = set()
+        for child in value:
+            attachment_ids.update(
+                _collect_attachment_argument_ids(
+                    child,
+                    in_attachment_slot=in_attachment_slot,
+                )
+            )
+        return attachment_ids
+    if in_attachment_slot and is_attachment_id(value):
+        return {cast("str", value)}
+    return set()
+
+
 class TaintTrackingToolsProvider(ToolsProvider):
     """Wraps another provider with runtime taint policy and result tracking."""
 
@@ -1014,11 +1053,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
         """Execute a tool and merge result taint into the turn tracker."""
         descriptor = await self._descriptor_provider.get_tool_descriptor(name)
         if descriptor is not None and context.taint_tracker is not None:
-            state = (
-                context.taint_policy_snapshot
-                if context.taint_policy_snapshot is not None
-                else context.taint_tracker.snapshot()
+            argument_taint_merged = await self._merge_argument_taint_into_context(
+                arguments,
+                context,
             )
+            state = context.taint_tracker.snapshot()
+            if context.taint_policy_snapshot is not None and not argument_taint_merged:
+                state = context.taint_policy_snapshot
             evaluation = self._taint_evaluator.evaluate_tool(
                 descriptor=descriptor,
                 state=state,
@@ -1079,6 +1120,11 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 if confirmed is not None:
                     return confirmed
 
+        state_before_execution = (
+            context.taint_tracker.snapshot()
+            if context.taint_tracker is not None
+            else None
+        )
         try:
             result = await self.wrapped_provider.execute_tool(
                 name,
@@ -1092,6 +1138,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     descriptor=descriptor,
                     context=context,
                     call_id=call_id,
+                    state_before_execution=state_before_execution,
                 )
                 if recorded_state is not None:
                     await self._record_result_taint_audit(
@@ -1107,6 +1154,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 descriptor=descriptor,
                 context=context,
                 call_id=call_id,
+                state_before_execution=state_before_execution,
             )
             if recorded_state is not None:
                 await self._record_result_taint_audit(
@@ -1116,6 +1164,34 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     state=recorded_state,
                 )
         return result
+
+    async def _merge_argument_taint_into_context(
+        self,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+    ) -> bool:
+        if context.taint_tracker is None or context.attachment_registry is None:
+            return False
+
+        attachment_ids = _collect_attachment_argument_ids(arguments)
+        if not attachment_ids:
+            return False
+
+        before = context.taint_tracker.snapshot()
+        metadata_by_id = await context.attachment_registry.get_attachments(
+            context.db_context,
+            sorted(attachment_ids),
+        )
+        for attachment_id, metadata in metadata_by_id.items():
+            merge_artifact_taint_into_context(
+                context,
+                provenance_metadata=metadata.metadata,
+                fallback_source_type=TaintSourceType.ATTACHMENT,
+                fallback_source_id=attachment_id,
+                fallback_reason="Tool argument attachment provenance.",
+            )
+        return context.taint_tracker.snapshot() != before
 
     async def _request_taint_confirmation(
         self,
@@ -1193,6 +1269,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         descriptor: ToolDescriptor,
         context: ToolExecutionContext,
         call_id: str | None,
+        state_before_execution: TurnTaintState | None,
     ) -> TurnTaintState | None:
         source = derive_tool_result_taint_source(
             descriptor=descriptor,
@@ -1201,8 +1278,25 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 self._taint_policy_config.default_unspecified_tool_output_tier
             ),
         )
-        if source is None or context.taint_tracker is None:
+        if context.taint_tracker is None:
             return None
+        if source is None:
+            state = context.taint_tracker.snapshot()
+            if (
+                state_before_execution is None
+                or state.sources == state_before_execution.sources
+            ):
+                return None
+            context.tool_result_taint_metadata[call_id or descriptor.name] = (
+                state.to_metadata()
+            )
+            logger.info(
+                "Tool result inherited dynamic taint: tool=%s call_id=%s max_tier=%s",
+                descriptor.name,
+                call_id,
+                state.max_tier.config_value,
+            )
+            return state
 
         state = context.taint_tracker.add_source(source)
         metadata = state.to_metadata()

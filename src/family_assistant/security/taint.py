@@ -545,6 +545,15 @@ def merge_taint_policy_config(
     if "high_taint_tier" in fields_set:
         merged.high_taint_tier = profile.high_taint_tier
     if "default_unspecified_tool_output_tier" in fields_set:
+        if (
+            profile.default_unspecified_tool_output_tier
+            < base.default_unspecified_tool_output_tier
+        ):
+            msg = (
+                "Profile taint_policy.default_unspecified_tool_output_tier "
+                "cannot be more trusted than the base policy"
+            )
+            raise ValueError(msg)
         merged.default_unspecified_tool_output_tier = (
             profile.default_unspecified_tool_output_tier
         )
@@ -599,6 +608,8 @@ def _reject_relaxed_base_policy(
 def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
     """Resolve a conservative sink class from tool metadata tags."""
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
+    if "sensitive_data" in tag_values and "read_only" in tag_values:
+        return SinkClass.SENSITIVE_READ_BROADENING
     if "code_execution" in tag_values or "worker" in tag_values:
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
@@ -617,8 +628,6 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         return SinkClass.ARTIFACT_WRITE
     if "home_auto" in tag_values:
         return SinkClass.HOME_LOCAL
-    if "sensitive_data" in tag_values and "read_only" in tag_values:
-        return SinkClass.SENSITIVE_READ_BROADENING
     logger.warning(
         "Tool '%s' has no sink-class metadata; defaulting to arbitrary external "
         "message for runtime taint policy.",
@@ -688,7 +697,7 @@ def _outcome_strictness(outcome: TaintPolicyOutcome) -> int:
     if outcome is TaintPolicyOutcome.AUDIT:
         return 1
     if outcome is TaintPolicyOutcome.REDACT:
-        return 1
+        return 2
     if outcome is TaintPolicyOutcome.CONFIRM:
         return 2
     if outcome is TaintPolicyOutcome.DENY:

@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from telegram import Update
     from telegram.ext import ContextTypes
 
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.telegram.types import AttachmentData
     from family_assistant.tools.types import ConfirmationOutcome
 
@@ -88,6 +89,8 @@ class ConfirmationUIManager(Protocol):
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
+        taint_state_json: TaintMetadata | None = None,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationOutcome:
         """
         Requests confirmation from the user via the UI.

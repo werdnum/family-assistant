@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -115,12 +115,15 @@ class FakeTelegramConfirmationUIManager:
         turn_id: str | None,
         prompt_text: str,
         tool_name: str,
-        tool_args: dict[str, object],
+        # ast-grep-ignore: no-dict-any - confirmation requests carry arbitrary tool arguments
+        tool_args: dict[str, Any],
         timeout: float,
         target_user_id: str | None = None,
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
+        taint_state_json: object | None = None,
+        processing_profile_id: str | None = None,
     ) -> ConfirmationOutcome:
         _ = (
             conversation_id,
@@ -134,6 +137,8 @@ class FakeTelegramConfirmationUIManager:
             tool_call_id,
             source_message_internal_id,
             wait_for_durable_execution,
+            taint_state_json,
+            processing_profile_id,
         )
         return ConfirmationOutcome(kind="failed", result="unexpected wait")
 

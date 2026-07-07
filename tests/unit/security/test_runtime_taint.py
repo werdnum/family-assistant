@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -87,6 +87,20 @@ async def _worker_tool(**_kwargs: object) -> ToolResult:
 
 async def _home_tool(**_kwargs: object) -> ToolResult:
     return ToolResult(text="home state")
+
+
+async def _dynamic_taint_read_tool(exec_context: ToolExecutionContext) -> ToolResult:
+    assert exec_context.taint_tracker is not None
+    exec_context.taint_tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="tainted-note",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset({"source_unknown_external"}),
+            reason="Stored note provenance.",
+        )
+    )
+    return ToolResult(text="tainted note content")
 
 
 def _registration(
@@ -314,6 +328,43 @@ def _unknown_external_tracker() -> InMemoryTurnTaintTracker:
     return tracker
 
 
+@pytest.mark.asyncio
+async def test_prompt_note_taint_source_load_failure_propagates() -> None:
+    class _FailingNotes:
+        async def get_prompt_notes(
+            self,
+            *,
+            visibility_grants: set[str] | None,
+        ) -> list[object]:
+            _ = visibility_grants
+            raise RuntimeError("notes unavailable")
+
+    class _FailingDbContext:
+        notes = _FailingNotes()
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: object,
+            exc: object,
+            traceback: object,
+        ) -> None:
+            _ = (exc_type, exc, traceback)
+
+    async def get_context() -> _FailingDbContext:
+        return _FailingDbContext()
+
+    provider = NotesContextProvider(
+        get_db_context_func=cast("Any", get_context),
+        prompts={},
+    )
+
+    with pytest.raises(RuntimeError, match="notes unavailable"):
+        await provider.get_context_taint_sources()
+
+
 @dataclass(frozen=True)
 class _DocumentFixture:
     source_type: str
@@ -355,12 +406,47 @@ def test_profile_taint_policy_cannot_downgrade_enforce_mode() -> None:
         merge_taint_policy_config(base=base, profile=profile)
 
 
+def test_profile_taint_policy_cannot_trust_unspecified_outputs_more_than_base() -> None:
+    base = TaintPolicyConfig(
+        default_unspecified_tool_output_tier=SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+    profile = TaintPolicyConfig(
+        default_unspecified_tool_output_tier=SourceTrustTier.TRUSTED_USER
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="default_unspecified_tool_output_tier cannot be more trusted",
+    ):
+        merge_taint_policy_config(base=base, profile=profile)
+
+
 def test_profile_taint_policy_cannot_relax_default_matrix() -> None:
     base = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
     profile = TaintPolicyConfig(
         matrix_overrides={
             SourceTrustTier.UNKNOWN_EXTERNAL: {
                 SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ALLOW
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="cannot relax base policy"):
+        merge_taint_policy_config(base=base, profile=profile)
+
+
+def test_profile_taint_policy_cannot_relax_redact_to_audit() -> None:
+    base = TaintPolicyConfig(
+        matrix_overrides={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.REDACT
+            }
+        }
+    )
+    profile = TaintPolicyConfig(
+        matrix_overrides={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.AUDIT
             }
         }
     )
@@ -507,6 +593,18 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
             )
         )
         is SinkClass.ARTIFACT_WRITE
+    )
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "sensitive_automation_read",
+                ToolTag.READ_ONLY,
+                ToolTag.SENSITIVE_DATA,
+                ToolTag.AUTOMATION,
+                ToolTag.OUTPUT_TRUSTED,
+            )
+        )
+        is SinkClass.SENSITIVE_READ_BROADENING
     )
 
 
@@ -984,3 +1082,108 @@ async def test_text_attachment_read_restores_stored_provenance_taint(
     assert read_state.sensitive_reads
     assert read_state.sensitive_reads[-1].scope.kind == "attachments"
     assert attachment.attachment_id in read_state.sensitive_reads[-1].scope.surfaced_ids
+
+
+@pytest.mark.asyncio
+async def test_tainted_attachment_arguments_are_merged_before_sink_policy(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    provenance_state = _unknown_external_tracker().snapshot()
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path),
+        db_engine=db_engine,
+        config=None,
+    )
+    provider = _tainting_provider()
+    tracker = InMemoryTurnTaintTracker()
+
+    async with get_db_context(db_engine) as db_context:
+        attachment = await registry.store_and_register_tool_attachment(
+            file_content=b"external attachment text\n",
+            filename="external.txt",
+            content_type="text/plain",
+            tool_name="test_tool",
+            metadata={"taint_metadata": provenance_state.to_metadata()},
+            db_context=db_context,
+        )
+        context = _minimal_context(
+            db_context,
+            tracker,
+            attachment_registry=registry,
+        )
+
+        await provider.execute_tool(
+            "browser_tool",
+            {"attachment_ids": [attachment.attachment_id]},
+            context,
+            "call_browser_with_attachment",
+        )
+        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    policy_events = [
+        event for event in audit_events if event["event_type"] == "policy_evaluation"
+    ]
+    assert len(policy_events) == 1
+    assert policy_events[0]["tool_name"] == "browser_tool"
+    assert policy_events[0]["requested_outcome"] == "confirm"
+    assert policy_events[0]["effective_outcome"] == "audit"
+    assert policy_events[0]["max_tier"] == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_dynamic_provenance_added_by_trusted_read_is_persisted_on_result(
+    db_engine: AsyncEngine,
+) -> None:
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "dynamic_taint_read",
+                                "description": "Read stored tainted content.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {},
+                                },
+                            },
+                        },
+                    ),
+                    implementation=_dynamic_taint_read_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.READ_ONLY,
+                        ToolTag.SENSITIVE_DATA,
+                        ToolTag.OUTPUT_TRUSTED,
+                    ]),
+                )
+            ]
+        )
+    )
+    tracker = InMemoryTurnTaintTracker()
+
+    async with get_db_context(db_engine) as db_context:
+        context = _minimal_context(db_context, tracker)
+
+        await provider.execute_tool(
+            "dynamic_taint_read",
+            {},
+            context,
+            "call_dynamic_read",
+        )
+        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    assert (
+        context.tool_result_taint_metadata["call_dynamic_read"].get("max_tier")
+        == "unknown_external"
+    )
+    result_events = [
+        event for event in audit_events if event["event_type"] == "result_taint"
+    ]
+    assert len(result_events) == 1
+    assert result_events[0]["tool_name"] == "dynamic_taint_read"
+    assert result_events[0]["max_tier"] == "unknown_external"

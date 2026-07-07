@@ -118,6 +118,7 @@ class PollableDelegationService(Protocol):
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> RemoteSubmission:
         """Submit without a client-supplied task id; the remote assigns one.
 

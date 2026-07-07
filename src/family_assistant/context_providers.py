@@ -259,39 +259,32 @@ class NotesContextProvider(ContextProvider):
     async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
         """Return provenance taint for notes auto-included in the system prompt."""
         sources: list[TaintSource] = []
-        try:
-            async with await self._get_db_context_func() as db_context:
-                prompt_notes = await db_context.notes.get_prompt_notes(
-                    visibility_grants=self._visibility_grants
-                )
-                for note in prompt_notes:
-                    provenance_metadata = note.provenance_metadata
-                    if not isinstance(provenance_metadata, dict):
-                        continue
-                    state = TurnTaintState.from_metadata(
-                        provenance_metadata.get("taint_metadata")
-                    )
-                    if state.max_tier <= SourceTrustTier.TRUSTED_USER:
-                        continue
-                    sources.extend(state.sources)
-                    sources.append(
-                        TaintSource(
-                            source_type=TaintSourceType.NOTE,
-                            source_id=note.title,
-                            tier=state.max_tier,
-                            labels=frozenset(note.visibility_labels),
-                            reason=(
-                                f"Prompt-included note '{note.title}' carries "
-                                "stored provenance taint."
-                            ),
-                        )
-                    )
-        except Exception as e:
-            logger.error(
-                f"[{self.name}] Failed to get notes context taint: {e}",
-                exc_info=True,
+        async with await self._get_db_context_func() as db_context:
+            prompt_notes = await db_context.notes.get_prompt_notes(
+                visibility_grants=self._visibility_grants
             )
-            return ()
+            for note in prompt_notes:
+                provenance_metadata = note.provenance_metadata
+                if not isinstance(provenance_metadata, dict):
+                    continue
+                state = TurnTaintState.from_metadata(
+                    provenance_metadata.get("taint_metadata")
+                )
+                if state.max_tier <= SourceTrustTier.TRUSTED_USER:
+                    continue
+                sources.extend(state.sources)
+                sources.append(
+                    TaintSource(
+                        source_type=TaintSourceType.NOTE,
+                        source_id=note.title,
+                        tier=state.max_tier,
+                        labels=frozenset(note.visibility_labels),
+                        reason=(
+                            f"Prompt-included note '{note.title}' carries "
+                            "stored provenance taint."
+                        ),
+                    )
+                )
         return tuple(sources)
 
 

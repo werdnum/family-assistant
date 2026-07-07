@@ -131,6 +131,23 @@ class _CapturingA2AClient:
             ],
         )
 
+    async def submit(
+        self,
+        content_parts: list[ContentPartDict],
+        *,
+        context_id: str | None = None,
+        task_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> Task:
+        _ = content_parts
+        _ = task_id
+        self.captured_metadata = metadata
+        return Task(
+            id="captured-async-task",
+            context_id=context_id or "captured-context",
+            status=TaskStatus(state=TaskState.submitted),
+        )
+
 
 @pytest.mark.asyncio
 async def test_remote_a2a_preserves_runtime_taint_metadata(
@@ -176,6 +193,39 @@ async def test_remote_a2a_preserves_runtime_taint_metadata(
         metadata=client.captured_metadata,
     )
     assert _initial_taint_sources_from_message(message) == (source,)
+
+
+@pytest.mark.asyncio
+async def test_remote_a2a_async_submit_preserves_runtime_taint_metadata() -> None:
+    source = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="message-123",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset({"source_unknown_external"}),
+        reason="external email",
+    )
+    client = _CapturingA2AClient()
+    service = RemoteA2AService(
+        service_config=RemoteServiceConfig(
+            id="remote_test_profile",
+            description="Test remote A2A profile",
+            delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        ),
+        client=cast("A2AClientWrapper", client),
+    )
+
+    submission = await service.submit_async(
+        [text_content("Summarize this email")],
+        conversation_id="tainted-conversation",
+        subconversation_id=None,
+        initial_taint_sources=[source],
+    )
+
+    assert submission.remote_task_id == "captured-async-task"
+    assert client.captured_metadata is not None
+    raw_taint = client.captured_metadata[A2A_TAINT_METADATA_KEY]
+    assert isinstance(raw_taint, dict)
+    assert TurnTaintState.from_metadata(raw_taint).sources == (source,)
 
 
 class TestA2AClientIntegration:

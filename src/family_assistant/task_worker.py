@@ -1224,6 +1224,7 @@ class TaskWorker:
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1339,6 +1340,7 @@ class TaskWorker:
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1819,6 +1821,11 @@ class TaskWorker:
                 if source_row is not None:
                     source_message_internal_id = source_row["internal_id"]
 
+            taint_state_json = (
+                context.taint_tracker.snapshot().to_metadata()
+                if context.taint_tracker is not None
+                else None
+            )
             return await confirmation_manager.request_confirmation(
                 conversation_id=run["conversation_id"],
                 interface_type=run["interface_type"],
@@ -1831,6 +1838,8 @@ class TaskWorker:
                 tool_call_id=call_id,
                 source_message_internal_id=source_message_internal_id,
                 wait_for_durable_execution=False,
+                taint_state_json=taint_state_json,
+                processing_profile_id=context.processing_profile_id,
             )
 
         return request_confirmation

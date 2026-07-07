@@ -104,10 +104,7 @@ class RemoteA2AService:
 
         metadata: dict[str, object] | None = None
         if initial_taint_sources:
-            state = TurnTaintState.empty()
-            for source in initial_taint_sources:
-                state = state.add_source(source)
-            metadata = {A2A_TAINT_METADATA_KEY: state.to_metadata()}
+            metadata = _a2a_taint_metadata(initial_taint_sources)
 
         try:
             task = await self._client.send_message(
@@ -144,6 +141,7 @@ class RemoteA2AService:
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> RemoteSubmission:
         """Submit to the remote agent without blocking; the remote assigns the id.
 
@@ -160,7 +158,16 @@ class RemoteA2AService:
             self._service_config.id,
             context_id,
         )
-        task = await self._client.submit(content_parts, context_id=context_id)
+        metadata = (
+            _a2a_taint_metadata(initial_taint_sources)
+            if initial_taint_sources
+            else None
+        )
+        task = await self._client.submit(
+            content_parts,
+            context_id=context_id,
+            metadata=metadata,
+        )
         terminal_result = None if _is_pending(task) else a2a_task_to_chat_result(task)
         return RemoteSubmission(
             remote_task_id=task.id,
@@ -206,3 +213,12 @@ class RemoteA2AService:
 def _is_pending(task: Task) -> bool:
     """Whether a remote task is still in progress (non-terminal)."""
     return task.status.state in {TaskState.submitted, TaskState.working}
+
+
+def _a2a_taint_metadata(
+    initial_taint_sources: Sequence[TaintSource],
+) -> dict[str, object]:
+    state = TurnTaintState.empty()
+    for source in initial_taint_sources:
+        state = state.add_source(source)
+    return {A2A_TAINT_METADATA_KEY: state.to_metadata()}
