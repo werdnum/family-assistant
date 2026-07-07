@@ -557,6 +557,10 @@ concentrate.
 
 ### Post-Taint Read Broadening
 
+This rule is planned but not enforced by the Phase 3 observe-mode implementation. Phase 3 records
+the state needed for the rule so later work can add enforcement without changing the turn-state
+schema.
+
 The matrix needs a temporal rule in addition to max tier:
 
 If `UNKNOWN_EXTERNAL` has entered the turn, a later request that broadens access to private semantic
@@ -951,7 +955,9 @@ structured tier in audit logs.
   during profile resolution.
 - Add sink-class resolver for local tools and MCP tools.
 - Wrap tool execution with taint evaluation after static policy.
-- Implement post-taint read-broadening checks for document/note/message-history reads.
+- Record post-taint read-broadening state for document/note/message-history reads. Enforcement of
+  the temporal read-broadening rule is deferred to a later phase; Phase 3 uses the max-tier sink
+  matrix only.
 - Store taint state on durable confirmation rows and re-evaluate policy on approval.
 - Keep mode `observe` by default.
 - Tests:
@@ -960,10 +966,7 @@ structured tier in audit logs.
   - user-local reply remains allowed.
   - profile-level `taint_policy` overrides cannot relax top-level operator minimums.
   - legacy message-history rows are backfilled or marked before enforcement is enabled.
-  - sensitive read before unknown external content is allowed; after unknown external content is
-    would-confirm.
-  - history-carried high-tier taint audits explicitly user-requested reads instead of confirming
-    every read in a long-running conversation.
+  - read-broadening state is recorded for later enforcement without changing Phase 3 sink decisions.
   - deferred confirmation approval executes with the stored taint state and fails closed if policy
     became stricter.
 
