@@ -538,7 +538,12 @@ various tasks with dark mode support and mobile optimization.
   stay in the assistant's context), shows Markdown and tool calls, handles approve/reject
   confirmations, and can upload images, PDFs, plain text, and Markdown files up to 100 MB. From the
   iOS share sheet or Files "Open In" flow, sharing a supported file to Family Assistant opens a new
-  Chat draft and attaches the file so you can add a message before sending. A very long message (or
+  Chat draft and attaches the file so you can add a message before sending. A copied image (for
+  example, a screenshot, or a photo copied from the Photos app) can be attached with the paste
+  button next to the composer — it lights up whenever an image is on the clipboard (text can be
+  pasted straight into the message field as usual). The Photos share sheet itself does not list
+  Family Assistant (that would need a share extension); copy the photo and paste it, pick it with
+  the composer's photo button, or share it from Files instead. A very long message (or
   a large tool result) renders a section at a time with a **Show more** control, so the thread stays
   responsive no matter how big the content is. The Chat tab opens directly to a fresh composer when
   there is no recent conversation to restore, and long-pressing the app icon shows **New Chat** and
