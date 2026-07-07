@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import XCTest
 
 @testable import FamilyAssistant
@@ -5977,6 +5978,42 @@ final class ChatViewModelTests: XCTestCase {
         await model.removeDraftAttachment(attachment)
 
         XCTAssertTrue(model.draftAttachments.isEmpty)
+    }
+
+    // MARK: - Pasted images
+
+    /// Formats the backend accepts pass through the paste pipeline untouched;
+    /// this covers the declaration-order guarantee that the PNG representation
+    /// wins over the generic transcode fallback for PNG pasteboard data.
+    func testPastedImagePassesSupportedFormatThroughUnchanged() throws {
+        let pngData = try XCTUnwrap(solidImage(size: CGSize(width: 4, height: 4)).pngData())
+
+        let pasted = PastedChatImage(data: pngData, mimeType: "image/png", filenameExtension: "png")
+
+        XCTAssertEqual(pasted.data, pngData)
+        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(pasted.mimeType))
+    }
+
+    func testPastedImageTranscodesDecodableDataToJPEG() throws {
+        let pngData = try XCTUnwrap(solidImage(size: CGSize(width: 4, height: 4)).pngData())
+
+        let pasted = try PastedChatImage.transcodedToJPEG(data: pngData)
+
+        XCTAssertEqual(pasted.mimeType, "image/jpeg")
+        XCTAssertEqual(pasted.filenameExtension, "jpg")
+        XCTAssertNotNil(UIImage(data: pasted.data))
+        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(pasted.mimeType))
+    }
+
+    func testPastedImageTranscodeRejectsUndecodableData() {
+        XCTAssertThrowsError(try PastedChatImage.transcodedToJPEG(data: Data("not an image".utf8)))
+    }
+
+    private func solidImage(size: CGSize) -> UIImage {
+        UIGraphicsImageRenderer(size: size).image { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
     }
 
     func testSharedAttachmentBatchUploadsIntoDraftAttachments() async throws {

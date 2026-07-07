@@ -503,6 +503,28 @@ private struct ChatComposerView: View {
                             .frame(width: 32, height: 36)
                     }
                     .accessibilityLabel("Add File")
+
+                    // The composer's TextField only accepts text pastes, so a
+                    // copied screenshot or photo needs an explicit paste
+                    // target. PasteButton reads the pasteboard without the
+                    // system paste-permission prompt and disables itself while
+                    // the pasteboard holds no image.
+                    PasteButton(payloadType: PastedChatImage.self) { images in
+                        Task { @MainActor in
+                            for image in images {
+                                await viewModel.addImageData(
+                                    image.data,
+                                    filename: "\(UUID().uuidString).\(image.filenameExtension)",
+                                    mimeType: image.mimeType
+                                )
+                            }
+                        }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.capsule)
+                    .frame(height: 36)
+                    .accessibilityLabel("Paste Image")
+                    .accessibilityIdentifier("chat-paste-button")
                 }
 
                 TextField(
@@ -624,6 +646,45 @@ private struct ChatComposerView: View {
             throw ChatAPIError.validation("Could not convert the selected photo to JPEG.")
         }
         return jpegData
+    }
+}
+
+/// An image imported from the system pasteboard via the composer's
+/// `PasteButton`. Formats the backend accepts are uploaded as-is; anything
+/// else `UIImage` can decode (HEIC from Photos, TIFF via Universal Clipboard,
+/// …) is transcoded to JPEG, mirroring the photo picker's HEIC handling.
+/// Representations are tried in declaration order, so the pass-through
+/// formats win over the generic transcoding fallback.
+struct PastedChatImage: Transferable, Equatable {
+    let data: Data
+    let mimeType: String
+    let filenameExtension: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .png) {
+            PastedChatImage(data: $0, mimeType: "image/png", filenameExtension: "png")
+        }
+        DataRepresentation(importedContentType: .jpeg) {
+            PastedChatImage(data: $0, mimeType: "image/jpeg", filenameExtension: "jpg")
+        }
+        DataRepresentation(importedContentType: .gif) {
+            PastedChatImage(data: $0, mimeType: "image/gif", filenameExtension: "gif")
+        }
+        DataRepresentation(importedContentType: .webP) {
+            PastedChatImage(data: $0, mimeType: "image/webp", filenameExtension: "webp")
+        }
+        DataRepresentation(importedContentType: .image) {
+            try PastedChatImage.transcodedToJPEG(data: $0)
+        }
+    }
+
+    static func transcodedToJPEG(data: Data) throws -> PastedChatImage {
+        guard let image = UIImage(data: data),
+              let jpegData = image.jpegData(compressionQuality: 0.9)
+        else {
+            throw ChatAPIError.validation("Pasted image format is not supported.")
+        }
+        return PastedChatImage(data: jpegData, mimeType: "image/jpeg", filenameExtension: "jpg")
     }
 }
 
