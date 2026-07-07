@@ -51,8 +51,10 @@ from family_assistant.llm.content_parts import ContentPartDict, text_content
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.security.taint import (
     A2A_TAINT_METADATA_KEY,
+    SourceTrustTier,
     TaintMetadata,
     TaintSource,
+    TaintSourceType,
     TurnTaintState,
     coerce_taint_metadata,
 )
@@ -1020,12 +1022,25 @@ def _resolve_service(request: Request, message: Message) -> ProcessingService | 
 def _initial_taint_sources_from_message(message: Message) -> tuple[TaintSource, ...]:
     """Restore FA runtime taint from A2A message metadata, when present."""
     if not message.metadata:
-        return ()
+        return (_default_a2a_peer_taint_source(message),)
     raw_taint = message.metadata.get(A2A_TAINT_METADATA_KEY)
     taint_metadata: TaintMetadata | None = coerce_taint_metadata(raw_taint)
     if taint_metadata is None:
-        return ()
+        return (_default_a2a_peer_taint_source(message),)
     return TurnTaintState.from_metadata(taint_metadata).sources
+
+
+def _default_a2a_peer_taint_source(message: Message) -> TaintSource:
+    return TaintSource(
+        source_type=TaintSourceType.MANUAL,
+        source_id=message.message_id,
+        tier=SourceTrustTier.RECOGNIZED_MACHINE,
+        labels=frozenset({"source_recognized_machine"}),
+        reason=(
+            "Inbound A2A message did not include Family Assistant runtime taint "
+            "metadata; defaulting peer content to recognized_machine."
+        ),
+    )
 
 
 def _row_to_task(row: A2ATaskRow) -> Task:

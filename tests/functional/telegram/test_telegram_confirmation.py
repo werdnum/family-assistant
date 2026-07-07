@@ -31,6 +31,7 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.telegram.ui import (
     PendingTelegramConfirmation,
@@ -98,6 +99,7 @@ class RecordingConfirmationService:
         confirmation_prompt: str,
         expires_at: datetime,
         decision_only: bool = False,
+        processing_profile_id: str | None = None,
         taint_state_json: dict[str, object] | None = None,
         approval_policy_fingerprint: str | None = None,
     ) -> dict[str, object]:
@@ -110,6 +112,7 @@ class RecordingConfirmationService:
             "confirmation_prompt": confirmation_prompt,
             "expires_at": expires_at,
             "decision_only": decision_only,
+            "processing_profile_id": processing_profile_id,
             "taint_state_json": taint_state_json,
             "approval_policy_fingerprint": approval_policy_fingerprint,
         }
@@ -355,6 +358,10 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
     assert (
         confirmation_service.last_created_request["taint_state_json"]
         == taint_state_json
+    )
+    assert (
+        confirmation_service.last_created_request["processing_profile_id"]
+        == "runtime-taint-test"
     )
     assert confirmation_service.last_created_request[
         "approval_policy_fingerprint"
@@ -969,6 +976,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
 
     # --- 3. Mock LLM: first call returns a tool call, second returns text ---
     tool_call_id = f"call_keyboard_{uuid.uuid4()}"
+    note_title = f"Deadlock Test {uuid.uuid4()}"
+    note_content = "content"
     cast("RuleBasedMockLLMClient", fix.mock_llm).rules = [
         (
             lambda kwargs: (
@@ -983,8 +992,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
                         function=ToolCallFunction(
                             name=TOOL_NAME_SENSITIVE,
                             arguments=json.dumps({
-                                "title": "Deadlock Test",
-                                "content": "content",
+                                "title": note_title,
+                                "content": note_content,
                             }),
                         ),
                     )
@@ -1077,6 +1086,10 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         assert any("added" in t.lower() or "note" in t.lower() for t in texts), (
             f"Expected final response after confirmation, got: {texts}"
         )
+        async with DatabaseContext(engine=fix.assistant.database_engine) as db:
+            note = await db.notes.get_by_title(note_title, visibility_grants=None)
+        assert note is not None
+        assert note.content == note_content
 
     finally:
         policy_provider._policy_engine.evaluate_for_execution = original_eval  # type: ignore[assignment]

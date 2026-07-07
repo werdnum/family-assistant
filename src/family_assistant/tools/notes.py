@@ -18,6 +18,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_state_into_tracker,
 )
+from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -421,6 +422,15 @@ async def list_notes_tool(
         ]
     else:
         filtered_notes = all_notes
+
+    for note in filtered_notes:
+        merge_artifact_taint_into_context(
+            exec_context,
+            provenance_metadata=note.provenance_metadata,
+            fallback_source_type=TaintSourceType.NOTE,
+            fallback_source_id=note.title,
+            fallback_reason=f"Listed note '{note.title}' carries stored provenance.",
+        )
 
     # Return summary with attachment count
     return [

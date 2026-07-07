@@ -942,16 +942,15 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
 
 
 def _taint_audit_sources(state: TurnTaintState) -> list[TaintAuditSourceSummary]:
-    metadata = state.to_metadata()
     return [
         {
-            "source_type": source["source_type"],
-            "source_id": source["source_id"],
-            "tier": source["tier"],
-            "labels": source["labels"],
-            "reason": source["reason"],
+            "source_type": source.source_type.value,
+            "source_id": source.source_id,
+            "tier": source.tier.config_value,
+            "labels": sorted(source.labels),
+            "reason": source.reason,
         }
-        for source in metadata.get("sources", [])
+        for source in state.sources
     ]
 
 
@@ -971,28 +970,44 @@ def _summarize_tool_arguments(
 def _collect_attachment_argument_ids(
     value: object,
     *,
+    schema: object = None,
     in_attachment_slot: bool = False,
 ) -> set[str]:
+    schema_is_attachment = (
+        isinstance(schema, dict) and schema.get("type") == "attachment"
+    )
+    in_attachment_slot = in_attachment_slot or schema_is_attachment
     if isinstance(value, dict):
         attachment_ids: set[str] = set()
+        schema_properties = (
+            schema.get("properties", {}) if isinstance(schema, dict) else {}
+        )
         for key, child in value.items():
             child_key = str(key).lower()
+            child_schema = (
+                schema_properties.get(key)
+                if isinstance(schema_properties, dict)
+                else None
+            )
             child_in_attachment_slot = in_attachment_slot or (
                 "attachment" in child_key and "id" in child_key
             )
             attachment_ids.update(
                 _collect_attachment_argument_ids(
                     child,
+                    schema=child_schema,
                     in_attachment_slot=child_in_attachment_slot,
                 )
             )
         return attachment_ids
     if isinstance(value, list | tuple):
         attachment_ids = set()
+        item_schema = schema.get("items") if isinstance(schema, dict) else None
         for child in value:
             attachment_ids.update(
                 _collect_attachment_argument_ids(
                     child,
+                    schema=item_schema,
                     in_attachment_slot=in_attachment_slot,
                 )
             )
@@ -1000,6 +1015,13 @@ def _collect_attachment_argument_ids(
     if in_attachment_slot and is_attachment_id(value):
         return {cast("str", value)}
     return set()
+
+
+def _tool_parameters_schema(descriptor: ToolDescriptor) -> object:
+    function_definition = descriptor.definition.get("function")
+    if not isinstance(function_definition, dict):
+        return None
+    return function_definition.get("parameters")
 
 
 class TaintTrackingToolsProvider(ToolsProvider):
@@ -1056,6 +1078,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             argument_taint_merged = await self._merge_argument_taint_into_context(
                 arguments,
                 context,
+                descriptor,
             )
             state = context.taint_tracker.snapshot()
             if context.taint_policy_snapshot is not None and not argument_taint_merged:
@@ -1170,11 +1193,15 @@ class TaintTrackingToolsProvider(ToolsProvider):
         # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
         arguments: dict[str, Any],
         context: ToolExecutionContext,
+        descriptor: ToolDescriptor,
     ) -> bool:
         if context.taint_tracker is None or context.attachment_registry is None:
             return False
 
-        attachment_ids = _collect_attachment_argument_ids(arguments)
+        attachment_ids = _collect_attachment_argument_ids(
+            arguments,
+            schema=_tool_parameters_schema(descriptor),
+        )
         if not attachment_ids:
             return False
 

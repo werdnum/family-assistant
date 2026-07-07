@@ -23,6 +23,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -52,7 +53,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
-    from family_assistant.security.taint import TaintSource
+    from family_assistant.security.taint import TaintMetadata, TaintSource
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
@@ -61,6 +62,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _taint_metadata_from_sources(
+    sources: Sequence[TaintSource] | None,
+) -> TaintMetadata:
+    state = TurnTaintState.empty()
+    for source in sources or ():
+        state = state.add_source(source)
+    return state.to_metadata()
 
 
 class ProcessingService:
@@ -612,6 +622,7 @@ class ProcessingService:
         save_history_with_isolated_context: bool = True,
         trigger_role: Literal["user", "system"] = "user",
         reuse_existing_user_row: bool = False,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> tuple[int | None, list[LLMMessage], tuple[TaintSource, ...]]:
         """Build the full pre-LLM turn state shared by sync and streaming flows."""
         thread_root_id_for_turn = thread_root_id
@@ -627,10 +638,14 @@ class ProcessingService:
         actual_interface_message_id = trigger_interface_message_id or f"temp_{turn_id}"
 
         trigger_message: LLMMessage
+        trigger_taint_metadata = _taint_metadata_from_sources(initial_taint_sources)
         if trigger_role == "system":
             trigger_message = SystemMessage(content=user_content_for_history)
         else:
-            trigger_message = UserMessage(content=user_content_for_history)
+            trigger_message = UserMessage(
+                content=user_content_for_history,
+                taint_metadata=trigger_taint_metadata,
+            )
         # When the caller already persisted this turn's user message, reuse it
         # instead of inserting a duplicate. The web endpoint does this before
         # launching the (cancellable) producer task, so a Stop that cancels the
@@ -923,6 +938,7 @@ class ProcessingService:
                 pinned_history_message_ids=pinned_history_message_ids,
                 save_history_with_isolated_context=use_isolated_history_writes,
                 trigger_role=trigger_role,
+                initial_taint_sources=initial_taint_sources,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---

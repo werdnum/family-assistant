@@ -3,16 +3,18 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Self, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import update
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
-from family_assistant.llm.messages import AssistantMessage, ToolMessage
+from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.errors import ScriptExecutionError
@@ -27,11 +29,14 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    merge_history_taint,
     merge_taint_policy_config,
     resolve_tool_sink_class,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import get_db_context
+from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.documents import get_full_document_content_tool
 from family_assistant.tools.infrastructure import (
@@ -46,7 +51,11 @@ from family_assistant.tools.metadata import (
     ToolTag,
     make_local_tool_metadata,
 )
-from family_assistant.tools.notes import add_or_update_note_tool, get_note_tool
+from family_assistant.tools.notes import (
+    add_or_update_note_tool,
+    get_note_tool,
+    list_notes_tool,
+)
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     MatcherArgs,
@@ -455,6 +464,26 @@ def test_profile_taint_policy_cannot_relax_redact_to_audit() -> None:
         merge_taint_policy_config(base=base, profile=profile)
 
 
+def test_profile_taint_policy_cannot_substitute_redact_for_confirm() -> None:
+    base = TaintPolicyConfig(
+        matrix_overrides={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM
+            }
+        }
+    )
+    profile = TaintPolicyConfig(
+        matrix_overrides={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.REDACT
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="cannot relax base policy"):
+        merge_taint_policy_config(base=base, profile=profile)
+
+
 def test_profile_taint_policy_can_make_operator_minimum_stricter() -> None:
     base = TaintPolicyConfig(
         operator_minimum={
@@ -516,6 +545,42 @@ def test_taint_metadata_round_trip_preserves_compacted_max_tier() -> None:
     assert restored.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert restored.sources[-1].tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert "max_tier exceeded retained source summaries" in restored.sources[-1].reason
+
+
+@pytest.mark.asyncio
+async def test_legacy_history_row_missing_taint_metadata_restores_unknown_external(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.ERROR)
+    async with get_db_context(db_engine) as db_context:
+        internal_id = await db_context.message_history.add_message(
+            UserMessage(content="legacy untrusted text"),
+            interface_type="test",
+            conversation_id="legacy-taint",
+            timestamp=datetime.now(UTC),
+            turn_id="turn-legacy",
+            processing_profile_id="runtime-taint-test",
+        )
+        assert internal_id is not None
+        await db_context.execute_with_retry(
+            update(message_history_table)
+            .where(message_history_table.c.internal_id == internal_id)
+            .values(taint_metadata_json=None, taint_metadata_version=None)
+        )
+
+        rows = await db_context.message_history.get_recent(
+            interface_type="test",
+            conversation_id="legacy-taint",
+            limit=5,
+            processing_profile_id="runtime-taint-test",
+        )
+
+    assert len(rows) == 1
+    state = merge_history_taint(rows)
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+    assert "legacy_missing_taint_metadata" in caplog.text
 
 
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
@@ -1085,6 +1150,34 @@ async def test_text_attachment_read_restores_stored_provenance_taint(
 
 
 @pytest.mark.asyncio
+async def test_list_notes_preview_restores_stored_provenance_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    provenance_state = _unknown_external_tracker().snapshot()
+    read_tracker = InMemoryTurnTaintTracker()
+
+    async with get_db_context(db_engine) as db_context:
+        await db_context.notes.add_or_update(
+            title="tainted listed note",
+            content="attacker preview text",
+            include_in_prompt=False,
+            provenance_metadata={"taint_metadata": provenance_state.to_metadata()},
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+        read_context = _minimal_context(db_context, read_tracker)
+        result = await list_notes_tool(read_context)
+
+    assert any(note["title"] == "tainted listed note" for note in result)
+    read_state = read_tracker.snapshot()
+    assert read_state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert any(
+        source.source_type is TaintSourceType.TOOL_OUTPUT
+        and source.source_id == "external"
+        for source in read_state.sources
+    )
+
+
+@pytest.mark.asyncio
 async def test_tainted_attachment_arguments_are_merged_before_sink_policy(
     db_engine: AsyncEngine,
     tmp_path: Path,
@@ -1130,6 +1223,81 @@ async def test_tainted_attachment_arguments_are_merged_before_sink_policy(
     assert policy_events[0]["requested_outcome"] == "confirm"
     assert policy_events[0]["effective_outcome"] == "audit"
     assert policy_events[0]["max_tier"] == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_tainted_schema_attachment_argument_without_id_name_is_merged(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    provenance_state = _unknown_external_tracker().snapshot()
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path),
+        db_engine=db_engine,
+        config=None,
+    )
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "transform_like_tool",
+                                "description": "Transform an image.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "image": {"type": "attachment"},
+                                    },
+                                },
+                            },
+                        },
+                    ),
+                    implementation=_browser_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.EXTERNAL_COMM,
+                        ToolTag.OUTPUT_TRUSTED,
+                    ]),
+                )
+            ]
+        )
+    )
+    tracker = InMemoryTurnTaintTracker()
+
+    async with get_db_context(db_engine) as db_context:
+        attachment = await registry.store_and_register_tool_attachment(
+            file_content=b"external image bytes\n",
+            filename="external.png",
+            content_type="image/png",
+            tool_name="test_tool",
+            metadata={"taint_metadata": provenance_state.to_metadata()},
+            db_context=db_context,
+        )
+        context = _minimal_context(
+            db_context,
+            tracker,
+            attachment_registry=registry,
+        )
+
+        await provider.execute_tool(
+            "transform_like_tool",
+            {"image": attachment.attachment_id},
+            context,
+            "call_transform_like_tool",
+        )
+        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    policy_events = [
+        event for event in audit_events if event["event_type"] == "policy_evaluation"
+    ]
+    assert len(policy_events) == 1
+    assert policy_events[0]["tool_name"] == "transform_like_tool"
+    assert policy_events[0]["requested_outcome"] == "confirm"
+    assert policy_events[0]["effective_outcome"] == "audit"
 
 
 @pytest.mark.asyncio

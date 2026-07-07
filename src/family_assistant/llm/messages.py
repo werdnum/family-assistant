@@ -171,6 +171,7 @@ class UserMessage(BaseModel):
 
     role: Literal["user"] = "user"
     content: str | list[ContentPart]
+    taint_metadata: TaintMetadata | None = None
 
     # Optional: For provider-specific pre-converted format (e.g., Google GenAI)
     # Excluded from serialization as it's only used during provider conversion
@@ -347,7 +348,7 @@ def message_to_json_dict(
     making the result safe for json.dumps().
     """
     if isinstance(msg, UserMessage):
-        return {
+        user_message_dict: dict[str, object] = {
             "role": "user",
             "content": [
                 part.model_dump(mode="json", exclude_none=True) for part in msg.content
@@ -355,6 +356,9 @@ def message_to_json_dict(
             if isinstance(msg.content, list)
             else msg.content,
         }
+        if include_taint_metadata and msg.taint_metadata is not None:
+            user_message_dict["taint_metadata"] = msg.taint_metadata
+        return user_message_dict
 
     if isinstance(msg, AssistantMessage):
         tool_calls = (

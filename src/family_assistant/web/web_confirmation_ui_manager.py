@@ -94,6 +94,7 @@ class WebConfirmationUIManager:
             confirmation_prompt=prompt_text,
             expires_at=expires_at,
             decision_only=not wait_for_durable_execution,
+            processing_profile_id=processing_profile_id,
             taint_state_json=taint_state_json,
             approval_policy_fingerprint=build_confirmation_policy_fingerprint(
                 tool_name=tool_name,

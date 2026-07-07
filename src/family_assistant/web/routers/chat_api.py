@@ -26,6 +26,7 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.confirmation_service import (
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
@@ -1013,7 +1014,10 @@ async def api_chat_create_turn(
     try:
         async with get_db_context(request.app.state.database_engine) as user_msg_db:
             await user_msg_db.message_history.add_message(
-                UserMessage(content=payload.prompt),
+                UserMessage(
+                    content=payload.prompt,
+                    taint_metadata=TurnTaintState.empty().to_metadata(),
+                ),
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 interface_message_id=f"temp_{payload.turn_id}",

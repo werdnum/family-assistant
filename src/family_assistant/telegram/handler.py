@@ -730,6 +730,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                         "internal_id"
                                     ]
 
+                            taint_state_json = (
+                                context.taint_tracker.snapshot().to_metadata()
+                                if context.taint_tracker is not None
+                                else None
+                            )
                             result = await self.confirmation_manager.request_confirmation(
                                 conversation_id=conversation_id,
                                 interface_type=interface_type,
@@ -741,6 +746,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 target_user_id=resolved_user.user_id,
                                 tool_call_id=call_id,
                                 source_message_internal_id=source_message_internal_id,
+                                taint_state_json=taint_state_json,
+                                processing_profile_id=context.processing_profile_id,
                             )
                             return result
 

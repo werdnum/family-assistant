@@ -444,6 +444,9 @@ class TaintPolicyEvaluator:
 
     def __init__(self, config: TaintPolicyConfig | None = None) -> None:
         self._config = config or TaintPolicyConfig()
+        self._matrix = _default_taint_matrix()
+        _merge_matrix(self._matrix, self._config.matrix)
+        _merge_matrix(self._matrix, self._config.matrix_overrides)
 
     @property
     def mode(self) -> TaintPolicyMode:
@@ -500,10 +503,7 @@ class TaintPolicyEvaluator:
         tier: SourceTrustTier,
         sink_class: SinkClass,
     ) -> TaintPolicyOutcome:
-        matrix = _default_taint_matrix()
-        _merge_matrix(matrix, self._config.matrix)
-        _merge_matrix(matrix, self._config.matrix_overrides)
-        return matrix.get(tier, {}).get(sink_class, TaintPolicyOutcome.ALLOW)
+        return self._matrix.get(tier, {}).get(sink_class, TaintPolicyOutcome.ALLOW)
 
     def _apply_operator_minimum(
         self,
@@ -515,7 +515,7 @@ class TaintPolicyEvaluator:
         minimum = self._config.operator_minimum.get(tier, {}).get(sink_class)
         if minimum is None:
             return outcome
-        if _outcome_strictness(outcome) >= _outcome_strictness(minimum):
+        if _outcome_satisfies_minimum(outcome, minimum):
             return outcome
         return minimum
 
@@ -596,7 +596,7 @@ def _reject_relaxed_base_policy(
                 minimum = operator_minimum
             if minimum is None:
                 continue
-            if _outcome_strictness(outcome) < _outcome_strictness(minimum):
+            if not _outcome_satisfies_minimum(outcome, minimum):
                 msg = (
                     "Profile taint_policy cannot relax base policy for "
                     f"{tier.config_value}.{sink_class.value}: "
@@ -703,6 +703,17 @@ def _outcome_strictness(outcome: TaintPolicyOutcome) -> int:
     if outcome is TaintPolicyOutcome.DENY:
         return 3
     raise AssertionError(f"Unhandled taint policy outcome: {outcome}")
+
+
+def _outcome_satisfies_minimum(
+    outcome: TaintPolicyOutcome,
+    minimum: TaintPolicyOutcome,
+) -> bool:
+    if outcome is minimum:
+        return True
+    if outcome is TaintPolicyOutcome.REDACT or minimum is TaintPolicyOutcome.REDACT:
+        return False
+    return _outcome_strictness(outcome) >= _outcome_strictness(minimum)
 
 
 def derive_tool_result_taint_source(
