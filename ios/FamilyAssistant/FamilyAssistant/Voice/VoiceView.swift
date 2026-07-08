@@ -130,21 +130,23 @@ private struct VoiceSessionContent: View {
 
     @ViewBuilder
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(model.transcript.entries) { entry in
-                        VoiceTranscriptRow(entry: entry)
-                            .id(entry.id)
-                    }
+        // The transcript streams text into its newest row on every partial, so it
+        // followed on every token — and it animated the follow, the exact pattern
+        // that wedges the LazyVStack under the scene-update watchdog. Route it
+        // through the shared sticky-bottom container: it follows the streaming
+        // tail while the user is at the bottom, never animates, and leaves them
+        // put if they scroll up to re-read. The trigger combines the newest
+        // entry's id and its text so both a new row and a streamed partial follow.
+        StickyBottomScroll(
+            followTrigger: model.transcript.entries.last.map { AnyHashable([$0.id.uuidString, $0.text]) }
+        ) {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                ForEach(model.transcript.entries) { entry in
+                    VoiceTranscriptRow(entry: entry)
+                        .id(entry.id)
                 }
-                .padding(.horizontal, 4)
             }
-            .onChange(of: model.transcript.entries.last?.text) {
-                if let last = model.transcript.entries.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
-            }
+            .padding(.horizontal, 4)
         }
         .frame(maxWidth: .infinity)
     }

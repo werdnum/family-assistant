@@ -900,6 +900,10 @@ final class ChatViewModel {
         )
         messages.append(userMessage)
         messages.append(assistantMessage)
+        // A local send always scrolls into view, even if the user had scrolled
+        // up: the newest bubble is now the assistant loading placeholder, so the
+        // near-bottom auto-follow gate can't recognize this as user-initiated.
+        requestScrollToLatest()
         draftText = ""
         cleanupTemporaryImports(for: draftAttachments)
         draftAttachments = []
@@ -2995,6 +2999,27 @@ final class ChatViewModel {
     /// Reveal another page of older bubbles.
     func showEarlierMessages() {
         displayedMessageLimit += Self.displayedMessagePageSize
+    }
+
+    /// Bumped when the user takes an action that should scroll the thread to the
+    /// newest message unconditionally (currently: sending a message). The chat
+    /// view observes it as `StickyBottomScroll.forceFollowTrigger`.
+    ///
+    /// This is separate from the near-bottom auto-follow gate: a passive arrival
+    /// (streamed reply, tool step, message synced from another device) only
+    /// follows when the user is near the bottom, so a reply landing while they
+    /// have scrolled up to read history never yanks them — the yank is also a
+    /// layout-watchdog hazard, forcing the `LazyVStack` into a non-settling
+    /// bottom-anchored re-measure (0x8BADF00D,
+    /// scratch/FamilyAssistant-2026-07-07-090155.ips). A local send, by contrast,
+    /// must always pin to the bottom, and that intent is an event — it can't be
+    /// inferred from the last bubble, which is the assistant loading placeholder
+    /// right after a send. See docs/design/ios-chat-layout-watchdog-crash.md.
+    private(set) var scrollToLatestRequestID = 0
+
+    /// Request an unconditional scroll to the newest message on the next render.
+    private func requestScrollToLatest() {
+        scrollToLatestRequestID += 1
     }
 
     /// Collapse the tool calls an agentic turn made across several backend

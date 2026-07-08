@@ -294,6 +294,47 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(grouped.last?.toolCalls.map(\.id), ["a", "b"])
     }
 
+    // MARK: - Auto-follow: local send force-scroll (scene-update watchdog)
+
+    func testSendDraftRequestsScrollToLatestSoALocalSendIsAlwaysShown() async {
+        // A local send must always scroll into view, even if the user had
+        // scrolled up to read history — but right after a send the newest bubble
+        // is the assistant loading placeholder, so this intent can't be inferred
+        // from the last role and is signalled explicitly via
+        // `scrollToLatestRequestID` (which the chat view drives as
+        // `StickyBottomScroll.forceFollowTrigger`). See
+        // scratch/FamilyAssistant-2026-07-07-090155.ips.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(#"{"turn_id":"t","conversation_id":"web_conv_scroll","first_seq":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_scroll/stream"):
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"t","seq":0}
+
+                    event: turn_ended
+                    data: {"turn_id":"t","status":"complete"}
+
+                    """
+                )
+            default:
+                return .json("{}")
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_scroll")
+        let before = model.scrollToLatestRequestID
+        model.draftText = "Anything else?"
+        await model.sendDraft()
+
+        XCTAssertGreaterThan(
+            model.scrollToLatestRequestID, before,
+            "Sending a message must request a scroll to the newest bubble."
+        )
+    }
+
     private func plainMessage(index: Int) -> ChatMessage {
         ChatMessage(
             id: "msg_\(index)",

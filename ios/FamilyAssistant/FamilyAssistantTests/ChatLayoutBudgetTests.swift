@@ -271,6 +271,219 @@ final class ChatLayoutBudgetTests: XCTestCase {
         )
     }
 
+    // MARK: - Auto-follow (no-yank) symptom guard
+
+    /// Hosts the real `StickyBottomScroll` and reproduces, at the UIKit layer,
+    /// the reported crash's trigger: content changes while the user has scrolled
+    /// up. When the follow gate denies (a passive arrival away from the bottom)
+    /// the scroll position must NOT jump to the bottom — that jump is the
+    /// production yank and the non-settling bottom-anchored re-measure that trips
+    /// the scene-update watchdog (scratch/FamilyAssistant-2026-07-07-090155.ips).
+    /// When the gate allows, it must follow. Complements the pure gate policy in
+    /// `ChatViewModelTests`; this covers the view wiring the unit test cannot.
+    func testStickyBottomScrollLandsAtBottomOnAppear() {
+        let harness = hostStickyScroll(gate: false)
+        defer { harness.teardown() }
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+        XCTAssertTrue(
+            isAtBottom(harness.scrollView),
+            "StickyBottomScroll must land at the bottom on appear (offset \(harness.scrollView.contentOffset.y) of \(maxOffset(harness.scrollView)))"
+        )
+    }
+
+    func testStickyBottomScrollDoesNotYankWhenGateDenies() {
+        let harness = hostStickyScroll(gate: false)
+        defer { harness.teardown() }
+        // Deterministically wait for the initial land BEFORE scrolling up, so a
+        // late onAppear scroll can never leak into the post-trigger window and
+        // masquerade as a follow (the flake this guards against).
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+        XCTAssertTrue(isAtBottom(harness.scrollView), "precondition: initial land at bottom did not settle")
+
+        harness.scrollToTop()
+        XCTAssertFalse(isAtBottom(harness.scrollView), "precondition: scroll-to-top did not take effect")
+
+        harness.change(follow: 1)
+        XCTAssertFalse(
+            isAtBottom(harness.scrollView),
+            "A denied follow must leave a scrolled-up reader where they are (offset \(harness.scrollView.contentOffset.y))"
+        )
+    }
+
+    func testStickyBottomScrollFollowsWhenGateAllows() {
+        let harness = hostStickyScroll(gate: true)
+        defer { harness.teardown() }
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+
+        harness.scrollToTop()
+        XCTAssertFalse(isAtBottom(harness.scrollView), "precondition: scroll-to-top did not take effect")
+
+        harness.change(follow: 1)
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+        XCTAssertTrue(
+            isAtBottom(harness.scrollView),
+            "An allowed follow must scroll to the bottom (offset \(harness.scrollView.contentOffset.y) of \(maxOffset(harness.scrollView)))"
+        )
+    }
+
+    func testStickyBottomScrollForceFollowScrollsEvenWhenGateWouldDeny() {
+        // A user-initiated force (e.g. sending a message) must scroll to the
+        // bottom even when the near-bottom gate would deny — the local-send case
+        // the passive gate cannot recognize (the newest bubble is the assistant
+        // loading placeholder). Gate denies, yet the force trigger still pins.
+        let harness = hostStickyScroll(gate: false)
+        defer { harness.teardown() }
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+
+        harness.scrollToTop()
+        XCTAssertFalse(isAtBottom(harness.scrollView), "precondition: scroll-to-top did not take effect")
+
+        harness.change(force: 1)
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+        XCTAssertTrue(
+            isAtBottom(harness.scrollView),
+            "A user-initiated force must scroll to the bottom despite a denying gate (offset \(harness.scrollView.contentOffset.y) of \(maxOffset(harness.scrollView)))"
+        )
+    }
+
+    // MARK: - Auto-follow harness
+
+    /// A hosted `StickyBottomScroll` plus handles to drive it from a test: the
+    /// underlying `UIScrollView`, ways to bump the gated follow trigger and the
+    /// unconditional force trigger, and teardown.
+    private final class StickyScrollHarness {
+        let window: UIWindow
+        let host: UIHostingController<StickyBottomScroll<AnyView>>
+        let scrollView: UIScrollView
+        let makeRoot: (_ followToken: Int, _ forceToken: Int) -> StickyBottomScroll<AnyView>
+        let pumpFor: (TimeInterval) -> Void
+        private var followToken = 0
+        private var forceToken = 0
+
+        init(
+            window: UIWindow,
+            host: UIHostingController<StickyBottomScroll<AnyView>>,
+            scrollView: UIScrollView,
+            makeRoot: @escaping (_ followToken: Int, _ forceToken: Int) -> StickyBottomScroll<AnyView>,
+            pumpFor: @escaping (TimeInterval) -> Void
+        ) {
+            self.window = window
+            self.host = host
+            self.scrollView = scrollView
+            self.makeRoot = makeRoot
+            self.pumpFor = pumpFor
+        }
+
+        /// Spin the run loop until `predicate` holds or `timeout` elapses, so a
+        /// step waits on an observable state change (the scroll settling) instead
+        /// of a fixed sleep that races the host machine.
+        func waitUntil(timeout: TimeInterval = 3, _ predicate: () -> Bool) {
+            let deadline = Date(timeIntervalSinceNow: timeout)
+            while !predicate(), Date() < deadline {
+                pumpFor(0.05)
+            }
+        }
+
+        func scrollToTop() {
+            scrollView.setContentOffset(.zero, animated: false)
+            pumpFor(0.1)
+        }
+
+        /// Bump the gated follow trigger (a passive content arrival).
+        func change(follow token: Int) {
+            followToken = token
+            reapply()
+        }
+
+        /// Bump the unconditional force trigger (a user-initiated pin-to-bottom).
+        func change(force token: Int) {
+            forceToken = token
+            reapply()
+        }
+
+        private func reapply() {
+            host.rootView = makeRoot(followToken, forceToken)
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            pumpFor(0.25)
+        }
+
+        func teardown() {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+    }
+
+    private func hostStickyScroll(gate: Bool) -> StickyScrollHarness {
+        let makeRoot: (Int, Int) -> StickyBottomScroll<AnyView> = { followToken, forceToken in
+            StickyBottomScroll(
+                followTrigger: AnyHashable(followToken),
+                forceFollowTrigger: AnyHashable(forceToken),
+                shouldFollow: { _ in gate }
+            ) {
+                AnyView(
+                    LazyVStack(spacing: 14) {
+                        // Enough tall rows that the content far exceeds one screen,
+                        // so "top" and "bottom" offsets are unambiguously distinct.
+                        ForEach(0..<80, id: \.self) { index in
+                            Text("Row \(index)\n\nbody line one\nbody line two")
+                                .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                                .id("row-\(index)")
+                        }
+                    }
+                    .padding()
+                )
+            }
+        }
+
+        let host = UIHostingController(rootView: makeRoot(0, 0))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: Self.width, height: Self.height))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.frame = window.bounds
+
+        let pumpFor: (TimeInterval) -> Void = { seconds in
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            // Let SwiftUI's update cycle deliver onAppear/onChange and settle the
+            // resulting programmatic scroll.
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: seconds))
+        }
+        pumpFor(0.05)
+
+        guard let scrollView = Self.firstScrollView(in: host.view) else {
+            fatalError("StickyBottomScroll did not host a UIScrollView")
+        }
+        return StickyScrollHarness(
+            window: window,
+            host: host,
+            scrollView: scrollView,
+            makeRoot: makeRoot,
+            pumpFor: pumpFor
+        )
+    }
+
+    private func maxOffset(_ scrollView: UIScrollView) -> CGFloat {
+        max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom + scrollView.adjustedContentInset.top)
+    }
+
+    private func isAtBottom(_ scrollView: UIScrollView) -> Bool {
+        // Within a row's height of the maximum offset counts as "at the bottom".
+        scrollView.contentOffset.y >= maxOffset(scrollView) - 64
+    }
+
+    private static func firstScrollView(in view: UIView) -> UIScrollView? {
+        if let scrollView = view as? UIScrollView {
+            return scrollView
+        }
+        for subview in view.subviews {
+            if let found = firstScrollView(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+
     // MARK: - Layout measurement
 
     /// Hosts the production message-list layout and forces a synchronous

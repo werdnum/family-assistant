@@ -2,9 +2,10 @@
 
 ## Status
 
-M1–M3 shipped (PR #920, 2026-06-18). M4 (suspend-watchdog recurrence) shipped in PR #947. M5 added
-after a **foreground** recurrence on build 23 traced to unbounded per-message markdown layout (see
-"M5 — Unbounded message layout" below); this is the current focus.
+M1–M3 shipped (PR #920, 2026-06-18). M4 (suspend-watchdog recurrence) shipped in PR #947. M5 (PR
+#955) bounded per-message markdown layout after a **foreground** recurrence on build 23. M6 added
+after a **foreground** recurrence on build 36 traced to the auto-follow scroll yanking a user who
+had scrolled up (see "M6 — Auto-follow yank" below); this is the current focus.
 
 ## Summary
 
@@ -206,6 +207,63 @@ subtree — so the regression guard enforces the invariant, not the one shape:
 - `FamilyAssistantUITests.testFollowUpAfterToolTurnStaysResponsive` — the end-to-end repro: seeds a
   tool turn with a very large answer (`web_conv_tool_heavy`), sends a follow-up, and asserts the app
   stays responsive (the original failing case).
+
+### M6 — Auto-follow yank (foreground recurrence, build 36)
+
+A sixth report (`scratch/FamilyAssistant-2026-07-07-090155.ips`, build 36) is the same watchdog
+family (`0x8BADF00D`, `scene-update`, 10 s) but a **new trigger, not a new layout cost**. The user
+was scrolling through history when a reply arrived; the app locked up. The wedged main thread is in
+the **list-placement** path — `LazySubviewPlacements.placeSubviews` → `LazyStack.place` →
+`StackPlacement.measureBackwards` → `_LazyLayout_Subview.lengthAndSpacing` — not a single deep
+markdown subtree (the sampled per-bubble subtree is normal depth, and the per-message budget from M5
+is intact). `WatchdogCPUStatistics` show only ~17 % app CPU across the window: the main thread was
+not pegged in one hot loop, it was re-running placement passes that never settled.
+
+**Root cause.** `messageScrollArea` fired `proxy.scrollTo(lastID, anchor: .bottom)` on *every* change
+of the newest bubble's id, gated only on `scenePhase == .active`. When a reply lands while the user
+has scrolled up (or is mid-drag), that bottom-anchored `scrollTo` forces the `LazyVStack` to
+re-resolve its bottom anchor and `measureBackwards` over the visible rows while fighting the user's
+scroll position — it never converges, and the 10 s scene-update watchdog kills the app. This is the
+unanimated cousin of M5's second cause (animated scroll-to-bottom): M5 dropped the animation, which
+fixed the *send-while-idle* case, but not *reply-arrives-while-reading-history*.
+
+**Related case found (no separate report yet).** The voice transcript (`VoiceView.swift`) had the
+*same* class of bug in a different shape: it scrolled `withAnimation` on **every streamed token**
+(`onChange(of: entries.last?.text)`) — animated follow (M5 cause #2) fired at partial-transcript
+frequency, a latent live-voice wedge. Two hand-rolled auto-followers, each unsafe in a different way,
+with no shared invariant.
+
+**Fix (single choke point for auto-follow).** Introduce `StickyBottomScroll` (in `ChatViews.swift`)
+and route **both** the chat thread and the voice transcript through it — mirroring how
+`MarkdownRenderBudget` is the single choke point for per-message layout *cost*. It enforces, in one
+place:
+
+- **Never animate the follow scroll** (kills the M5-cause-#2 shape wherever it recurs, including
+  voice).
+- **Only follow a passive arrival when near the bottom.** A zero-height bottom sentinel tracks "is
+  the user at the bottom" (`onAppear`/`onDisappear`); a *passive* arrival (streamed reply, tool step,
+  synced message; `followTrigger` = the newest bubble's id) follows only when they are near the
+  bottom — so a reply never yanks a reader who scrolled up.
+- **A local send always pins to the bottom, signalled explicitly.** Sending is a user-initiated
+  event and must scroll into view even from scrolled-up. It can *not* be inferred from the last
+  bubble's role: `sendDraft()` appends the user bubble **and** an assistant loading placeholder, so
+  the newest bubble is `.assistant` right after a send. The view model bumps
+  `scrollToLatestRequestID` in `sendDraft()`, and the view drives it as
+  `StickyBottomScroll.forceFollowTrigger` (an unconditional, un-gated scroll). `forceFollowTrigger`
+  is deliberately **not** scene-phase-gated — it only ever changes on a send (always active), and
+  gating it would fire it on the `nil → value` flip when returning to the foreground, re-introducing
+  the yank.
+
+**Coverage.** `ChatViewModelTests.testSendDraftRequestsScrollToLatest…` asserts a send bumps the
+force signal (the local-send case a role heuristic misses). `ChatLayoutBudgetTests.testStickyBottomScroll*`
+hosts the real `StickyBottomScroll`, scrolls it up, and asserts: a *denied* passive follow does not
+jump to the bottom, an *allowed* one does, and a *force* trigger scrolls even when the gate denies
+(the deny/allow pair is mutually validating — the allow case proves the follow mechanism fires, so
+the deny case is non-vacuous). These UIKit-hosted tests wait on the observed scroll state via a
+run-loop poll (`waitUntil`), never a fixed sleep, and wait for the initial land to settle before
+scrolling up so a late `onAppear` scroll can't masquerade as a follow. The existing
+`testFollowUpAfterToolTurnStaysResponsive` / `testNativeChatSendsAndStreamsResponse` UI tests
+continue to cover open-lands-at-bottom and send-follows in the real app.
 
 ## Verification
 
