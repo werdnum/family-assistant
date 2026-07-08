@@ -56,15 +56,23 @@ remote backend is not active, like `request_browser_handoff`):
   never changes scope; widening requires a new jar. Default scope for a *new* jar is the current
   origin. **Capturing any
   origin beyond the session's current origin is an elevated ask**: the confirmation must enumerate
-  *every* origin the save would capture, and adding an off-site origin (e.g. an IdP like
-  `accounts.google.com`) is deny-by-default — a routine site-login save must not be able to slip an
-  IdP or unrelated service into the jar. The `probe` target is likewise constrained to the jar's own
-  origins (rejected otherwise) **and must be a safe, idempotent read** — a selector check on a stable
-  page, not an action URL: a same-origin `/logout` (or any side-effecting GET) would otherwise be
-  replayed under the saved login by the scheduled freshness automation and end the session or change
-  account state. The default human-derived probe uses the current logged-in page + a selector, never
-  an action endpoint. The probe target is named in the save confirmation, so injected content can't point
-  the later scheduled freshness automation at an off-origin URL. **This origin-set comparison lives
+  *every* origin the save would capture **and every `nav_allowlist` entry it would add**, and adding
+  an off-site origin (e.g. an IdP like `accounts.google.com`) — whether as a captured origin *or* an
+  allowlist entry — is deny-by-default (an allowlist entry expands where the confined session may
+  navigate, so it needs the same elevated consent as a captured origin, not a quiet add). A routine
+  site-login save must not be able to slip an IdP or unrelated service into the jar. The `probe` target
+  is constrained to the jar's own origins (rejected otherwise) and must satisfy three properties, else
+  the save is rejected: **(1) safe/idempotent** — a selector check on a stable page, never an action
+  URL like `/logout` that the scheduled automation would replay under the login and end the session;
+  **(2) a stable, sanitized target** — query and fragment are stripped and one-time/transient URLs
+  are rejected, so a save that defaults to "the current page" never persists an OAuth callback
+  (`?code=…&state=…`), magic-link, or checkout-session URL (which is both sensitive and useless for
+  later probes); **(3) an authenticated-only indicator** — the success signal must distinguish
+  logged-in from logged-out (a logout control, an account-name element, or a redirect-to-login check
+  via `logged_out_url_prefix`), not a chrome element like the logo/footer that is present on both the
+  login wall and the authed page (which would report a dead jar as fresh forever). The default
+  human-derived probe therefore targets a stable authenticated page with an authenticated-only
+  selector, not the raw current URL. The probe target is named in the save confirmation. **This origin-set comparison lives
   in the `save_browser_session` tool wrapper, not the tag-based policy engine**: the tool-policy
   matcher keys on tool name / tags / MCP id / exact argument values and cannot compute "is this
   capture set a superset of the session's current origin," so the wrapper performs that check (and
@@ -81,9 +89,12 @@ remote backend is not active, like `request_browser_handoff`):
 - `forget_saved_session(jar_label_or_id)` → `DELETE /v1/jars/{id}`.
 
 **Jar reference resolution.** The mutating/session-creating tools accept a label or id, so the
-adapter must resolve unambiguously: a label is only accepted if it matches exactly one jar, and the
-match is by exact id or exact label — never a fuzzy/first match. Two jars sharing a label (separate
-family accounts, a stale duplicate) make the label ambiguous — the tool then **errors**. Crucially
+adapter must resolve unambiguously: a token is only accepted if it matches exactly one jar across
+**both** namespaces, by exact id or exact label — never a fuzzy/first match. Two jars sharing a
+label (separate family accounts, a stale duplicate) make it ambiguous, and — because labels are
+caller-supplied — so does a token that matches one jar's id *and* another jar's label; any token
+resolving to more than one jar by id-or-label is treated as ambiguous rather than decided by resolver
+precedence. In all ambiguous cases the tool **errors**. Crucially
 the ambiguity error must not itself become an inventory-disclosure side channel (it would hand back
 the same ids/origins/saved-by that `list_saved_sessions` is interim-gated to protect): in a
 browser-tainted / interim context it returns a **generic** "ambiguous label, please choose from your
@@ -105,10 +116,16 @@ browser is still alive**. Loading the stale jar first would drop the human into 
 (exact-origin) session, and confinement would then block the very off-origin IdP redirect
 (Google/Microsoft/Facebook) an SSO login needs — SSO-backed jars would become unrecoverable. The
 flow is a human-first session with **no jar loaded** (full un-confined control for any IdP bounce),
-and the jar is refreshed via one of the two live-context paths the mechanism doc specifies —
-**human-save-in-place** (the human clicks "Save this login", refreshing the jar id from the live page
-before completing) or **handover-then-agent-save** — because a resumable `credentials` handoff
-auto-completes and tears down the worker, leaving nothing to export. Refresh keeps the jar's existing
+and the jar is refreshed by **human-save-in-place only**: the human clicks "Save this login", which
+refreshes the jar id from the live page *while the human still holds control*, before completing.
+Re-login deliberately does **not** hand the freshly-logged-in session back to the agent
+(handover-then-agent-save): that would give the agent an authenticated, jar-less (therefore
+*un-confined*, un-load-confirmed) browser sitting on a post-credential page — where a malicious
+post-login page could drive authenticated navigation/submit, and where password/OTP/recovery-code
+fields the human just typed could be exposed to the agent's next snapshot. Human-save-in-place keeps
+the browser alive to export from without ever handing the agent that window. (A general
+human→agent handover for *other* tasks still exists and rides browser-server's existing
+sanitized-resume; it is just not the re-login refresh path.) Refresh keeps the jar's existing
 approved origin set (scope unchanged — refresh cannot widen origins). Origin confinement constrains
 *agent-driven* navigation in a jar-loaded session; it never traps a human performing a login. Invalidation is
 **not** taken on the agent's word alone: a page merely *looking* like a login wall (a modal, an
@@ -122,8 +139,10 @@ untrusted page content.
 Via the existing tool-policy engine and durable confirmations — no new enforcement machinery:
 
 - `load_saved_session`: **confirm** by default in every profile that has it. The confirmation
-  message names the jar label and origins ("Open a browser logged in to woolworths.com.au as
-  Andrew?"). Durable confirmations make this work across interfaces and background turns.
+  message names the jar label and **the full reachable-origin set — `jar_origins` *and*
+  `jar_nav_allowlist`** ("Open a browser logged in to woolworths.com.au as Andrew?"), so an
+  allowlist entry can't silently widen where the confined session may go without the user seeing it
+  at load time. Durable confirmations make this work across interfaces and background turns.
 - `save_browser_session`: confirm by default, and the confirmation **enumerates every origin** the
   save would capture. Capturing any origin beyond the session's current origin (an IdP/off-site
   origin) is **deny-by-default** — allowed only on an explicit elevated confirmation, never as part
@@ -186,6 +205,20 @@ use case; taint tightens same-origin *state-changing* submits after high-tier ta
 confinement that already blocks cross-origin). The session metadata (`jar_id`, `jar_origins` on every
 session response) exists precisely so those rules have ground truth to evaluate against.
 
+**Where the taint decision physically happens.** A `browser_click`/`browser_fill` tool call exposes
+only a DOM ref and a `submit` flag *before* execution — not the final request URL, nor whether a
+click will trigger a navigation/submit — so FA policy cannot evaluate the sink from the tool
+arguments alone (it would decide before the facts exist, or after the request already left). The
+enforcement therefore rides **browser-server's request interceptor**, which does see the actual
+outgoing document/form request: for the taint hookup the interceptor pauses an in-scope but
+high-sensitivity request and consults the turn's taint verdict (a per-turn taint level passed at
+session create / carried on the session, not a per-request round-trip to the model) before
+continuing. The conservative interim, until that callback exists, is to **gate `click`/`submit`
+under high-tier taint** at the tool layer (confirm or block), accepting some false positives rather
+than letting an unknown-destination submit through. Either way the exact-origin confinement below is
+unconditional and already blocks the cross-origin case; taint only adds the same-origin
+state-change decision.
+
 Snapshots from jar-loaded sessions remain `UNKNOWN_EXTERNAL` taint like all web content —
 being logged in makes the fetched content more sensitive, not more trustworthy.
 
@@ -203,17 +236,19 @@ So the initial saved-session release does **not** wait for the full taint matrix
 load-time confirmation with two egress controls that are cheap because the mechanism already exists
 in browser-server:
 
-- **Origin-scoped navigation confinement** on jar-loaded sessions: **every top-level document** —
-  navigation, form-submit, redirect chains (aborted pre-request), and popup/`window.open`/
-  `target=_blank` new pages — is confined to the jar's **exact `jar_origins`** (scheme + host +
-  **port**, plus any explicit saved allowlist exposed as `jar_nav_allowlist`) — *not* its registrable
-  domain, since a `Domain=.example.com` cookie would ride along to a user- or attacker-controlled
-  sibling like `evil.example.com`, and *not* scheme+host alone, since a differing port
-  (`example.com:8443`) is a distinct origin. This is browser-server's route-interception backstop,
-  pulled forward from a follow-up to a prerequisite for enabling load. It directly blocks the
-  cross-origin-egress-under-auth vector — the injected page cannot send the agent (and the
-  authenticated session) off to an attacker origin, whether via navigation, a sneaky redirect, or a
-  popup. (Page-JavaScript subresource egress remains the deferred residual below.)
+- **Origin-scoped navigation confinement** on jar-loaded sessions: **every off-scope document/form
+  request in any frame** — main-frame navigation, form-submit, redirect chains (aborted pre-request),
+  popup/`window.open`/`target=_blank` new pages, **and child-frame (iframe) document loads / form
+  POSTs** — is blocked. The guard filters on request *type* (`document`), so a form targeted at a
+  hidden iframe cannot POST to `https://attacker` while the top-level URL stays on a jar origin; only
+  document/navigation requests are gated, so ordinary subresource rendering is untouched. The
+  boundary is the jar's **exact `jar_origins`** (scheme + host + **port**, plus any explicit saved
+  allowlist exposed as `jar_nav_allowlist`) — *not* its registrable domain (a `Domain=.example.com`
+  cookie would ride along to a sibling like `evil.example.com`), and *not* scheme+host alone (a
+  differing port `example.com:8443` is a distinct origin). This is browser-server's route-interception
+  backstop, pulled forward from a follow-up to a prerequisite for enabling load. (Page-JavaScript
+  *subresource* egress — `fetch`/beacon/`<img>`, not document requests — remains the deferred residual
+  below.)
 - **`exec` default-deny** in jar-loaded sessions (already a browser-server mechanism invariant),
   keeping the model off the one command that can read cookie/storage values.
 
@@ -270,9 +305,9 @@ loop, as userspace configuration in keeping with primitives-in-code / behavior-i
   user with the re-login ask.
 - Re-login is the existing warm-handoff flow, starting from a **fresh un-confined human session**
   (no stale jar loaded, so an off-origin IdP/SSO bounce isn't blocked by confinement): human-first
-  session → human logs in → jar refreshed **while the browser is still alive** via human-save-in-place
-  or handover-then-agent-save (not a resumable `credentials` handoff, which auto-completes and tears
-  down the worker). Refresh preserves the jar's approved origin set. No new primitives.
+  session → human logs in → **human-save-in-place** refresh while still in control (never handed back
+  to the agent on a post-credential page). Refresh preserves the jar's approved origin set. No new
+  primitives.
 
 ## User-visible behavior
 
