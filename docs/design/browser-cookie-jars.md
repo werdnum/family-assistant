@@ -95,7 +95,8 @@ To document in `docs/user/USER_GUIDE.md` and the browser-profile prompt when imp
 - "Save this login" appears on the browser handover page; saved logins are listed and revocable in
   the browser service UI (`/jars`) and via chat ("forget my Woolworths login").
 - The assistant always asks before opening a browser with a saved login.
-- Saved logins keep the session cookies only — never passwords — encrypted on the browser server.
+- Saved logins keep the site's session data (cookies and browser storage) only — never passwords —
+  encrypted on the browser server.
 
 ## Milestones
 
