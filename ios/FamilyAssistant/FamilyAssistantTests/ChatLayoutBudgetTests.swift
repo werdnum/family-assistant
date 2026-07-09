@@ -346,6 +346,35 @@ final class ChatLayoutBudgetTests: XCTestCase {
         )
     }
 
+    func testStickyBottomScrollHandlesTailMutationWhileUserIsScrolledUp() {
+        // Regression guard for scratch/FamilyAssistant-2026-07-09-175705.ips:
+        // the user is manually scrolled away from the bottom while the newest
+        // assistant bubble keeps changing. This must not yank to bottom or spend
+        // watchdog-scale time in stack placement.
+        let harness = hostStickyScroll(gate: false)
+        defer { harness.teardown() }
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+
+        harness.scrollToTop()
+        XCTAssertFalse(isAtBottom(harness.scrollView), "precondition: scroll-to-top did not take effect")
+
+        var layoutSeconds = 0.0
+        for index in 0..<12 {
+            layoutSeconds += harness.changeTailTextAndMeasureLayoutSeconds(
+                String(repeating: " streamed-\(index)", count: 40)
+            )
+            XCTAssertFalse(
+                isAtBottom(harness.scrollView),
+                "A streaming tail mutation while scrolled up must not yank to bottom."
+            )
+        }
+        XCTAssertLessThan(
+            layoutSeconds,
+            Self.budgetSeconds,
+            "Streaming tail mutation layout took \(String(format: "%.3f", layoutSeconds))s, which is watchdog-risky."
+        )
+    }
+
     // MARK: - Auto-follow harness
 
     /// A hosted `StickyBottomScroll` plus handles to drive it from a test: the
@@ -355,16 +384,17 @@ final class ChatLayoutBudgetTests: XCTestCase {
         let window: UIWindow
         let host: UIHostingController<StickyBottomScroll<AnyView>>
         let scrollView: UIScrollView
-        let makeRoot: (_ followToken: Int, _ forceToken: Int) -> StickyBottomScroll<AnyView>
+        let makeRoot: (_ followToken: Int, _ forceToken: Int, _ tailText: String) -> StickyBottomScroll<AnyView>
         let pumpFor: (TimeInterval) -> Void
         private var followToken = 0
         private var forceToken = 0
+        private var tailText = ""
 
         init(
             window: UIWindow,
             host: UIHostingController<StickyBottomScroll<AnyView>>,
             scrollView: UIScrollView,
-            makeRoot: @escaping (_ followToken: Int, _ forceToken: Int) -> StickyBottomScroll<AnyView>,
+            makeRoot: @escaping (_ followToken: Int, _ forceToken: Int, _ tailText: String) -> StickyBottomScroll<AnyView>,
             pumpFor: @escaping (TimeInterval) -> Void
         ) {
             self.window = window
@@ -386,26 +416,84 @@ final class ChatLayoutBudgetTests: XCTestCase {
 
         func scrollToTop() {
             scrollView.setContentOffset(.zero, animated: false)
-            pumpFor(0.1)
+            waitForScrollSettled()
         }
 
         /// Bump the gated follow trigger (a passive content arrival).
         func change(follow token: Int) {
             followToken = token
-            reapply()
+            reapplyAndWaitForScrollSettled()
         }
 
         /// Bump the unconditional force trigger (a user-initiated pin-to-bottom).
         func change(force token: Int) {
             forceToken = token
-            reapply()
+            reapplyAndWaitForScrollSettled()
         }
 
-        private func reapply() {
-            host.rootView = makeRoot(followToken, forceToken)
+        /// Mutate the newest row without changing scroll triggers, matching a
+        /// streamed assistant bubble while the user is reading earlier content.
+        func change(tailText text: String) {
+            _ = changeTailTextAndMeasureLayoutSeconds(text)
+        }
+
+        func changeTailTextAndMeasureLayoutSeconds(_ text: String) -> Double {
+            tailText = text
+            let layoutSeconds = reapply()
+            waitForScrollSettled()
+            return layoutSeconds
+        }
+
+        private func reapplyAndWaitForScrollSettled() {
+            _ = reapply()
+            waitForScrollSettled()
+        }
+
+        private func reapply() -> Double {
+            let start = CFAbsoluteTimeGetCurrent()
+            host.rootView = makeRoot(followToken, forceToken, tailText)
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
-            pumpFor(0.25)
+            return CFAbsoluteTimeGetCurrent() - start
+        }
+
+        private func waitForScrollSettled(
+            timeout: TimeInterval = 3,
+            interval: TimeInterval = 0.05,
+            stableSamples: Int = 4
+        ) {
+            let deadline = Date(timeIntervalSinceNow: timeout)
+            var previous = ScrollSnapshot(scrollView)
+            var stableCount = 0
+
+            while stableCount < stableSamples, Date() < deadline {
+                pumpFor(interval)
+                let current = ScrollSnapshot(scrollView)
+                if current.isClose(to: previous) {
+                    stableCount += 1
+                } else {
+                    stableCount = 0
+                    previous = current
+                }
+            }
+        }
+
+        private struct ScrollSnapshot {
+            let offsetY: CGFloat
+            let contentHeight: CGFloat
+            let boundsHeight: CGFloat
+
+            init(_ scrollView: UIScrollView) {
+                offsetY = scrollView.contentOffset.y
+                contentHeight = scrollView.contentSize.height
+                boundsHeight = scrollView.bounds.height
+            }
+
+            func isClose(to other: ScrollSnapshot) -> Bool {
+                abs(offsetY - other.offsetY) < 0.5
+                    && abs(contentHeight - other.contentHeight) < 0.5
+                    && abs(boundsHeight - other.boundsHeight) < 0.5
+            }
         }
 
         func teardown() {
@@ -415,18 +503,18 @@ final class ChatLayoutBudgetTests: XCTestCase {
     }
 
     private func hostStickyScroll(gate: Bool) -> StickyScrollHarness {
-        let makeRoot: (Int, Int) -> StickyBottomScroll<AnyView> = { followToken, forceToken in
+        let makeRoot: (Int, Int, String) -> StickyBottomScroll<AnyView> = { followToken, forceToken, tailText in
             StickyBottomScroll(
                 followTrigger: AnyHashable(followToken),
                 forceFollowTrigger: AnyHashable(forceToken),
                 shouldFollow: { _ in gate }
             ) {
                 AnyView(
-                    LazyVStack(spacing: 14) {
+                    VStack(spacing: 14) {
                         // Enough tall rows that the content far exceeds one screen,
                         // so "top" and "bottom" offsets are unambiguously distinct.
                         ForEach(0..<80, id: \.self) { index in
-                            Text("Row \(index)\n\nbody line one\nbody line two")
+                            Text("Row \(index)\n\nbody line one\nbody line two\(index == 79 ? tailText : "")")
                                 .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                                 .id("row-\(index)")
                         }
@@ -436,7 +524,7 @@ final class ChatLayoutBudgetTests: XCTestCase {
             }
         }
 
-        let host = UIHostingController(rootView: makeRoot(0, 0))
+        let host = UIHostingController(rootView: makeRoot(0, 0, ""))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: Self.width, height: Self.height))
         window.rootViewController = host
         window.makeKeyAndVisible()

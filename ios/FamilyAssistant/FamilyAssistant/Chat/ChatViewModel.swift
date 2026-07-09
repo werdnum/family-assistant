@@ -7,11 +7,13 @@ import os
 final class ChatViewModel {
     var conversations: [ChatConversationSummary] = []
     var messages: [ChatMessage] = []
-    // Upper bound on how many grouped bubbles are realized into the chat view at
-    // once. The full thread is still loaded into `messages`; only a recent window
-    // is shown, and older bubbles page in via `showEarlierMessages()`. See
+    // Requested upper bound on how many grouped bubbles are realized into the
+    // chat view at once. The full thread is still loaded into `messages`; only a
+    // recent window is shown, and older bubbles page in via
+    // `showEarlierMessages()` up to the fixed eager-render ceiling. See
     // `visibleGroupedMessages`.
     var displayedMessageLimit = ChatViewModel.initialDisplayedMessageCount
+    var displayedMessageNewerOffset = 0
     var profiles: [ChatProfile] = []
     var defaultProfileID = "default_assistant"
     // The profile the active conversation runs under: it drives the picker label
@@ -143,12 +145,14 @@ final class ChatViewModel {
     static let conversationRestoreWindow: TimeInterval = 15 * 60
 
     // Windowing for the chat thread. A long thread is loaded in full, but only a
-    // recent window of grouped bubbles is realized into the view at once: a
-    // LazyVStack still measures every row it is given to size its scroll content
-    // (LazyStack.measureEstimates is on the watchdog crash stacks), so an
-    // unbounded thread means an unbounded first layout pass — the foreground
-    // layout hang. `showEarlierMessages()` grows the window a page at a time.
+    // recent window of grouped bubbles is realized into the view at once. The
+    // view intentionally uses an eager VStack for that bounded window: the
+    // LazyStack placement path is the recurring watchdog hot spot when the user
+    // scrolls while the streaming tail mutates. An unbounded eager stack would be
+    // unsafe too, so `showEarlierMessages()` grows the window a page at a time
+    // only up to `maxDisplayedMessageCount`.
     static let initialDisplayedMessageCount = 30
+    static let maxDisplayedMessageCount = 120
     private static let displayedMessagePageSize = 30
 
     // Max characters of an optimistic conversation-list preview, matching the
@@ -486,6 +490,7 @@ final class ChatViewModel {
         endedTurnStatusByTurnID.removeAll()
         resetTurnControlState()
         displayedMessageLimit = Self.initialDisplayedMessageCount
+        displayedMessageNewerOffset = 0
         if isSwitchingConversation {
             draftText = ""
         }
@@ -548,6 +553,7 @@ final class ChatViewModel {
         endedTurnStatusByTurnID.removeAll()
         resetTurnControlState()
         displayedMessageLimit = Self.initialDisplayedMessageCount
+        displayedMessageNewerOffset = 0
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
@@ -612,7 +618,7 @@ final class ChatViewModel {
             guard self.conversationID == id else {
                 return
             }
-            messages = withLiveFollowBubbles(Self.renderMessages(from: backendMessages))
+            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: backendMessages)))
             errorMessage = nil
         } catch {
             guard self.conversationID == id else {
@@ -775,7 +781,7 @@ final class ChatViewModel {
             var merged = messages.filter { !$0.id.hasPrefix("local_") }
             let existingIDs = Set(merged.map(\.id))
             merged.append(contentsOf: rendered.filter { !existingIDs.contains($0.id) })
-            messages = withLiveFollowBubbles(merged)
+            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(merged))
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -898,8 +904,8 @@ final class ChatViewModel {
             errorTraceback: nil,
             turnID: turnID
         )
-        messages.append(userMessage)
-        messages.append(assistantMessage)
+        appendMessagePreservingPagedBackWindow(userMessage)
+        appendMessagePreservingPagedBackWindow(assistantMessage)
         // A local send always scrolls into view, even if the user had scrolled
         // up: the newest bubble is now the assistant loading placeholder, so the
         // near-bottom auto-follow gate can't recognize this as user-initiated.
@@ -2176,7 +2182,7 @@ final class ChatViewModel {
     /// hierarchy for the current scene phase.
     ///
     /// An offscreen background *launch* (push / state restoration / snapshot)
-    /// must keep the `LazyVStack` out of the tree entirely: laying out a restored
+    /// must keep the message stack out of the tree entirely: laying out a restored
     /// thread while inactive overruns the ~10 s `scene-update` watchdog
     /// (`docs/design/ios-chat-layout-watchdog-crash.md`).
     ///
@@ -2426,7 +2432,7 @@ final class ChatViewModel {
     private func makeLiveFollowBubble(for turnID: String) -> String {
         let bubbleID = "local_follow_\(turnID)"
         if !messages.contains(where: { $0.id == bubbleID }) {
-            messages.append(
+            appendMessagePreservingPagedBackWindow(
                 ChatMessage(
                     id: bubbleID,
                     role: .assistant,
@@ -2739,9 +2745,9 @@ final class ChatViewModel {
         if let index = messages.firstIndex(
             where: { $0.role == .assistant && $0.status == .running && $0.turnID == event.turnID }
         ) {
-            messages.insert(message, at: index)
+            insertMessagePreservingPagedBackWindow(message, at: index)
         } else {
-            messages.append(message)
+            appendMessagePreservingPagedBackWindow(message)
         }
         removeInFlightSteer(text)
         removeAwaitingEchoSteer(text)
@@ -2980,25 +2986,102 @@ final class ChatViewModel {
         Self.groupToolCallTurns(messages)
     }
 
-    /// The recent window of `groupedMessages` actually rendered by the chat view.
-    /// Always a suffix, so newly streamed messages stay visible; only older
-    /// history is withheld until `showEarlierMessages()` widens the window.
+    /// The bounded window of `groupedMessages` actually rendered by the chat
+    /// view. It starts as the newest suffix so streamed messages stay visible,
+    /// then can page backward/forward in fixed chunks without ever realizing
+    /// more than `maxDisplayedMessageCount` bubbles into the eager stack.
     var visibleGroupedMessages: [ChatMessage] {
         let grouped = groupedMessages
-        guard grouped.count > displayedMessageLimit else {
-            return grouped
-        }
-        return Array(grouped.suffix(displayedMessageLimit))
+        let range = visibleGroupedMessageRange(in: grouped)
+        return Array(grouped[range])
     }
 
-    /// Whether older bubbles are currently hidden behind the display window.
+    /// Whether another older page can be shown while keeping the eager render
+    /// window bounded.
     var hasEarlierMessages: Bool {
-        groupedMessages.count > displayedMessageLimit
+        let grouped = groupedMessages
+        return visibleGroupedMessageRange(in: grouped).lowerBound > grouped.startIndex
     }
 
-    /// Reveal another page of older bubbles.
+    /// Whether the current bounded window is hiding newer bubbles below it.
+    var hasNewerMessages: Bool {
+        let grouped = groupedMessages
+        return visibleGroupedMessageRange(in: grouped).upperBound < grouped.endIndex
+    }
+
+    /// Reveal another page of older bubbles, first by growing the suffix up to
+    /// the eager ceiling and then by sliding the bounded window backward.
     func showEarlierMessages() {
-        displayedMessageLimit += Self.displayedMessagePageSize
+        if displayedMessageLimit < Self.maxDisplayedMessageCount {
+            displayedMessageLimit = min(
+                displayedMessageLimit + Self.displayedMessagePageSize,
+                Self.maxDisplayedMessageCount
+            )
+            return
+        }
+
+        let groupedCount = groupedMessages.count
+        let windowSize = min(displayedMessageLimit, Self.maxDisplayedMessageCount, groupedCount)
+        let maxOffset = max(0, groupedCount - windowSize)
+        displayedMessageNewerOffset = min(
+            displayedMessageNewerOffset + Self.displayedMessagePageSize,
+            maxOffset
+        )
+    }
+
+    /// Reveal a newer page after the user has paged backward through history.
+    func showNewerMessages() {
+        displayedMessageNewerOffset = max(0, displayedMessageNewerOffset - Self.displayedMessagePageSize)
+    }
+
+    private func visibleGroupedMessageRange(in grouped: [ChatMessage]) -> Range<[ChatMessage].Index> {
+        guard !grouped.isEmpty else {
+            return grouped.startIndex..<grouped.endIndex
+        }
+
+        let windowSize = min(displayedMessageLimit, Self.maxDisplayedMessageCount, grouped.count)
+        let maxOffset = max(0, grouped.count - windowSize)
+        let newerOffset = min(displayedMessageNewerOffset, maxOffset)
+        let end = grouped.index(grouped.endIndex, offsetBy: -newerOffset)
+        let start = grouped.index(end, offsetBy: -windowSize)
+        return start..<end
+    }
+
+    func appendMessagePreservingPagedBackWindow(_ message: ChatMessage) {
+        let oldGroupedCount = groupedCountForPagedBackPreservation()
+        messages.append(message)
+        preservePagedBackWindowAfterGroupedCountChange(from: oldGroupedCount)
+    }
+
+    private func insertMessagePreservingPagedBackWindow(_ message: ChatMessage, at index: Int) {
+        let oldGroupedCount = groupedCountForPagedBackPreservation()
+        messages.insert(message, at: index)
+        preservePagedBackWindowAfterGroupedCountChange(from: oldGroupedCount)
+    }
+
+    private func replaceMessagesPreservingPagedBackWindow(_ newMessages: [ChatMessage]) {
+        let oldGroupedCount = groupedCountForPagedBackPreservation()
+        messages = newMessages
+        preservePagedBackWindowAfterGroupedCountChange(from: oldGroupedCount)
+    }
+
+    private func groupedCountForPagedBackPreservation() -> Int? {
+        guard displayedMessageNewerOffset > 0 else {
+            return nil
+        }
+        return groupedMessages.count
+    }
+
+    private func preservePagedBackWindowAfterGroupedCountChange(from oldGroupedCount: Int?) {
+        guard let oldGroupedCount else {
+            return
+        }
+
+        let newGroupedCount = groupedMessages.count
+        let appendedGroupedCount = max(0, newGroupedCount - oldGroupedCount)
+        let windowSize = min(displayedMessageLimit, Self.maxDisplayedMessageCount, newGroupedCount)
+        let maxOffset = max(0, newGroupedCount - windowSize)
+        displayedMessageNewerOffset = min(displayedMessageNewerOffset + appendedGroupedCount, maxOffset)
     }
 
     /// Bumped when the user takes an action that should scroll the thread to the
@@ -3009,7 +3092,7 @@ final class ChatViewModel {
     /// (streamed reply, tool step, message synced from another device) only
     /// follows when the user is near the bottom, so a reply landing while they
     /// have scrolled up to read history never yanks them — the yank is also a
-    /// layout-watchdog hazard, forcing the `LazyVStack` into a non-settling
+    /// layout-watchdog hazard, forcing the message stack into a non-settling
     /// bottom-anchored re-measure (0x8BADF00D,
     /// scratch/FamilyAssistant-2026-07-07-090155.ips). A local send, by contrast,
     /// must always pin to the bottom, and that intent is an event — it can't be
@@ -3019,6 +3102,7 @@ final class ChatViewModel {
 
     /// Request an unconditional scroll to the newest message on the next render.
     private func requestScrollToLatest() {
+        displayedMessageNewerOffset = 0
         scrollToLatestRequestID += 1
     }
 
