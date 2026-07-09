@@ -5,7 +5,8 @@
 M1–M3 shipped (PR #920, 2026-06-18). M4 (suspend-watchdog recurrence) shipped in PR #947. M5 (PR
 #955) bounded per-message markdown layout after a **foreground** recurrence on build 23. M6 added
 after a **foreground** recurrence on build 36 traced to the auto-follow scroll yanking a user who
-had scrolled up (see "M6 — Auto-follow yank" below); this is the current focus.
+had scrolled up. M7 covers the follow-up build 36 recurrence where the user manually scrolled while
+waiting for a streamed reply; the remaining hot path was LazyStack placement itself.
 
 ## Summary
 
@@ -264,6 +265,34 @@ run-loop poll (`waitUntil`), never a fixed sleep, and wait for the initial land 
 scrolling up so a late `onAppear` scroll can't masquerade as a follow. The existing
 `testFollowUpAfterToolTurnStaysResponsive` / `testNativeChatSendsAndStreamsResponse` UI tests
 continue to cover open-lands-at-bottom and send-follows in the real app.
+
+### M7 — Manual scroll during streaming (foreground recurrence, build 36)
+
+`scratch/FamilyAssistant-2026-07-09-175705.ips` is another build 36 foreground `scene-update`
+watchdog kill (`0x8BADF00D`). The user-visible trigger was scrolling while waiting for a reply.
+Unlike M6, the chat follow trigger was already gated and only changed on newest-row identity, not on
+streamed text, so the app was not firing a `scrollTo` per token.
+
+The main thread was still in the same SwiftUI lazy-list placement family:
+`_ViewList_TemporarySublistTransform.apply` → `_LazyLayout_Subviews.apply` →
+`LazyStack.place` / `LazySubviewPlacements.updateValue`. That points at the remaining lazy stack
+itself: while the user scrolls, the streamed tail row mutates every flush, and SwiftUI keeps
+recomputing lazy placements for the bounded visible window until the scene-update watchdog kills the
+app.
+
+**Fix.**
+
+- Keep the thread-level and per-message bounds from M3/M5, but render the already-bounded visible
+  window with an eager `VStack` instead of `LazyVStack`. The initial window is 30 grouped bubbles and
+  "Load earlier messages" widens it by explicit user action up to a fixed 120-bubble ceiling, then
+  slides that bounded window through older history with a matching "Load newer messages" affordance,
+  so eager layout is bounded while avoiding the LazyStack placement path that appears in every
+  recurrence and history beyond the ceiling remains reachable.
+- Apply the same eager-stack choice to the voice transcript, whose streaming-tail behavior shares
+  the same sticky-bottom container.
+- Add `ChatLayoutBudgetTests.testStickyBottomScrollHandlesTailMutationWhileUserIsScrolledUp`, which
+  hosts the real sticky scroll view, scrolls away from the bottom, mutates the tail repeatedly, and
+  asserts it neither yanks to bottom nor spends watchdog-scale time in layout.
 
 ## Verification
 

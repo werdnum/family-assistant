@@ -380,6 +380,71 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
     }
 
+    func testShowEarlierMessagesStopsAtEagerRenderCeiling() {
+        let model = makeViewModel(conversationID: "web_conv_window")
+        let total = ChatViewModel.maxDisplayedMessageCount + 75
+        model.messages = (0..<total).map(plainMessage(index:))
+
+        while model.displayedMessageLimit < ChatViewModel.maxDisplayedMessageCount {
+            model.showEarlierMessages()
+        }
+
+        XCTAssertEqual(model.displayedMessageLimit, ChatViewModel.maxDisplayedMessageCount)
+        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.maxDisplayedMessageCount)
+        XCTAssertEqual(
+            model.visibleGroupedMessages.first?.id,
+            "msg_\(total - ChatViewModel.maxDisplayedMessageCount)"
+        )
+        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_\(total - 1)")
+        XCTAssertTrue(model.hasEarlierMessages)
+
+        model.showEarlierMessages()
+
+        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.maxDisplayedMessageCount)
+        XCTAssertEqual(
+            model.visibleGroupedMessages.first?.id,
+            "msg_\(total - ChatViewModel.maxDisplayedMessageCount - 30)"
+        )
+        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_\(total - 31)")
+        XCTAssertTrue(model.hasEarlierMessages)
+        XCTAssertTrue(model.hasNewerMessages)
+
+        while model.hasEarlierMessages {
+            model.showEarlierMessages()
+        }
+
+        XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
+        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.maxDisplayedMessageCount)
+        XCTAssertTrue(model.hasNewerMessages)
+        XCTAssertFalse(model.hasEarlierMessages)
+
+        model.showNewerMessages()
+
+        XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_30")
+        XCTAssertTrue(model.hasEarlierMessages)
+        XCTAssertTrue(model.hasNewerMessages)
+    }
+
+    func testPagedBackWindowStaysAnchoredWhenNewMessagesAppend() {
+        let model = makeViewModel(conversationID: "web_conv_window")
+        let total = ChatViewModel.maxDisplayedMessageCount + 75
+        model.messages = (0..<total).map(plainMessage(index:))
+
+        while model.hasEarlierMessages {
+            model.showEarlierMessages()
+        }
+
+        XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
+        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_119")
+
+        model.appendMessagePreservingPagedBackWindow(plainMessage(index: total))
+
+        XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
+        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_119")
+        XCTAssertFalse(model.hasEarlierMessages)
+        XCTAssertTrue(model.hasNewerMessages)
+    }
+
     func testShortThreadShowsEverythingWithoutEarlierControl() {
         let model = makeViewModel(conversationID: "web_conv_short")
         model.messages = (0..<3).map(plainMessage(index:))
@@ -397,6 +462,7 @@ final class ChatViewModelTests: XCTestCase {
         model.startNewConversation()
 
         XCTAssertEqual(model.displayedMessageLimit, ChatViewModel.initialDisplayedMessageCount)
+        XCTAssertFalse(model.hasNewerMessages)
     }
 
     func testBackNavigationClearsSelectionButKeepsActiveConversation() async throws {
@@ -5071,7 +5137,7 @@ final class ChatViewModelTests: XCTestCase {
     }
 
     func testShouldRenderThreadKeepsListMountedOnceActive() {
-        // Offscreen background launch (never been active): keep the LazyVStack out
+        // Offscreen background launch (never been active): keep the message stack out
         // of the tree so a background scene-update can't run the expensive layout.
         let model = makeViewModel(conversationID: "web_conv_render")
         XCTAssertFalse(model.shouldRenderThread(isActive: false, hasMountedBefore: false))

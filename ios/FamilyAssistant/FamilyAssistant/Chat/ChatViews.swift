@@ -180,7 +180,7 @@ private struct ChatThreadView: View {
     @Environment(\.scenePhase) private var scenePhase
     // Latches true the first time the scene is active, then stays true. Gates the
     // thread between two competing watchdog hazards (see
-    // `ChatViewModel.shouldRenderThread`): keep the LazyVStack OUT of the tree on
+    // `ChatViewModel.shouldRenderThread`): keep the message stack OUT of the tree on
     // an offscreen background launch, but keep it mounted across later
     // background transitions once it has been realized.
     @State private var hasMountedThread = false
@@ -250,7 +250,7 @@ private struct ChatThreadView: View {
             followTrigger: scenePhase == .active ? viewModel.visibleGroupedMessages.last?.id : nil,
             forceFollowTrigger: viewModel.scrollToLatestRequestID
         ) {
-            LazyVStack(spacing: 14) {
+            VStack(spacing: 14) {
                 if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
                     ContentUnavailableView {
                         Label("Ask Family Assistant", systemImage: "sparkles")
@@ -271,6 +271,14 @@ private struct ChatThreadView: View {
                     MessageBubble(message: message, viewModel: viewModel)
                         .id(message.id)
                         .accessibilityIdentifier("chat-message-\(message.id)")
+                }
+                if viewModel.hasNewerMessages {
+                    Button("Load newer messages") {
+                        viewModel.showNewerMessages()
+                    }
+                    .font(.subheadline)
+                    .padding(.vertical, 4)
+                    .accessibilityIdentifier("chat-load-newer")
                 }
             }
             .padding()
@@ -402,7 +410,7 @@ private struct MessageBubble: View {
 
 #if DEBUG
 /// Test seam for the chat-layout budget/fuzz harness (`ChatLayoutBudgetTests`).
-/// Renders the production message-list layout — `ScrollView` + `LazyVStack` +
+/// Renders the production message-list layout — `ScrollView` + bounded `VStack` +
 /// `MessageBubble` — over an explicit message array so a hosting controller can
 /// force a content-sizing pass and time it. Mirrors
 /// `ChatThreadView.messageScrollArea` without the scroll-position plumbing. The
@@ -415,7 +423,7 @@ struct ChatMessageListLayoutProbe: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 14) {
+            VStack(spacing: 14) {
                 ForEach(messages) { message in
                     MessageBubble(message: message, viewModel: viewModel)
                         .id(message.id)
@@ -438,12 +446,12 @@ struct ChatMessageListLayoutProbe: View {
 /// is a *class* of bug rather than one shape:
 ///
 /// - **Never animate the follow scroll.** An animated `scrollTo(.bottom)` past a
-///   tall row re-places the `LazyVStack` on every animation frame without
+///   tall row re-places the message stack on every animation frame without
 ///   settling — a main-thread wedge. (This is why the voice transcript, which
 ///   previously animated on every streamed token, is routed through here.)
 /// - **Only follow when the gate allows.** A passive arrival while the user has
 ///   scrolled up must not fire a bottom-anchored `scrollTo`, which forces the
-///   `LazyVStack` to re-resolve its anchor and re-measure backwards over the
+///   stack to re-resolve its bottom anchor and re-measure backwards over the
 ///   visible rows without converging (scratch/FamilyAssistant-2026-07-07-090155.ips).
 ///
 /// Near-bottom is tracked with a zero-height sentinel at the end of the content:
@@ -1081,7 +1089,7 @@ enum MarkdownRenderBudget {
 
     /// A bounded prefix of `markdown` for `pages` worth of budget, plus whether the
     /// source was truncated. O(prefix), never O(markdown.count): `body` is
-    /// re-evaluated many times per message (scroll, animation, LazyVStack), so an
+    /// re-evaluated many times per message (scroll, animation, stack layout), so an
     /// O(n) scan over a multi-hundred-KB message here is itself a main-thread hang.
     /// `prefix` stops after charLimit+1 Characters.
     static func boundedSource(_ markdown: String, pages: Int) -> (text: String, truncated: Bool) {
