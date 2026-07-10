@@ -19,7 +19,8 @@ delegate explicitly.
 - Let the selected target profile own the system prompt, model, tool policy, context providers,
   maximum iterations, and taint policy for that turn.
 - Require all targets of one router to have equivalent effective permissions. Classification is a
-  cost/capability decision, not a security-boundary decision.
+  cost/capability decision, not a security-boundary decision. Equivalence includes automatically
+  injected context, not only tool and taint policy.
 - Restrict v1 targets to local, non-router profiles. This prevents routing cycles and avoids mixing
   remote A2A lifecycle semantics into the first version.
 - Use native structured output for the classifier decision. An invalid decision or exhausted
@@ -39,6 +40,8 @@ tool loop and still allows the next user turn or system wake-up to choose a diff
 local concrete profile, a remote A2A profile, or a classifier router.
 
 ```yaml
+indexing_llm_profile_id: "default_assistant_balanced"
+
 service_profiles:
   - id: "default_assistant"
     description: "Automatically selects the appropriate general-assistant tier."
@@ -146,13 +149,15 @@ the web turn producer and inbound A2A streaming paths.
 
 `ProcessingService` gains an internal-only history identity parameter. That identity is used for
 recent-history reads and message-history writes. Tool execution, confirmations, visibility grants,
-delegation source identity, and audit/taint records continue to use the selected target's actual
-profile ID. This separation is intentional:
+and audit/taint records continue to use the selected target's actual profile ID. Outbound delegation
+authorization uses the public router ID, because the internal execution profile acts on behalf of
+that router and existing target allowlists name `default_assistant`. This separation is intentional:
 
-| Concern                               | Identity                     |
-| ------------------------------------- | ---------------------------- |
-| Conversation continuity               | Router (`default_assistant`) |
-| Prompt, model, tools, security, audit | Selected target profile      |
+| Concern                                              | Identity                     |
+| ---------------------------------------------------- | ---------------------------- |
+| Conversation continuity                              | Router (`default_assistant`) |
+| Outbound delegation source allowlist                 | Router (`default_assistant`) |
+| Prompt, model, tools, confirmation, taint, and audit | Selected target profile      |
 
 Existing `default_assistant` history remains readable without migration because the router retains
 that ID. Only new execution-tier IDs are introduced.
@@ -177,6 +182,14 @@ provenance, and delegation-run persistence. Non-routed turns set both identities
 ID, keeping current behavior. Database changes require an Alembic migration and typed repository
 updates; no fallback inference from an internal profile ID is permitted.
 
+`ToolExecutionContext` also carries `delegation_source_profile_id`. A router sets it to its public
+ID while retaining the target as `processing_profile_id`. `delegate_to_service` checks the target's
+`allowed_delegation_sources` against `delegation_source_profile_id`; confirmation, taint, and audit
+records still identify the concrete execution profile. Non-routed turns again set both values to the
+same ID. This preserves existing allowlists such as
+`allowed_delegation_sources: ["default_assistant"]` without expanding them to implementation-only
+tier IDs.
+
 The assistant setup becomes two-pass: instantiate concrete local and remote profiles first, then
 instantiate routers after all target references can be resolved. Introduce a local chat-service
 protocol covering `service_config`, non-streaming handling, and streaming handling instead of
@@ -184,11 +197,16 @@ requiring `isinstance(..., ProcessingService)` at web, A2A, and default-profile 
 configured default may be a concrete local service or router, but not a remote A2A service.
 
 Current bootstrap code also reaches through the default service for `llm_client`, `tools_provider`,
-and timezone. A router exposes its own router `service_config` (including timezone), while non-chat
-utility consumers such as `DocumentIndexer` receive the concrete client from the configured fallback
-target (or the first route when no fallback is configured). Root UI/API tool listings keep using the
-existing root provider; they do not use a target profile's policy provider. Shutdown closes concrete
-profile providers once and treats routers as non-owning facades.
+and timezone. A router exposes its own router `service_config` (including timezone). Add the
+top-level `indexing_llm_profile_id` setting for `DocumentIndexer`; it must reference a concrete
+local profile and may reference an internal route target. When the default service is concrete, the
+field defaults to that profile for backward-compatible behavior. When the default is a router,
+startup requires an explicit value. Indexing never derives its client from `fallback_profile_id` or
+route order, so chat availability policy and route reordering cannot silently change extraction
+behavior. The existing `app.state.llm_client` compatibility value uses this same explicit utility
+client (or is removed if an implementation audit confirms there are no consumers). Root UI/API tool
+listings keep using the existing root provider; they do not use a target profile's policy provider.
+Shutdown closes concrete profile providers once and treats routers as non-owning facades.
 
 ## Security constraints
 
@@ -201,6 +219,14 @@ profile providers once and treats routers as non-owning facades.
   visibility grants, note-visibility constraints, delegation permissions, and wake permissions.
   Startup fails with a field-specific mismatch instead of treating classifier routing as a way to
   cross a security boundary.
+- Targets must also have identical resolved context-provider descriptors. Bootstrap constructs a
+  canonical descriptor before instantiating each provider and compares provider type plus every
+  configuration input that controls which private data is injected. This includes effective notes
+  visibility, calendar source/configuration, known-user maps, weather configuration, Home Assistant
+  URL/template/SSL settings, context-related prompt templates, and included system documents. Secret
+  values are compared by a non-reversible fingerprint and never included in mismatch errors. Adding
+  a new context provider requires adding its complete construction inputs to the descriptor; an
+  unregistered provider makes router validation fail closed.
 - Runtime taint sources are passed unchanged to the selected target.
 
 The shipped default tiers therefore differ only in model, model parameters, prompt guidance, and
@@ -223,23 +249,29 @@ redact prompts and policy bodies from read-only diagnostics.
 
 ## Tests
 
-1. Config-model tests for valid router config, mutually exclusive profile kinds, duplicate IDs,
-   missing/internal constraints, and cycles.
-2. Unit tests with fake classifier and target services proving simple/balanced/complex selection,
-   invalid-output failure, configured fallback behavior, timeout behavior, one classification per
-   turn, and independent concurrent turns.
-3. Functional message-history test: two consecutive turns select different targets, the second
-   target receives the first turn, and all user-visible rows remain under the router history ID.
-4. Functional policy test: the selected target's profile ID reaches `ToolExecutionContext` while
-   history remains under the router ID.
-5. Streaming functional tests proving web and inbound A2A calls classify once, proxy target events,
-   and preserve `reuse_existing_user_row` behavior.
-6. Confirmation-flow test: approve a confirmation created during a routed turn, then assert the
-   resumed execution uses the target policy and writes its result under the router history ID.
-7. Callback, automation wake, and delegation-completion tests proving new turns re-enter the router.
-8. Web/A2A/profile-catalog tests proving internal route targets are neither listed nor directly
-   addressable and the router remains selectable as `default_assistant`.
-9. Existing processing-profile, Telegram, web chat, delegation, diagnostics, and task-worker tests.
+01. Config-model tests for valid router config, mutually exclusive profile kinds, duplicate IDs,
+    missing/internal constraints, and cycles.
+02. Unit tests with fake classifier and target services proving simple/balanced/complex selection,
+    invalid-output failure, configured fallback behavior, timeout behavior, one classification per
+    turn, and independent concurrent turns.
+03. Functional message-history test: two consecutive turns select different targets, the second
+    target receives the first turn, and all user-visible rows remain under the router history ID.
+04. Functional policy test: the selected target's profile ID reaches `ToolExecutionContext`, the
+    router ID is used for outbound delegation allowlists, and history remains under the router ID.
+05. Streaming functional tests proving web and inbound A2A calls classify once, proxy target events,
+    and preserve `reuse_existing_user_row` behavior.
+06. Confirmation-flow test: approve a confirmation created during a routed turn, then assert the
+    resumed execution uses the target policy and writes its result under the router history ID.
+07. Callback, automation wake, and delegation-completion tests proving new turns re-enter the
+    router.
+08. Web/A2A/profile-catalog tests proving internal route targets are neither listed nor directly
+    addressable and the router remains selectable as `default_assistant`.
+09. Config/bootstrap tests proving differences in every context-provider input reject a route set,
+    secrets stay out of validation errors, and indexing requires an explicit concrete profile when
+    the default is a router.
+10. Indexing test proving route reordering and classifier fallback changes do not change the
+    `DocumentIndexer` client.
+11. Existing processing-profile, Telegram, web chat, delegation, diagnostics, and task-worker tests.
 
 ## Documentation changes
 
@@ -252,14 +284,14 @@ redact prompts and policy bodies from read-only diagnostics.
 
 ## Implementation milestones
 
-1. Add typed router configuration, presence-aware startup validation, permission-equivalence checks,
-   and config-loader merge support.
+1. Add typed router configuration, presence-aware startup validation, permission/context-provider
+   equivalence checks, explicit indexing-client configuration, and config-loader merge support.
 2. Add durable history-identity separation across processing, tools, confirmations, automations,
    delegation runs, and task payloads, covered by focused functional tests and a migration.
 3. Implement structured classification plus streaming/non-streaming `ClassifierRoutingService` paths
    with timeout, explicit fallback, and trace/log metadata.
-4. Update default-service consumers, local service protocols, shutdown ownership, and inbound A2A
-   visibility enforcement.
+4. Update default-service consumers, local service protocols, delegation source identity, shutdown
+   ownership, and inbound A2A visibility enforcement.
 5. Convert shipped `default_assistant` into a router and add hidden fast/balanced/complex targets.
 6. Update profile catalogs, diagnostics, user documentation, and classifier prompt.
 7. Run formatting/linting, focused tests, plausibly impacted suites, then `poe test` because this is
