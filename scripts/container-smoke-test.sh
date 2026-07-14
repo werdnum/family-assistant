@@ -40,6 +40,7 @@ echo "Launching container..."
 docker run -d --name "$CONTAINER_NAME" -p "$PORT:$PORT" \
     -e GEMINI_API_KEY=dummy \
     -e OPENAI_API_KEY=dummy \
+    -e ANTHROPIC_API_KEY=dummy \
     -e BRAVE_API_KEY=dummy \
     -e HOMEASSISTANT_API_KEY=dummy \
     -e GOOGLE_MAPS_API_KEY=dummy \
