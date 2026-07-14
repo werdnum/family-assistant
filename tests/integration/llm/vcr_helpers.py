@@ -48,6 +48,12 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
 
             normalized["messages"].append(norm_msg)
 
+    # Responses API uses input items rather than Chat Completions messages.
+    # Keep the full item structure so recordings with the same model but
+    # different turns cannot be replayed interchangeably.
+    if "input" in body:
+        normalized["input"] = _normalize_json_value(body["input"])
+
     # Handle Google-style contents array (used by Gemini client)
     if "contents" in body:
         normalized["contents"] = body["contents"]
@@ -82,6 +88,9 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
 
     if "response_format" in body:
         normalized["response_format"] = _normalize_json_value(body["response_format"])
+
+    if "reasoning" in body:
+        normalized["reasoning"] = _normalize_json_value(body["reasoning"])
 
     # Handle streaming parameter
     if "stream" in body:

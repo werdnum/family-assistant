@@ -89,6 +89,7 @@ class OpenAIClient(BaseLLMClient):
         """
         base_url = kwargs.pop("base_url", None)
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self._is_direct_openai = base_url is None
         self.model = model
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
@@ -182,6 +183,149 @@ class OpenAIClient(BaseLLMClient):
                 )
         return params
 
+    def _uses_responses_api(self) -> bool:
+        """Return whether this direct OpenAI model requires the Responses API."""
+        return self._is_direct_openai and self.model.startswith("gpt-5.6-sol")
+
+    def _build_responses_params(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list["ToolDefinition"] | None,
+        tool_choice: str | None,
+        *,
+        stream: bool,
+    ) -> dict[str, object]:
+        """Translate the shared client request shape to the Responses API."""
+        model_params = {
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model),
+        }
+        reasoning_effort = model_params.pop("reasoning_effort", None)
+        params: dict[str, object] = {
+            "model": self.model,
+            "input": self._messages_to_responses_input(messages),
+            "stream": stream,
+        }
+
+        if reasoning_effort is not None:
+            params["reasoning"] = {"effort": reasoning_effort}
+
+        for key in ("temperature", "top_p", "parallel_tool_calls", "user"):
+            if key in model_params:
+                params[key] = model_params[key]
+        if "max_tokens" in model_params:
+            params["max_output_tokens"] = model_params["max_tokens"]
+        if "max_output_tokens" in model_params:
+            params["max_output_tokens"] = model_params["max_output_tokens"]
+
+        if tools:
+            params["tools"] = [
+                {
+                    "type": "function",
+                    "name": tool["function"]["name"],
+                    "description": tool["function"].get("description"),
+                    "parameters": tool["function"].get("parameters", {}),
+                    "strict": False,
+                }
+                for tool in tools
+            ]
+            params["tool_choice"] = tool_choice
+
+        return params
+
+    def _messages_to_responses_input(
+        self,
+        messages: Sequence[LLMMessage],
+    ) -> list[dict[str, object]]:
+        """Convert application messages to stateless Responses API input items."""
+        input_items: list[dict[str, object]] = []
+        for message in messages:
+            if isinstance(message, (UserMessage,)):
+                content: object
+                if isinstance(message.content, str):
+                    content = message.content
+                else:
+                    content = [
+                        (
+                            {"type": "input_text", "text": part.text}
+                            if isinstance(part, TextContentPart)
+                            else {
+                                "type": "input_image",
+                                "image_url": part.image_url["url"],
+                            }
+                        )
+                        for part in message.content
+                        if isinstance(part, (TextContentPart, ImageUrlContentPart))
+                    ]
+                input_items.append({"role": "user", "content": content})
+            elif message.role == "system":
+                input_items.append({"role": "system", "content": message.content})
+            elif message.role == "assistant":
+                provider_metadata = message.provider_metadata
+                if isinstance(provider_metadata, dict) and isinstance(
+                    provider_metadata.get("openai_response_output"), list
+                ):
+                    input_items.extend(provider_metadata["openai_response_output"])
+                else:
+                    if message.content:
+                        input_items.append({
+                            "type": "message",
+                            "id": f"msg_{uuid.uuid4().hex}",
+                            "role": "assistant",
+                            "status": "completed",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": message.content,
+                                    "annotations": [],
+                                }
+                            ],
+                        })
+                    for tool_call in message.tool_calls or []:
+                        input_items.append({
+                            "type": "function_call",
+                            "call_id": tool_call.id,
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        })
+            elif message.role == "tool":
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": message.tool_call_id,
+                    "output": message.content,
+                })
+        return input_items
+
+    @staticmethod
+    def _responses_reasoning_info(response: Any) -> MessageReasoningInfo | None:  # noqa: ANN401
+        """Extract usage information from a Responses API response."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=usage.input_tokens,
+            completion_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+        )
+        details = getattr(usage, "output_tokens_details", None)
+        if details and getattr(details, "reasoning_tokens", None) is not None:
+            reasoning_info["reasoning_tokens"] = details.reasoning_tokens
+        return reasoning_info
+
+    @staticmethod
+    def _responses_tool_calls(response: Any) -> list[ToolCallItem] | None:  # noqa: ANN401
+        """Extract function calls from a Responses API response."""
+        tool_calls = [
+            ToolCallItem(
+                id=item.call_id,
+                type="function",
+                function=ToolCallFunction(name=item.name, arguments=item.arguments),
+            )
+            for item in response.output
+            if item.type == "function_call"
+        ]
+        return tool_calls or None
+
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map a raw OpenAI exception to the typed provider error hierarchy."""
         error_message = str(e)
@@ -240,6 +384,34 @@ class OpenAIClient(BaseLLMClient):
         try:
             # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
+
+            if self._uses_responses_api():
+                response = await cast("Any", self.client.responses.create)(
+                    **self._build_responses_params(
+                        processed_messages, tools, tool_choice, stream=False
+                    )
+                )
+                llm_output = LLMOutput(
+                    content=response.output_text or None,
+                    tool_calls=self._responses_tool_calls(response),
+                    reasoning_info=self._responses_reasoning_info(response),
+                )
+
+                duration_ms = (time.monotonic() - start_time) * 1000
+                get_request_buffer().add(
+                    LLMRequestRecord(
+                        timestamp=request_timestamp,
+                        request_id=request_id,
+                        model_id=self.model,
+                        messages=message_dicts,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        response=asdict(llm_output),
+                        duration_ms=duration_ms,
+                        error=None,
+                    )
+                )
+                return llm_output
 
             # Convert typed messages to dicts for API call
             api_message_dicts = [
@@ -573,6 +745,13 @@ class OpenAIClient(BaseLLMClient):
             # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
 
+            if self._uses_responses_api():
+                async for event in self._generate_responses_stream(
+                    processed_messages, tools, tool_choice
+                ):
+                    yield event
+                return
+
             # Convert typed messages to dicts for SDK boundary
             api_message_dicts = [
                 message_to_json_dict(msg) for msg in processed_messages
@@ -769,6 +948,120 @@ class OpenAIClient(BaseLLMClient):
                 },
             )
 
+    async def _generate_responses_stream(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list["ToolDefinition"] | None,
+        tool_choice: str | None,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Stream a Responses API request as the application's common events."""
+        stream = await cast("Any", self.client.responses.create)(
+            **self._build_responses_params(messages, tools, tool_choice, stream=True)
+        )
+        response: Any | None = None
+        vcr_events = await self._maybe_parse_vcr_stream(stream)
+        if vcr_events is not None:
+            async for event in self._emit_events_from_responses_dicts(vcr_events):
+                yield event
+            return
+
+        async for event in stream:
+            if event.type == "response.output_text.delta":
+                yield LLMStreamEvent(type="content", content=event.delta)
+            elif (
+                event.type == "response.output_item.done"
+                and event.item.type == "function_call"
+            ):
+                tool_call = ToolCallItem(
+                    id=event.item.call_id,
+                    type="function",
+                    function=ToolCallFunction(
+                        name=event.item.name,
+                        arguments=event.item.arguments,
+                    ),
+                )
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=tool_call,
+                    tool_call_id=tool_call.id,
+                )
+            elif event.type == "response.completed":
+                response = event.response
+            elif event.type == "error":
+                yield LLMStreamEvent(type="error", error=event.message)
+                return
+
+        metadata: StreamEventMetadata = {}
+        if response is not None:
+            reasoning_info = self._responses_reasoning_info(response)
+            if reasoning_info:
+                metadata["reasoning_info"] = reasoning_info
+            metadata["provider_metadata"] = {
+                "openai_response_output": [
+                    item.model_dump(mode="json") for item in response.output
+                ]
+            }
+        yield LLMStreamEvent(type="done", metadata=metadata)
+
+    async def _emit_events_from_responses_dicts(
+        self,
+        event_dicts: list[dict[str, object]],
+    ) -> AsyncIterator[LLMStreamEvent]:
+        """Emit common stream events from VCR-replayed Responses API frames."""
+        metadata: StreamEventMetadata = {}
+        for event in event_dicts:
+            event_type = event.get("type")
+            if event_type == "response.output_text.delta":
+                delta = event.get("delta")
+                if isinstance(delta, str):
+                    yield LLMStreamEvent(type="content", content=delta)
+            elif event_type == "response.output_item.done":
+                item = event.get("item")
+                if isinstance(item, dict) and item.get("type") == "function_call":
+                    call_id = item.get("call_id")
+                    name = item.get("name")
+                    arguments = item.get("arguments")
+                    if (
+                        isinstance(call_id, str)
+                        and isinstance(name, str)
+                        and isinstance(arguments, str)
+                    ):
+                        tool_call = ToolCallItem(
+                            id=call_id,
+                            type="function",
+                            function=ToolCallFunction(name=name, arguments=arguments),
+                        )
+                        yield LLMStreamEvent(
+                            type="tool_call",
+                            tool_call=tool_call,
+                            tool_call_id=call_id,
+                        )
+            elif event_type == "response.completed":
+                response = event.get("response")
+                if isinstance(response, dict):
+                    usage = response.get("usage")
+                    if isinstance(usage, dict):
+                        metadata["reasoning_info"] = MessageReasoningInfo(
+                            prompt_tokens=int(usage.get("input_tokens", 0)),
+                            completion_tokens=int(usage.get("output_tokens", 0)),
+                            total_tokens=int(usage.get("total_tokens", 0)),
+                        )
+                    output = response.get("output")
+                    if isinstance(output, list):
+                        metadata["provider_metadata"] = {
+                            "openai_response_output": output
+                        }
+            elif event_type == "error":
+                message = event.get("message")
+                yield LLMStreamEvent(
+                    type="error",
+                    error=message
+                    if isinstance(message, str)
+                    else "OpenAI stream error",
+                )
+                return
+        yield LLMStreamEvent(type="done", metadata=metadata)
+
     async def _maybe_parse_vcr_stream(
         self,
         stream: Any,  # noqa: ANN401 - OpenAI AsyncStream[ChatCompletionChunk] erased by VCR replay
@@ -809,20 +1102,25 @@ class OpenAIClient(BaseLLMClient):
         # ast-grep-ignore: no-dict-any - VCR replay parses raw JSON SSE frames into unstructured dicts
         chunks: list[dict[str, Any]] = []
         for raw_block in normalized.split("\n\n"):
-            block = raw_block.strip()
-            if not block.startswith("data:"):
+            data_line = next(
+                (
+                    line.removeprefix("data:").strip()
+                    for line in raw_block.splitlines()
+                    if line.startswith("data:")
+                ),
+                None,
+            )
+            if data_line is None:
                 continue
-
-            data_str = block.removeprefix("data:").strip()
-            if data_str == "[DONE]":
+            if data_line == "[DONE]":
                 break
 
             try:
-                chunk = json.loads(data_str)
+                chunk = json.loads(data_line)
                 if isinstance(chunk, dict):
                     chunks.append(chunk)
             except json.JSONDecodeError:
-                logger.debug("Skipping unparsable VCR SSE block: %s", data_str)
+                logger.debug("Skipping unparsable VCR SSE block: %s", data_line)
 
         return chunks
 

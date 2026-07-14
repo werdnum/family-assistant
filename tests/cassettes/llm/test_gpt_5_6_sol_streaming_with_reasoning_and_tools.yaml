@@ -1,0 +1,95 @@
+interactions:
+  - request:
+      body: '{"input":[{"role":"user","content":"What is 42 times 17? Use the calculate tool."}],"model":"gpt-5.6-sol","reasoning":{"effort":"low"},"stream":true,"tool_choice":"auto","tools":[{"type":"function","name":"get_weather","description":"Get current weather for a location","parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and country"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"Temperature unit"}},"required":["location"]},"strict":false},{"type":"function","name":"calculate","description":"Perform mathematical calculations","parameters":{"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]},"strict":false}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '772'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.109.1
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.109.1
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+      method: POST
+      uri: https://api.openai.com/v1/responses
+    response:
+      body:
+        string: 'event: response.created #magic___^_^___line data: {"type":"response.created","response":{"id":"resp_014edad529279729006a55bad29a3081918a330f87e1e2791e","object":"response","created_at":1784003282,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"low","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Get current weather for a location","name":"get_weather","output_schema":null,"parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and country"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"Temperature unit"}},"required":["location"]},"strict":false},{"type":"function","description":"Perform mathematical calculations","name":"calculate","output_schema":null,"parameters":{"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0} #magic___^_^___line #magic___^_^___line event: response.in_progress #magic___^_^___line data: {"type":"response.in_progress","response":{"id":"resp_014edad529279729006a55bad29a3081918a330f87e1e2791e","object":"response","created_at":1784003282,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"low","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Get current weather for a location","name":"get_weather","output_schema":null,"parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and country"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"Temperature unit"}},"required":["location"]},"strict":false},{"type":"function","description":"Perform mathematical calculations","name":"calculate","output_schema":null,"parameters":{"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1} #magic___^_^___line #magic___^_^___line event: response.output_item.added #magic___^_^___line data: {"type":"response.output_item.added","item":{"id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","type":"function_call","status":"in_progress","arguments":"","call_id":"call_QBSlgyLX5o2M36k0TXcE3d7X","name":"calculate"},"output_index":0,"sequence_number":2} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":"{\"","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"J5lghqLYhGlv2Z","output_index":0,"sequence_number":3} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":"expression","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"tjgbZa","output_index":0,"sequence_number":4} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":"\":\"","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"GUh0Lk1irZzw5","output_index":0,"sequence_number":5} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":"42","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"N4Vssqh96auQ4C","output_index":0,"sequence_number":6} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":" *","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"Ciu3JvernOQvH4","output_index":0,"sequence_number":7} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":" ","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"iEPP7fFrLQYz4m7","output_index":0,"sequence_number":8} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":"17","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"OLwHJPuU2pdEL9","output_index":0,"sequence_number":9} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.delta #magic___^_^___line data: {"type":"response.function_call_arguments.delta","delta":"\"}","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","obfuscation":"7aB4pxccZjM5LL","output_index":0,"sequence_number":10} #magic___^_^___line #magic___^_^___line event: response.function_call_arguments.done #magic___^_^___line data: {"type":"response.function_call_arguments.done","arguments":"{\"expression\":\"42 * 17\"}","item_id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","output_index":0,"sequence_number":11} #magic___^_^___line #magic___^_^___line event: response.output_item.done #magic___^_^___line data: {"type":"response.output_item.done","item":{"id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","type":"function_call","status":"completed","arguments":"{\"expression\":\"42 * 17\"}","call_id":"call_QBSlgyLX5o2M36k0TXcE3d7X","name":"calculate"},"output_index":0,"sequence_number":12} #magic___^_^___line #magic___^_^___line event: response.completed #magic___^_^___line data: {"type":"response.completed","response":{"id":"resp_014edad529279729006a55bad29a3081918a330f87e1e2791e","object":"response","created_at":1784003282,"status":"completed","background":false,"completed_at":1784003285,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5.6-sol","moderation":null,"output":[{"id":"fc_014edad529279729006a55bad50b88819198b09fa2c4293d68","type":"function_call","status":"completed","arguments":"{\"expression\":\"42 * 17\"}","call_id":"call_QBSlgyLX5o2M36k0TXcE3d7X","name":"calculate"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"low","mode":"standard","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Get current weather for a location","name":"get_weather","output_schema":null,"parameters":{"type":"object","properties":{"location":{"type":"string","description":"The city and country"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"Temperature unit"}},"required":["location"]},"strict":false},{"type":"function","description":"Perform mathematical calculations","name":"calculate","output_schema":null,"parameters":{"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"input_tokens":99,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":119},"user":null,"metadata":{}},"sequence_number":13} #magic___^_^___line #magic___^_^___line '
+      headers:
+        Access-Control-Expose-Headers:
+          - CF-Ray
+        CF-Cache-Status:
+          - DYNAMIC
+        CF-Ray:
+          - a1adc7439caa9923-FRA
+        Connection:
+          - keep-alive
+        Content-Type:
+          - text/event-stream; charset=utf-8
+        Date:
+          - Tue, 14 Jul 2026 04:28:02 GMT
+        Server:
+          - cloudflare
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+          - CF-Ray
+        alt-svc:
+          - h3=":443"; ma=86400
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '149'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        set-cookie:
+          - __cf_bm=ha3k8jrIidvO1OtckpM2JNOY6qgmUZXYnExbPSeK2sE-1784003282.494659-1.0.1.1-Wc4ahjeUAzKkKlZ1jLlh0SDQ5_5Kgr7odn37_gES9LlQPWj3cOMHQplgQo.CL_TAXb3HOEnvOuxwoRopX.wGWJKYAzfHiCMlyEPKc7ZO1heDDmKwgq7mNCbK6jDW2mwM; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Tue, 14 Jul 2026 04:58:02 GMT
+        x-ratelimit-limit-requests:
+          - '10000'
+        x-ratelimit-limit-tokens:
+          - '4000000'
+        x-ratelimit-remaining-requests:
+          - '9999'
+        x-ratelimit-remaining-tokens:
+          - '3999466'
+        x-ratelimit-reset-requests:
+          - 6ms
+        x-ratelimit-reset-tokens:
+          - 8ms
+        x-request-id:
+          - req_bcc732b51b754aa5883c061b68cb6a25
+      status:
+        code: 200
+        message: OK
+version: 1

@@ -340,6 +340,40 @@ async def test_streaming_with_tool_calls(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
+    sample_tools: list[ToolDefinition],
+) -> None:
+    """Replay the Responses API flow required by GPT-5.6-sol tool calls."""
+    if os.getenv("CI") and not os.getenv("OPENAI_API_KEY"):
+        pytest.skip("Skipping OpenAI test in CI without API key")
+
+    client = LLMClientFactory.create_client({
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "api_key": os.getenv("OPENAI_API_KEY", "test-openai-key"),
+        "model_parameters": {"gpt-5.6-sol": {"reasoning_effort": "low"}},
+    })
+    messages = [create_user_message("What is 42 times 17? Use the calculate tool.")]
+
+    tool_calls = []
+    done_event = None
+    async for event in client.generate_response_stream(
+        messages, tools=sample_tools, tool_choice="auto"
+    ):
+        if event.type == "tool_call" and event.tool_call:
+            tool_calls.append(event.tool_call)
+        elif event.type == "done":
+            done_event = event
+
+    assert [tool_call.function.name for tool_call in tool_calls] == ["calculate"]
+    assert done_event is not None
+    assert done_event.metadata is not None
+    assert "reasoning_info" in done_event.metadata
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
 @pytest.mark.parametrize(
     "provider,model",
     [
