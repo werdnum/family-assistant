@@ -1392,14 +1392,14 @@ service_profiles:
       - "/camera"
       - "/investigate"
   - id: "complex_tasks"
-    description: "Advanced reasoning profile using Claude Opus 4.7 for complex, multi-step tasks that require deep analysis, planning, or sophisticated judgment. Delegates here when the default model struggles with nuanced reasoning."
+    description: "Advanced reasoning profile using OpenAI GPT-5.6-sol for complex, multi-step tasks that require deep analysis, planning, or sophisticated judgment. Delegates here when the default model struggles with nuanced reasoning."
     processing_config:
-      provider: "anthropic"
-      llm_model: "claude-opus-4-7"
+      provider: "openai"
+      llm_model: "gpt-5.6-sol"
       max_iterations: 100
       prompts:
         system_prompt: |
-          You are an advanced reasoning assistant interacting with {user_name}, powered by Claude Opus 4.7. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment.
+          You are an advanced reasoning assistant interacting with {user_name}, powered by OpenAI GPT-5.6-sol. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment.
 
           You have full access to all Family Assistant tools — notes, calendar, documents, Home Assistant, scheduling, and more. Use these tools to gather context and take actions as needed. This is what distinguishes you from spawn_worker, which runs isolated coding agents with NO access to Family Assistant tools or data.
 
