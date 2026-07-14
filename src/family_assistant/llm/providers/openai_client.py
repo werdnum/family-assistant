@@ -746,10 +746,28 @@ class OpenAIClient(BaseLLMClient):
             processed_messages = self._process_tool_messages(list(messages))
 
             if self._uses_responses_api():
+                responses_stream_error = False
                 async for event in self._generate_responses_stream(
                     processed_messages, tools, tool_choice
                 ):
+                    if event.type == "error":
+                        responses_stream_error = True
                     yield event
+                if not responses_stream_error:
+                    duration_ms = (time.monotonic() - start_time) * 1000
+                    get_request_buffer().add(
+                        LLMRequestRecord(
+                            timestamp=request_timestamp,
+                            request_id=request_id,
+                            model_id=self.model,
+                            messages=message_dicts,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            response={"streaming": True},
+                            duration_ms=duration_ms,
+                            error=None,
+                        )
+                    )
                 return
 
             # Convert typed messages to dicts for SDK boundary
