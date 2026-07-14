@@ -265,14 +265,22 @@ class OpenAIClient(BaseLLMClient):
                 if isinstance(provider_metadata, dict) and isinstance(
                     provider_metadata.get("openai_response_output"), list
                 ):
-                    input_items.extend(provider_metadata["openai_response_output"])
+                    for output_item in provider_metadata["openai_response_output"]:
+                        if not isinstance(output_item, dict):
+                            raise TypeError(
+                                "OpenAI Responses output metadata must contain objects"
+                            )
+                        input_items.append({
+                            key: value
+                            for key, value in output_item.items()
+                            if key != "status"
+                        })
                 else:
                     if message.content:
                         input_items.append({
                             "type": "message",
                             "id": f"msg_{uuid.uuid4().hex}",
                             "role": "assistant",
-                            "status": "completed",
                             "content": [
                                 {
                                     "type": "output_text",
