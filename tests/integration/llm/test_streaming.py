@@ -373,6 +373,28 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
     assert isinstance(provider_metadata, dict)
     assert "openai_response_output" in provider_metadata
 
+    continuation_messages = [
+        *messages,
+        create_assistant_message(
+            content=None,
+            tool_calls=tool_calls,
+            provider_metadata=provider_metadata,
+        ),
+        create_tool_message(
+            tool_call_id=tool_calls[0].id,
+            content="714",
+            name=tool_calls[0].function.name,
+        ),
+    ]
+    continuation_done_event = None
+    async for event in client.generate_response_stream(
+        continuation_messages, tools=sample_tools, tool_choice="auto"
+    ):
+        if event.type == "done":
+            continuation_done_event = event
+
+    assert continuation_done_event is not None
+
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
