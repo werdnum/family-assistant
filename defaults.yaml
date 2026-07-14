@@ -1396,6 +1396,17 @@ service_profiles:
     processing_config:
       provider: "openai"
       llm_model: "gpt-5.6-sol"
+      # default_profile_settings ships a retry_config (Gemini primary, GPT-5.5
+      # fallback) which takes precedence over provider/llm_model above. Override
+      # it here so /complex actually runs on GPT-5.6-sol rather than inheriting
+      # the default retry chain.
+      retry_config:
+        primary:
+          provider: "openai"
+          model: "gpt-5.6-sol"
+        fallback:
+          provider: "openai"
+          model: "gpt-5.5"
       max_iterations: 100
       prompts:
         system_prompt: |
