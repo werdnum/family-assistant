@@ -212,24 +212,10 @@ class OpenAIClient(BaseLLMClient):
         if reasoning_effort is not None:
             params["reasoning"] = {"effort": reasoning_effort}
 
-        for key in (
-            "frequency_penalty",
-            "max_tool_calls",
-            "parallel_tool_calls",
-            "presence_penalty",
-            "service_tier",
-            "store",
-            "temperature",
-            "top_p",
-            "truncation",
-            "user",
-        ):
-            if key in model_params:
-                params[key] = model_params[key]
-        if "max_tokens" in model_params:
-            params["max_output_tokens"] = model_params["max_tokens"]
-        if "max_output_tokens" in model_params:
-            params["max_output_tokens"] = model_params["max_output_tokens"]
+        max_tokens = model_params.pop("max_tokens", None)
+        if max_tokens is not None:
+            model_params["max_output_tokens"] = max_tokens
+        params.update(model_params)
 
         if tools:
             params["tools"] = [
