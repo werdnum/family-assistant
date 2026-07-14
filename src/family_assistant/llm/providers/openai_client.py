@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 import aiofiles
 from openai import AsyncOpenAI
+from openai.types.responses import Response
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.llm import (
@@ -306,7 +307,7 @@ class OpenAIClient(BaseLLMClient):
         return input_items
 
     @staticmethod
-    def _responses_reasoning_info(response: Any) -> MessageReasoningInfo | None:  # noqa: ANN401
+    def _responses_reasoning_info(response: Response) -> MessageReasoningInfo | None:
         """Extract usage information from a Responses API response."""
         usage = getattr(response, "usage", None)
         if usage is None:
@@ -322,7 +323,7 @@ class OpenAIClient(BaseLLMClient):
         return reasoning_info
 
     @staticmethod
-    def _responses_tool_calls(response: Any) -> list[ToolCallItem] | None:  # noqa: ANN401
+    def _responses_tool_calls(response: Response) -> list[ToolCallItem] | None:
         """Extract function calls from a Responses API response."""
         tool_calls = [
             ToolCallItem(
