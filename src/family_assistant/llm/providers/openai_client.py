@@ -213,8 +213,10 @@ class OpenAIClient(BaseLLMClient):
             params["reasoning"] = {"effort": reasoning_effort}
 
         for key in (
+            "frequency_penalty",
             "max_tool_calls",
             "parallel_tool_calls",
+            "presence_penalty",
             "service_tier",
             "store",
             "temperature",
