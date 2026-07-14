@@ -69,6 +69,10 @@ service_profiles:
     processing_config:
       provider: "openai"
       llm_model: "deepseek/deepseek-v4-flash"
+      # complex_tasks pins its model via retry_config in defaults.yaml, which
+      # takes precedence over llm_model/provider. null it here so the single
+      # cheap llm_model+provider path is used.
+      retry_config: null
       # Keep the cost cap even for the "complex" profile in the sandbox.
       max_iterations: 8
   - id: "engineer"
