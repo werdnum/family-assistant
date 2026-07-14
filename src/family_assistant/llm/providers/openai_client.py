@@ -205,6 +205,7 @@ class OpenAIClient(BaseLLMClient):
         params: dict[str, object] = {
             "model": self.model,
             "input": self._messages_to_responses_input(messages),
+            "include": ["reasoning.encrypted_content"],
             "stream": stream,
         }
 
