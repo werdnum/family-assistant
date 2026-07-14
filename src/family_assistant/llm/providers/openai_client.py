@@ -395,6 +395,11 @@ class OpenAIClient(BaseLLMClient):
                     content=response.output_text or None,
                     tool_calls=self._responses_tool_calls(response),
                     reasoning_info=self._responses_reasoning_info(response),
+                    provider_metadata={
+                        "openai_response_output": [
+                            item.model_dump(mode="json") for item in response.output
+                        ]
+                    },
                 )
 
                 duration_ms = (time.monotonic() - start_time) * 1000
@@ -1005,6 +1010,14 @@ class OpenAIClient(BaseLLMClient):
                 )
             elif event.type == "response.completed":
                 response = event.response
+            elif event.type in {"response.failed", "response.incomplete"}:
+                error = getattr(event.response, "error", None)
+                message = getattr(error, "message", None)
+                yield LLMStreamEvent(
+                    type="error",
+                    error=message or f"OpenAI Responses request {event.type}",
+                )
+                return
             elif event.type == "error":
                 yield LLMStreamEvent(type="error", error=event.message)
                 return
@@ -1069,6 +1082,19 @@ class OpenAIClient(BaseLLMClient):
                         metadata["provider_metadata"] = {
                             "openai_response_output": output
                         }
+            elif event_type in {"response.failed", "response.incomplete"}:
+                response = event.get("response")
+                error = response.get("error") if isinstance(response, dict) else None
+                message = error.get("message") if isinstance(error, dict) else None
+                yield LLMStreamEvent(
+                    type="error",
+                    error=(
+                        message
+                        if isinstance(message, str)
+                        else f"OpenAI Responses request {event_type}"
+                    ),
+                )
+                return
             elif event_type == "error":
                 message = event.get("message")
                 yield LLMStreamEvent(

@@ -610,6 +610,7 @@ class LLMStreamingLoop:
             llm_context_assistant_message = AssistantMessage(
                 content=final_content,
                 tool_calls=effective_tool_calls,
+                provider_metadata=serialized_provider_metadata,
                 taint_metadata=taint_tracker.snapshot().to_metadata(),
             )
             messages.append(llm_context_assistant_message)
