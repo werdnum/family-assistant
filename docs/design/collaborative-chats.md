@@ -87,10 +87,12 @@ accessed through normal chat APIs.
 
 ### Messaging and assistant behavior
 
-- Every message accepted from a member is persisted and delivered to the assistant.
+- Every message accepted from a member is persisted and delivered to the assistant unless its turn
+  is explicitly cancelled before processing, including cancellation caused by that member leaving.
 - Messages are not gated on mentions, commands, or an "ask assistant" button on web/iOS.
 - Each member message creates a distinct assistant turn.
-- The assistant sees the shared conversation history with an author label on every human message.
+- The assistant sees the shared conversation history with a unique speaker token and optional author
+  label on every human message.
 - The assistant is told which member submitted the current prompt.
 - The assistant may reply normally even if the message was primarily directed at another human.
 - A future `end_turn_without_reply` tool will let the assistant intentionally remain silent while
@@ -221,17 +223,17 @@ only after the normal membership check.
 
 Add a first-class conversation table:
 
-| Column                     | Type                    | Constraints / meaning                                                     |
-| -------------------------- | ----------------------- | ------------------------------------------------------------------------- |
-| `id`                       | string/UUID             | Primary key; server-generated                                             |
-| `title`                    | text                    | Non-empty display title; may initially be generated from the first prompt |
-| `created_by_user_id`       | string                  | Canonical configured user; audit metadata, not an access role             |
-| `creation_idempotency_key` | UUID                    | Unique with `created_by_user_id`; supplied by the creating client         |
-| `creation_request_hash`    | string                  | Immutable hash of the normalized original create payload                  |
-| `processing_profile_id`    | string                  | Required and fixed for the lifetime of the conversation                   |
-| `created_at`               | timezone-aware datetime | Required                                                                  |
-| `updated_at`               | timezone-aware datetime | Required; bumped on visible activity                                      |
-| `archived_at`              | datetime, nullable      | Set when the conversation has no members or is archived later             |
+| Column                     | Type                    | Constraints / meaning                                             |
+| -------------------------- | ----------------------- | ----------------------------------------------------------------- |
+| `id`                       | string/UUID             | Primary key; server-generated                                     |
+| `title`                    | text                    | Non-empty display title supplied when the conversation is created |
+| `created_by_user_id`       | string                  | Canonical configured user; audit metadata, not an access role     |
+| `creation_idempotency_key` | UUID                    | Unique with `created_by_user_id`; supplied by the creating client |
+| `creation_request_hash`    | string                  | Immutable hash of the normalized original create payload          |
+| `processing_profile_id`    | string                  | Required and fixed for the lifetime of the conversation           |
+| `created_at`               | timezone-aware datetime | Required                                                          |
+| `updated_at`               | timezone-aware datetime | Required; bumped on visible activity                              |
+| `archived_at`              | datetime, nullable      | Set when the conversation has no members or is archived later     |
 
 `created_by_user_id` records provenance only. It does not grant permissions beyond an active
 membership.
@@ -246,6 +248,7 @@ membership.
 | `left_at`            | timezone-aware datetime, nullable | `NULL` means active member                                      |
 | `added_by_user_id`   | string                            | Canonical member that added this user                           |
 | `membership_version` | UUID                              | Regenerated for each join/re-add; identifies that membership    |
+| `speaker_token`      | string                            | Immutable, conversation-unique LLM/UI disambiguator             |
 | `notification_level` | enum/string                       | Initially `all` or `muted`                                      |
 | `last_ack_seq`       | integer, nullable                 | Optional durable notification/read cursor                       |
 
@@ -355,7 +358,7 @@ Membership checks are required for:
 - creating, stopping, steering, and resuming turns;
 - SSE subscribe and acknowledgement;
 - activity-stream fan-out;
-- attachment upload, claim, read, preview, and delete;
+- attachment claim, read, preview, and delete;
 - pending confirmation status displayed in a conversation;
 - voice-session append/create behavior;
 - scheduled/delegated completions delivered into the conversation;
@@ -414,6 +417,11 @@ Create request:
 }
 ```
 
+`title` is required and non-empty at creation, before any turn exists. Web and iOS may prefill a
+localized "New conversation" value for the user to accept or edit, but the server does not derive a
+title from an unavailable first prompt. Automatic prompt-based renaming would be a separate later
+mutation with its own authorization and idempotency contract.
+
 The server ignores any attempt to omit the authenticated creator and rejects unknown/unconfigured
 user ids. It also rejects an unknown profile, a profile that is disabled, or a profile restricted to
 delegation/remote invocation rather than direct chat. It must not apply the current turn endpoint's
@@ -428,7 +436,8 @@ and may update only the caller's active membership.
 Leaving targets the caller's current `membership_version`, supplied as a request precondition. A
 successful leave invalidates that version. Retrying it is harmless, while retrying an old leave
 after the user has been re-added cannot remove the new membership because its version differs. A
-client must refetch before leaving again from a new membership instance.
+conversation detail response exposes `my_membership_version`, and leave supplies that value in an
+`If-Match` header. A client must refetch before leaving again from a new membership instance.
 
 ### Message and turn APIs
 
@@ -568,20 +577,22 @@ Collaborative history must preserve authorship through formatting. A provider-ne
 should clearly distinguish speakers without trusting user-controlled display text, for example:
 
 ```text
-[Conversation participant: Andrew]
+[Conversation participant P1: Andrew]
 Can everyone do the 18th?
 ```
 
 The prompt preamble includes:
 
-- the current prompting member's canonical label;
-- the complete active member list using configured labels;
+- the current prompting member's unique `speaker_token` and configured label when present;
+- the complete active member list using unique speaker tokens plus configured labels when present;
 - an instruction that participant statements are conversational context, not authorization; and
 - an instruction that tools always run as the current prompting member.
 
-Labels come from trusted application configuration or persisted label snapshots, not message text.
-Escaping prevents a label from changing prompt structure. Raw canonical ids should not be exposed to
-the model unless needed for a specific tool contract.
+Speaker tokens are short opaque values such as `P1`, assigned once per conversation and never
+reused, so duplicate or missing labels remain distinguishable. Labels come from trusted application
+configuration or persisted label snapshots, not message text. Escaping prevents a label from
+changing prompt structure. Raw canonical ids should not be exposed to the model unless needed for a
+specific tool contract.
 
 History selection for a web/iOS collaborative conversation is by canonical
 `collaborative_conversation_id` and subconversation. It must not partition web versus iOS, because
@@ -595,8 +606,12 @@ and cannot contribute history to a web/iOS conversation.
 
 ## Attachments
 
-- A member may upload and attach files supported by the existing web/iOS limits.
-- An unclaimed upload is owned by the uploading user until attached.
+- Any authenticated user may create an unclaimed upload supported by the existing web/iOS limits;
+  this step checks uploader identity, not conversation membership.
+- An unclaimed upload is owned and readable only by the uploading user until attached.
+- Claiming an upload for a conversation requires both uploader ownership and active membership; the
+  claim and message/turn creation occur in the same transaction so a failed send does not transfer
+  access.
 - Once attached to a collaborative conversation, every current member may read/preview that
   attachment through the conversation membership check.
 - A former member loses attachment access when membership ends.
@@ -617,13 +632,18 @@ Replace `resolve_conversation_user` for collaborative chat with a member fan-out
 ```python
 await notify_conversation_members(
     conversation_id=conversation_id,
-    exclude_user_ids={initiating_user_id},
+    event=notification_event,
+    exclude_user_ids=event_specific_exclusions,
     ...,
 )
 ```
 
 It loads active members and their notification preferences, then sends through Web Push and APNs.
-Confirmation notifications bypass member fan-out and target only the confirmation's user.
+For a human-message event, `event_specific_exclusions` contains the message author. For an assistant
+or background completion it is empty; per-member acknowledgement/delivery state suppresses only
+members who already received the completion on an active stream, including the requester when
+appropriate. Confirmation notifications bypass member fan-out and target only the confirmation's
+user.
 
 Disconnect-push suppression can no longer be a single `TurnRecord.delivered` boolean: one member's
 acknowledgement must not suppress another member's notification. Delivery/ack state must be tracked
