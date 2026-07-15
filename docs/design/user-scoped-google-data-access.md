@@ -224,6 +224,17 @@ Implementation notes:
   fail-safe `unknown_external` fallback.
 - Result size is bounded (default page sizes, body truncation with an explicit truncation marker) so
   a hostile mailbox cannot blow out the context window.
+- **Attachment owner enforcement.** The existing attachment registry performs no user-scoped
+  authorization, so without a change any user (or any turn acting as another user) holding an
+  attachment ID could read Google-derived content through `read_text_attachment` or the HTTP
+  attachment route — a hole in the cross-user isolation this design promises. The registry therefore
+  gains an optional `owner_user_id` on registered attachments. The Gmail/Drive tools (and their
+  auto-conversion of large results) always set it to the acting user; enforcement lives in the
+  registry read path itself, not in individual callers: a read with a non-matching acting user (tool
+  path, via `exec_context.user_id`) or session user (HTTP attachment route) is refused as not-found.
+  Attachments without `owner_user_id` (uploads, legacy, non-personal tool output) behave exactly as
+  today, so this is additive and backward-compatible. Cross-user isolation tests cover both read
+  paths.
 
 #### Taint provenance
 
@@ -458,15 +469,16 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
    encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
    `GoogleApiBackend`; the atomic `record_tool_result_taint` runtime extension with authenticated
-   sender classification (including the `read_text_attachment` read-back provenance update); the
-   `require_taint_enforcement` startup check (tools unregistered + surfaced reason when unmet,
-   explicit logged waiver path); policy defaults; per-user isolation tests (two connected users,
-   assert each context reads only its own data; unconnected and no-acting-user contexts fail closed
-   with actionable messages). Docs in the same PR: USER_GUIDE Gmail section (what the assistant
-   can/can't do, the operator security notes incl. the `home_local` override callout) and
-   `prompts.yaml` system-prompt guidance (tools act as the requesting user; suggest connecting when
-   not connected). Before enabling this in a deployment, the operator either flips
-   `taint_policy.mode` to `enforce` or explicitly waives the requirement.
+   sender classification (including the `read_text_attachment` read-back provenance update);
+   attachment `owner_user_id` registration + read-path enforcement; the `require_taint_enforcement`
+   startup check (tools unregistered + surfaced reason when unmet, explicit logged waiver path);
+   policy defaults; per-user isolation tests (two connected users, assert each context reads only
+   its own data; unconnected and no-acting-user contexts fail closed with actionable messages). Docs
+   in the same PR: USER_GUIDE Gmail section (what the assistant can/can't do, the operator security
+   notes incl. the `home_local` override callout) and `prompts.yaml` system-prompt guidance (tools
+   act as the requesting user; suggest connecting when not connected). Before enabling this in a
+   deployment, the operator either flips `taint_policy.mode` to `enforce` or explicitly waives the
+   requirement.
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
    same test posture. Docs in the same PR: USER_GUIDE Drive section and the matching `prompts.yaml`
    additions.
