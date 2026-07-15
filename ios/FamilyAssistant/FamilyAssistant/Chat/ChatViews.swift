@@ -1,3 +1,4 @@
+import Combine
 import Markdown
 import PhotosUI
 import SwiftUI
@@ -498,6 +499,7 @@ struct StickyBottomScroll<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     @State private var isNearBottom = true
+    @State private var hasPendingFollow = false
 
     init(
         followTrigger: AnyHashable?,
@@ -535,15 +537,28 @@ struct StickyBottomScroll<Content: View>: View {
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
             .onChange(of: followTrigger) {
-                guard followTrigger != nil, canFollow(), shouldFollow(isNearBottom) else {
+                guard followTrigger != nil, shouldFollow(isNearBottom) else {
                     return
                 }
+                guard canFollow() else {
+                    hasPendingFollow = true
+                    return
+                }
+                hasPendingFollow = false
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                guard hasPendingFollow, canFollow() else {
+                    return
+                }
+                hasPendingFollow = false
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
             .onChange(of: forceFollowTrigger) {
                 guard forceFollowTrigger != nil else {
                     return
                 }
+                hasPendingFollow = false
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
         }

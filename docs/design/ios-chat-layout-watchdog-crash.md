@@ -320,9 +320,14 @@ could still consume the full scene-update allowance.
 - Stop encoding activity into the message list's `followTrigger`. `StickyBottomScroll` instead
   checks an injected `canFollow` closure when a passive trigger changes; production reads
   `UIApplication.shared.applicationState` without creating a SwiftUI environment dependency. The
-  force-follow signal remains unconditional because it is emitted only by an active user send.
+  force-follow signal remains unconditional because it is emitted only by an active user send. If
+  lifecycle suppression defers an otherwise-allowed passive follow, the shared scroll container
+  preserves it and retries on `UIApplication.didBecomeActiveNotification`; the content that arrived
+  in the background is therefore visible immediately on foregrounding without invalidating the heavy
+  parent view.
 - Cover the lifecycle suppression at the hosted scroll-view layer: an otherwise-allowed passive
-  follow is denied while `canFollow` is false and leaves the scroll position untouched.
+  follow is denied while `canFollow` is false and leaves the scroll position untouched, then the
+  same pending follow runs when the lifecycle gate reopens.
 
 ### M9 — Eager-window process-exit layout (foreground recurrence, build 39)
 
