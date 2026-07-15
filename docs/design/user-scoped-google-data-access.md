@@ -167,23 +167,28 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
 - `GET /api/integrations/google` — connection status for the settings UI (account email, scopes,
   status; never tokens).
 - `GET /api/integrations/google/authorize` — starts the authorization-code flow. Generates a random
-  nonce, stores `{nonce, user_id}` server-side (session), redirects to Google's consent screen with
-  `state=nonce`, `access_type=offline`, `prompt=consent`, and the requested scopes: the configured
-  data scopes (v1 default: `gmail.readonly`, `drive.readonly`) plus `openid` and `email`, which are
-  always appended in code — not operator-configurable — so the callback can identify the connected
-  account.
-- `GET /api/integrations/google/callback` — validates `state` against the stored nonce **and** that
-  the session's canonical user matches the user who initiated the flow, then **atomically consumes
-  the pending flow (single-use nonce) before exchanging the code**: the stored `{nonce, user_id}` is
-  deleted in the same step that accepts it, and every later callback presenting the same state is
-  rejected. Without consumption, `state` is only echoed by the authorization server, so an attacker
-  who learned an old value could mint a fresh code for *their* Google account and hand the victim a
-  callback URL that overwrites the victim's connection with an attacker-controlled mailbox. After
-  consuming the flow, the handler exchanges the code (server-side, client secret from
-  `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`), fetches the account email from the ID
-  token / userinfo, and upserts the connection row for the **session's canonical user**. The Google
-  account email is recorded for display but plays no role in authorization — the binding is session
-  user → connection. Pending flows also expire after a short TTL (10 minutes).
+  nonce and persists the pending flow **in the database** (a `pending_google_oauth_flows` table:
+  hashed nonce, initiating canonical `user_id`, `created_at`), then redirects to Google's consent
+  screen with `state=nonce`, `access_type=offline`, `prompt=consent`, and the requested scopes: the
+  configured data scopes (v1 default: `gmail.readonly`, `drive.readonly`) plus `openid` and `email`,
+  which are always appended in code — not operator-configurable — so the callback can identify the
+  connected account. A database store is required, not a convenience: the app's `SessionMiddleware`
+  keeps the whole session in a **signed client-side cookie**, so a cookie-stored nonce cannot be
+  single-use — two concurrent callbacks replaying the same pre-consumption cookie would both
+  validate, and "deleting" the nonce only issues a replacement cookie after the response.
+- `GET /api/integrations/google/callback` — **atomically consumes** the pending flow before
+  exchanging the code: a single conditional `DELETE` (CAS) on the hashed state value claims the flow
+  row, exactly one concurrent callback can win it, and every subsequent callback presenting the same
+  state is rejected. The handler additionally requires the session's canonical user to match the
+  flow's initiating user. Without single-use consumption, `state` is only echoed by the
+  authorization server, so an attacker who learned an old value could mint a fresh code for *their*
+  Google account and hand the victim a callback URL that overwrites the victim's connection with an
+  attacker-controlled mailbox. After claiming the flow, the handler exchanges the code (server-side,
+  client secret from `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`), fetches the account
+  email from the ID token / userinfo, and upserts the connection row for the flow's canonical user.
+  The Google account email is recorded for display but plays no role in authorization — the binding
+  is initiating user → connection. Pending flows expire after a short TTL (10 minutes), enforced on
+  claim and cleaned up opportunistically.
 - `DELETE /api/integrations/google` — best-effort token revocation against Google's revoke endpoint,
   then deletes the row.
 
@@ -277,8 +282,16 @@ Implementation notes:
   `public, max-age=31536000, immutable` — otherwise a shared cache could hand user A's file to user
   B without ever reaching the ownership check. Attachments without `owner_user_id` (uploads, legacy,
   non-personal tool output) behave exactly as today, so this is additive and backward-compatible.
-  Cross-user isolation tests cover the tool read path and the HTTP content, metadata, and delete
-  routes, plus the cache-header assertion.
+  Internal **delivery paths** need the acting user threaded through rather than exempted: e.g.
+  `TelegramChatInterface._send_attachments()` reads attachments by ID alone with neither an
+  execution context nor an HTTP session, so strict enforcement would break sending a Gmail
+  attachment back to its own requester while a blanket exemption would reopen the bypass. The
+  attachment-delivery APIs (`ChatInterface` send paths and the attachment-processing pipeline)
+  therefore gain an `on_behalf_of_user_id` parameter, populated from the turn's acting user where
+  attachments are queued for delivery, and owned-attachment reads on these paths check it like any
+  other actor. Cross-user isolation tests cover the tool read path, the HTTP content, metadata, and
+  delete routes, the cache-header assertion, and interface delivery (own-user delivery succeeds; a
+  mismatched delivery user is refused).
 
 #### Taint provenance
 
@@ -562,7 +575,12 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
 ## Testing Strategy
 
 - **Unit**: encryption round-trip + wrong-key behavior; resolver fail-closed matrix (no user, no
-  connection, needs_reauth, disabled integration); refresh single-flight under concurrency.
+  connection, needs_reauth, disabled integration); refresh single-flight under concurrency;
+  **credential mutation during an active API operation** — deterministic tests (gated fake backend,
+  no sleeps) pause an in-flight request while a reconnect, disconnect, and `needs_reauth` transition
+  each occur, then assert the paused operation's response is discarded (retried or failed) and never
+  surfaces data from the superseded account, and that the mutation waited for the operation lease to
+  drain.
 - **Functional (web)**: full connect/disconnect flow against stubbed Google endpoints; status
   endpoint redaction; auth required on all routes.
 - **Tool tests**: fake `GoogleApiBackend` (DI, no monkeypatching); cross-user isolation; taint
