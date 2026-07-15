@@ -258,15 +258,19 @@ Implementation notes:
   `Cache-Control: private, no-store` instead of the route's current
   `public, max-age=31536000, immutable` — otherwise a shared cache could hand user A's file to user
   B without ever reaching the ownership check. Attachments without `owner_user_id` (uploads, legacy,
-  non-personal tool output) behave exactly as today, so this is additive and backward-compatible.
-  Internal **delivery paths** need the acting user threaded through rather than exempted: e.g.
-  `TelegramChatInterface._send_attachments()` reads attachments by ID alone with neither an
-  execution context nor an HTTP session, so strict enforcement would break sending a Gmail
-  attachment back to its own requester while a blanket exemption would reopen the bypass. The
-  attachment-delivery APIs (`ChatInterface` send paths and the attachment-processing pipeline)
-  therefore gain an `on_behalf_of_user_id` parameter, populated from the turn's acting user where
-  attachments are queued for delivery, and owned-attachment reads on these paths check it like any
-  other actor.
+  non-personal tool output) behave exactly as today, so this is additive and backward-compatible. To
+  make enforcement unavoidable rather than per-consumer, the registry read/delete APIs become
+  **actor-bound**: `acting_user_id: str | None` is a required (non-defaulted) parameter on
+  `get_attachment` / content / delete. Passing `None` is valid and means "no user context" — it can
+  read only ownerless attachments; on an owned attachment it fails. This is deliberately a breaking
+  signature change: the type checker enumerates every existing consumer (`jq_query`,
+  `execute_script`, `attach_to_response`, notes flows, chat delivery, HTTP routes, …), and each one
+  must state where its actor comes from — `exec_context.user_id` for tool paths, the session user
+  for HTTP routes, and a new `on_behalf_of_user_id` threaded through the attachment-delivery APIs
+  (`ChatInterface` send paths read attachments by ID alone today, with neither an execution context
+  nor an HTTP session; without the parameter, strict enforcement would break sending a Gmail
+  attachment back to its own requester, while a blanket exemption would reopen the bypass). Per the
+  no-backwards-compatibility rule, there is no actorless shim.
 
 #### Taint
 
@@ -331,7 +335,14 @@ not re-litigate the taint design's matrix through a side-door registration check
   (already implemented in the notes write path), so injected instructions cannot launder themselves
   into "trusted" storage — they re-enter later turns as tainted. Automations carry provenance and
   wake under their originating profile. Confirming every write after any external content is the
-  rubber-stamping failure mode the taint design explicitly avoids.
+  rubber-stamping failure mode the taint design explicitly avoids. Provenance stamping does *not*
+  help with **destructive** mutations (`delete_note`, `delete_calendar_event`, …), which resolve to
+  the same sink class and would run un-confirmed at `unknown_external`; this exposure is identical
+  to what email intake already accepts under the shared matrix, and the same operator override
+  applies (`artifact_write` → `confirm` via `matrix_overrides`, documented alongside the
+  `home_local` callout). Splitting `artifact_write` into creation vs. destructive-mutation sink
+  classes so the matrix can treat them differently is proposed as future work on the taint
+  machinery, not smuggled in here.
 - `home_local` — the taint design treats the household as inside the trust boundary: Home Assistant
   actions cannot exfiltrate mailbox content to an attacker. The residual risk is attacker-influenced
   household actuation (e.g. a hostile email inducing a device action). Operators with
@@ -489,6 +500,8 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
   runtime taint doc's connector split).
 - Per-user Google Calendar via the same connections.
 - Cross-user sharing grants with explicit consent UX.
+- Split `artifact_write` into creation vs. destructive-mutation sink classes in the taint machinery,
+  so the matrix can confirm deletes after untrusted content without confirming every note write.
 - Encryption key rotation via `MultiFernet`.
 
 ## Testing Strategy
