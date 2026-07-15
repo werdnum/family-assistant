@@ -238,12 +238,17 @@ Implementation notes:
   gains an optional `owner_user_id` on registered attachments. The Gmail/Drive tools (and their
   auto-conversion of large results) always set it to the acting user; enforcement lives in the
   registry itself, not in individual callers, and covers **every operation on an owned attachment**
-  — read, delete, and any future mutation — so ownership cannot be bypassed for destructive access
-  via `DELETE /api/attachments/{id}` any more than for reads. An operation with a non-matching
-  acting user (tool path, via `exec_context.user_id`) or session user (HTTP routes) is refused as
-  not-found. Attachments without `owner_user_id` (uploads, legacy, non-personal tool output) behave
-  exactly as today, so this is additive and backward-compatible. Cross-user isolation tests cover
-  the tool read path, the HTTP read route, and the HTTP delete route.
+  — content read, the metadata route (`GET /api/attachments/{id}/metadata`, which today calls
+  `get_attachment` without resolving the session user), delete, and any future mutation — so
+  ownership cannot be bypassed for destructive access via `DELETE /api/attachments/{id}` or leaked
+  via metadata any more than via content reads. An operation with a non-matching acting user (tool
+  path, via `exec_context.user_id`) or session user (HTTP routes) is refused as not-found. Owned
+  attachments are also served with `Cache-Control: private, no-store` instead of the route's current
+  `public, max-age=31536000, immutable` — otherwise a shared cache could hand user A's file to user
+  B without ever reaching the ownership check. Attachments without `owner_user_id` (uploads, legacy,
+  non-personal tool output) behave exactly as today, so this is additive and backward-compatible.
+  Cross-user isolation tests cover the tool read path and the HTTP content, metadata, and delete
+  routes, plus the cache-header assertion.
 
 #### Taint provenance
 
@@ -279,10 +284,17 @@ def record_tool_result_taint(
 ```
 
 Tool implementations today never see their own call id — it stays inside the provider wrapper — so
-the helper takes it from the execution context instead: `ToolExecutionContext` gains a
-`tool_call_id: str | None` field that `LocalToolsProvider` populates for each invocation (the
-wrapper already receives `call_id` alongside the arguments; it stamps the per-call context before
-dispatch). Connector code never handles raw call ids, and the LLM cannot influence the value.
+the helper takes it from the execution context instead: `ToolExecutionContext` gains an
+`invocation_id: str | None` field that `LocalToolsProvider` stamps on a per-call copy of the context
+before dispatch. The provider **generates** this id internally for every execution rather than
+reusing the LLM-protocol `call_id`, because not every invocation has one: nested tool calls from
+`execute_script` (`MontyEngine.execute_tool_async`) currently pass no `call_id` and share one
+execution context, and keying the provenance registry by `None` would let one nested call's
+provenance suppress another's fallback. A fresh unique id per provider invocation — with the
+protocol `call_id` recorded alongside when present, so `_record_result_taint` can associate the
+registry entry with the result it is finalizing — makes the registry unambiguous in both the plain
+and nested-script paths. Connector code never handles raw ids, and the LLM cannot influence the
+value.
 
 There is deliberately no standalone "mark as recorded" flag: registering result provenance and
 adding the taint source are one operation, so no code path can suppress the fallback without having
