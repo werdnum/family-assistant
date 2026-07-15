@@ -128,6 +128,16 @@ connection is gone or needs re-auth). Because status transitions also rotate the
 authoritative revocation (`invalid_grant` marking `needs_reauth`) fails in-flight requests closed
 rather than letting a near-expiry lease slip its response through.
 
+To keep that check from being merely a smaller time-of-check/time-of-use window, validation and
+mutation are ordered like a reader-writer lock: each API operation holds an **operation lease** (a
+per-connection active-operation count) from token issuance until its response is surfaced or
+discarded, and credential mutations (reconnect, disconnect, status transition) first rotate the
+generation — so no *new* lease can be issued — and then **wait for outstanding operation leases to
+drain** before completing. A mutation therefore cannot commit between an operation's validation and
+its result delivery. Lease duration is bounded by the HTTP client timeout, so mutations wait at most
+one request timeout; mutations are rare (user-initiated or `invalid_grant`) and the wait is
+invisible in practice.
+
 Repository access follows the existing pattern: `db.google_connections` on `DatabaseContext`,
 returning Pydantic models.
 
@@ -163,11 +173,17 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
   always appended in code — not operator-configurable — so the callback can identify the connected
   account.
 - `GET /api/integrations/google/callback` — validates `state` against the stored nonce **and** that
-  the session's canonical user matches the user who initiated the flow, exchanges the code
-  (server-side, client secret from `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`), fetches
-  the account email from the ID token / userinfo, and upserts the connection row for the **session's
-  canonical user**. The Google account email is recorded for display but plays no role in
-  authorization — the binding is session user → connection.
+  the session's canonical user matches the user who initiated the flow, then **atomically consumes
+  the pending flow (single-use nonce) before exchanging the code**: the stored `{nonce, user_id}` is
+  deleted in the same step that accepts it, and every later callback presenting the same state is
+  rejected. Without consumption, `state` is only echoed by the authorization server, so an attacker
+  who learned an old value could mint a fresh code for *their* Google account and hand the victim a
+  callback URL that overwrites the victim's connection with an attacker-controlled mailbox. After
+  consuming the flow, the handler exchanges the code (server-side, client secret from
+  `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`), fetches the account email from the ID
+  token / userinfo, and upserts the connection row for the **session's canonical user**. The Google
+  account email is recorded for display but plays no role in authorization — the binding is session
+  user → connection. Pending flows also expire after a short TTL (10 minutes).
 - `DELETE /api/integrations/google` — best-effort token revocation against Google's revoke endpoint,
   then deletes the row.
 
