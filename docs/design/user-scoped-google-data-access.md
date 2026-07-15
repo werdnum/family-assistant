@@ -207,6 +207,12 @@ Implementation notes:
   `google-api-python-client`. Tests use a fake backend; no mocking of internals.
 - Large results compose with the existing large-result-to-attachment conversion and the global
   `read_text_attachment` tool.
+- Attachments registered by `gmail_get_attachment` / `drive_get_file` carry their classified
+  `taint_metadata` (the source state computed for the containing message/file) in the registry
+  metadata, so provenance survives storage: a later `read_text_attachment` re-derives the graduated
+  tier from that metadata via the existing artifact-provenance merge path instead of collapsing an
+  authenticated known-contact attachment to `unknown_external` — and an attachment registered
+  without metadata still falls back to `unknown_external`, keeping the fail-safe direction.
 - Result size is bounded (default page sizes, body truncation with an explicit truncation marker) so
   a hostile mailbox cannot blow out the context window.
 
@@ -238,15 +244,21 @@ atomic helper, e.g.
 
 ```python
 def record_tool_result_taint(
-    exec_context: ToolExecutionContext, call_id: str, source: TaintSource
+    exec_context: ToolExecutionContext, source: TaintSource
 ) -> None:
-    """Add `source` to the turn tracker AND register it as this call's result provenance."""
+    """Add `source` to the turn tracker AND register it as the current call's result provenance."""
 ```
+
+Tool implementations today never see their own call id — it stays inside the provider wrapper — so
+the helper takes it from the execution context instead: `ToolExecutionContext` gains a
+`tool_call_id: str | None` field that `LocalToolsProvider` populates for each invocation (the
+wrapper already receives `call_id` alongside the arguments; it stamps the per-call context before
+dispatch). Connector code never handles raw call ids, and the LLM cannot influence the value.
 
 There is deliberately no standalone "mark as recorded" flag: registering result provenance and
 adding the taint source are one operation, so no code path can suppress the fallback without having
 contributed an actual source. `_record_result_taint` consults the per-call registry: when one or
-more explicit sources were registered for this `call_id`, they are the result's provenance and the
+more explicit sources were registered for this call id, they are the result's provenance and the
 static-descriptor source is skipped; for every call with an empty registry — including a Gmail tool
 code path that forgets to classify — the unconditional `unknown_external` static source applies as
 today. Provenance is computed exclusively by first-party connector code from the authentication
@@ -314,7 +326,11 @@ provenance-labeled writes follow the deployment's matrix, which the operator tun
 
 In `defaults.yaml`:
 
-- Tools carry tags `google_personal_data` + `OUTPUT_UNTRUSTED`.
+- All five tools carry tags `google_personal_data`, `OUTPUT_UNTRUSTED`, `READ_ONLY`, and
+  `SENSITIVE_DATA`. The last two are load-bearing, not descriptive: `resolve_tool_sink_class` maps a
+  descriptor to `sensitive_read_broadening` only when both `sensitive_data` and `read_only` are
+  present, and that sink class is what makes a *second* Gmail/Drive read after tainted content hit
+  the matrix floor's confirm outcome instead of falling through to a default.
 - Allowed in interactive trusted profiles (`default_assistant` tiers, `complex_tasks`).
 - **Denied by default in ambient/untrusted-input profiles**: `email_intake`, `reminder`,
   event-handler and browser profiles. Rationale: those profiles process attacker-influenced
