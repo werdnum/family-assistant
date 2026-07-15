@@ -279,11 +279,16 @@ mode would also undercut the taint design's own observe-first rollout strategy. 
 safe by default and overridable explicitly:
 
 - `google_integration.require_taint_enforcement` (default `true`). With the default, startup
-  validates that `taint_policy.mode` is `enforce` and that the effective matrix (defaults +
-  overrides + `operator_minimum`) yields at least `confirm` at the `unknown_external` tier for the
-  sink classes `arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`, and
-  `sensitive_read_broadening`. If the check fails, the Google tools are not registered, a startup
-  error-log entry states why, and the integration status endpoint reports the unmet condition.
+  validates that `taint_policy.mode` is `enforce` and that the **fully merged effective policy —
+  queried through the same evaluator the runtime uses**, i.e. defaults after applying
+  `taint_policy.matrix`, `matrix_overrides`, `operator_minimum`, and any profile-level policy for
+  the profiles the tools are enabled in — yields at least `confirm` at the `unknown_external` tier
+  for the sink classes `arbitrary_external_message`, `attacker_addressable_egress`,
+  `sandbox_network`, and `sensitive_read_broadening`. Validating a re-derived approximation instead
+  of the real evaluator would let a full-`matrix` replacement (which the runtime honors) silently
+  drop a gate the floor claims to guarantee. If the check fails, the Google tools are not
+  registered, a startup error-log entry states why, and the integration status endpoint reports the
+  unmet condition.
 - An operator who accepts the tradeoff (e.g. single-user deployment, taint rollout still in observe
   mode, willing to rely on read-only scopes + profile policy + confirmations) sets
   `require_taint_enforcement: false`. The tools then register regardless of taint mode; the choice
@@ -297,12 +302,17 @@ audit trail and provenance, which is exactly what the observe-first rollout need
 before flipping to enforce.
 
 **What the floor does and does not guarantee.** The matrix floor covers the exfiltration and
-corpus-broadening sinks: with it enforced, a prompt-injected message cannot send arbitrary external
-messages, reach attacker-addressable egress, run networked sandbox code, or broaden sensitive reads
-without a confirm/deny outcome. Two sink classes are deliberately **not** in the floor, because the
-shipped default matrix intentionally leaves them softer at `unknown_external` (`home_local: allow`,
-`artifact_write: audit`), and this feature should not re-litigate the taint design's matrix through
-a side-door registration check:
+corpus-broadening sinks **at the `unknown_external` tier**: with it enforced, content from an
+unknown or unauthenticated sender cannot drive arbitrary external messages, attacker-addressable
+egress, networked sandbox code, or sensitive-read broadening without a confirm/deny outcome. Content
+that classifies lower (`known_contact` / `recognized_machine`) is intentionally lower-friction — the
+default matrix still confirms external messaging, egress, and sandbox network at those tiers but
+allows read broadening, reflecting that those tiers require both an operator-curated allowlist entry
+*and* passing DMARC authentication; an operator who wants confirmation there too raises those cells
+via `matrix_overrides`. Two sink classes are deliberately **not** in the floor at any tier, because
+the shipped default matrix intentionally leaves them softer at `unknown_external`
+(`home_local: allow`, `artifact_write: audit`), and this feature should not re-litigate the taint
+design's matrix through a side-door registration check:
 
 - `artifact_write` — the taint design's mitigation for writes is provenance propagation, not
   confirmation: notes and other artifacts written from a tainted turn are stamped with taint labels
@@ -319,8 +329,9 @@ a side-door registration check:
   instructions.
 
 This keeps the guarantee statement accurate: the default floor prevents un-confirmed exfiltration
-and read-broadening after Google content enters a turn; in-household actuation and audited,
-provenance-labeled writes follow the deployment's matrix, which the operator tunes.
+and read-broadening after unknown-external Google content enters a turn; authenticated allowlisted
+senders get graduated lower friction, and in-household actuation and audited, provenance-labeled
+writes follow the deployment's matrix, which the operator tunes.
 
 #### Tool policy defaults
 
@@ -329,8 +340,8 @@ In `defaults.yaml`:
 - All five tools carry tags `google_personal_data`, `OUTPUT_UNTRUSTED`, `READ_ONLY`, and
   `SENSITIVE_DATA`. The last two are load-bearing, not descriptive: `resolve_tool_sink_class` maps a
   descriptor to `sensitive_read_broadening` only when both `sensitive_data` and `read_only` are
-  present, and that sink class is what makes a *second* Gmail/Drive read after tainted content hit
-  the matrix floor's confirm outcome instead of falling through to a default.
+  present, and that sink class is what makes a *second* Gmail/Drive read after unknown-external
+  content hit the matrix floor's confirm outcome instead of falling through to a default.
 - Allowed in interactive trusted profiles (`default_assistant` tiers, `complex_tasks`).
 - **Denied by default in ambient/untrusted-input profiles**: `email_intake`, `reminder`,
   event-handler and browser profiles. Rationale: those profiles process attacker-influenced
@@ -346,10 +357,12 @@ In `defaults.yaml`:
   attacker-addressable. The composition is made safe not by pretending mail is trusted but by:
   1. **Enforced runtime taint (default-on requirement)** — by default the tools do not register
      unless `taint_policy.mode` is `enforce` and the matrix floor above holds, so after a
-     Gmail/Drive read the exfiltration and read-broadening sinks (arbitrary external messages,
-     attacker-addressable egress, sandbox network, sensitive-read broadening) are actually gated
-     (confirm/deny), not merely audited. That is the precise guarantee: injected mailbox content
-     cannot exfiltrate data or steer external communication un-confirmed. In-household actuation
+     Gmail/Drive read of unknown-external content the exfiltration and read-broadening sinks
+     (arbitrary external messages, attacker-addressable egress, sandbox network, sensitive-read
+     broadening) are actually gated (confirm/deny), not merely audited. That is the precise
+     guarantee: mailbox content from an unknown or unauthenticated sender — the tier an attacker
+     lands in — cannot exfiltrate data or steer external communication un-confirmed; authenticated
+     allowlisted senders get the graduated treatment described above. In-household actuation
      (`home_local`) and provenance-labeled artifact writes remain governed by the deployment's
      matrix as discussed above — residual risk the operator tunes, not a gap this feature hides. An
      operator can also explicitly waive the whole requirement (`require_taint_enforcement: false`)
