@@ -284,6 +284,32 @@ graduated tiers keep authenticated household mail low-friction. Observe mode sti
 audit trail and provenance, which is exactly what the observe-first rollout needs to tune the matrix
 before flipping to enforce.
 
+**What the floor does and does not guarantee.** The matrix floor covers the exfiltration and
+corpus-broadening sinks: with it enforced, a prompt-injected message cannot send arbitrary external
+messages, reach attacker-addressable egress, run networked sandbox code, or broaden sensitive reads
+without a confirm/deny outcome. Two sink classes are deliberately **not** in the floor, because the
+shipped default matrix intentionally leaves them softer at `unknown_external` (`home_local: allow`,
+`artifact_write: audit`), and this feature should not re-litigate the taint design's matrix through
+a side-door registration check:
+
+- `artifact_write` — the taint design's mitigation for writes is provenance propagation, not
+  confirmation: notes and other artifacts written from a tainted turn are stamped with taint labels
+  (already implemented in the notes write path), so injected instructions cannot launder themselves
+  into "trusted" storage — they re-enter later turns as tainted. Automations carry provenance and
+  wake under their originating profile. Confirming every write after any external content is the
+  rubber-stamping failure mode the taint design explicitly avoids.
+- `home_local` — the taint design treats the household as inside the trust boundary: Home Assistant
+  actions cannot exfiltrate mailbox content to an attacker. The residual risk is attacker-influenced
+  household actuation (e.g. a hostile email inducing a device action). Operators with
+  high-consequence actuators (locks, garage doors, alarms) should raise `home_local` at
+  `unknown_external` to `confirm` via `taint_policy.matrix_overrides` / `operator_minimum` — the
+  user guide documentation in Milestone 4 calls this out explicitly alongside the Gmail/Drive setup
+  instructions.
+
+This keeps the guarantee statement accurate: the default floor prevents un-confirmed exfiltration
+and read-broadening after Google content enters a turn; in-household actuation and audited,
+provenance-labeled writes follow the deployment's matrix, which the operator tunes.
+
 #### Tool policy defaults
 
 In `defaults.yaml`:
@@ -304,13 +330,16 @@ In `defaults.yaml`:
   attacker-addressable. The composition is made safe not by pretending mail is trusted but by:
   1. **Enforced runtime taint (default-on requirement)** — by default the tools do not register
      unless `taint_policy.mode` is `enforce` and the matrix floor above holds, so after a
-     Gmail/Drive read the profile's existing communication and state-changing tools are actually
-     gated (confirm/deny), not merely audited. This is what prevents the [BC] profile from becoming
-     an un-gated [ABC] agent. An operator can explicitly waive this requirement
-     (`require_taint_enforcement: false`) and accept the residual prompt-injection exposure — that
-     waiver is a deliberate, logged deployment decision with the remaining mitigations below still
-     in place, consistent with the operator owning the security posture everywhere else in the
-     config.
+     Gmail/Drive read the exfiltration and read-broadening sinks (arbitrary external messages,
+     attacker-addressable egress, sandbox network, sensitive-read broadening) are actually gated
+     (confirm/deny), not merely audited. That is the precise guarantee: injected mailbox content
+     cannot exfiltrate data or steer external communication un-confirmed. In-household actuation
+     (`home_local`) and provenance-labeled artifact writes remain governed by the deployment's
+     matrix as discussed above — residual risk the operator tunes, not a gap this feature hides. An
+     operator can also explicitly waive the whole requirement (`require_taint_enforcement: false`)
+     and accept the larger observe-mode exposure — a deliberate, logged deployment decision with the
+     remaining mitigations below still in place, consistent with the operator owning the security
+     posture everywhere else in the config.
   2. **Read-only scopes** — the OAuth grant itself cannot send mail or write files, so the Google
      tools add no egress capability of their own.
   3. **Profile policy** — ambient profiles that already process untrusted triggers cannot also read
