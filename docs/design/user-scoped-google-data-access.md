@@ -233,22 +233,48 @@ metadata does not establish who authored the content.
 **Runtime path.** The current runtime cannot honor per-result tiers on a statically tagged tool:
 `_record_result_taint` derives its source from the static descriptor alone, and the
 `OUTPUT_UNTRUSTED` tag adds an `unknown_external` source unconditionally, which dominates any lower
-tier under the max rule. Milestone 2 therefore includes a small, general runtime extension: a tool
-implementation may record explicit per-result taint sources during execution (as
-`merge_artifact_taint_into_context` already does for stored artifacts) and mark the call as
-provenance-recorded via a new explicit signal on the execution context (e.g.
-`exec_context.mark_result_taint_recorded(call_id)`). `_record_result_taint` skips the
-static-descriptor source only for calls carrying that mark; every other `OUTPUT_UNTRUSTED` tool —
-including a Gmail tool code path that forgets to classify — still gets the unconditional
-`unknown_external` source. Provenance is computed exclusively by first-party connector code from the
-authentication evidence above; it is never derived from LLM-supplied arguments or message content.
-Tests cover both directions: an authenticated known-contact message yields `known_contact`, and a
-result whose classification path is skipped still taints the turn as `unknown_external`.
+tier under the max rule. Milestone 2 therefore includes a small, general runtime extension: a single
+atomic helper, e.g.
 
-The turn's taint state then does its job: after a Gmail read, attacker-addressable egress sinks and
-sensitive-read broadening are gated by the configured taint matrix. Where the matrix is still in
-observe mode, the containment story is: read-only scopes (no exfiltration via Gmail send/Drive
-write), tool policy (below), and the existing confirmation machinery.
+```python
+def record_tool_result_taint(
+    exec_context: ToolExecutionContext, call_id: str, source: TaintSource
+) -> None:
+    """Add `source` to the turn tracker AND register it as this call's result provenance."""
+```
+
+There is deliberately no standalone "mark as recorded" flag: registering result provenance and
+adding the taint source are one operation, so no code path can suppress the fallback without having
+contributed an actual source. `_record_result_taint` consults the per-call registry: when one or
+more explicit sources were registered for this `call_id`, they are the result's provenance and the
+static-descriptor source is skipped; for every call with an empty registry — including a Gmail tool
+code path that forgets to classify — the unconditional `unknown_external` static source applies as
+today. Provenance is computed exclusively by first-party connector code from the authentication
+evidence above; it is never derived from LLM-supplied arguments or message content. Tests cover both
+directions: an authenticated known-contact message yields `known_contact`, and a result whose
+classification path is skipped still taints the turn as `unknown_external`.
+
+**Enforcement precondition.** The taint matrix only blocks anything when `taint_policy.mode` is
+`enforce`; the shipped default is `observe`, which converts confirm/deny outcomes to audit events.
+Observe mode is not containment: an interactive profile keeps all of its existing communication and
+state-changing tools, so a prompt-injected email could drive them — read-only Google scopes
+constrain only the Google tools themselves, not the rest of the profile. Therefore the Google data
+tools are registered **only when the effective taint policy is enforcing**, validated at startup:
+
+- `taint_policy.mode` must be `enforce`, and
+- the effective matrix (defaults + overrides + `operator_minimum`) must yield at least `confirm` at
+  the `unknown_external` tier for the sink classes `arbitrary_external_message`,
+  `attacker_addressable_egress`, `sandbox_network`, and `sensitive_read_broadening`.
+
+If the integration is configured but these conditions fail, the tools are not registered, a startup
+error-log entry states why, and the integration status endpoint reports the unmet precondition.
+There is no partial fallback. For the production deployment this means flipping taint enforcement on
+(per the runtime taint design's rollout plan) is a prerequisite to shipping Milestone 2, not a
+nice-to-have.
+
+With that precondition, the turn's taint state does its job: after a Gmail read, the matrix gates
+attacker-addressable egress and sensitive-read broadening with real confirm/deny outcomes, and
+graduated tiers keep authenticated household mail low-friction.
 
 #### Tool policy defaults
 
@@ -268,10 +294,13 @@ In `defaults.yaml`:
 - `default_assistant` is [BC] today (sensitive data + state/communication), anchored on
   authenticated users. These tools introduce \[A\]: mailbox and Drive content is
   attacker-addressable. The composition is made safe not by pretending mail is trusted but by:
-  1. **Read-only scopes** — the OAuth grant itself cannot send mail or write files, so the
-     highest-bandwidth exfiltration channels don't exist in v1.
-  2. **Runtime taint** — results enter as tiered untrusted sources; egress/broadening sinks are
-     gated per the taint matrix.
+  1. **Enforced runtime taint (hard precondition)** — the tools do not register unless
+     `taint_policy.mode` is `enforce` and the matrix floor above holds, so after a Gmail/Drive read
+     the profile's existing communication and state-changing tools are actually gated
+     (confirm/deny), not merely audited. This is what prevents the [BC] profile from becoming an
+     un-gated [ABC] agent.
+  2. **Read-only scopes** — the OAuth grant itself cannot send mail or write files, so the Google
+     tools add no egress capability of their own.
   3. **Profile policy** — ambient profiles that already process untrusted triggers cannot also read
      the mailbox.
 - **Cross-user isolation** is structural: connection rows are keyed by canonical `user_id`; the
@@ -313,10 +342,12 @@ Each lands independently with tests and passes `poe test`.
    section, `GoogleCredentialResolver` with refresh + `needs_reauth` handling. Deliverable: a user
    can connect/disconnect and the row round-trips encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
-   `GoogleApiBackend`; the per-result taint runtime extension (`mark_result_taint_recorded` +
-   `_record_result_taint` skip logic) with authenticated sender classification; policy defaults;
-   per-user isolation tests (two connected users, assert each context reads only its own data;
-   unconnected and no-acting-user contexts fail closed with actionable messages).
+   `GoogleApiBackend`; the atomic `record_tool_result_taint` runtime extension with authenticated
+   sender classification; the taint-enforcement startup precondition (tools unregistered + surfaced
+   reason when unmet); policy defaults; per-user isolation tests (two connected users, assert each
+   context reads only its own data; unconnected and no-acting-user contexts fail closed with
+   actionable messages). Shipping this milestone to production requires the deployment to run
+   `taint_policy.mode: "enforce"`.
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
    same test posture.
 4. **Docs & prompts** — USER_GUIDE section (connect flow, what the assistant can/can't do, token
