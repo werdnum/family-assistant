@@ -28,6 +28,14 @@ Any Gmail/Drive integration must be **user-scoped**:
 3. Mailbox and Drive content is attacker-addressable input (anyone can email you), so ingesting it
    must compose with the prompt-injection containment machinery rather than bypass it.
 
+## Design Principles
+
+The security-critical invariant is **cross-user isolation and injection containment for sensible
+scenarios**. Where a scenario is obscure (a user racing their own reconnect, mixed-trust tier
+optimization), the design accepts *reasonable* behavior instead of ideal behavior and says so
+explicitly, rather than growing machinery. Accepted simplifications are collected in
+[Deliberate simplifications](#deliberate-simplifications-accepted-behavior).
+
 ## Goals
 
 - Per-user "Connect Google account" / disconnect flow in the web UI, bound to the authenticated
@@ -37,8 +45,8 @@ Any Gmail/Drive integration must be **user-scoped**:
   file) that operate strictly as the acting user of the current turn.
 - Fail-closed behavior everywhere: no connection → actionable error; no acting user → tools
   unavailable; no encryption key → feature disabled.
-- Taint-correct results: Gmail/Drive content enters the turn as classified untrusted input via the
-  runtime taint machinery (`docs/design/runtime-taint-machinery.md`).
+- Taint-correct results: Gmail/Drive content enters the turn as untrusted input via the runtime
+  taint machinery (`docs/design/runtime-taint-machinery.md`).
 
 ## Non-Goals
 
@@ -48,6 +56,9 @@ Any Gmail/Drive integration must be **user-scoped**:
 - **Ambient mailbox sync / background indexing** of email or Drive into the vector store. The
   runtime taint design explicitly calls this out as a separate connector design. v1 is
   interactive-only: the user asks, the assistant searches.
+- **Graduated taint tiers for Google content.** All Gmail/Drive content taints the turn at
+  `unknown_external` in v1 (see [Taint](#taint)); authenticated-sender tier reduction is future
+  work.
 - **Replacing CalDAV with per-user Google Calendar.** Natural follow-up once the connection
   infrastructure exists, but out of scope.
 - **Cross-user sharing** ("check whether my partner got the school email"). v1 is strictly
@@ -60,9 +71,9 @@ Any Gmail/Drive integration must be **user-scoped**:
 - **MCP servers (e.g. a Gmail MCP server per user).** `MCPToolsProvider` establishes one session per
   configured server at startup with server-wide auth; there is no per-user session or per-call
   auth-header mechanism. Running N server instances for N users would multiply configuration, bypass
-  taint provenance, and put refresh tokens in `config.yaml` (plaintext). Native tools give us
-  per-user credential resolution at the execution-context chokepoint, tool metadata tags, and
-  provenance-tiered taint — none of which MCP output carries today.
+  taint integration, and put refresh tokens in `config.yaml` (plaintext). Native tools give us
+  per-user credential resolution at the execution-context chokepoint and tool metadata tags — none
+  of which MCP output carries today.
 - **Email forwarding / existing email intake.** Already supported, but only covers mail explicitly
   addressed or forwarded to the assistant. It cannot answer "search my mailbox," and it cannot see
   Drive.
@@ -79,7 +90,7 @@ Three layers, each independently testable:
 2. **Credential resolution** — `GoogleCredentialResolver` service, injected into the tool execution
    context by the tool executor; strictly keyed by the turn's acting user.
 3. **Tools** — read-only Gmail/Drive local tools calling Google REST APIs via an injectable async
-   backend, emitting taint provenance per result.
+   backend, tainting the turn through existing tool metadata.
 
 ### 1. Connections
 
@@ -87,56 +98,32 @@ Three layers, each independently testable:
 
 New table `user_google_connections` (Alembic migration):
 
-| Column                    | Type              | Notes                                                                    |
-| ------------------------- | ----------------- | ------------------------------------------------------------------------ |
-| `id`                      | int PK            |                                                                          |
-| `user_id`                 | string(255)       | canonical user id; unique together with provider                         |
-| `provider`                | string(64)        | `"google"` in v1                                                         |
-| `provider_account_email`  | string(255)       | the Google account that was connected                                    |
-| `scopes`                  | JSON list[str]    | granted scopes as returned by the token exchange                         |
-| `refresh_token_encrypted` | text              | Fernet ciphertext, never logged                                          |
-| `credential_generation`   | string(36)        | random UUID; rotated on every credential write **and** status transition |
-| `status`                  | string(32)        | `active` \| `needs_reauth`                                               |
-| `created_at`/`updated_at` | datetime          |                                                                          |
-| `last_used_at`            | datetime nullable | updated on successful API use                                            |
+| Column                    | Type              | Notes                                                          |
+| ------------------------- | ----------------- | -------------------------------------------------------------- |
+| `id`                      | int PK            |                                                                |
+| `user_id`                 | string(255)       | canonical user id; unique together with provider               |
+| `provider`                | string(64)        | `"google"` in v1                                               |
+| `provider_account_email`  | string(255)       | the Google account that was connected                          |
+| `scopes`                  | JSON list[str]    | granted scopes as returned by the token exchange               |
+| `refresh_token_encrypted` | text              | Fernet ciphertext, never logged                                |
+| `credential_generation`   | string(36)        | random UUID; rotated on credential write and on `needs_reauth` |
+| `status`                  | string(32)        | `active` \| `needs_reauth`                                     |
+| `created_at`/`updated_at` | datetime          |                                                                |
+| `last_used_at`            | datetime nullable | updated on successful API use                                  |
 
-Access tokens are cached **in memory only**, keyed by `(user_id, credential_generation)`, with
-expiry and an asyncio lock per connection. They are never persisted. `credential_generation` is a
-**random UUID**, not a counter, regenerated on every credential write (reconnect, account switch)
-**and** on every status transition. A random value is deliberate: an incrementing version keyed by
-row id is ABA-prone — deleting and recreating a connection can reproduce the same
-`(connection_id, version)` pair (SQLite reuses the highest integer primary key, and a fresh row's
-counter restarts) and would let an in-flight operation validate against the wrong account. A UUID
-minted per mutation can never collide with a superseded one, including across row
-deletion/recreation. Disconnect and `needs_reauth` transitions additionally evict the cache entry
-eagerly.
+Access tokens are cached **in memory only**, keyed by `(user_id, credential_generation)`, and never
+persisted. `credential_generation` is a random UUID rotated on every credential write (reconnect,
+account switch) and on `needs_reauth`, so a reconnect, disconnect, or revocation makes stale cache
+entries unreachable immediately — a UUID rather than a counter so a deleted-and-recreated connection
+can never reproduce an old key.
 
-The per-connection lock serializes **all credential mutations**, not just refreshes: reconnect,
-disconnect, and status changes take the same lock as an in-flight refresh. Every post-refresh step —
-caching the token, returning it to the caller, or marking `needs_reauth` — is additionally
-conditioned on the connection's `credential_generation` still matching the generation the refresh
-started from (compare-and-set); on a mismatch the stale operation discards its result and retries
-against the current credentials. This closes the race where a refresh begun against the old account
-returns a token (or flips status) after the user has reconnected a different account.
+A single asyncio lock per user serializes token refreshes with credential mutations (reconnect,
+disconnect, status changes): refresh is single-flight, a refresh and a reconnect cannot interleave,
+and a refresh re-checks the generation before persisting any status change so it can never mark a
+*replacement* connection `needs_reauth`.
 
-The same check extends through the API call itself: the resolver hands tools a token **lease**
-carrying the `credential_generation` it was issued under, and the `GoogleApiBackend` wrapper
-revalidates after each REST response — the connection must still exist, its `credential_generation`
-must equal the lease's, **and** its `status` must be `active` — before surfacing the response;
-otherwise the result is discarded and the operation retried with fresh credentials (or failed if the
-connection is gone or needs re-auth). Because status transitions also rotate the generation, an
-authoritative revocation (`invalid_grant` marking `needs_reauth`) fails in-flight requests closed
-rather than letting a near-expiry lease slip its response through.
-
-To keep that check from being merely a smaller time-of-check/time-of-use window, validation and
-mutation are ordered like a reader-writer lock: each API operation holds an **operation lease** (a
-per-connection active-operation count) from token issuance until its response is surfaced or
-discarded, and credential mutations (reconnect, disconnect, status transition) first rotate the
-generation — so no *new* lease can be issued — and then **wait for outstanding operation leases to
-drain** before completing. A mutation therefore cannot commit between an operation's validation and
-its result delivery. Lease duration is bounded by the HTTP client timeout, so mutations wait at most
-one request timeout; mutations are rare (user-initiated or `invalid_grant`) and the wait is
-invisible in practice.
+An API request already in flight when its user reconnects or disconnects may still complete with the
+old token — see [Deliberate simplifications](#deliberate-simplifications-accepted-behavior).
 
 Repository access follows the existing pattern: `db.google_connections` on `DatabaseContext`,
 returning Pydantic models.
@@ -174,15 +161,14 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
   which are always appended in code — not operator-configurable — so the callback can identify the
   connected account. A database store is required, not a convenience: the app's `SessionMiddleware`
   keeps the whole session in a **signed client-side cookie**, so a cookie-stored nonce cannot be
-  single-use — two concurrent callbacks replaying the same pre-consumption cookie would both
-  validate, and "deleting" the nonce only issues a replacement cookie after the response.
+  single-use.
 - `GET /api/integrations/google/callback` — **atomically consumes** the pending flow before
-  exchanging the code: a single conditional `DELETE` (CAS) on the hashed state value claims the flow
-  row, exactly one concurrent callback can win it, and every subsequent callback presenting the same
-  state is rejected. The handler additionally requires the session's canonical user to match the
-  flow's initiating user. Without single-use consumption, `state` is only echoed by the
-  authorization server, so an attacker who learned an old value could mint a fresh code for *their*
-  Google account and hand the victim a callback URL that overwrites the victim's connection with an
+  exchanging the code: a single conditional `DELETE` on the hashed state value claims the flow row,
+  exactly one callback can win it, and every subsequent callback presenting the same state is
+  rejected. The handler additionally requires the session's canonical user to match the flow's
+  initiating user. Without single-use consumption, `state` is only echoed by the authorization
+  server, so an attacker who learned an old value could mint a fresh code for *their* Google account
+  and hand the victim a callback URL that overwrites the victim's connection with an
   attacker-controlled mailbox. After claiming the flow, the handler exchanges the code (server-side,
   client secret from `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`), fetches the account
   email from the ID token / userinfo, and upserts the connection row for the flow's canonical user.
@@ -253,32 +239,23 @@ Implementation notes:
   protocol on the resolver/tools, same test-seam pattern as `tools/video_backends.py`), not the sync
   `google-api-python-client`. Tests use a fake backend; no mocking of internals.
 - Large results compose with the existing large-result-to-attachment conversion and the global
-  `read_text_attachment` tool.
-- Attachments registered by `gmail_get_attachment` / `drive_get_file` carry their classified
-  `taint_metadata` (the source state computed for the containing message/file) in the registry
-  metadata, so provenance survives storage. Storing it is not sufficient on its own:
-  `read_text_attachment` is itself tagged `OUTPUT_UNTRUSTED`, so without a change the static
-  `unknown_external` fallback would clobber the stored tier on re-read even after the merge path
-  restores it. Milestone 2 therefore also updates `read_text_attachment` to register the
-  successfully merged stored provenance as its explicit result source via the same
-  `record_tool_result_taint` helper — the graduated tier then survives read-back end to end, while
-  an attachment with no stored metadata (or a failed merge) registers nothing and keeps the
-  fail-safe `unknown_external` fallback.
+  `read_text_attachment` tool. No taint changes are needed for read-back: `read_text_attachment` is
+  already tagged `OUTPUT_UNTRUSTED`, so re-read content taints the turn `unknown_external` — the
+  same tier the original fetch did.
 - Result size is bounded (default page sizes, body truncation with an explicit truncation marker) so
   a hostile mailbox cannot blow out the context window.
 - **Attachment owner enforcement.** The existing attachment registry performs no user-scoped
   authorization, so without a change any user (or any turn acting as another user) holding an
   attachment ID could read Google-derived content through `read_text_attachment` or the HTTP
-  attachment route — a hole in the cross-user isolation this design promises. The registry therefore
-  gains an optional `owner_user_id` on registered attachments. The Gmail/Drive tools (and their
-  auto-conversion of large results) always set it to the acting user; enforcement lives in the
+  attachment routes — a hole in the cross-user isolation this design promises. The registry
+  therefore gains an optional `owner_user_id` on registered attachments. The Gmail/Drive tools (and
+  their auto-conversion of large results) always set it to the acting user; enforcement lives in the
   registry itself, not in individual callers, and covers **every operation on an owned attachment**
   — content read, the metadata route (`GET /api/attachments/{id}/metadata`, which today calls
-  `get_attachment` without resolving the session user), delete, and any future mutation — so
-  ownership cannot be bypassed for destructive access via `DELETE /api/attachments/{id}` or leaked
-  via metadata any more than via content reads. An operation with a non-matching acting user (tool
-  path, via `exec_context.user_id`) or session user (HTTP routes) is refused as not-found. Owned
-  attachments are also served with `Cache-Control: private, no-store` instead of the route's current
+  `get_attachment` without resolving the session user), delete, and any future mutation. An
+  operation with a non-matching acting user (tool path, via `exec_context.user_id`) or session user
+  (HTTP routes) is refused as not-found. Owned attachments are also served with
+  `Cache-Control: private, no-store` instead of the route's current
   `public, max-age=31536000, immutable` — otherwise a shared cache could hand user A's file to user
   B without ever reaching the ownership check. Attachments without `owner_user_id` (uploads, legacy,
   non-personal tool output) behave exactly as today, so this is additive and backward-compatible.
@@ -289,81 +266,29 @@ Implementation notes:
   attachment-delivery APIs (`ChatInterface` send paths and the attachment-processing pipeline)
   therefore gain an `on_behalf_of_user_id` parameter, populated from the turn's acting user where
   attachments are queued for delivery, and owned-attachment reads on these paths check it like any
-  other actor. Cross-user isolation tests cover the tool read path, the HTTP content, metadata, and
-  delete routes, the cache-header assertion, and interface delivery (own-user delivery succeeds; a
-  mismatched delivery user is refused).
+  other actor.
 
-#### Taint provenance
+#### Taint
 
-All five tools are tagged `OUTPUT_UNTRUSTED`. Statically, that means the runtime records an
-`unknown_external` taint source for every result — the correct fail-safe default. Graduated tiers
-are layered on top as follows.
+All five tools carry the tags `google_personal_data`, `OUTPUT_UNTRUSTED`, `READ_ONLY`, and
+`SENSITIVE_DATA`. The existing runtime already does everything v1 needs with these tags alone:
 
-**Classification.** Tier reduction below `unknown_external` requires the same evidence contract as
-inbound email intake (`email_intake/taint.py::email_initial_taint_source`): the sender must match
-the existing `email_intake.known_contact_sender_addresses` / `recognized_machine_sender_addresses`
-allowlists **and** sender authentication must pass. A bare `From` header match is never sufficient —
-`From` is attacker-controlled. For Gmail-fetched messages, authentication evidence comes from the
-`Authentication-Results` header that Gmail's own delivery pipeline stamps on received mail: the
-classifier parses only the topmost `Authentication-Results` instance with authserv-id
-`mx.google.com` (receivers strip inbound headers claiming their own authserv-id per RFC 8601, and
-taking only the topmost instance is a second defensive layer) and requires `dmarc=pass`, mirroring
-`email_authentication_passed`. Any parse failure, missing header (e.g. self-sent mail in the Sent
-folder), or non-pass result classifies as `unknown_external`. Drive results are always
-`unknown_external` in v1 — Drive has no equivalent authentication evidence, and file ownership
-metadata does not establish who authored the content.
+- `OUTPUT_UNTRUSTED` makes `_record_result_taint` record an `unknown_external` taint source for
+  every result — every Gmail/Drive read taints the turn at the least-trusted tier.
+- `READ_ONLY` + `SENSITIVE_DATA` together make `resolve_tool_sink_class` classify these tools as
+  `sensitive_read_broadening`, so a *second* mailbox/Drive read after untrusted content has entered
+  the turn is gated by the taint matrix.
 
-**Runtime path.** The current runtime cannot honor per-result tiers on a statically tagged tool:
-`_record_result_taint` derives its source from the static descriptor alone, and the
-`OUTPUT_UNTRUSTED` tag adds an `unknown_external` source unconditionally, which dominates any lower
-tier under the max rule. Milestone 2 therefore includes a small, general runtime extension: a single
-atomic helper, e.g.
-
-```python
-def record_tool_result_taint(
-    exec_context: ToolExecutionContext, source: TaintSource
-) -> None:
-    """Add `source` to the turn tracker AND register it as the current call's result provenance."""
-```
-
-Tool implementations today never see their own call id — it stays inside the provider wrapper — so
-the helper takes it from the execution context instead: `ToolExecutionContext` gains an
-`invocation_id: str | None` field. Crucially, the id is generated by the **same wrapper layer that
-finalizes result taint** (the enforcing provider that calls `_record_result_taint`), not by an inner
-provider: for each execution that wrapper generates a fresh unique id, stamps it on the per-call
-context copy it dispatches inward, keeps it in a local variable, and after execution consults the
-provenance registry under exactly that id. Generation and consumption living in one frame means
-there is no propagation problem to solve — the finalizer never needs to recover an id from a context
-it didn't create. The LLM-protocol `call_id` is not used as the key because not every invocation has
-one: nested tool calls from `execute_script` (`MontyEngine.execute_tool_async`) pass no `call_id`
-today and share one execution context, and keying by `None` would let one nested call's provenance
-suppress another's fallback; each nested call instead flows through the wrapper and gets its own
-generated id like any other invocation. Connector code never handles raw ids, and the LLM cannot
-influence the value.
-
-There is deliberately no standalone "mark as recorded" flag: registering result provenance and
-adding the taint source are one operation, so no code path can suppress the fallback without having
-contributed an actual source. `_record_result_taint` consults the per-call registry: when one or
-more explicit sources were registered for this call id, they are the result's provenance and the
-static-descriptor source is skipped; for every call with an empty registry — including a Gmail tool
-code path that forgets to classify — the unconditional `unknown_external` static source applies as
-today. Provenance is computed exclusively by first-party connector code from the authentication
-evidence above; it is never derived from LLM-supplied arguments or message content.
-
-**Aggregate results register exactly one source for the whole invocation**, never per-item sources:
-a `gmail_search` result containing many messages registers a single source whose tier is the
-**maximum (least trusted) tier across every returned item**, computed by folding from a starting
-value of `unknown_external` downward only when *all* items carry authenticated lower-tier
-classifications — any item that cannot be classified holds the aggregate at `unknown_external`. This
-closes the partial-classification hole where one authenticated message in a mixed result would
-suppress the static fallback and let unknown senders inherit the lower tier. Single-item tools
-(`gmail_get_message`, `gmail_get_attachment`, `drive_get_file`) are the degenerate case of the same
-rule.
-
-Tests cover all three directions: an authenticated known-contact message yields `known_contact`; a
-mixed search result (one authenticated known contact + one unknown sender) yields
-`unknown_external`; and a result whose classification path is skipped still taints the turn as
-`unknown_external`.
+**v1 adds no new taint runtime machinery.** Uniform `unknown_external` is deliberately conservative
+— mail from household members taints the turn the same as mail from strangers — and the practical
+friction is small: at `unknown_external` the default matrix still freely allows replying to the user
+(`user_local`) and audits artifact writes; confirmation appears only on external messaging,
+attacker-addressable egress, sandbox network, and read broadening, which is where it belongs.
+Graduated tiers for authenticated household senders (classifying Gmail's `Authentication-Results`
+DMARC evidence against the email-intake allowlists, plus a per-result provenance runtime extension
+so a classified tier can override the static tag) are future work; a detailed sketch was worked out
+during design review and can be recovered from this document's git history if the friction ever
+warrants it.
 
 **Taint enforcement interaction.** The taint matrix only blocks anything when `taint_policy.mode` is
 `enforce`; the shipped default is `observe`, which converts confirm/deny outcomes to audit events.
@@ -394,24 +319,12 @@ safe by default and overridable explicitly:
   is logged at startup and shown on the integration status endpoint so it is a visible, deliberate
   risk acceptance rather than a silent default.
 
-With enforcement on, the turn's taint state does its job: after a Gmail read, the matrix gates
-attacker-addressable egress and sensitive-read broadening with real confirm/deny outcomes, and
-graduated tiers keep authenticated household mail low-friction. Observe mode still gets the full
-audit trail and provenance, which is exactly what the observe-first rollout needs to tune the matrix
-before flipping to enforce.
-
-**What the floor does and does not guarantee.** The matrix floor covers the exfiltration and
-corpus-broadening sinks **at the `unknown_external` tier**: with it enforced, content from an
-unknown or unauthenticated sender cannot drive arbitrary external messages, attacker-addressable
-egress, networked sandbox code, or sensitive-read broadening without a confirm/deny outcome. Content
-that classifies lower (`known_contact` / `recognized_machine`) is intentionally lower-friction — the
-default matrix still confirms external messaging, egress, and sandbox network at those tiers but
-allows read broadening, reflecting that those tiers require both an operator-curated allowlist entry
-*and* passing DMARC authentication; an operator who wants confirmation there too raises those cells
-via `matrix_overrides`. Two sink classes are deliberately **not** in the floor at any tier, because
-the shipped default matrix intentionally leaves them softer at `unknown_external`
-(`home_local: allow`, `artifact_write: audit`), and this feature should not re-litigate the taint
-design's matrix through a side-door registration check:
+**What the floor does and does not guarantee.** With enforcement on, a prompt-injected message read
+from Gmail or Drive cannot drive arbitrary external messages, attacker-addressable egress, networked
+sandbox code, or further sensitive reads without a confirm/deny outcome. Two sink classes are
+deliberately **not** in the floor, because the shipped default matrix intentionally leaves them
+softer at `unknown_external` (`home_local: allow`, `artifact_write: audit`), and this feature should
+not re-litigate the taint design's matrix through a side-door registration check:
 
 - `artifact_write` — the taint design's mitigation for writes is provenance propagation, not
   confirmation: notes and other artifacts written from a tainted turn are stamped with taint labels
@@ -427,20 +340,10 @@ design's matrix through a side-door registration check:
   user guide documentation shipped with Milestone 2 calls this out explicitly alongside the Gmail
   setup instructions.
 
-This keeps the guarantee statement accurate: the default floor prevents un-confirmed exfiltration
-and read-broadening after unknown-external Google content enters a turn; authenticated allowlisted
-senders get graduated lower friction, and in-household actuation and audited, provenance-labeled
-writes follow the deployment's matrix, which the operator tunes.
-
 #### Tool policy defaults
 
 In `defaults.yaml`:
 
-- All five tools carry tags `google_personal_data`, `OUTPUT_UNTRUSTED`, `READ_ONLY`, and
-  `SENSITIVE_DATA`. The last two are load-bearing, not descriptive: `resolve_tool_sink_class` maps a
-  descriptor to `sensitive_read_broadening` only when both `sensitive_data` and `read_only` are
-  present, and that sink class is what makes a *second* Gmail/Drive read after unknown-external
-  content hit the matrix floor's confirm outcome instead of falling through to a default.
 - Allowed in interactive trusted profiles (`default_assistant` tiers, `complex_tasks`).
 - **Denied by default in ambient/untrusted-input profiles**: `email_intake`, `reminder`,
   event-handler and browser profiles. Rationale: those profiles process attacker-influenced
@@ -455,19 +358,14 @@ In `defaults.yaml`:
   authenticated users. These tools introduce \[A\]: mailbox and Drive content is
   attacker-addressable. The composition is made safe not by pretending mail is trusted but by:
   1. **Enforced runtime taint (default-on requirement)** — by default the tools do not register
-     unless `taint_policy.mode` is `enforce` and the matrix floor above holds, so after a
-     Gmail/Drive read of unknown-external content the exfiltration and read-broadening sinks
-     (arbitrary external messages, attacker-addressable egress, sandbox network, sensitive-read
-     broadening) are actually gated (confirm/deny), not merely audited. That is the precise
-     guarantee: mailbox content from an unknown or unauthenticated sender — the tier an attacker
-     lands in — cannot exfiltrate data or steer external communication un-confirmed; authenticated
-     allowlisted senders get the graduated treatment described above. In-household actuation
-     (`home_local`) and provenance-labeled artifact writes remain governed by the deployment's
-     matrix as discussed above — residual risk the operator tunes, not a gap this feature hides. An
-     operator can also explicitly waive the whole requirement (`require_taint_enforcement: false`)
-     and accept the larger observe-mode exposure — a deliberate, logged deployment decision with the
-     remaining mitigations below still in place, consistent with the operator owning the security
-     posture everywhere else in the config.
+     unless `taint_policy.mode` is `enforce` and the matrix floor above holds, so after any
+     Gmail/Drive read the exfiltration and read-broadening sinks are actually gated (confirm/deny),
+     not merely audited. In-household actuation (`home_local`) and provenance-labeled artifact
+     writes remain governed by the deployment's matrix as discussed above — residual risk the
+     operator tunes, not a gap this feature hides. An operator can also explicitly waive the whole
+     requirement (`require_taint_enforcement: false`) and accept the larger observe-mode exposure —
+     a deliberate, logged deployment decision with the remaining mitigations below still in place,
+     consistent with the operator owning the security posture everywhere else in the config.
   2. **Read-only scopes** — the OAuth grant itself cannot send mail or write files, so the Google
      tools add no egress capability of their own.
   3. **Profile policy** — ambient profiles that already process untrusted triggers cannot also read
@@ -475,14 +373,36 @@ In `defaults.yaml`:
 - **Cross-user isolation** is structural: connection rows are keyed by canonical `user_id`; the
   resolver reads the acting user from the execution context only; tool schemas contain no
   user-addressable parameter. A prompt-injected model cannot ask for someone else's mailbox because
-  no reachable code path takes a user identifier as input.
+  no reachable code path takes a user identifier as input. Google-derived attachments carry
+  `owner_user_id` and the registry enforces it on every operation.
 - **Token safety**: refresh tokens Fernet-encrypted at rest; access tokens in memory only; both
   redacted from config dumps and diagnostics export; tool results and errors never include tokens.
   The new endpoints are excluded from the diagnostics read-only token's scope.
-- **CSRF/linking safety**: `state` nonce stored server-side in the session, callback bound to the
-  initiating session's canonical user — a crafted callback URL cannot attach an attacker's Google
-  account to a victim's user (login-CSRF) because the connection is written to the session user
-  resolved at callback time, and a mismatch with the flow-initiating user aborts.
+- **CSRF/linking safety**: OAuth `state` is a single-use nonce persisted in
+  `pending_google_oauth_flows` and atomically claimed at callback time, and the callback requires
+  the session's canonical user to match the flow's initiating user — a crafted or replayed callback
+  URL cannot attach an attacker's Google account to a victim's connection.
+
+## Deliberate simplifications (accepted behavior)
+
+Simplifications adopted on the principle that sensible scenarios get good behavior and obscure
+scenarios get *reasonable* behavior — recorded here so future reviewers know they are deliberate,
+not oversights:
+
+- **Self-race on reconnect/disconnect.** An API request already in flight when its user reconnects a
+  different Google account (or disconnects) may complete and return data fetched with the old token.
+  The only party who can observe the result is the same user who owned the old account and initiated
+  both actions — there is no cross-user exposure, and the window is one HTTP request. We therefore
+  do not add response leases, post-response revalidation, or mutation-waits-for-drain
+  synchronization; the generation-keyed cache and the per-user mutation lock are the whole
+  mechanism.
+- **Uniform `unknown_external` taint.** Household mail is tainted like stranger mail in v1. Cost:
+  occasional extra confirmation on egress after reading family email. Benefit: zero new taint
+  runtime machinery (no per-result provenance path, no authenticated-sender classification, no
+  aggregate tier folding, no attachment provenance round-trip). Graduated tiers are future work.
+- **Same-user stale reads are not "leaks."** Several smaller behaviors follow the same rule: a
+  needs_reauth flip mid-request fails the *next* request rather than the in-flight one, and a
+  disconnect does not chase down responses already on the wire.
 
 ## Configuration
 
@@ -524,14 +444,11 @@ naming the unmet condition:
 
 - client id, secret, and encryption key are present;
 - the `scopes` list passes allowlist validation;
-- web session support is configured (`SESSION_SECRET_KEY`) — the app installs `SessionMiddleware`
-  only when that key is present, and the OAuth flow stores its state nonce and initiating user in
-  the server-side session;
 - **real web authentication is enabled and resolving canonical identities** (OIDC configured and
-  active, `users` block resolution in effect). The app's unauthenticated development mode serves a
-  synthetic `test_user` from `get_current_user()` without authenticating the request; in that mode
-  any caller could connect or read a Google account under the shared identity, so the integration
-  must refuse to enable. Session middleware alone is not authentication.
+  active with `SESSION_SECRET_KEY` set, `users` block resolution in effect). The app's
+  unauthenticated development mode serves a synthetic `test_user` from `get_current_user()` without
+  authenticating the request; in that mode any caller could connect or read a Google account under
+  the shared identity, so the integration must refuse to enable.
 
 ## Milestones
 
@@ -547,17 +464,15 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
    `CREDENTIAL_ENCRYPTION_KEY`). Deliverable: a user can connect/disconnect and the row round-trips
    encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
-   `GoogleApiBackend`; the atomic `record_tool_result_taint` runtime extension with authenticated
-   sender classification (including the `read_text_attachment` read-back provenance update);
-   attachment `owner_user_id` registration + read-path enforcement; the `require_taint_enforcement`
-   startup check (tools unregistered + surfaced reason when unmet, explicit logged waiver path);
-   policy defaults; per-user isolation tests (two connected users, assert each context reads only
-   its own data; unconnected and no-acting-user contexts fail closed with actionable messages). Docs
-   in the same PR: USER_GUIDE Gmail section (what the assistant can/can't do, the operator security
-   notes incl. the `home_local` override callout) and `prompts.yaml` system-prompt guidance (tools
-   act as the requesting user; suggest connecting when not connected). Before enabling this in a
-   deployment, the operator either flips `taint_policy.mode` to `enforce` or explicitly waives the
-   requirement.
+   `GoogleApiBackend`; attachment `owner_user_id` registration + registry enforcement; the
+   `require_taint_enforcement` startup check (tools unregistered + surfaced reason when unmet,
+   explicit logged waiver path); policy defaults; per-user isolation tests (two connected users,
+   assert each context reads only its own data; unconnected and no-acting-user contexts fail closed
+   with actionable messages). Docs in the same PR: USER_GUIDE Gmail section (what the assistant
+   can/can't do, the operator security notes incl. the `home_local` override callout) and
+   `prompts.yaml` system-prompt guidance (tools act as the requesting user; suggest connecting when
+   not connected). Before enabling this in a deployment, the operator either flips
+   `taint_policy.mode` to `enforce` or explicitly waives the requirement.
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
    same test posture. Docs in the same PR: USER_GUIDE Drive section and the matching `prompts.yaml`
    additions.
@@ -566,6 +481,10 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
 
 - Write actions (send/reply/label, Drive upload) behind `confirm` + taint sink classes
   (`arbitrary_external_message`, `artifact_write`).
+- Graduated taint tiers for authenticated household senders: classify Gmail's
+  `Authentication-Results` DMARC evidence against the email-intake allowlists, add a per-result
+  provenance runtime path so a classified tier can override the static `OUTPUT_UNTRUSTED` tag, and
+  fold aggregates at the max tier. A reviewed sketch exists in this document's git history.
 - Ambient mailbox ingestion/indexing with visibility labels per owner (separate design, per the
   runtime taint doc's connector split).
 - Per-user Google Calendar via the same connections.
@@ -575,15 +494,13 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
 ## Testing Strategy
 
 - **Unit**: encryption round-trip + wrong-key behavior; resolver fail-closed matrix (no user, no
-  connection, needs_reauth, disabled integration); refresh single-flight under concurrency;
-  **credential mutation during an active API operation** — deterministic tests (gated fake backend,
-  no sleeps) pause an in-flight request while a reconnect, disconnect, and `needs_reauth` transition
-  each occur, then assert the paused operation's response is discarded (retried or failed) and never
-  surfaces data from the superseded account, and that the mutation waited for the operation lease to
-  drain.
-- **Functional (web)**: full connect/disconnect flow against stubbed Google endpoints; status
-  endpoint redaction; auth required on all routes.
-- **Tool tests**: fake `GoogleApiBackend` (DI, no monkeypatching); cross-user isolation; taint
-  provenance tiers on results; truncation/attachment conversion paths.
+  connection, needs_reauth, disabled integration); refresh single-flight under concurrency.
+- **Functional (web)**: full connect/disconnect flow against stubbed Google endpoints; state nonce
+  single-use (a second callback with the same state is rejected); status endpoint redaction; auth
+  required on all routes.
+- **Tool tests**: fake `GoogleApiBackend` (DI, no monkeypatching); cross-user isolation for tools
+  and attachments (tool read path, HTTP content/metadata/delete routes, cache-header assertion,
+  interface delivery with `on_behalf_of_user_id`); every Google result taints the turn
+  `unknown_external`; truncation/attachment conversion paths.
 - **Policy tests**: tools visible in `default_assistant`, denied in `email_intake`/`reminder`;
   conformance with the per-profile tool inventory endpoint.
