@@ -430,7 +430,8 @@ private struct MessageBubble: View {
 /// Test seam for the chat-layout budget/fuzz harness (`ChatLayoutBudgetTests`).
 /// Renders the production message-list layout — `ScrollView` + bounded `VStack` +
 /// `MessageBubble` — over an explicit message array so a hosting controller can
-/// force a content-sizing pass and time it. Mirrors
+/// force a content-sizing pass and time it. This also covers the fixed maximum
+/// eager window used to stay below the process-exit watchdog. Mirrors
 /// `ChatThreadView.messageScrollArea` without the scroll-position plumbing. The
 /// invariant the harness enforces is that this layout stays bounded (well under
 /// the scene-update watchdog) for any message shape; see

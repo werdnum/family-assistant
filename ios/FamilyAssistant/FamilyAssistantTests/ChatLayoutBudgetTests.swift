@@ -58,6 +58,25 @@ final class ChatLayoutBudgetTests: XCTestCase {
         )
     }
 
+    /// The build-39 process-exit watchdog sampled the eager chat stack while it
+    /// was placing rows. Exercise the maximum production window as one hosted
+    /// layout pass: paging must never grow the eager subtree beyond this count,
+    /// and a representative complex window must remain below the 5s exit
+    /// allowance with margin.
+    func testMaximumThreadWindowLayoutStaysUnderExitWatchdogBudget() {
+        let messages = (0..<ChatViewModel.displayedMessageWindowCount).map { index in
+            assistantMessage(MarkdownShapes.everything(repeats: 3), id: "window-\(index)")
+        }
+
+        let seconds = layoutSeconds(for: messages)
+
+        XCTAssertLessThan(
+            seconds,
+            Self.budgetSeconds,
+            "The maximum eager message window took \(String(format: "%.3f", seconds))s to lay out; process exit allows only 5s."
+        )
+    }
+
     /// Large adversarial content shapes. Sizes are large enough that an
     /// *unbounded* renderer blows the budget (by seconds) yet still terminates —
     /// so a future regression that removes a cap fails loudly instead of wedging

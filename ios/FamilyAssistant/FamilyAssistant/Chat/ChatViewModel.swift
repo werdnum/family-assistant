@@ -7,12 +7,11 @@ import os
 final class ChatViewModel {
     var conversations: [ChatConversationSummary] = []
     var messages: [ChatMessage] = []
-    // Requested upper bound on how many grouped bubbles are realized into the
-    // chat view at once. The full thread is still loaded into `messages`; only a
-    // recent window is shown, and older bubbles page in via
-    // `showEarlierMessages()` up to the fixed eager-render ceiling. See
-    // `visibleGroupedMessages`.
-    var displayedMessageLimit = ChatViewModel.initialDisplayedMessageCount
+    // Fixed upper bound on how many grouped bubbles are realized into the chat
+    // view at once. The full thread is still loaded into `messages`; only a
+    // recent window is shown, and `showEarlierMessages()` /
+    // `showNewerMessages()` slide that fixed eager-render window through
+    // history. See `visibleGroupedMessages`.
     var displayedMessageNewerOffset = 0
     var profiles: [ChatProfile] = []
     var defaultProfileID = "default_assistant"
@@ -145,14 +144,14 @@ final class ChatViewModel {
     static let conversationRestoreWindow: TimeInterval = 15 * 60
 
     // Windowing for the chat thread. A long thread is loaded in full, but only a
-    // recent window of grouped bubbles is realized into the view at once. The
-    // view intentionally uses an eager VStack for that bounded window: the
+    // fixed recent window of grouped bubbles is realized into the view at once.
+    // The view intentionally uses an eager VStack for that bounded window: the
     // LazyStack placement path is the recurring watchdog hot spot when the user
-    // scrolls while the streaming tail mutates. An unbounded eager stack would be
-    // unsafe too, so `showEarlierMessages()` grows the window a page at a time
-    // only up to `maxDisplayedMessageCount`.
-    static let initialDisplayedMessageCount = 30
-    static let maxDisplayedMessageCount = 120
+    // scrolls while the streaming tail mutates. The eager window must not grow:
+    // placing or tearing down 120 complex bubbles can itself overrun the shorter
+    // process-exit watchdog. Earlier/newer controls slide this fixed window so
+    // the whole thread remains reachable.
+    static let displayedMessageWindowCount = 30
     private static let displayedMessagePageSize = 30
 
     // Max characters of an optimistic conversation-list preview, matching the
@@ -489,7 +488,6 @@ final class ChatViewModel {
         endedTurnIDs.removeAll()
         endedTurnStatusByTurnID.removeAll()
         resetTurnControlState()
-        displayedMessageLimit = Self.initialDisplayedMessageCount
         displayedMessageNewerOffset = 0
         if isSwitchingConversation {
             draftText = ""
@@ -552,7 +550,6 @@ final class ChatViewModel {
         endedTurnIDs.removeAll()
         endedTurnStatusByTurnID.removeAll()
         resetTurnControlState()
-        displayedMessageLimit = Self.initialDisplayedMessageCount
         displayedMessageNewerOffset = 0
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
@@ -2989,7 +2986,7 @@ final class ChatViewModel {
     /// The bounded window of `groupedMessages` actually rendered by the chat
     /// view. It starts as the newest suffix so streamed messages stay visible,
     /// then can page backward/forward in fixed chunks without ever realizing
-    /// more than `maxDisplayedMessageCount` bubbles into the eager stack.
+    /// more than `displayedMessageWindowCount` bubbles into the eager stack.
     var visibleGroupedMessages: [ChatMessage] {
         let grouped = groupedMessages
         let range = visibleGroupedMessageRange(in: grouped)
@@ -3009,19 +3006,12 @@ final class ChatViewModel {
         return visibleGroupedMessageRange(in: grouped).upperBound < grouped.endIndex
     }
 
-    /// Reveal another page of older bubbles, first by growing the suffix up to
-    /// the eager ceiling and then by sliding the bounded window backward.
+    /// Reveal another page of older bubbles by sliding the fixed render window
+    /// backward. The window never grows because eager teardown and placement
+    /// must also stay below the process-exit watchdog budget.
     func showEarlierMessages() {
-        if displayedMessageLimit < Self.maxDisplayedMessageCount {
-            displayedMessageLimit = min(
-                displayedMessageLimit + Self.displayedMessagePageSize,
-                Self.maxDisplayedMessageCount
-            )
-            return
-        }
-
         let groupedCount = groupedMessages.count
-        let windowSize = min(displayedMessageLimit, Self.maxDisplayedMessageCount, groupedCount)
+        let windowSize = min(Self.displayedMessageWindowCount, groupedCount)
         let maxOffset = max(0, groupedCount - windowSize)
         displayedMessageNewerOffset = min(
             displayedMessageNewerOffset + Self.displayedMessagePageSize,
@@ -3039,7 +3029,7 @@ final class ChatViewModel {
             return grouped.startIndex..<grouped.endIndex
         }
 
-        let windowSize = min(displayedMessageLimit, Self.maxDisplayedMessageCount, grouped.count)
+        let windowSize = min(Self.displayedMessageWindowCount, grouped.count)
         let maxOffset = max(0, grouped.count - windowSize)
         let newerOffset = min(displayedMessageNewerOffset, maxOffset)
         let end = grouped.index(grouped.endIndex, offsetBy: -newerOffset)
@@ -3079,7 +3069,7 @@ final class ChatViewModel {
 
         let newGroupedCount = groupedMessages.count
         let appendedGroupedCount = max(0, newGroupedCount - oldGroupedCount)
-        let windowSize = min(displayedMessageLimit, Self.maxDisplayedMessageCount, newGroupedCount)
+        let windowSize = min(Self.displayedMessageWindowCount, newGroupedCount)
         let maxOffset = max(0, newGroupedCount - windowSize)
         displayedMessageNewerOffset = min(displayedMessageNewerOffset + appendedGroupedCount, maxOffset)
     }

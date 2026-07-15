@@ -298,11 +298,13 @@ for the bounded visible window until the scene-update watchdog kills the app.
 
 ### M8 — Scene-phase environment invalidation (background recurrence, build 39)
 
-`scratch/FamilyAssistant-2026-07-15-151118.ips` is a build 39 background `scene-update` watchdog
-kill (`0x8BADF00D`, 10 s). The two copied reports are byte-identical. Unlike M7, the faulting main
-thread is no longer in `LazyStack` placement; it is in Swift generic metadata instantiation from
+Two distinct build 39 reports are background `scene-update` watchdog kills (`0x8BADF00D`, 10 s):
+`scratch/FamilyAssistant-2026-07-15-083505.ips` and `scratch/FamilyAssistant-2026-07-15-151118.ips`.
+(The file named `151118 1.ips` is byte-identical to `151118.ips`, so it is one incident rather than
+a third.) The `083505` main thread is flushing an AttributeGraph view transaction; `151118` provides
+the more specific sample inside Swift generic metadata instantiation from
 `EnvironmentBox.update(property:phase:)` → `_DynamicPropertyBuffer.update` →
-`DynamicBody.updateValue` while SwiftUI flushes a view-graph transaction.
+`DynamicBody.updateValue`. Neither report returns to the M7 `LazyStack` placement path.
 
 M7 removed the unbounded lazy-placement path, but `ChatThreadView` still directly declared
 `@Environment(\.scenePhase)`. Every active/background transition therefore invalidated the parent
@@ -321,6 +323,26 @@ could still consume the full scene-update allowance.
   force-follow signal remains unconditional because it is emitted only by an active user send.
 - Cover the lifecycle suppression at the hosted scroll-view layer: an otherwise-allowed passive
   follow is denied while `canFollow` is false and leaves the scroll position untouched.
+
+### M9 — Eager-window process-exit layout (foreground recurrence, build 39)
+
+`scratch/FamilyAssistant-2026-07-15-163058.ips` is the third distinct July 15 incident. It is not a
+background scene update: FrontBoard killed the app after it failed to terminate within the 5 s
+`process-exit` allowance (`WatchdogVisibility: Foreground`). The main thread is synchronously
+placing the eager message stack through `StackLayout.UnmanagedImplementation.placeChildren`,
+`explicitAlignment`, and `ViewLayoutEngine.sizeThatFits`.
+
+M7 correctly removed the repeatedly non-settling `LazyVStack` path, but its eager replacement could
+grow from 30 to 120 complex bubbles after repeated "Load earlier messages" actions. A 120-bubble
+tree is bounded in the mathematical sense but is still too large for synchronous placement or
+teardown under the shorter process-exit watchdog.
+
+**Fix.** Keep the eager renderer, but make its window a fixed 30 grouped bubbles. "Load earlier
+messages" and "Load newer messages" slide that fixed window instead of growing it, so all history
+remains reachable and SwiftUI never realizes four pages simultaneously. A view-model regression test
+enforces the fixed-size paging behavior, and
+`ChatLayoutBudgetTests.testMaximumThreadWindowLayoutStaysUnderExitWatchdogBudget` hosts the maximum
+production window as one layout pass against a budget below the 5 s exit allowance.
 
 ## Verification
 
