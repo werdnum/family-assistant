@@ -101,11 +101,18 @@ New table `user_google_connections` (Alembic migration):
 | `last_used_at`            | datetime nullable | updated on successful API use                    |
 
 Access tokens are cached **in memory only**, keyed by `(connection_id, credential_version)`, with
-expiry and an asyncio lock per connection to serialize refreshes. They are never persisted.
-`credential_version` is bumped whenever the stored refresh token changes (reconnect, account
-switch), so a reconnect to a different Google account can never keep serving cached tokens for the
-previous account. Disconnect and `needs_reauth` transitions additionally evict the cache entry
-eagerly.
+expiry and an asyncio lock per connection. They are never persisted. `credential_version` is bumped
+whenever the stored refresh token changes (reconnect, account switch), so a reconnect to a different
+Google account can never keep serving cached tokens for the previous account. Disconnect and
+`needs_reauth` transitions additionally evict the cache entry eagerly.
+
+The per-connection lock serializes **all credential mutations**, not just refreshes: reconnect,
+disconnect, and status changes take the same lock as an in-flight refresh. Every post-refresh step —
+caching the token, returning it to the caller, or marking `needs_reauth` — is additionally
+conditioned on the connection's `credential_version` still matching the version the refresh started
+from (compare-and-set); on a version mismatch the stale operation discards its result and retries
+against the current credentials. This closes the race where a refresh begun against the old account
+returns a token (or flips status) after the user has reconnected a different account.
 
 Repository access follows the existing pattern: `db.google_connections` on `DatabaseContext`,
 returning Pydantic models.
@@ -230,11 +237,13 @@ Implementation notes:
   attachment route — a hole in the cross-user isolation this design promises. The registry therefore
   gains an optional `owner_user_id` on registered attachments. The Gmail/Drive tools (and their
   auto-conversion of large results) always set it to the acting user; enforcement lives in the
-  registry read path itself, not in individual callers: a read with a non-matching acting user (tool
-  path, via `exec_context.user_id`) or session user (HTTP attachment route) is refused as not-found.
-  Attachments without `owner_user_id` (uploads, legacy, non-personal tool output) behave exactly as
-  today, so this is additive and backward-compatible. Cross-user isolation tests cover both read
-  paths.
+  registry itself, not in individual callers, and covers **every operation on an owned attachment**
+  — read, delete, and any future mutation — so ownership cannot be bypassed for destructive access
+  via `DELETE /api/attachments/{id}` any more than for reads. An operation with a non-matching
+  acting user (tool path, via `exec_context.user_id`) or session user (HTTP routes) is refused as
+  not-found. Attachments without `owner_user_id` (uploads, legacy, non-personal tool output) behave
+  exactly as today, so this is additive and backward-compatible. Cross-user isolation tests cover
+  the tool read path, the HTTP read route, and the HTTP delete route.
 
 #### Taint provenance
 
