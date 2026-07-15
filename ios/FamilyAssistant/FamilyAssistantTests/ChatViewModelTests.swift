@@ -352,58 +352,53 @@ final class ChatViewModelTests: XCTestCase {
 
     func testVisibleMessagesCapToRecentWindow() {
         let model = makeViewModel(conversationID: "web_conv_window")
-        let total = ChatViewModel.initialDisplayedMessageCount + 15
+        let total = ChatViewModel.displayedMessageWindowCount + 15
         model.messages = (0..<total).map(plainMessage(index:))
 
         let visible = model.visibleGroupedMessages
-        XCTAssertEqual(visible.count, ChatViewModel.initialDisplayedMessageCount)
+        XCTAssertEqual(visible.count, ChatViewModel.displayedMessageWindowCount)
         XCTAssertTrue(model.hasEarlierMessages)
         // The window is the most-recent suffix: newest is shown, oldest is hidden.
         XCTAssertEqual(visible.last?.id, "msg_\(total - 1)")
-        XCTAssertEqual(visible.first?.id, "msg_\(total - ChatViewModel.initialDisplayedMessageCount)")
+        XCTAssertEqual(visible.first?.id, "msg_\(total - ChatViewModel.displayedMessageWindowCount)")
     }
 
-    func testShowEarlierMessagesWidensWindowToWholeThread() {
+    func testShowEarlierMessagesSlidesFixedWindowToStartOfShortThread() {
         let model = makeViewModel(conversationID: "web_conv_window")
-        let total = ChatViewModel.initialDisplayedMessageCount + 15
+        let total = ChatViewModel.displayedMessageWindowCount + 15
         model.messages = (0..<total).map(plainMessage(index:))
 
         let initialVisible = model.visibleGroupedMessages.count
         model.showEarlierMessages()
-        XCTAssertGreaterThan(model.visibleGroupedMessages.count, initialVisible)
+        XCTAssertEqual(model.visibleGroupedMessages.count, initialVisible)
 
-        // Widening enough reveals the whole thread and clears the earlier flag.
-        while model.hasEarlierMessages {
-            model.showEarlierMessages()
-        }
-        XCTAssertEqual(model.visibleGroupedMessages.count, total)
+        // The final older page is clamped to the start and overlaps the prior
+        // page rather than widening the eager stack.
+        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.displayedMessageWindowCount)
         XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
+        XCTAssertFalse(model.hasEarlierMessages)
+        XCTAssertTrue(model.hasNewerMessages)
     }
 
-    func testShowEarlierMessagesStopsAtEagerRenderCeiling() {
+    func testPagingKeepsFixedEagerRenderWindow() {
         let model = makeViewModel(conversationID: "web_conv_window")
-        let total = ChatViewModel.maxDisplayedMessageCount + 75
+        let total = ChatViewModel.displayedMessageWindowCount + 75
         model.messages = (0..<total).map(plainMessage(index:))
 
-        while model.displayedMessageLimit < ChatViewModel.maxDisplayedMessageCount {
-            model.showEarlierMessages()
-        }
-
-        XCTAssertEqual(model.displayedMessageLimit, ChatViewModel.maxDisplayedMessageCount)
-        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.maxDisplayedMessageCount)
+        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.displayedMessageWindowCount)
         XCTAssertEqual(
             model.visibleGroupedMessages.first?.id,
-            "msg_\(total - ChatViewModel.maxDisplayedMessageCount)"
+            "msg_\(total - ChatViewModel.displayedMessageWindowCount)"
         )
         XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_\(total - 1)")
         XCTAssertTrue(model.hasEarlierMessages)
 
         model.showEarlierMessages()
 
-        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.maxDisplayedMessageCount)
+        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.displayedMessageWindowCount)
         XCTAssertEqual(
             model.visibleGroupedMessages.first?.id,
-            "msg_\(total - ChatViewModel.maxDisplayedMessageCount - 30)"
+            "msg_\(total - ChatViewModel.displayedMessageWindowCount - 30)"
         )
         XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_\(total - 31)")
         XCTAssertTrue(model.hasEarlierMessages)
@@ -414,7 +409,7 @@ final class ChatViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
-        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.maxDisplayedMessageCount)
+        XCTAssertEqual(model.visibleGroupedMessages.count, ChatViewModel.displayedMessageWindowCount)
         XCTAssertTrue(model.hasNewerMessages)
         XCTAssertFalse(model.hasEarlierMessages)
 
@@ -427,7 +422,7 @@ final class ChatViewModelTests: XCTestCase {
 
     func testPagedBackWindowStaysAnchoredWhenNewMessagesAppend() {
         let model = makeViewModel(conversationID: "web_conv_window")
-        let total = ChatViewModel.maxDisplayedMessageCount + 75
+        let total = ChatViewModel.displayedMessageWindowCount + 75
         model.messages = (0..<total).map(plainMessage(index:))
 
         while model.hasEarlierMessages {
@@ -435,12 +430,12 @@ final class ChatViewModelTests: XCTestCase {
         }
 
         XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
-        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_119")
+        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_29")
 
         model.appendMessagePreservingPagedBackWindow(plainMessage(index: total))
 
         XCTAssertEqual(model.visibleGroupedMessages.first?.id, "msg_0")
-        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_119")
+        XCTAssertEqual(model.visibleGroupedMessages.last?.id, "msg_29")
         XCTAssertFalse(model.hasEarlierMessages)
         XCTAssertTrue(model.hasNewerMessages)
     }
@@ -455,13 +450,13 @@ final class ChatViewModelTests: XCTestCase {
 
     func testStartingNewConversationResetsTheWindow() {
         let model = makeViewModel(conversationID: "web_conv_window")
-        model.messages = (0..<(ChatViewModel.initialDisplayedMessageCount + 15)).map(plainMessage(index:))
+        model.messages = (0..<(ChatViewModel.displayedMessageWindowCount + 15)).map(plainMessage(index:))
         model.showEarlierMessages()
-        XCTAssertGreaterThan(model.displayedMessageLimit, ChatViewModel.initialDisplayedMessageCount)
+        XCTAssertTrue(model.hasNewerMessages)
 
         model.startNewConversation()
 
-        XCTAssertEqual(model.displayedMessageLimit, ChatViewModel.initialDisplayedMessageCount)
+        XCTAssertEqual(model.displayedMessageNewerOffset, 0)
         XCTAssertFalse(model.hasNewerMessages)
     }
 

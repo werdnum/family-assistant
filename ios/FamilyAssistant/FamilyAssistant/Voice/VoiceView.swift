@@ -141,7 +141,8 @@ private struct VoiceSessionContent: View {
         // eager stack; LazyVStack's placement path is the recurring watchdog hot
         // spot when the tail mutates during a user scroll.
         StickyBottomScroll(
-            followTrigger: model.transcript.entries.last.map { AnyHashable([$0.id.uuidString, $0.text]) }
+            followTrigger: model.transcript.entries.last.map { AnyHashable([$0.id.uuidString, $0.text]) },
+            canFollow: { UIApplication.shared.applicationState == .active }
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(model.transcript.entries) { entry in

@@ -6,7 +6,9 @@ M1–M3 shipped (PR #920, 2026-06-18). M4 (suspend-watchdog recurrence) shipped 
 #955) bounded per-message markdown layout after a **foreground** recurrence on build 23. M6 added
 after a **foreground** recurrence on build 36 traced to the auto-follow scroll yanking a user who
 had scrolled up. M7 covers the follow-up build 36 recurrence where the user manually scrolled while
-waiting for a streamed reply; the remaining hot path was LazyStack placement itself.
+waiting for a streamed reply; the remaining hot path was LazyStack placement itself. M8 covers a
+build 39 background recurrence where the heavy thread itself observed `scenePhase`, invalidating the
+bounded eager stack during the scene update.
 
 ## Summary
 
@@ -220,19 +222,19 @@ markdown subtree (the sampled per-bubble subtree is normal depth, and the per-me
 is intact). `WatchdogCPUStatistics` show only ~17 % app CPU across the window: the main thread was
 not pegged in one hot loop, it was re-running placement passes that never settled.
 
-**Root cause.** `messageScrollArea` fired `proxy.scrollTo(lastID, anchor: .bottom)` on *every* change
-of the newest bubble's id, gated only on `scenePhase == .active`. When a reply lands while the user
-has scrolled up (or is mid-drag), that bottom-anchored `scrollTo` forces the `LazyVStack` to
-re-resolve its bottom anchor and `measureBackwards` over the visible rows while fighting the user's
-scroll position — it never converges, and the 10 s scene-update watchdog kills the app. This is the
-unanimated cousin of M5's second cause (animated scroll-to-bottom): M5 dropped the animation, which
-fixed the *send-while-idle* case, but not *reply-arrives-while-reading-history*.
+**Root cause.** `messageScrollArea` fired `proxy.scrollTo(lastID, anchor: .bottom)` on *every*
+change of the newest bubble's id, gated only on `scenePhase == .active`. When a reply lands while
+the user has scrolled up (or is mid-drag), that bottom-anchored `scrollTo` forces the `LazyVStack`
+to re-resolve its bottom anchor and `measureBackwards` over the visible rows while fighting the
+user's scroll position — it never converges, and the 10 s scene-update watchdog kills the app. This
+is the unanimated cousin of M5's second cause (animated scroll-to-bottom): M5 dropped the animation,
+which fixed the *send-while-idle* case, but not *reply-arrives-while-reading-history*.
 
 **Related case found (no separate report yet).** The voice transcript (`VoiceView.swift`) had the
 *same* class of bug in a different shape: it scrolled `withAnimation` on **every streamed token**
 (`onChange(of: entries.last?.text)`) — animated follow (M5 cause #2) fired at partial-transcript
-frequency, a latent live-voice wedge. Two hand-rolled auto-followers, each unsafe in a different way,
-with no shared invariant.
+frequency, a latent live-voice wedge. Two hand-rolled auto-followers, each unsafe in a different
+way, with no shared invariant.
 
 **Fix (single choke point for auto-follow).** Introduce `StickyBottomScroll` (in `ChatViews.swift`)
 and route **both** the chat thread and the voice transcript through it — mirroring how
@@ -242,9 +244,9 @@ place:
 - **Never animate the follow scroll** (kills the M5-cause-#2 shape wherever it recurs, including
   voice).
 - **Only follow a passive arrival when near the bottom.** A zero-height bottom sentinel tracks "is
-  the user at the bottom" (`onAppear`/`onDisappear`); a *passive* arrival (streamed reply, tool step,
-  synced message; `followTrigger` = the newest bubble's id) follows only when they are near the
-  bottom — so a reply never yanks a reader who scrolled up.
+  the user at the bottom" (`onAppear`/`onDisappear`); a *passive* arrival (streamed reply, tool
+  step, synced message; `followTrigger` = the newest bubble's id) follows only when they are near
+  the bottom — so a reply never yanks a reader who scrolled up.
 - **A local send always pins to the bottom, signalled explicitly.** Sending is a user-initiated
   event and must scroll into view even from scrolled-up. It can *not* be inferred from the last
   bubble's role: `sendDraft()` appends the user bubble **and** an assistant loading placeholder, so
@@ -256,15 +258,16 @@ place:
   the yank.
 
 **Coverage.** `ChatViewModelTests.testSendDraftRequestsScrollToLatest…` asserts a send bumps the
-force signal (the local-send case a role heuristic misses). `ChatLayoutBudgetTests.testStickyBottomScroll*`
-hosts the real `StickyBottomScroll`, scrolls it up, and asserts: a *denied* passive follow does not
-jump to the bottom, an *allowed* one does, and a *force* trigger scrolls even when the gate denies
-(the deny/allow pair is mutually validating — the allow case proves the follow mechanism fires, so
-the deny case is non-vacuous). These UIKit-hosted tests wait on the observed scroll state via a
-run-loop poll (`waitUntil`), never a fixed sleep, and wait for the initial land to settle before
-scrolling up so a late `onAppear` scroll can't masquerade as a follow. The existing
-`testFollowUpAfterToolTurnStaysResponsive` / `testNativeChatSendsAndStreamsResponse` UI tests
-continue to cover open-lands-at-bottom and send-follows in the real app.
+force signal (the local-send case a role heuristic misses).
+`ChatLayoutBudgetTests.testStickyBottomScroll*` hosts the real `StickyBottomScroll`, scrolls it up,
+and asserts: a *denied* passive follow does not jump to the bottom, an *allowed* one does, and a
+*force* trigger scrolls even when the gate denies (the deny/allow pair is mutually validating — the
+allow case proves the follow mechanism fires, so the deny case is non-vacuous). These UIKit-hosted
+tests wait on the observed scroll state via a run-loop poll (`waitUntil`), never a fixed sleep, and
+wait for the initial land to settle before scrolling up so a late `onAppear` scroll can't masquerade
+as a follow. The existing `testFollowUpAfterToolTurnStaysResponsive` /
+`testNativeChatSendsAndStreamsResponse` UI tests continue to cover open-lands-at-bottom and
+send-follows in the real app.
 
 ### M7 — Manual scroll during streaming (foreground recurrence, build 36)
 
@@ -274,25 +277,77 @@ Unlike M6, the chat follow trigger was already gated and only changed on newest-
 streamed text, so the app was not firing a `scrollTo` per token.
 
 The main thread was still in the same SwiftUI lazy-list placement family:
-`_ViewList_TemporarySublistTransform.apply` → `_LazyLayout_Subviews.apply` →
-`LazyStack.place` / `LazySubviewPlacements.updateValue`. That points at the remaining lazy stack
-itself: while the user scrolls, the streamed tail row mutates every flush, and SwiftUI keeps
-recomputing lazy placements for the bounded visible window until the scene-update watchdog kills the
-app.
+`_ViewList_TemporarySublistTransform.apply` → `_LazyLayout_Subviews.apply` → `LazyStack.place` /
+`LazySubviewPlacements.updateValue`. That points at the remaining lazy stack itself: while the user
+scrolls, the streamed tail row mutates every flush, and SwiftUI keeps recomputing lazy placements
+for the bounded visible window until the scene-update watchdog kills the app.
 
 **Fix.**
 
 - Keep the thread-level and per-message bounds from M3/M5, but render the already-bounded visible
-  window with an eager `VStack` instead of `LazyVStack`. The initial window is 30 grouped bubbles and
-  "Load earlier messages" widens it by explicit user action up to a fixed 120-bubble ceiling, then
-  slides that bounded window through older history with a matching "Load newer messages" affordance,
-  so eager layout is bounded while avoiding the LazyStack placement path that appears in every
-  recurrence and history beyond the ceiling remains reachable.
+  window with an eager `VStack` instead of `LazyVStack`. The initial window is 30 grouped bubbles
+  and "Load earlier messages" widens it by explicit user action up to a fixed 120-bubble ceiling,
+  then slides that bounded window through older history with a matching "Load newer messages"
+  affordance, so eager layout is bounded while avoiding the LazyStack placement path that appears in
+  every recurrence and history beyond the ceiling remains reachable.
 - Apply the same eager-stack choice to the voice transcript, whose streaming-tail behavior shares
   the same sticky-bottom container.
 - Add `ChatLayoutBudgetTests.testStickyBottomScrollHandlesTailMutationWhileUserIsScrolledUp`, which
   hosts the real sticky scroll view, scrolls away from the bottom, mutates the tail repeatedly, and
   asserts it neither yanks to bottom nor spends watchdog-scale time in layout.
+
+### M8 — Scene-phase environment invalidation (background recurrence, build 39)
+
+Two distinct build 39 reports are background `scene-update` watchdog kills (`0x8BADF00D`, 10 s):
+`scratch/FamilyAssistant-2026-07-15-083505.ips` and `scratch/FamilyAssistant-2026-07-15-151118.ips`.
+(The file named `151118 1.ips` is byte-identical to `151118.ips`, so it is one incident rather than
+a third.) The `083505` main thread is flushing an AttributeGraph view transaction; `151118` provides
+the more specific sample inside Swift generic metadata instantiation from
+`EnvironmentBox.update(property:phase:)` → `_DynamicPropertyBuffer.update` →
+`DynamicBody.updateValue`. Neither report returns to the M7 `LazyStack` placement path.
+
+M7 removed the unbounded lazy-placement path, but `ChatThreadView` still directly declared
+`@Environment(\.scenePhase)`. Every active/background transition therefore invalidated the parent
+whose body owns the eager message stack (up to 120 complex bubbles). Keeping that stack mounted
+avoided M4's teardown transaction, but recomputing its dynamic-property graph during backgrounding
+could still consume the full scene-update allowance.
+
+**Fix.**
+
+- Move `scenePhase` observation into a zero-sized `ChatScenePhaseObserver` below a mount gate. The
+  observer handles the one-time foreground mount and reconnect callback, while later phase changes
+  do not invalidate `ChatThreadView` or reconstruct its message closure.
+- Stop encoding activity into the message list's `followTrigger`. `StickyBottomScroll` instead
+  checks an injected `canFollow` closure when a passive trigger changes; production reads
+  `UIApplication.shared.applicationState` without creating a SwiftUI environment dependency. The
+  force-follow signal remains unconditional because it is emitted only by an active user send. If
+  lifecycle suppression defers an otherwise-allowed passive follow, the shared scroll container
+  preserves it and retries on `UIApplication.didBecomeActiveNotification`; the content that arrived
+  in the background is therefore visible immediately on foregrounding without invalidating the heavy
+  parent view.
+- Cover the lifecycle suppression at the hosted scroll-view layer: an otherwise-allowed passive
+  follow is denied while `canFollow` is false and leaves the scroll position untouched, then the
+  same pending follow runs when the lifecycle gate reopens.
+
+### M9 — Eager-window process-exit layout (foreground recurrence, build 39)
+
+`scratch/FamilyAssistant-2026-07-15-163058.ips` is the third distinct July 15 incident. It is not a
+background scene update: FrontBoard killed the app after it failed to terminate within the 5 s
+`process-exit` allowance (`WatchdogVisibility: Foreground`). The main thread is synchronously
+placing the eager message stack through `StackLayout.UnmanagedImplementation.placeChildren`,
+`explicitAlignment`, and `ViewLayoutEngine.sizeThatFits`.
+
+M7 correctly removed the repeatedly non-settling `LazyVStack` path, but its eager replacement could
+grow from 30 to 120 complex bubbles after repeated "Load earlier messages" actions. A 120-bubble
+tree is bounded in the mathematical sense but is still too large for synchronous placement or
+teardown under the shorter process-exit watchdog.
+
+**Fix.** Keep the eager renderer, but make its window a fixed 30 grouped bubbles. "Load earlier
+messages" and "Load newer messages" slide that fixed window instead of growing it, so all history
+remains reachable and SwiftUI never realizes four pages simultaneously. A view-model regression test
+enforces the fixed-size paging behavior, and
+`ChatLayoutBudgetTests.testMaximumThreadWindowLayoutStaysUnderExitWatchdogBudget` hosts the maximum
+production window as one layout pass against a budget below the 5 s exit allowance.
 
 ## Verification
 

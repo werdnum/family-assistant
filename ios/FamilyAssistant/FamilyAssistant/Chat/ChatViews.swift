@@ -1,3 +1,4 @@
+import Combine
 import Markdown
 import PhotosUI
 import SwiftUI
@@ -177,58 +178,16 @@ private struct ConversationRow: View {
 
 private struct ChatThreadView: View {
     var viewModel: ChatViewModel
-    @Environment(\.scenePhase) private var scenePhase
-    // Latches true the first time the scene is active, then stays true. Gates the
-    // thread between two competing watchdog hazards (see
-    // `ChatViewModel.shouldRenderThread`): keep the message stack OUT of the tree on
-    // an offscreen background launch, but keep it mounted across later
-    // background transitions once it has been realized.
-    @State private var hasMountedThread = false
 
     var body: some View {
         VStack(spacing: 0) {
             PendingConfirmationsBanner(viewModel: viewModel)
-            if viewModel.shouldRenderThread(
-                isActive: scenePhase == .active,
-                hasMountedBefore: hasMountedThread
-            ) {
+            ChatScenePhaseMountGate(viewModel: viewModel) {
                 messageScrollArea
-            } else {
-                // Offscreen background launch (push / state restoration /
-                // snapshot): SwiftUI reports .background/.inactive before the
-                // thread has ever been active. Laying out a restored thread here
-                // overruns the ~10s scene-update watchdog (0x8BADF00D). The real
-                // list renders when the scene first becomes active and then stays
-                // mounted. See docs/design/ios-chat-layout-watchdog-crash.md.
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             Divider()
             ChatComposerView(viewModel: viewModel)
-        }
-        .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
-            if newPhase == .active {
-                hasMountedThread = true
-            }
-            // Returning to the foreground from the BACKGROUND: re-establish the
-            // live-updates follow stream and catch up persisted history. A turn
-            // that finished while the app was backgrounded (the follow Task is
-            // suspended/torn down by the OS) would otherwise strand until a manual
-            // refresh. With the SSE-independent catch-up in `reconnectLiveUpdates`,
-            // the thread recovers even if the fresh SSE connect itself fails.
-            //
-            // Gate on a real return from the background so a transient
-            // `.inactive → .active` blip (Control Center, the app switcher, a
-            // notification banner) does not needlessly tear down and restart a
-            // healthy follow connection. The decision lives on the view model so
-            // it is unit-testable.
-            if viewModel.shouldReconnectOnForeground(
-                cameFromBackground: oldPhase == .background,
-                isNowActive: newPhase == .active
-            ) {
-                Task { await viewModel.reconnectLiveUpdates() }
-            }
         }
     }
 
@@ -241,14 +200,15 @@ private struct ChatThreadView: View {
         // Sending a message is a user-initiated event that always pins to the
         // bottom, signalled explicitly via `scrollToLatestRequestID` (it can't be
         // inferred from the last bubble, which is the assistant loading
-        // placeholder right after a send). `followTrigger` is gated on the active
-        // scene so a background layout pass never scrolls; `forceFollowTrigger` is
-        // not — it only ever changes on a user send (always active), and gating it
-        // would make it fire on the nil→value flip when returning to the
-        // foreground, yanking a user who had scrolled up.
+        // placeholder right after a send). Passive follow is gated on application
+        // state inside `StickyBottomScroll`, without making this heavy parent
+        // observe `scenePhase`; a background phase change must not invalidate the
+        // eager message stack. `forceFollowTrigger` is not gated — it only ever
+        // changes on an active user send.
         StickyBottomScroll(
-            followTrigger: scenePhase == .active ? viewModel.visibleGroupedMessages.last?.id : nil,
-            forceFollowTrigger: viewModel.scrollToLatestRequestID
+            followTrigger: viewModel.visibleGroupedMessages.last?.id,
+            forceFollowTrigger: viewModel.scrollToLatestRequestID,
+            canFollow: { UIApplication.shared.applicationState == .active }
         ) {
             VStack(spacing: 14) {
                 if viewModel.messages.isEmpty && !viewModel.isLoadingMessages {
@@ -288,6 +248,65 @@ private struct ChatThreadView: View {
                 ProgressView("Loading messages...")
             }
         }
+    }
+}
+
+/// Keeps scene lifecycle observation out of `ChatThreadView`, whose body owns the
+/// bounded eager message stack. A phase change should update only a lightweight
+/// observer; invalidating the parent while backgrounding can spend the entire
+/// scene-update watchdog budget rebuilding dynamic properties for every row.
+private struct ChatScenePhaseMountGate<Content: View>: View {
+    var viewModel: ChatViewModel
+    @ViewBuilder let content: () -> Content
+
+    @State private var hasMountedContent = false
+
+    var body: some View {
+        Group {
+            if hasMountedContent {
+                content()
+            } else {
+                // Offscreen background launch (push / state restoration /
+                // snapshot): laying out a restored thread before the scene has
+                // ever been active overruns the scene-update watchdog.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background {
+            ChatScenePhaseObserver { oldPhase, newPhase in
+                if !hasMountedContent, viewModel.shouldRenderThread(
+                    isActive: newPhase == .active,
+                    hasMountedBefore: false
+                ) {
+                    hasMountedContent = true
+                }
+
+                // A turn can finish while the app is suspended. Reconnect and
+                // catch up only after a real background → active transition;
+                // transient inactive states keep the healthy stream intact.
+                if viewModel.shouldReconnectOnForeground(
+                    cameFromBackground: oldPhase == .background,
+                    isNowActive: newPhase == .active
+                ) {
+                    Task { await viewModel.reconnectLiveUpdates() }
+                }
+            }
+        }
+    }
+}
+
+private struct ChatScenePhaseObserver: View {
+    @Environment(\.scenePhase) private var scenePhase
+    let phaseChanged: (_ oldPhase: ScenePhase, _ newPhase: ScenePhase) -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+            .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
+                phaseChanged(oldPhase, newPhase)
+            }
     }
 }
 
@@ -412,7 +431,8 @@ private struct MessageBubble: View {
 /// Test seam for the chat-layout budget/fuzz harness (`ChatLayoutBudgetTests`).
 /// Renders the production message-list layout — `ScrollView` + bounded `VStack` +
 /// `MessageBubble` — over an explicit message array so a hosting controller can
-/// force a content-sizing pass and time it. Mirrors
+/// force a content-sizing pass and time it. This also covers the fixed maximum
+/// eager window used to stay below the process-exit watchdog. Mirrors
 /// `ChatThreadView.messageScrollArea` without the scroll-position plumbing. The
 /// invariant the harness enforces is that this layout stays bounded (well under
 /// the scene-update watchdog) for any message shape; see
@@ -464,9 +484,7 @@ struct ChatMessageListLayoutProbe: View {
 /// See docs/design/ios-chat-layout-watchdog-crash.md.
 struct StickyBottomScroll<Content: View>: View {
     /// Changes whenever new content that may warrant a follow has arrived (the
-    /// newest row's id, its streamed text, …). A `nil` value never follows, so
-    /// callers can suppress following (e.g. while the scene is inactive) by
-    /// passing `nil`.
+    /// newest row's id, its streamed text, …). A `nil` value never follows.
     let followTrigger: AnyHashable?
     /// Changes whenever a user-initiated event should scroll to the bottom
     /// unconditionally (ignoring `shouldFollow`) — e.g. the user just sent a
@@ -475,19 +493,25 @@ struct StickyBottomScroll<Content: View>: View {
     /// Given whether the user is currently near the bottom, whether to follow a
     /// `followTrigger` change. Defaults to "only when near the bottom".
     let shouldFollow: (_ isNearBottom: Bool) -> Bool
+    /// Read at trigger time so lifecycle suppression does not require an
+    /// `@Environment(\.scenePhase)` dependency in the heavy scrolling subtree.
+    let canFollow: () -> Bool
     @ViewBuilder let content: () -> Content
 
     @State private var isNearBottom = true
+    @State private var hasPendingFollow = false
 
     init(
         followTrigger: AnyHashable?,
         forceFollowTrigger: AnyHashable? = nil,
         shouldFollow: @escaping (_ isNearBottom: Bool) -> Bool = { $0 },
+        canFollow: @escaping () -> Bool = { true },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.followTrigger = followTrigger
         self.forceFollowTrigger = forceFollowTrigger
         self.shouldFollow = shouldFollow
+        self.canFollow = canFollow
         self.content = content
     }
 
@@ -516,12 +540,25 @@ struct StickyBottomScroll<Content: View>: View {
                 guard followTrigger != nil, shouldFollow(isNearBottom) else {
                     return
                 }
+                guard canFollow() else {
+                    hasPendingFollow = true
+                    return
+                }
+                hasPendingFollow = false
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                guard hasPendingFollow, canFollow() else {
+                    return
+                }
+                hasPendingFollow = false
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
             .onChange(of: forceFollowTrigger) {
                 guard forceFollowTrigger != nil else {
                     return
                 }
+                hasPendingFollow = false
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
         }

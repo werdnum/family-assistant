@@ -58,6 +58,25 @@ final class ChatLayoutBudgetTests: XCTestCase {
         )
     }
 
+    /// The build-39 process-exit watchdog sampled the eager chat stack while it
+    /// was placing rows. Exercise the maximum production window as one hosted
+    /// layout pass: paging must never grow the eager subtree beyond this count,
+    /// and a representative complex window must remain below the 5s exit
+    /// allowance with margin.
+    func testMaximumThreadWindowLayoutStaysUnderExitWatchdogBudget() {
+        let messages = (0..<ChatViewModel.displayedMessageWindowCount).map { index in
+            assistantMessage(MarkdownShapes.everything(repeats: 3), id: "window-\(index)")
+        }
+
+        let seconds = layoutSeconds(for: messages)
+
+        XCTAssertLessThan(
+            seconds,
+            Self.budgetSeconds,
+            "The maximum eager message window took \(String(format: "%.3f", seconds))s to lay out; process exit allows only 5s."
+        )
+    }
+
     /// Large adversarial content shapes. Sizes are large enough that an
     /// *unbounded* renderer blows the budget (by seconds) yet still terminates —
     /// so a future regression that removes a cap fails loudly instead of wedging
@@ -326,6 +345,38 @@ final class ChatLayoutBudgetTests: XCTestCase {
         )
     }
 
+    func testStickyBottomScrollDoesNotFollowWhenLifecycleGateDenies() {
+        let harness = hostStickyScroll(gate: true, canFollow: false)
+        defer { harness.teardown() }
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+
+        harness.scrollToTop()
+        XCTAssertFalse(isAtBottom(harness.scrollView), "precondition: scroll-to-top did not take effect")
+
+        harness.change(follow: 1)
+        XCTAssertFalse(
+            isAtBottom(harness.scrollView),
+            "A passive arrival while backgrounded must not start a layout-driving follow scroll."
+        )
+    }
+
+    func testStickyBottomScrollRetriesPendingFollowWhenLifecycleReopens() {
+        let harness = hostStickyScroll(gate: true, canFollow: false)
+        defer { harness.teardown() }
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+
+        harness.scrollToTop()
+        harness.change(follow: 1)
+        XCTAssertFalse(isAtBottom(harness.scrollView), "The inactive follow must remain pending without scrolling.")
+
+        harness.reopenLifecycleGate()
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+        XCTAssertTrue(
+            isAtBottom(harness.scrollView),
+            "An allowed follow suppressed while inactive must retry when the application becomes active."
+        )
+    }
+
     func testStickyBottomScrollForceFollowScrollsEvenWhenGateWouldDeny() {
         // A user-initiated force (e.g. sending a message) must scroll to the
         // bottom even when the near-bottom gate would deny — the local-send case
@@ -386,6 +437,7 @@ final class ChatLayoutBudgetTests: XCTestCase {
         let scrollView: UIScrollView
         let makeRoot: (_ followToken: Int, _ forceToken: Int, _ tailText: String) -> StickyBottomScroll<AnyView>
         let pumpFor: (TimeInterval) -> Void
+        let followAvailability: FollowAvailability
         private var followToken = 0
         private var forceToken = 0
         private var tailText = ""
@@ -395,13 +447,15 @@ final class ChatLayoutBudgetTests: XCTestCase {
             host: UIHostingController<StickyBottomScroll<AnyView>>,
             scrollView: UIScrollView,
             makeRoot: @escaping (_ followToken: Int, _ forceToken: Int, _ tailText: String) -> StickyBottomScroll<AnyView>,
-            pumpFor: @escaping (TimeInterval) -> Void
+            pumpFor: @escaping (TimeInterval) -> Void,
+            followAvailability: FollowAvailability
         ) {
             self.window = window
             self.host = host
             self.scrollView = scrollView
             self.makeRoot = makeRoot
             self.pumpFor = pumpFor
+            self.followAvailability = followAvailability
         }
 
         /// Spin the run loop until `predicate` holds or `timeout` elapses, so a
@@ -429,6 +483,11 @@ final class ChatLayoutBudgetTests: XCTestCase {
         func change(force token: Int) {
             forceToken = token
             reapplyAndWaitForScrollSettled()
+        }
+
+        func reopenLifecycleGate() {
+            followAvailability.value = true
+            NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
         }
 
         /// Mutate the newest row without changing scroll triggers, matching a
@@ -502,12 +561,22 @@ final class ChatLayoutBudgetTests: XCTestCase {
         }
     }
 
-    private func hostStickyScroll(gate: Bool) -> StickyScrollHarness {
+    private final class FollowAvailability {
+        var value: Bool
+
+        init(_ value: Bool) {
+            self.value = value
+        }
+    }
+
+    private func hostStickyScroll(gate: Bool, canFollow: Bool = true) -> StickyScrollHarness {
+        let followAvailability = FollowAvailability(canFollow)
         let makeRoot: (Int, Int, String) -> StickyBottomScroll<AnyView> = { followToken, forceToken, tailText in
             StickyBottomScroll(
                 followTrigger: AnyHashable(followToken),
                 forceFollowTrigger: AnyHashable(forceToken),
-                shouldFollow: { _ in gate }
+                shouldFollow: { _ in gate },
+                canFollow: { followAvailability.value }
             ) {
                 AnyView(
                     VStack(spacing: 14) {
@@ -547,7 +616,8 @@ final class ChatLayoutBudgetTests: XCTestCase {
             host: host,
             scrollView: scrollView,
             makeRoot: makeRoot,
-            pumpFor: pumpFor
+            pumpFor: pumpFor,
+            followAvailability: followAvailability
         )
     }
 
