@@ -209,10 +209,14 @@ Implementation notes:
   `read_text_attachment` tool.
 - Attachments registered by `gmail_get_attachment` / `drive_get_file` carry their classified
   `taint_metadata` (the source state computed for the containing message/file) in the registry
-  metadata, so provenance survives storage: a later `read_text_attachment` re-derives the graduated
-  tier from that metadata via the existing artifact-provenance merge path instead of collapsing an
-  authenticated known-contact attachment to `unknown_external` — and an attachment registered
-  without metadata still falls back to `unknown_external`, keeping the fail-safe direction.
+  metadata, so provenance survives storage. Storing it is not sufficient on its own:
+  `read_text_attachment` is itself tagged `OUTPUT_UNTRUSTED`, so without a change the static
+  `unknown_external` fallback would clobber the stored tier on re-read even after the merge path
+  restores it. Milestone 2 therefore also updates `read_text_attachment` to register the
+  successfully merged stored provenance as its explicit result source via the same
+  `record_tool_result_taint` helper — the graduated tier then survives read-back end to end, while
+  an attachment with no stored metadata (or a failed merge) registers nothing and keeps the
+  fail-safe `unknown_external` fallback.
 - Result size is bounded (default page sizes, body truncation with an explicit truncation marker) so
   a hostile mailbox cannot blow out the context window.
 
@@ -429,12 +433,12 @@ Each lands independently with tests and passes `poe test`.
    can connect/disconnect and the row round-trips encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
    `GoogleApiBackend`; the atomic `record_tool_result_taint` runtime extension with authenticated
-   sender classification; the `require_taint_enforcement` startup check (tools unregistered +
-   surfaced reason when unmet, explicit logged waiver path); policy defaults; per-user isolation
-   tests (two connected users, assert each context reads only its own data; unconnected and
-   no-acting-user contexts fail closed with actionable messages). Before enabling this in a
-   deployment, the operator either flips `taint_policy.mode` to `enforce` or explicitly waives the
-   requirement.
+   sender classification (including the `read_text_attachment` read-back provenance update); the
+   `require_taint_enforcement` startup check (tools unregistered + surfaced reason when unmet,
+   explicit logged waiver path); policy defaults; per-user isolation tests (two connected users,
+   assert each context reads only its own data; unconnected and no-acting-user contexts fail closed
+   with actionable messages). Before enabling this in a deployment, the operator either flips
+   `taint_policy.mode` to `enforce` or explicitly waives the requirement.
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
    same test posture.
 4. **Docs & prompts** — USER_GUIDE section (connect flow, what the assistant can/can't do, token
