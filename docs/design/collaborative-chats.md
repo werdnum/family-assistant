@@ -245,6 +245,7 @@ membership.
 | `joined_at`          | timezone-aware datetime           | Required                                                        |
 | `left_at`            | timezone-aware datetime, nullable | `NULL` means active member                                      |
 | `added_by_user_id`   | string                            | Canonical member that added this user                           |
+| `membership_version` | UUID                              | Regenerated for each join/re-add; identifies that membership    |
 | `notification_level` | enum/string                       | Initially `all` or `muted`                                      |
 | `last_ack_seq`       | integer, nullable                 | Optional durable notification/read cursor                       |
 
@@ -314,10 +315,14 @@ Add a durable turn table:
 | ----------------------- | ---------------------------------------------------------------- |
 | `id`                    | Server-generated primary key                                     |
 | `client_request_id`     | Nullable client-supplied idempotency key for direct client turns |
+| `client_request_hash`   | Nullable immutable hash of normalized prompt and attachments     |
+| `parent_turn_id`        | Nullable FK to the causal turn for a continuation                |
 | `conversation_id`       | Owning conversation                                              |
 | `initiating_user_id`    | Tool/data/confirmation principal                                 |
 | `status`                | `queued`, `running`, `complete`, `failed`, `cancelled`, `silent` |
 | `processing_profile_id` | Profile selected for this turn                                   |
+| `lease_owner_id`        | Nullable worker identity while running                           |
+| `lease_expires_at`      | Nullable expiry used to recover an abandoned running turn        |
 | timestamps              | Queue/start/end ordering and diagnostics                         |
 
 Today turn state is partly inferred from message rows and partly retained in memory. Collaboration
@@ -420,6 +425,11 @@ the original outcome and never re-adds someone who left after the first request.
 `PATCH .../members/me` accepts `{"notification_level": "all"}` or `{"notification_level": "muted"}`
 and may update only the caller's active membership.
 
+Leaving targets the caller's current `membership_version`, supplied as a request precondition. A
+successful leave invalidates that version. Retrying it is harmless, while retrying an old leave
+after the user has been re-added cannot remove the new membership because its version differs. A
+client must refetch before leaving again from a new membership instance.
+
 ### Message and turn APIs
 
 Existing endpoints remain structurally useful:
@@ -442,6 +452,10 @@ Conversation messages include:
 {
   "internal_id": 123,
   "turn_id": "...",
+  "initiating_member": {
+    "user_id": "andrew@example.com",
+    "label": "Andrew"
+  },
   "role": "user",
   "author": {
     "user_id": "andrew@example.com",
@@ -453,25 +467,34 @@ Conversation messages include:
 }
 ```
 
-Non-human rows return `"author": null`. Clients must not derive the current user from label text;
-the current authenticated canonical user id must be available in session/bootstrap data.
+Non-human rows return `"author": null`, but every row returns the immutable `initiating_member`
+summary joined from its durable turn. This lets a paginated reload attribute or redact assistant,
+tool, confirmation, and system-continuation rows even when the page contains no human message.
+Clients must not derive the current user from label text; the current authenticated canonical user
+id must be available in session/bootstrap data.
 
 ### Stream and activity events
 
 Per-conversation SSE remains the live delivery mechanism. Membership is checked before subscribing.
-The hub may fan out ordinary transcript events to every authorized subscriber because all members
-have the same transcript visibility. Confirmation events are the exception: the shared stream
-contains only a redacted status event with the requester label and turn id. It never contains tool
-arguments, confirmation prompts, policy data, or private results. The requester reacts to that event
-or their targeted push by fetching the existing requester-authorized pending/detail endpoint. This
-keeps the shared hub payload safe without introducing per-subscriber transformation.
+The hub may fan out human and assistant transcript events to every authorized subscriber because all
+members have the same transcript visibility. Raw existing `tool_call` events are not safe for shared
+fan-out because they contain function arguments. Shared tool events contain only a safe display
+name, lifecycle status, requester label, and turn id; they never contain arguments or raw/private
+results. Requester-only details use an authenticated target-user endpoint rather than the shared
+stream.
+
+Confirmation events follow the same rule: the shared stream contains only a redacted status event
+with the requester label and turn id. It never contains tool arguments, confirmation prompts, policy
+data, or private results. The requester reacts to that event or their targeted push by fetching the
+existing requester-authorized pending/detail endpoint. This keeps shared payloads safe without
+requiring subscriber-specific transformation.
 
 Add or standardize these content-free/rich event types:
 
 - `message_committed`: authoritative message id, conversation id, author summary, and turn id;
 - `turn_queued`: turn id and initiating member summary;
 - `turn_started`: turn id and initiating member summary;
-- existing text/tool/attachment events;
+- existing text and attachment events, plus redacted tool lifecycle events only;
 - redacted confirmation status only; requester details come from target-user APIs;
 - `turn_ended`: status including future `silent` completion;
 - `membership_changed`: content-free refetch nudge; and
@@ -496,16 +519,23 @@ parallel would let each model invocation load a different history snapshot, prod
 answers, and invoke conflicting tools. The initial implementation therefore serializes assistant
 turns per conversation.
 
-1. Persist the member message immediately.
-2. Create a turn in `queued` state.
-3. Publish the committed human message to every member.
-4. If no other turn is running, atomically claim the oldest queued turn.
-5. Recheck that the initiating user is still an active member; cancel the turn if not.
-6. Build its LLM context from committed conversation history through that turn's user message.
-7. Run tools with the queued turn's `initiating_user_id`, rechecking membership at every tool and
+1. In one database transaction, persist the member message and its turn in `queued` state. Neither
+   row may exist without the other.
+2. After that transaction commits, publish the committed human message to every member.
+3. If no other turn is running, atomically claim the oldest queued turn and establish a renewable
+   worker lease.
+4. Recheck that the initiating user is still an active member; cancel the turn if not.
+5. Build its LLM context from committed conversation history through that turn's user message.
+6. Run tools with the queued turn's `initiating_user_id`, rechecking membership at every tool and
    confirmation boundary.
-8. Persist and publish the terminal result only while the initiating user remains a member.
-9. Claim the next queued turn.
+7. Persist and publish the terminal result only while the initiating user remains a member.
+8. Release the lease and claim the next queued turn.
+
+Workers renew the running-turn lease while processing. At startup and before claiming queued work,
+the queue service atomically detects expired leases, marks those turns `failed` with an explicit
+abandoned-worker reason, rejects their pending confirmations, and then releases the next queued
+turn. An expired turn is not automatically replayed because its tools may already have produced side
+effects; the requester may submit a new turn after seeing the failure.
 
 Queue order is `(message timestamp, message internal_id)` or an explicit monotonically increasing
 conversation sequence assigned transactionally. Database ordering, not arrival order at an
@@ -525,9 +555,11 @@ recheck and cannot start another tool call.
 
 ### Idempotency
 
-Each submitted turn retains a client-supplied UUID. Retrying the same UUID for the same conversation
-and authenticated user returns the existing turn. Reuse with a different conversation or user
-returns `404` or a conflict without disclosing the existing turn.
+Each submitted turn retains a client-supplied UUID and an immutable hash of the normalized prompt,
+ordered attachment ids, and other execution-affecting request fields. Retrying the same UUID for the
+same conversation and authenticated user with the same hash returns the existing turn. Reusing it
+with a different payload returns `409`; reuse with a different conversation or user returns `404` or
+a conflict without disclosing the existing turn.
 
 ## LLM Context and Author Attribution
 
