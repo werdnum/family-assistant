@@ -422,6 +422,13 @@ tool can exercise — pure credential-theft blast radius for zero functionality 
 disables the integration with a clear startup error. This is coherence validation, not a policy
 knob; when write actions land (future work), the allowlist grows with them.
 
+Tool registration follows the configured scopes, so the LLM is never advertised a tool its
+credentials cannot serve: the `gmail_*` tools register only when `gmail.readonly` is configured;
+`drive_search` registers when `drive.readonly` or `drive.metadata.readonly` is configured;
+`drive_get_file` (content download/export) registers only with `drive.readonly`. A Gmail-only
+deployment therefore exposes exactly the three Gmail tools, and a metadata-only Drive scope yields
+search without fetch.
+
 Integration is enabled only when all of the following hold, validated at startup with a clear error
 naming the unmet condition:
 
