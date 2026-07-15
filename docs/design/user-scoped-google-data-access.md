@@ -87,40 +87,46 @@ Three layers, each independently testable:
 
 New table `user_google_connections` (Alembic migration):
 
-| Column                    | Type              | Notes                                            |
-| ------------------------- | ----------------- | ------------------------------------------------ |
-| `id`                      | int PK            |                                                  |
-| `user_id`                 | string(255)       | canonical user id; unique together with provider |
-| `provider`                | string(64)        | `"google"` in v1                                 |
-| `provider_account_email`  | string(255)       | the Google account that was connected            |
-| `scopes`                  | JSON list[str]    | granted scopes as returned by the token exchange |
-| `refresh_token_encrypted` | text              | Fernet ciphertext, never logged                  |
-| `credential_version`      | int               | incremented on every refresh-token write         |
-| `status`                  | string(32)        | `active` \| `needs_reauth`                       |
-| `created_at`/`updated_at` | datetime          |                                                  |
-| `last_used_at`            | datetime nullable | updated on successful API use                    |
+| Column                    | Type              | Notes                                                                    |
+| ------------------------- | ----------------- | ------------------------------------------------------------------------ |
+| `id`                      | int PK            |                                                                          |
+| `user_id`                 | string(255)       | canonical user id; unique together with provider                         |
+| `provider`                | string(64)        | `"google"` in v1                                                         |
+| `provider_account_email`  | string(255)       | the Google account that was connected                                    |
+| `scopes`                  | JSON list[str]    | granted scopes as returned by the token exchange                         |
+| `refresh_token_encrypted` | text              | Fernet ciphertext, never logged                                          |
+| `credential_generation`   | string(36)        | random UUID; rotated on every credential write **and** status transition |
+| `status`                  | string(32)        | `active` \| `needs_reauth`                                               |
+| `created_at`/`updated_at` | datetime          |                                                                          |
+| `last_used_at`            | datetime nullable | updated on successful API use                                            |
 
-Access tokens are cached **in memory only**, keyed by `(connection_id, credential_version)`, with
-expiry and an asyncio lock per connection. They are never persisted. `credential_version` is bumped
-whenever the stored refresh token changes (reconnect, account switch), so a reconnect to a different
-Google account can never keep serving cached tokens for the previous account. Disconnect and
-`needs_reauth` transitions additionally evict the cache entry eagerly.
+Access tokens are cached **in memory only**, keyed by `(user_id, credential_generation)`, with
+expiry and an asyncio lock per connection. They are never persisted. `credential_generation` is a
+**random UUID**, not a counter, regenerated on every credential write (reconnect, account switch)
+**and** on every status transition. A random value is deliberate: an incrementing version keyed by
+row id is ABA-prone — deleting and recreating a connection can reproduce the same
+`(connection_id, version)` pair (SQLite reuses the highest integer primary key, and a fresh row's
+counter restarts) and would let an in-flight operation validate against the wrong account. A UUID
+minted per mutation can never collide with a superseded one, including across row
+deletion/recreation. Disconnect and `needs_reauth` transitions additionally evict the cache entry
+eagerly.
 
 The per-connection lock serializes **all credential mutations**, not just refreshes: reconnect,
 disconnect, and status changes take the same lock as an in-flight refresh. Every post-refresh step —
 caching the token, returning it to the caller, or marking `needs_reauth` — is additionally
-conditioned on the connection's `credential_version` still matching the version the refresh started
-from (compare-and-set); on a version mismatch the stale operation discards its result and retries
+conditioned on the connection's `credential_generation` still matching the generation the refresh
+started from (compare-and-set); on a mismatch the stale operation discards its result and retries
 against the current credentials. This closes the race where a refresh begun against the old account
 returns a token (or flips status) after the user has reconnected a different account.
 
-The same versioning extends through the API call itself: the resolver hands tools a token **lease**
-carrying the `credential_version` it was issued under, and the `GoogleApiBackend` wrapper
-revalidates the connection's current version against the lease after each REST response before
-surfacing it — a response obtained under a superseded version is discarded and the operation retried
-with fresh credentials (or failed if the connection is gone). Without this, a request in flight
-during a reconnect could still return data from the previous account even though token issuance was
-correctly serialized.
+The same check extends through the API call itself: the resolver hands tools a token **lease**
+carrying the `credential_generation` it was issued under, and the `GoogleApiBackend` wrapper
+revalidates after each REST response — the connection must still exist, its `credential_generation`
+must equal the lease's, **and** its `status` must be `active` — before surfacing the response;
+otherwise the result is discarded and the operation retried with fresh credentials (or failed if the
+connection is gone or needs re-auth). Because status transitions also rotate the generation, an
+authoritative revocation (`invalid_grant` marking `needs_reauth`) fails in-flight requests closed
+rather than letting a near-expiry lease slip its response through.
 
 Repository access follows the existing pattern: `db.google_connections` on `DatabaseContext`,
 returning Pydantic models.
