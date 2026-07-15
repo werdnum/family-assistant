@@ -221,15 +221,16 @@ only after the normal membership check.
 
 Add a first-class conversation table:
 
-| Column                          | Type                    | Constraints / meaning                                                     |
-| ------------------------------- | ----------------------- | ------------------------------------------------------------------------- |
-| `id`                            | string/UUID             | Primary key; server-generated                                             |
-| `title`                         | text                    | Non-empty display title; may initially be generated from the first prompt |
-| `created_by_user_id`            | string                  | Canonical configured user; audit metadata, not an access role             |
-| `default_processing_profile_id` | string, nullable        | Default profile for new turns                                             |
-| `created_at`                    | timezone-aware datetime | Required                                                                  |
-| `updated_at`                    | timezone-aware datetime | Required; bumped on visible activity                                      |
-| `archived_at`                   | datetime, nullable      | Set when the conversation has no members or is archived later             |
+| Column                     | Type                    | Constraints / meaning                                                     |
+| -------------------------- | ----------------------- | ------------------------------------------------------------------------- |
+| `id`                       | string/UUID             | Primary key; server-generated                                             |
+| `title`                    | text                    | Non-empty display title; may initially be generated from the first prompt |
+| `created_by_user_id`       | string                  | Canonical configured user; audit metadata, not an access role             |
+| `creation_idempotency_key` | UUID                    | Unique with `created_by_user_id`; supplied by the creating client         |
+| `processing_profile_id`    | string                  | Required and fixed for the lifetime of the conversation                   |
+| `created_at`               | timezone-aware datetime | Required                                                                  |
+| `updated_at`               | timezone-aware datetime | Required; bumped on visible activity                                      |
+| `archived_at`              | datetime, nullable      | Set when the conversation has no members or is archived later             |
 
 `created_by_user_id` records provenance only. It does not grant permissions beyond an active
 membership.
@@ -266,26 +267,29 @@ This table is operational/audit history and is not used as the primary authoriza
 
 Retain `message_history` as the turn transcript, with these changes:
 
-| Change                                           | Purpose                                                           |
-| ------------------------------------------------ | ----------------------------------------------------------------- |
-| FK `conversation_id -> conversations.id`         | Establish a real web/iOS conversation boundary                    |
-| Rename or redefine `user_id` as `author_user_id` | Make human authorship explicit                                    |
-| Add `author_label` snapshot                      | Stable display and LLM attribution after config label changes     |
-| Keep `interface_type`                            | Origin/diagnostics, not an authorization partition within web/iOS |
-| Add/retain `turn_id`                             | Relate user, assistant, and tool rows to one initiating turn      |
-| Add `client_message_id` where needed             | Idempotent member message submission                              |
+| Change                                            | Purpose                                                           |
+| ------------------------------------------------- | ----------------------------------------------------------------- |
+| Add nullable FK `collaborative_conversation_id`   | Link only migrated/new web/iOS rows to `conversations.id`         |
+| Keep legacy `conversation_id` without a global FK | Preserve Telegram and other interface-specific transcripts        |
+| Rename or redefine `user_id` as `author_user_id`  | Make human authorship explicit                                    |
+| Add `author_label` snapshot                       | Stable display and LLM attribution after config label changes     |
+| Keep `interface_type`                             | Origin/diagnostics, not an authorization partition within web/iOS |
+| Add/retain `turn_id`                              | Relate user, assistant, and tool rows to one initiating turn      |
+| Add `client_message_id` where needed              | Idempotent member message submission                              |
 
 An implementation may keep the physical `user_id` column name to reduce migration risk, but all
 models and repository APIs should call the concept `author_user_id`. Compatibility aliases should
 not be preserved indefinitely; internal callers should migrate together.
 
 Assistant, tool, system, and error rows have no human `author_user_id`. Their initiating principal
-is derived from the turn's user row. If repeated joins make that expensive, add an explicit
-`initiating_user_id` to a future turn table rather than attributing assistant output to a human.
+comes from the mandatory durable `conversation_turns.initiating_user_id`, not from message
+authorship. This matters for scheduled callbacks and delegation wakeups whose trigger is a system
+message rather than a human message. Every turn delivered into a collaborative conversation must
+carry its original canonical user; an ownerless system trigger cannot create such a turn.
 
-### Optional `conversation_turns`
+### `conversation_turns`
 
-The implementation should strongly consider a durable turn table:
+Add a durable turn table:
 
 | Column                  | Purpose                                                          |
 | ----------------------- | ---------------------------------------------------------------- |
@@ -297,9 +301,10 @@ The implementation should strongly consider a durable turn table:
 | timestamps              | Queue/start/end ordering and diagnostics                         |
 
 Today turn state is partly inferred from message rows and partly retained in memory. Collaboration
-introduces a queue and an intentional no-reply terminal state, making durable turn state the cleaner
-long-term model. If the first milestone does not add this table, its message-based substitute must
-still represent queued and intentionally silent terminal turns unambiguously.
+introduces a queue, system-triggered continuations, and an intentional no-reply terminal state, so
+durable turn state is required. `initiating_user_id` is non-null and immutable. Scheduled,
+delegated, and other system-triggered continuations copy the originating turn's user id into their
+own durable turn row before processing begins.
 
 ## Membership Service and Authorization
 
@@ -340,8 +345,11 @@ Client-generated conversation ids are replaced by a server-side creation endpoin
 current empty-conversation rule where any authenticated caller may claim an unused id. Creation and
 initial membership rows commit atomically.
 
-Clients may optimistically allocate a local draft id, but it never becomes an authorization
-identifier. The server returns the durable conversation id before the first turn starts.
+Clients optimistically allocate a local UUID as `creation_idempotency_key`, but it never becomes an
+authorization identifier. Retrying creation with the same
+`(authenticated user, creation_idempotency_key)` and identical request returns the existing
+conversation. Reusing that key with different members, title, or profile returns `409`. The server
+returns the durable conversation id before the first turn starts.
 
 ## API Requirements
 
@@ -350,18 +358,26 @@ Exact URL naming may follow existing conventions, but the API needs these capabi
 ### Conversation management
 
 ```http
+GET  /api/v1/users
 POST /api/v1/chat/conversations
 GET  /api/v1/chat/conversations
 GET  /api/v1/chat/conversations/{conversation_id}
 GET  /api/v1/chat/conversations/{conversation_id}/members
 POST /api/v1/chat/conversations/{conversation_id}/members
+PATCH /api/v1/chat/conversations/{conversation_id}/members/me
 DELETE /api/v1/chat/conversations/{conversation_id}/members/me
 ```
+
+`GET /api/v1/users` is an authenticated directory of configured users for member pickers. It returns
+only canonical `user_id` and configured display `label`; it does not expose OIDC subjects, email
+aliases, Telegram ids, developer flags, or other identity mappings. All configured users, including
+the caller, are returned because any configured user is eligible to be added.
 
 Create request:
 
 ```json
 {
+  "creation_idempotency_key": "6509d912-a6f8-44f5-9c67-c26832be8962",
   "title": "Summer trip",
   "member_user_ids": ["andrew@example.com", "sam@example.com"],
   "profile_id": "trusted"
@@ -370,6 +386,8 @@ Create request:
 
 The server ignores any attempt to omit the authenticated creator and rejects unknown/unconfigured
 user ids. Member addition accepts exactly one configured user per idempotent request.
+`PATCH .../members/me` accepts `{"notification_level": "all"}` or `{"notification_level": "muted"}`
+and may update only the caller's active membership.
 
 ### Message and turn APIs
 
@@ -410,8 +428,12 @@ the current authenticated canonical user id must be available in session/bootstr
 ### Stream and activity events
 
 Per-conversation SSE remains the live delivery mechanism. Membership is checked before subscribing.
-The hub may fan out the same content events to every authorized subscriber because all members have
-the same transcript visibility.
+The hub may fan out ordinary transcript events to every authorized subscriber because all members
+have the same transcript visibility. Confirmation events are the exception: the shared stream
+contains only a redacted status event with the requester label and turn id. It never contains tool
+arguments, confirmation prompts, policy data, or private results. The requester reacts to that event
+or their targeted push by fetching the existing requester-authorized pending/detail endpoint. This
+keeps the shared hub payload safe without introducing per-subscriber transformation.
 
 Add or standardize these content-free/rich event types:
 
@@ -419,7 +441,7 @@ Add or standardize these content-free/rich event types:
 - `turn_queued`: turn id and initiating member summary;
 - `turn_started`: turn id and initiating member summary;
 - existing text/tool/attachment events;
-- redacted or requester-specific confirmation status;
+- redacted confirmation status only; requester details come from target-user APIs;
 - `turn_ended`: status including future `silent` completion;
 - `membership_changed`: content-free refetch nudge; and
 - existing heartbeat/drop control frames.
@@ -447,10 +469,12 @@ turns per conversation.
 2. Create a turn in `queued` state.
 3. Publish the committed human message to every member.
 4. If no other turn is running, atomically claim the oldest queued turn.
-5. Build its LLM context from committed conversation history through that turn's user message.
-6. Run tools with the queued turn's `initiating_user_id`.
-7. Persist and publish the terminal result.
-8. Claim the next queued turn.
+5. Recheck that the initiating user is still an active member; cancel the turn if not.
+6. Build its LLM context from committed conversation history through that turn's user message.
+7. Run tools with the queued turn's `initiating_user_id`, rechecking membership at every tool and
+   confirmation boundary.
+8. Persist and publish the terminal result only while the initiating user remains a member.
+9. Claim the next queued turn.
 
 Queue order is `(message timestamp, message internal_id)` or an explicit monotonically increasing
 conversation sequence assigned transactionally. Database ordering, not arrival order at an
@@ -461,6 +485,12 @@ treated as a steer for the running turn. Explicit steering remains attached to t
 that initiated it; another member cannot cancel or steer someone else's turn in the first release.
 
 The UI shows queued human messages immediately and indicates whose turn the assistant is processing.
+
+Leaving a conversation cancels that user's queued and running turns before the membership change is
+reported as complete. The cancellation path rejects their pending confirmations and prevents any
+later assistant/tool output from being published into the conversation. A model or external call
+already in flight may finish internally, but its result is discarded after the mandatory membership
+recheck and cannot start another tool call.
 
 ### Idempotency
 
@@ -490,10 +520,15 @@ Labels come from trusted application configuration or persisted label snapshots,
 Escaping prevents a label from changing prompt structure. Raw canonical ids should not be exposed to
 the model unless needed for a specific tool contract.
 
-History selection for a web/iOS collaborative conversation is by canonical `conversation_id`,
-processing profile, and subconversation. It must not partition web versus iOS, because those are two
-clients of the same `web` conversation surface. Telegram remains separately partitioned and cannot
-contribute history to a web/iOS conversation.
+History selection for a web/iOS collaborative conversation is by canonical
+`collaborative_conversation_id` and subconversation. It must not partition web versus iOS, because
+those are two clients of the same `web` conversation surface.
+
+A collaborative conversation has one required, immutable `processing_profile_id` selected at
+creation. Every member's turn uses it, and `POST /turns` rejects a conflicting profile id. Switching
+profiles starts a new conversation. This prevents the current profile-partitioned history behavior
+from hiding messages written under another member's profile. Telegram remains separately partitioned
+and cannot contribute history to a web/iOS conversation.
 
 ## Attachments
 
@@ -544,7 +579,7 @@ membership-aware fan-out and per-user acknowledgements.
 - Remove a conversation immediately when the current user's membership ends.
 - Treat a future `turn_ended(status="silent")` as successful completion with no assistant bubble.
 - Preserve resumable streaming, history reconciliation, stop behavior, attachment previews, and
-  profile selection.
+  conversation-level profile display; choosing a different profile starts a new conversation.
 
 ## Native iOS Requirements
 
@@ -613,12 +648,16 @@ For every existing conversation whose user messages resolve to exactly one canon
 
 1. create a `conversations` row using the existing id;
 2. add that canonical user as its active member;
-3. populate `created_by_user_id` with that user;
-4. copy a configured label snapshot onto historical human messages where possible; and
-5. retain timestamps, turn ids, interface types, and attachments unchanged.
+3. populate `created_by_user_id` with that user and assign a one-time migration idempotency key;
+4. set `collaborative_conversation_id` on only that conversation's web/iOS message rows;
+5. create durable turn rows with the initiating user recovered from each turn's user message or
+   existing owner-bearing continuation metadata;
+6. copy a configured label snapshot onto historical human messages where possible; and
+7. retain timestamps, turn ids, interface types, and attachments unchanged.
 
-Legacy owner ids are canonicalized through `UserIdentityResolver`. A row that cannot be resolved to
-a configured user is not silently assigned; migration reports it for operator action.
+Legacy owner ids are canonicalized through `UserIdentityResolver`. A row or system-triggered turn
+whose initiating user cannot be recovered is not silently assigned; migration reports it for
+operator action and leaves it outside the collaborative conversation model.
 
 Existing conversations containing several canonical authors are not automatically imported into
 web/iOS collaboration. They are expected to be Telegram groups or anomalous legacy data and remain
@@ -651,7 +690,11 @@ multi-owner conversations, rolling back application code will fail closed for sh
 09. Full confirmation details never fan out to other members.
 10. Telegram data never enters a web/iOS collaborative conversation.
 11. A missing/ambiguous identity or membership check fails closed.
-12. Membership removal invalidates long-lived delivery and pending authority promptly.
+12. Membership removal cancels that user's queued/running turns, rejects their pending
+    confirmations, and invalidates long-lived delivery before completing.
+13. Shared SSE events never contain requester-only confirmation details.
+14. Every collaborative turn, including a system-triggered continuation, has a durable initiating
+    user.
 
 These invariants should be expressed in service APIs and tests, not only in prompts or client UI.
 
@@ -659,19 +702,22 @@ These invariants should be expressed in service APIs and tests, not only in prom
 
 ### Milestone 1: Conversation foundation
 
-- Add conversation, membership, and membership-audit tables/repositories.
-- Add server-side conversation creation and member management endpoints.
+- Add conversation, membership, membership-audit, and durable turn tables/repositories.
+- Add idempotent server-side conversation creation, configured-user directory, member management,
+  and self notification-preference endpoints.
 - Migrate existing single-user web/iOS histories.
 - Replace message-derived sole-owner checks with centralized membership authorization.
 - Add author metadata to storage and API responses.
+- Fix one immutable processing profile per collaborative conversation.
 - Keep existing one-member web/iOS UX functional.
 
 ### Milestone 2: Safe collaborative turns
 
 - Add deterministic per-conversation turn serialization.
 - Preserve initiating user throughout processing, tools, delegation, and confirmations.
+- Cancel queued/running turns when their initiating user leaves.
 - Add author-aware LLM history and participant/current-speaker prompt context.
-- Add requester-only full confirmation delivery plus redacted member status.
+- Keep requester-only full confirmations off the shared stream and add redacted member status.
 - Add attachment membership authorization.
 - Add backend functional and concurrency coverage.
 
@@ -711,8 +757,12 @@ These invariants should be expressed in service APIs and tests, not only in prom
 ### Storage and migration
 
 - Creating a conversation atomically creates initial memberships.
+- Retrying creation with the same user/key returns one conversation; conflicting reuse returns
+  `409`.
 - Existing one-user conversations migrate to one-member conversations.
 - Ambiguous/unconfigured legacy owners are reported and not assigned.
+- Telegram/other legacy message rows remain valid without a collaborative-conversation FK.
+- Every migrated collaborative turn, including eligible system triggers, has an initiating user.
 - Historical authors retain labels after membership ends or config labels change.
 - Re-add/leave operations produce correct audit events.
 
@@ -722,6 +772,8 @@ These invariants should be expressed in service APIs and tests, not only in prom
 - A non-member gets `404` from every conversation-specific surface.
 - Adding a member grants access immediately.
 - Leaving revokes reads, writes, streams, attachments, activity, and notifications.
+- The authenticated user directory exposes only configured ids and labels.
+- A member can update only their own notification preference.
 - An API token and OIDC/iOS session for the same canonical user see the same memberships.
 - A Telegram identity does not make a Telegram group visible on web/iOS.
 
@@ -733,7 +785,7 @@ These invariants should be expressed in service APIs and tests, not only in prom
 - A confirmation created by A is fully visible and resolvable only by A.
 - B sees at most redacted waiting state and receives authorization errors on direct approval calls.
 - Removing A rejects A's pending confirmations for that conversation.
-- Deferred work retains the originating user's id.
+- Deferred/system-triggered work durably retains the originating user's id.
 
 ### Concurrency
 
@@ -741,8 +793,10 @@ These invariants should be expressed in service APIs and tests, not only in prom
 - The second member's message appears live while the first turn is running.
 - The second prompt is not injected as a steer into the first turn.
 - Stop/steer by a different member is rejected.
+- A member who leaves has queued/running turns cancelled before another tool or result publish.
 - A failed/cancelled/silent first turn releases the next queued turn.
 - Retried client turn ids do not duplicate messages, tools, or replies.
+- Every turn uses the conversation's fixed profile and sees the full shared history.
 
 ### Streaming and notifications
 
@@ -753,6 +807,8 @@ These invariants should be expressed in service APIs and tests, not only in prom
 - One member's acknowledgement does not suppress another member's offline push.
 - The initiating member does not receive a redundant notification for their own human message.
 - Confirmation pushes go only to the requester.
+- Shared conversation SSE exposes only redacted confirmation status; direct requester fetch returns
+  full detail.
 
 ### Web and iOS
 
