@@ -114,6 +114,14 @@ from (compare-and-set); on a version mismatch the stale operation discards its r
 against the current credentials. This closes the race where a refresh begun against the old account
 returns a token (or flips status) after the user has reconnected a different account.
 
+The same versioning extends through the API call itself: the resolver hands tools a token **lease**
+carrying the `credential_version` it was issued under, and the `GoogleApiBackend` wrapper
+revalidates the connection's current version against the lease after each REST response before
+surfacing it — a response obtained under a superseded version is discarded and the operation retried
+with fresh credentials (or failed if the connection is gone). Without this, a request in flight
+during a reconnect could still return data from the previous account even though token issuance was
+correctly serialized.
+
 Repository access follows the existing pattern: `db.google_connections` on `DatabaseContext`,
 returning Pydantic models.
 
@@ -305,9 +313,22 @@ more explicit sources were registered for this call id, they are the result's pr
 static-descriptor source is skipped; for every call with an empty registry — including a Gmail tool
 code path that forgets to classify — the unconditional `unknown_external` static source applies as
 today. Provenance is computed exclusively by first-party connector code from the authentication
-evidence above; it is never derived from LLM-supplied arguments or message content. Tests cover both
-directions: an authenticated known-contact message yields `known_contact`, and a result whose
-classification path is skipped still taints the turn as `unknown_external`.
+evidence above; it is never derived from LLM-supplied arguments or message content.
+
+**Aggregate results register exactly one source for the whole invocation**, never per-item sources:
+a `gmail_search` result containing many messages registers a single source whose tier is the
+**maximum (least trusted) tier across every returned item**, computed by folding from a starting
+value of `unknown_external` downward only when *all* items carry authenticated lower-tier
+classifications — any item that cannot be classified holds the aggregate at `unknown_external`. This
+closes the partial-classification hole where one authenticated message in a mixed result would
+suppress the static fallback and let unknown senders inherit the lower tier. Single-item tools
+(`gmail_get_message`, `gmail_get_attachment`, `drive_get_file`) are the degenerate case of the same
+rule.
+
+Tests cover all three directions: an authenticated known-contact message yields `known_contact`; a
+mixed search result (one authenticated known contact + one unknown sender) yields
+`unknown_external`; and a result whose classification path is skipped still taints the turn as
+`unknown_external`.
 
 **Taint enforcement interaction.** The taint matrix only blocks anything when `taint_policy.mode` is
 `enforce`; the shipped default is `observe`, which converts confirm/deny outcomes to audit events.
