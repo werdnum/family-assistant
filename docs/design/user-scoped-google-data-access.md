@@ -422,11 +422,19 @@ tool can exercise — pure credential-theft blast radius for zero functionality 
 disables the integration with a clear startup error. This is coherence validation, not a policy
 knob; when write actions land (future work), the allowlist grows with them.
 
-Integration is enabled only when client id, secret, and encryption key are all present, the `scopes`
-list passes allowlist validation, **and** web session support is configured (`SESSION_SECRET_KEY`):
-the app installs `SessionMiddleware` only when that key is present, and the OAuth flow stores its
-state nonce and initiating user in the server-side session. A configured-but-sessionless deployment
-disables the integration with a clear startup error rather than failing at authorize time.
+Integration is enabled only when all of the following hold, validated at startup with a clear error
+naming the unmet condition:
+
+- client id, secret, and encryption key are present;
+- the `scopes` list passes allowlist validation;
+- web session support is configured (`SESSION_SECRET_KEY`) — the app installs `SessionMiddleware`
+  only when that key is present, and the OAuth flow stores its state nonce and initiating user in
+  the server-side session;
+- **real web authentication is enabled and resolving canonical identities** (OIDC configured and
+  active, `users` block resolution in effect). The app's unauthenticated development mode serves a
+  synthetic `test_user` from `get_current_user()` without authenticating the request; in that mode
+  any caller could connect or read a Google account under the shared identity, so the integration
+  must refuse to enable. Session middleware alone is not authentication.
 
 ## Milestones
 
