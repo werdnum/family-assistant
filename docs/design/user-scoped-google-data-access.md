@@ -254,27 +254,35 @@ evidence above; it is never derived from LLM-supplied arguments or message conte
 directions: an authenticated known-contact message yields `known_contact`, and a result whose
 classification path is skipped still taints the turn as `unknown_external`.
 
-**Enforcement precondition.** The taint matrix only blocks anything when `taint_policy.mode` is
+**Taint enforcement interaction.** The taint matrix only blocks anything when `taint_policy.mode` is
 `enforce`; the shipped default is `observe`, which converts confirm/deny outcomes to audit events.
 Observe mode is not containment: an interactive profile keeps all of its existing communication and
 state-changing tools, so a prompt-injected email could drive them — read-only Google scopes
-constrain only the Google tools themselves, not the rest of the profile. Therefore the Google data
-tools are registered **only when the effective taint policy is enforcing**, validated at startup:
+constrain only the Google tools themselves, not the rest of the profile.
 
-- `taint_policy.mode` must be `enforce`, and
-- the effective matrix (defaults + overrides + `operator_minimum`) must yield at least `confirm` at
-  the `unknown_external` tier for the sink classes `arbitrary_external_message`,
-  `attacker_addressable_egress`, `sandbox_network`, and `sensitive_read_broadening`.
+Whether that residual risk is acceptable is an **operator decision**, not one this feature makes
+unilaterally. The security posture of this deployment is already operator-owned end to end
+(`tools_policy`, `operator_minimum`, taint mode itself), and hard-coupling Gmail/Drive to enforce
+mode would also undercut the taint design's own observe-first rollout strategy. So the design is
+safe by default and overridable explicitly:
 
-If the integration is configured but these conditions fail, the tools are not registered, a startup
-error-log entry states why, and the integration status endpoint reports the unmet precondition.
-There is no partial fallback. For the production deployment this means flipping taint enforcement on
-(per the runtime taint design's rollout plan) is a prerequisite to shipping Milestone 2, not a
-nice-to-have.
+- `google_integration.require_taint_enforcement` (default `true`). With the default, startup
+  validates that `taint_policy.mode` is `enforce` and that the effective matrix (defaults +
+  overrides + `operator_minimum`) yields at least `confirm` at the `unknown_external` tier for the
+  sink classes `arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`, and
+  `sensitive_read_broadening`. If the check fails, the Google tools are not registered, a startup
+  error-log entry states why, and the integration status endpoint reports the unmet condition.
+- An operator who accepts the tradeoff (e.g. single-user deployment, taint rollout still in observe
+  mode, willing to rely on read-only scopes + profile policy + confirmations) sets
+  `require_taint_enforcement: false`. The tools then register regardless of taint mode; the choice
+  is logged at startup and shown on the integration status endpoint so it is a visible, deliberate
+  risk acceptance rather than a silent default.
 
-With that precondition, the turn's taint state does its job: after a Gmail read, the matrix gates
+With enforcement on, the turn's taint state does its job: after a Gmail read, the matrix gates
 attacker-addressable egress and sensitive-read broadening with real confirm/deny outcomes, and
-graduated tiers keep authenticated household mail low-friction.
+graduated tiers keep authenticated household mail low-friction. Observe mode still gets the full
+audit trail and provenance, which is exactly what the observe-first rollout needs to tune the matrix
+before flipping to enforce.
 
 #### Tool policy defaults
 
@@ -294,11 +302,15 @@ In `defaults.yaml`:
 - `default_assistant` is [BC] today (sensitive data + state/communication), anchored on
   authenticated users. These tools introduce \[A\]: mailbox and Drive content is
   attacker-addressable. The composition is made safe not by pretending mail is trusted but by:
-  1. **Enforced runtime taint (hard precondition)** — the tools do not register unless
-     `taint_policy.mode` is `enforce` and the matrix floor above holds, so after a Gmail/Drive read
-     the profile's existing communication and state-changing tools are actually gated
-     (confirm/deny), not merely audited. This is what prevents the [BC] profile from becoming an
-     un-gated [ABC] agent.
+  1. **Enforced runtime taint (default-on requirement)** — by default the tools do not register
+     unless `taint_policy.mode` is `enforce` and the matrix floor above holds, so after a
+     Gmail/Drive read the profile's existing communication and state-changing tools are actually
+     gated (confirm/deny), not merely audited. This is what prevents the [BC] profile from becoming
+     an un-gated [ABC] agent. An operator can explicitly waive this requirement
+     (`require_taint_enforcement: false`) and accept the residual prompt-injection exposure — that
+     waiver is a deliberate, logged deployment decision with the remaining mitigations below still
+     in place, consistent with the operator owning the security posture everywhere else in the
+     config.
   2. **Read-only scopes** — the OAuth grant itself cannot send mail or write files, so the Google
      tools add no egress capability of their own.
   3. **Profile policy** — ambient profiles that already process untrusted triggers cannot also read
@@ -325,6 +337,10 @@ google_integration:
   scopes:                    # operator-tunable DATA scopes; v1 defaults
     - "https://www.googleapis.com/auth/gmail.readonly"
     - "https://www.googleapis.com/auth/drive.readonly"
+  # Require taint_policy.mode=enforce (plus the matrix floor) before registering
+  # the Gmail/Drive tools. Set false to accept running them under observe mode;
+  # the waiver is logged and shown on the integration status endpoint.
+  require_taint_enforcement: true
 ```
 
 The identity scopes `openid` and `email` are **not** part of the operator-tunable `scopes` list: the
@@ -343,11 +359,12 @@ Each lands independently with tests and passes `poe test`.
    can connect/disconnect and the row round-trips encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
    `GoogleApiBackend`; the atomic `record_tool_result_taint` runtime extension with authenticated
-   sender classification; the taint-enforcement startup precondition (tools unregistered + surfaced
-   reason when unmet); policy defaults; per-user isolation tests (two connected users, assert each
-   context reads only its own data; unconnected and no-acting-user contexts fail closed with
-   actionable messages). Shipping this milestone to production requires the deployment to run
-   `taint_policy.mode: "enforce"`.
+   sender classification; the `require_taint_enforcement` startup check (tools unregistered +
+   surfaced reason when unmet, explicit logged waiver path); policy defaults; per-user isolation
+   tests (two connected users, assert each context reads only its own data; unconnected and
+   no-acting-user contexts fail closed with actionable messages). Before enabling this in a
+   deployment, the operator either flips `taint_policy.mode` to `enforce` or explicitly waives the
+   requirement.
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
    same test posture.
 4. **Docs & prompts** — USER_GUIDE section (connect flow, what the assistant can/can't do, token
