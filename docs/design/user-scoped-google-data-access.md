@@ -363,8 +363,8 @@ google_integration:
   oauth_client_id: ""        # env GOOGLE_OAUTH_CLIENT_ID
   oauth_client_secret: ""    # env GOOGLE_OAUTH_CLIENT_SECRET (secret, redacted)
   credential_encryption_key: ""  # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
-  scopes:                    # operator-tunable DATA scopes; v1 defaults
-    - "https://www.googleapis.com/auth/gmail.readonly"
+  scopes:                    # operator-tunable DATA scopes; subset of the supported
+    - "https://www.googleapis.com/auth/gmail.readonly"   # read-only allowlist below
     - "https://www.googleapis.com/auth/drive.readonly"
   # Require taint_policy.mode=enforce (plus the matrix floor) before registering
   # the Gmail/Drive tools. Set false to accept running them under observe mode;
@@ -376,7 +376,19 @@ The identity scopes `openid` and `email` are **not** part of the operator-tunabl
 authorize endpoint always appends them in code, so the callback reliably receives an ID token
 identifying the connected account regardless of operator configuration.
 
-Integration is enabled only when client id, secret, and encryption key are all present.
+`scopes` is validated at startup against the allowlist of scopes the shipped tools can actually use
+— in v1: `gmail.readonly`, `drive.readonly`, and `drive.metadata.readonly`. The field exists to
+*narrow* the grant (e.g. Gmail-only, no Drive), not to broaden it: a write-capable scope such as
+`gmail.send`, `gmail.modify`, or full `drive` would add power to the stored refresh token that no v1
+tool can exercise — pure credential-theft blast radius for zero functionality — so an unlisted scope
+disables the integration with a clear startup error. This is coherence validation, not a policy
+knob; when write actions land (future work), the allowlist grows with them.
+
+Integration is enabled only when client id, secret, and encryption key are all present, the `scopes`
+list passes allowlist validation, **and** web session support is configured (`SESSION_SECRET_KEY`):
+the app installs `SessionMiddleware` only when that key is present, and the OAuth flow stores its
+state nonce and initiating user in the server-side session. A configured-but-sessionless deployment
+disables the integration with a clear startup error rather than failing at authorize time.
 
 ## Milestones
 
