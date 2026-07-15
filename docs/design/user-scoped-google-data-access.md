@@ -119,8 +119,13 @@ as a direct dependency). The key comes from a new `CREDENTIAL_ENCRYPTION_KEY` en
 
 - Key unset → the Google integration is disabled: connect endpoints return a clear error, tools are
   not registered. Fail closed, no plaintext fallback.
-- Key present but a stored token fails to decrypt (rotated/wrong key) → mark the connection
-  `needs_reauth` and surface an actionable error; never crash the turn pipeline.
+- Key present but a stored token fails to decrypt → surface an actionable **configuration** error
+  ("credential decryption failed — check `CREDENTIAL_ENCRYPTION_KEY`") without mutating the
+  connection row; never crash the turn pipeline. Fernet cannot distinguish a wrong deployment key
+  from corrupt ciphertext, so a transient key typo or partially rolled-out secret must not durably
+  invalidate otherwise-valid connections — restoring the correct key restores service with no user
+  action. `needs_reauth` is reserved for authoritative signals from Google (`invalid_grant` on
+  refresh), where re-consent genuinely is the only fix.
 - Future key rotation via `MultiFernet` (accept-old/encrypt-new) is noted but not built in v1.
 
 #### OAuth flow (web only)
@@ -329,8 +334,8 @@ design's matrix through a side-door registration check:
   household actuation (e.g. a hostile email inducing a device action). Operators with
   high-consequence actuators (locks, garage doors, alarms) should raise `home_local` at
   `unknown_external` to `confirm` via `taint_policy.matrix_overrides` / `operator_minimum` — the
-  user guide documentation in Milestone 4 calls this out explicitly alongside the Gmail/Drive setup
-  instructions.
+  user guide documentation shipped with Milestone 2 calls this out explicitly alongside the Gmail
+  setup instructions.
 
 This keeps the guarantee statement accurate: the default floor prevents un-confirmed exfiltration
 and read-broadening after unknown-external Google content enters a turn; authenticated allowlisted
@@ -425,25 +430,31 @@ disables the integration with a clear startup error rather than failing at autho
 
 ## Milestones
 
-Each lands independently with tests and passes `poe test`.
+Each lands independently with tests and passes `poe test`. Per the repository rule that user-visible
+features ship with their documentation, every milestone that exposes a surface includes its
+USER_GUIDE and prompt updates in the same PR — there is no trailing docs milestone.
 
 1. **Connection infrastructure** — config models, migration, repository, Fernet encryption helper,
    OAuth endpoints with a fake Google token/userinfo server in functional web tests, settings UI
-   section, `GoogleCredentialResolver` with refresh + `needs_reauth` handling. Deliverable: a user
-   can connect/disconnect and the row round-trips encrypted.
+   section, `GoogleCredentialResolver` with refresh + `needs_reauth` handling. Docs in the same PR:
+   USER_GUIDE "Connect your Google account" section (flow, disconnect, test-mode 7-day token expiry)
+   and AGENTS.md env var documentation (`GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`,
+   `CREDENTIAL_ENCRYPTION_KEY`). Deliverable: a user can connect/disconnect and the row round-trips
+   encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
    `GoogleApiBackend`; the atomic `record_tool_result_taint` runtime extension with authenticated
    sender classification (including the `read_text_attachment` read-back provenance update); the
    `require_taint_enforcement` startup check (tools unregistered + surfaced reason when unmet,
    explicit logged waiver path); policy defaults; per-user isolation tests (two connected users,
    assert each context reads only its own data; unconnected and no-acting-user contexts fail closed
-   with actionable messages). Before enabling this in a deployment, the operator either flips
+   with actionable messages). Docs in the same PR: USER_GUIDE Gmail section (what the assistant
+   can/can't do, the operator security notes incl. the `home_local` override callout) and
+   `prompts.yaml` system-prompt guidance (tools act as the requesting user; suggest connecting when
+   not connected). Before enabling this in a deployment, the operator either flips
    `taint_policy.mode` to `enforce` or explicitly waives the requirement.
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
-   same test posture.
-4. **Docs & prompts** — USER_GUIDE section (connect flow, what the assistant can/can't do, token
-   expiry in test-mode deployments), system prompt guidance in `prompts.yaml` (tools act as the
-   requesting user; suggest connecting when not connected), AGENTS.md env var documentation.
+   same test posture. Docs in the same PR: USER_GUIDE Drive section and the matching `prompts.yaml`
+   additions.
 
 ## Future Work
 
