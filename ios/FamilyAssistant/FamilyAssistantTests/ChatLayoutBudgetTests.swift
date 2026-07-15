@@ -326,6 +326,21 @@ final class ChatLayoutBudgetTests: XCTestCase {
         )
     }
 
+    func testStickyBottomScrollDoesNotFollowWhenLifecycleGateDenies() {
+        let harness = hostStickyScroll(gate: true, canFollow: false)
+        defer { harness.teardown() }
+        harness.waitUntil { self.isAtBottom(harness.scrollView) }
+
+        harness.scrollToTop()
+        XCTAssertFalse(isAtBottom(harness.scrollView), "precondition: scroll-to-top did not take effect")
+
+        harness.change(follow: 1)
+        XCTAssertFalse(
+            isAtBottom(harness.scrollView),
+            "A passive arrival while backgrounded must not start a layout-driving follow scroll."
+        )
+    }
+
     func testStickyBottomScrollForceFollowScrollsEvenWhenGateWouldDeny() {
         // A user-initiated force (e.g. sending a message) must scroll to the
         // bottom even when the near-bottom gate would deny — the local-send case
@@ -502,12 +517,13 @@ final class ChatLayoutBudgetTests: XCTestCase {
         }
     }
 
-    private func hostStickyScroll(gate: Bool) -> StickyScrollHarness {
+    private func hostStickyScroll(gate: Bool, canFollow: Bool = true) -> StickyScrollHarness {
         let makeRoot: (Int, Int, String) -> StickyBottomScroll<AnyView> = { followToken, forceToken, tailText in
             StickyBottomScroll(
                 followTrigger: AnyHashable(followToken),
                 forceFollowTrigger: AnyHashable(forceToken),
-                shouldFollow: { _ in gate }
+                shouldFollow: { _ in gate },
+                canFollow: { canFollow }
             ) {
                 AnyView(
                     VStack(spacing: 14) {
