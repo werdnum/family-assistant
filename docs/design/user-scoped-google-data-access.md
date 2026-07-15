@@ -219,6 +219,9 @@ Deliberate properties:
 - Refresh failures with `invalid_grant` (revoked/expired) flip the connection to `needs_reauth` and
   notify the owning user through the existing user-scoped notification path, so the user learns
   immediately rather than at their next request.
+- A `401` from a Google API call (token revoked before its cached expiry) evicts the cached access
+  token and retries the request once through the resolver; if the forced refresh then fails with
+  `invalid_grant`, the `needs_reauth` path above fires immediately instead of after cache expiry.
 
 ### 3. Tools
 
@@ -259,18 +262,21 @@ Implementation notes:
   `public, max-age=31536000, immutable` — otherwise a shared cache could hand user A's file to user
   B without ever reaching the ownership check. Attachments without `owner_user_id` (uploads, legacy,
   non-personal tool output) behave exactly as today, so this is additive and backward-compatible. To
-  make enforcement unavoidable rather than per-consumer, the registry read/delete APIs become
-  **actor-bound**: `acting_user_id: str | None` is a required (non-defaulted) parameter on
-  `get_attachment` / content / delete. Passing `None` is valid and means "no user context" — it can
-  read only ownerless attachments; on an owned attachment it fails. This is deliberately a breaking
-  signature change: the type checker enumerates every existing consumer (`jq_query`,
-  `execute_script`, `attach_to_response`, notes flows, chat delivery, HTTP routes, …), and each one
-  must state where its actor comes from — `exec_context.user_id` for tool paths, the session user
-  for HTTP routes, and a new `on_behalf_of_user_id` threaded through the attachment-delivery APIs
-  (`ChatInterface` send paths read attachments by ID alone today, with neither an execution context
-  nor an HTTP session; without the parameter, strict enforcement would break sending a Gmail
-  attachment back to its own requester, while a blanket exemption would reopen the bypass). Per the
-  no-backwards-compatibility rule, there is no actorless shim.
+  make enforcement unavoidable rather than per-consumer, **every public registry accessor and
+  mutator becomes actor-bound**: `acting_user_id: str | None` is a required (non-defaulted)
+  parameter on singular reads (`get_attachment` / content / metadata), deletes, **and list/bulk
+  queries** (`get_attachments`, `list_attachments`, `get_recent_attachments_for_conversation`, …),
+  where it acts as a filter — owned rows appear only for a matching actor. Passing `None` is valid
+  and means "no user context": it can see only ownerless attachments; on an owned attachment a
+  singular access fails. Row-level helpers that bypass the check become private to the registry.
+  This is deliberately a breaking signature change: the type checker enumerates every existing
+  consumer (`jq_query`, `execute_script`, `attach_to_response`, notes flows, chat delivery, HTTP
+  routes, …), and each one must state where its actor comes from — `exec_context.user_id` for tool
+  paths, the session user for HTTP routes, and a new `on_behalf_of_user_id` threaded through the
+  attachment-delivery APIs (`ChatInterface` send paths read attachments by ID alone today, with
+  neither an execution context nor an HTTP session; without the parameter, strict enforcement would
+  break sending a Gmail attachment back to its own requester, while a blanket exemption would reopen
+  the bypass). Per the no-backwards-compatibility rule, there is no actorless shim.
 
 #### Taint
 
