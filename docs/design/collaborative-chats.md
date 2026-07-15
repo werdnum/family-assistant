@@ -1,0 +1,802 @@
+# Collaborative Chats
+
+## Status
+
+Product requirements approved; implementation not started.
+
+## Summary
+
+Family Assistant will support conversations containing multiple authenticated application users on
+the web and native iOS chat surfaces. A conversation has a binary access model: a user is either a
+member or a non-member. Every member may read the conversation and send prompts and attachments.
+
+Every accepted member message is delivered to the assistant. The assistant may eventually choose to
+finish a turn without posting a reply through a separate `end_turn_without_reply` tool. That tool is
+a related future feature, not part of this design's implementation scope.
+
+Each assistant turn runs with the identity and permissions of the member who submitted the prompt:
+
+- data access is scoped to the prompting user;
+- state-changing tools execute as the prompting user;
+- confirmation requests are addressed only to the prompting user; and
+- another conversation member cannot approve or reject that user's request.
+
+Telegram group conversations remain a separate surface. Making a Telegram conversation visible in,
+or synchronized with, web or iOS is explicitly out of scope. There are no channel bindings, mirrored
+messages, or cross-channel conversation identifiers in this design.
+
+## Problem
+
+The existing chat model assumes a conversation has exactly one canonical owner. Ownership is not a
+stored conversation property; it is inferred from the distinct `user_id` values on user messages.
+The web API then requires the caller to be the sole canonical owner. A conversation with more than
+one author, including a Telegram group, is omitted from the conversation list and returns `404` from
+the read, write, stream, and acknowledgement APIs.
+
+That invariant made the in-memory stream hub safe without subscriber-level filtering, but it also
+prevents intentional collaboration. Removing the sole-owner check alone would not be sufficient:
+
+- there is no conversation or membership record;
+- an invited user cannot be authorized until after posting, but cannot post until authorized;
+- API and client message models do not identify the human author;
+- LLM history does not distinguish messages written by different people;
+- notifications resolve one owner from recent history;
+- activity events are routed to one exact user id;
+- attachment access assumes a single user or existing conversation owner;
+- confirmation ownership and turn-control behavior are not expressed as collaborative invariants;
+- concurrent member prompts can load inconsistent history and produce replies out of order; and
+- web/iOS and Telegram histories are partitioned by `interface_type`, so sharing a raw
+  `conversation_id` would not create a coherent cross-channel conversation anyway.
+
+Collaborative chat therefore needs a first-class conversation and membership model rather than an
+authorization exception around the existing message-derived ownership rule.
+
+## Confirmed Product Requirements
+
+### Authentication and eligibility
+
+- Web and iOS participants must be authenticated.
+- A participant must resolve to a canonical user in the configured top-level `users` list.
+- API tokens remain eligible only when their owner resolves to a configured canonical user.
+- There are no anonymous users, guest links, public invite links, or email-only invitees.
+- A Telegram participant must resolve through `users[].telegram.user_ids`; an update from an unknown
+  Telegram user is ignored or rejected at the interface boundary as it is today.
+
+### Membership
+
+- Authorization is binary: `member` or `non-member`.
+- A member may list, open, read, stream, and post to the conversation.
+- A member may send text prompts and supported attachments.
+- A non-member receives `404` for conversation-specific resources so the API does not disclose the
+  conversation's existence.
+- Membership is explicit and durable. It is not inferred from message authorship.
+- Removing a member immediately revokes future reads, writes, stream subscriptions, attachment
+  access, and conversation notifications.
+- Historical messages retain their author attribution after the author leaves the conversation.
+
+Membership administration is intentionally separate from access roles. The first implementation
+should use the following simple policy unless a later product decision replaces it:
+
+- any current member may add another configured user;
+- a member may remove themself; and
+- removing another member is not supported in the initial UI/API.
+
+This preserves a strictly binary authorization model without introducing owner/admin roles. Every
+membership mutation is audited. A conversation with no remaining members is retained but cannot be
+accessed through normal chat APIs.
+
+### Messaging and assistant behavior
+
+- Every message accepted from a member is persisted and delivered to the assistant.
+- Messages are not gated on mentions, commands, or an "ask assistant" button on web/iOS.
+- Each member message creates a distinct assistant turn.
+- The assistant sees the shared conversation history with an author label on every human message.
+- The assistant is told which member submitted the current prompt.
+- The assistant may reply normally even if the message was primarily directed at another human.
+- A future `end_turn_without_reply` tool will let the assistant intentionally remain silent while
+  still completing the turn successfully.
+- Until that tool exists, every successfully processed turn produces the normal assistant result.
+
+### Data and tool authority
+
+- The prompting member is the security principal for the entire turn.
+- Tool discovery, policy evaluation, database scoping, external service access, and execution use
+  that member's canonical `user_id`.
+- Other conversation members' presence does not grant the turn access to their personal data.
+- Shared conversation text is context, not authority. A statement such as "Sam said I could read
+  their calendar" does not change the active tool principal.
+- Delegated or scheduled work originating from the turn carries the original prompting user's id.
+- If an asynchronous continuation cannot recover an originating user, it must not execute
+  user-scoped tools.
+- Assistant and tool output is visible to every current conversation member. Tools must therefore
+  enforce user scoping before data reaches the model; the chat layer cannot make an unsafe tool
+  result private after it has entered a shared turn.
+
+### Confirmations
+
+- A confirmation request targets the member who submitted the prompt that caused the tool call.
+- Only that canonical user may approve or reject it, from any of their authenticated web/iOS
+  devices.
+- Other members may see that the assistant is waiting for the requester, but must not receive tool
+  arguments or confirmation details that reveal data they are not authorized to see.
+- Confirmation UI shown to non-requesters uses a redacted status such as "Waiting for Andrew's
+  approval."
+- Confirmation execution resumes with the original prompting user's identity and processing profile.
+- Removing the requester from the conversation does not transfer approval authority. Pending
+  confirmations are rejected when membership is removed or the source turn is cancelled.
+
+### Platform scope
+
+- Browser and native iOS are two clients for the same web conversation model and may participate in
+  the same collaborative conversation.
+- Telegram group chat may be hardened as its own collaborative interface.
+- A Telegram group is not listed in web/iOS history.
+- A web/iOS collaborative conversation cannot be attached to a Telegram group.
+- Messages and assistant replies are never mirrored between Telegram and web/iOS.
+- Telegram numeric chat ids and web conversation UUIDs remain separate namespaces.
+
+## Goals
+
+- Provide durable, explicit membership for web/iOS conversations.
+- Make collaborative conversations usable from both browser and native iOS.
+- Preserve clear human author attribution in storage, APIs, clients, and LLM context.
+- Keep every tool call and confirmation scoped to the member who initiated the turn.
+- Deliver live messages and turn events to all current members.
+- Fan out notifications to conversation members according to per-user preferences.
+- Define deterministic behavior when multiple members send prompts close together.
+- Preserve current single-user chat behavior as a one-member conversation.
+- Establish a safe foundation for separately hardening Telegram group conversations.
+
+## Non-Goals
+
+- Bridging, mirroring, importing, or synchronizing Telegram with web/iOS conversations.
+- Anonymous or unauthenticated participation.
+- Public invite links or bearer-style conversation share tokens.
+- Owner, administrator, moderator, viewer, or read-only roles.
+- Private messages inside a shared conversation.
+- Per-message visibility rules.
+- Sharing one member's personal tool credentials or personal data with another member.
+- Multi-party approvals.
+- End-to-end encryption beyond the application's existing transport and storage protections.
+- Presence indicators, typing indicators, reactions, edits, deletion, read receipts, or mentions in
+  the first implementation.
+- Implementing `end_turn_without_reply`; this design only defines the chat contract it will need.
+- Replacing the single-process in-memory stream hub with a distributed broker.
+
+## User Experience
+
+### Conversation creation
+
+An authenticated configured user starts a new conversation and chooses one or more configured users
+as initial members. The creator is always included. The server creates the conversation and all
+initial membership rows atomically, then returns the conversation summary.
+
+A new one-person conversation uses the same model. "Private chat" is simply a conversation with one
+member rather than a separate conversation type.
+
+### Conversation list
+
+The web sidebar and iOS conversation list show only conversations where the caller has an active
+membership. A summary includes:
+
+- conversation id;
+- title;
+- latest visible message preview and timestamp;
+- message count;
+- member summaries; and
+- whether a turn is running or waiting for the caller's approval.
+
+The UI may render a compact participant label, for example "Andrew, Sam + 1," but must not infer
+membership from message authors.
+
+### Conversation thread
+
+Human messages show the configured user label and a deterministic avatar/initial. The current user's
+messages may retain the existing visual alignment, while messages from other members must be
+visually distinguishable. Author identity must also be available to assistive technology and not
+communicated by color alone.
+
+Assistant messages remain attributed to Family Assistant. Tool cards identify the requesting member
+when relevant. A member who cannot resolve a confirmation sees only redacted waiting/resolved state.
+
+### Membership changes
+
+The initial member picker lists configured users only. A current member may later add another
+configured user. A member can leave a conversation after an explicit confirmation. Membership
+changes appear promptly on every connected client through a content-free activity event followed by
+an authoritative refetch.
+
+### Notifications
+
+When a human posts, notify other members according to their preferences; do not notify the author on
+their own devices. When the assistant completes a turn, notify members who did not acknowledge the
+completion on an active stream. Confirmation notifications go only to the requesting member.
+
+Notification bodies must avoid including sensitive tool arguments. Deep links open the conversation
+only after the normal membership check.
+
+## Data Model
+
+### `conversations`
+
+Add a first-class conversation table:
+
+| Column                          | Type                    | Constraints / meaning                                                     |
+| ------------------------------- | ----------------------- | ------------------------------------------------------------------------- |
+| `id`                            | string/UUID             | Primary key; server-generated                                             |
+| `title`                         | text                    | Non-empty display title; may initially be generated from the first prompt |
+| `created_by_user_id`            | string                  | Canonical configured user; audit metadata, not an access role             |
+| `default_processing_profile_id` | string, nullable        | Default profile for new turns                                             |
+| `created_at`                    | timezone-aware datetime | Required                                                                  |
+| `updated_at`                    | timezone-aware datetime | Required; bumped on visible activity                                      |
+| `archived_at`                   | datetime, nullable      | Set when the conversation has no members or is archived later             |
+
+`created_by_user_id` records provenance only. It does not grant permissions beyond an active
+membership.
+
+### `conversation_members`
+
+| Column               | Type                              | Constraints / meaning                                           |
+| -------------------- | --------------------------------- | --------------------------------------------------------------- |
+| `conversation_id`    | FK                                | Part of composite primary key; cascade on conversation deletion |
+| `user_id`            | string                            | Part of composite primary key; canonical configured user        |
+| `joined_at`          | timezone-aware datetime           | Required                                                        |
+| `left_at`            | timezone-aware datetime, nullable | `NULL` means active member                                      |
+| `added_by_user_id`   | string                            | Canonical member that added this user                           |
+| `notification_level` | enum/string                       | Initially `all` or `muted`                                      |
+| `last_ack_seq`       | integer, nullable                 | Optional durable notification/read cursor                       |
+
+Re-adding a former member clears `left_at` and records a new audited membership event. Repository
+queries expose active membership through one shared predicate rather than open-coding
+`left_at IS NULL` throughout the application.
+
+### `conversation_membership_events`
+
+Append-only audit records capture:
+
+- conversation id;
+- affected user id;
+- action (`added`, `left`, `removed_by_system`);
+- acting user id when applicable; and
+- timestamp.
+
+This table is operational/audit history and is not used as the primary authorization source.
+
+### `message_history` changes
+
+Retain `message_history` as the turn transcript, with these changes:
+
+| Change                                           | Purpose                                                           |
+| ------------------------------------------------ | ----------------------------------------------------------------- |
+| FK `conversation_id -> conversations.id`         | Establish a real web/iOS conversation boundary                    |
+| Rename or redefine `user_id` as `author_user_id` | Make human authorship explicit                                    |
+| Add `author_label` snapshot                      | Stable display and LLM attribution after config label changes     |
+| Keep `interface_type`                            | Origin/diagnostics, not an authorization partition within web/iOS |
+| Add/retain `turn_id`                             | Relate user, assistant, and tool rows to one initiating turn      |
+| Add `client_message_id` where needed             | Idempotent member message submission                              |
+
+An implementation may keep the physical `user_id` column name to reduce migration risk, but all
+models and repository APIs should call the concept `author_user_id`. Compatibility aliases should
+not be preserved indefinitely; internal callers should migrate together.
+
+Assistant, tool, system, and error rows have no human `author_user_id`. Their initiating principal
+is derived from the turn's user row. If repeated joins make that expensive, add an explicit
+`initiating_user_id` to a future turn table rather than attributing assistant output to a human.
+
+### Optional `conversation_turns`
+
+The implementation should strongly consider a durable turn table:
+
+| Column                  | Purpose                                                          |
+| ----------------------- | ---------------------------------------------------------------- |
+| `id`                    | Client-supplied idempotency key                                  |
+| `conversation_id`       | Owning conversation                                              |
+| `initiating_user_id`    | Tool/data/confirmation principal                                 |
+| `status`                | `queued`, `running`, `complete`, `failed`, `cancelled`, `silent` |
+| `processing_profile_id` | Profile selected for this turn                                   |
+| timestamps              | Queue/start/end ordering and diagnostics                         |
+
+Today turn state is partly inferred from message rows and partly retained in memory. Collaboration
+introduces a queue and an intentional no-reply terminal state, making durable turn state the cleaner
+long-term model. If the first milestone does not add this table, its message-based substitute must
+still represent queued and intentionally silent terminal turns unambiguously.
+
+## Membership Service and Authorization
+
+Introduce a single service/repository boundary used by all chat features:
+
+```python
+await conversation_access.require_member(conversation_id, user_id)
+await conversation_access.is_member(conversation_id, user_id)
+await conversation_access.list_member_ids(conversation_id)
+await conversation_access.add_member(conversation_id, acting_user_id, new_user_id)
+await conversation_access.leave(conversation_id, user_id)
+```
+
+`require_member` returns the authoritative conversation/member context or raises the same `404` used
+for missing conversations. Do not scatter membership SQL across routers and services.
+
+Membership checks are required for:
+
+- conversation summaries and search;
+- full and paginated message history;
+- creating, stopping, steering, and resuming turns;
+- SSE subscribe and acknowledgement;
+- activity-stream fan-out;
+- attachment upload, claim, read, preview, and delete;
+- pending confirmation status displayed in a conversation;
+- voice-session append/create behavior;
+- scheduled/delegated completions delivered into the conversation;
+- notification deep links; and
+- member listing and mutation.
+
+The caller must remain a member for the duration of long-lived delivery. When membership is removed,
+the backend should disconnect that user's conversation stream promptly. Every subsequent reconnect
+or history fetch rechecks durable membership.
+
+### Conversation creation
+
+Client-generated conversation ids are replaced by a server-side creation endpoint. This avoids the
+current empty-conversation rule where any authenticated caller may claim an unused id. Creation and
+initial membership rows commit atomically.
+
+Clients may optimistically allocate a local draft id, but it never becomes an authorization
+identifier. The server returns the durable conversation id before the first turn starts.
+
+## API Requirements
+
+Exact URL naming may follow existing conventions, but the API needs these capabilities.
+
+### Conversation management
+
+```http
+POST /api/v1/chat/conversations
+GET  /api/v1/chat/conversations
+GET  /api/v1/chat/conversations/{conversation_id}
+GET  /api/v1/chat/conversations/{conversation_id}/members
+POST /api/v1/chat/conversations/{conversation_id}/members
+DELETE /api/v1/chat/conversations/{conversation_id}/members/me
+```
+
+Create request:
+
+```json
+{
+  "title": "Summer trip",
+  "member_user_ids": ["andrew@example.com", "sam@example.com"],
+  "profile_id": "trusted"
+}
+```
+
+The server ignores any attempt to omit the authenticated creator and rejects unknown/unconfigured
+user ids. Member addition accepts exactly one configured user per idempotent request.
+
+### Message and turn APIs
+
+Existing endpoints remain structurally useful:
+
+```http
+POST /api/v1/chat/turns
+GET  /api/v1/chat/conversations/{conversation_id}/messages
+GET  /api/v1/chat/conversations/{conversation_id}/stream
+POST /api/v1/chat/ack
+POST /api/v1/chat/turns/{turn_id}/cancel
+POST /api/v1/chat/turns/{turn_id}/steer
+```
+
+They change from sole-owner authorization to membership authorization. `POST /turns` derives
+`initiating_user_id` exclusively from the authenticated principal, never from request JSON.
+
+Conversation messages include:
+
+```json
+{
+  "internal_id": 123,
+  "turn_id": "...",
+  "role": "user",
+  "author": {
+    "user_id": "andrew@example.com",
+    "label": "Andrew"
+  },
+  "content": "Can everyone do the 18th?",
+  "timestamp": "...",
+  "attachments": []
+}
+```
+
+Non-human rows return `"author": null`. Clients must not derive the current user from label text;
+the current authenticated canonical user id must be available in session/bootstrap data.
+
+### Stream and activity events
+
+Per-conversation SSE remains the live delivery mechanism. Membership is checked before subscribing.
+The hub may fan out the same content events to every authorized subscriber because all members have
+the same transcript visibility.
+
+Add or standardize these content-free/rich event types:
+
+- `message_committed`: authoritative message id, conversation id, author summary, and turn id;
+- `turn_queued`: turn id and initiating member summary;
+- `turn_started`: turn id and initiating member summary;
+- existing text/tool/attachment events;
+- redacted or requester-specific confirmation status;
+- `turn_ended`: status including future `silent` completion;
+- `membership_changed`: content-free refetch nudge; and
+- existing heartbeat/drop control frames.
+
+The activity stream must subscribe by canonical user and publish to every active member rather than
+to one inferred owner. It remains advisory: clients refetch the membership-filtered list.
+
+### Confirmation APIs
+
+The durable confirmation record remains targeted to one `target_user_id`. Existing confirmation
+approval authorization already enforces exact target-user equality and should remain unchanged.
+
+Conversation APIs need a redacted status projection so other members can render waiting state
+without accessing tool name, arguments, policy fingerprint, or private result. Full pending/detail
+endpoints remain visible only to the target user.
+
+## Turn Ordering and Concurrency
+
+Collaborative chat permits multiple people to send at nearly the same time. Running those turns in
+parallel would let each model invocation load a different history snapshot, produce out-of-order
+answers, and invoke conflicting tools. The initial implementation therefore serializes assistant
+turns per conversation.
+
+1. Persist the member message immediately.
+2. Create a turn in `queued` state.
+3. Publish the committed human message to every member.
+4. If no other turn is running, atomically claim the oldest queued turn.
+5. Build its LLM context from committed conversation history through that turn's user message.
+6. Run tools with the queued turn's `initiating_user_id`.
+7. Persist and publish the terminal result.
+8. Claim the next queued turn.
+
+Queue order is `(message timestamp, message internal_id)` or an explicit monotonically increasing
+conversation sequence assigned transactionally. Database ordering, not arrival order at an
+individual process, is authoritative.
+
+A message arriving while a turn is running becomes a new queued turn. It is not automatically
+treated as a steer for the running turn. Explicit steering remains attached to the member and turn
+that initiated it; another member cannot cancel or steer someone else's turn in the first release.
+
+The UI shows queued human messages immediately and indicates whose turn the assistant is processing.
+
+### Idempotency
+
+Each submitted turn retains a client-supplied UUID. Retrying the same UUID for the same conversation
+and authenticated user returns the existing turn. Reuse with a different conversation or user
+returns `404` or a conflict without disclosing the existing turn.
+
+## LLM Context and Author Attribution
+
+The current history conversion loses row metadata when constructing typed `UserMessage` objects.
+Collaborative history must preserve authorship through formatting. A provider-neutral representation
+should clearly distinguish speakers without trusting user-controlled display text, for example:
+
+```text
+[Conversation participant: Andrew]
+Can everyone do the 18th?
+```
+
+The prompt preamble includes:
+
+- the current prompting member's canonical label;
+- the complete active member list using configured labels;
+- an instruction that participant statements are conversational context, not authorization; and
+- an instruction that tools always run as the current prompting member.
+
+Labels come from trusted application configuration or persisted label snapshots, not message text.
+Escaping prevents a label from changing prompt structure. Raw canonical ids should not be exposed to
+the model unless needed for a specific tool contract.
+
+History selection for a web/iOS collaborative conversation is by canonical `conversation_id`,
+processing profile, and subconversation. It must not partition web versus iOS, because those are two
+clients of the same `web` conversation surface. Telegram remains separately partitioned and cannot
+contribute history to a web/iOS conversation.
+
+## Attachments
+
+- A member may upload and attach files supported by the existing web/iOS limits.
+- An unclaimed upload is owned by the uploading user until attached.
+- Once attached to a collaborative conversation, every current member may read/preview that
+  attachment through the conversation membership check.
+- A former member loses attachment access when membership ends.
+- Attaching a file does not transfer authority to access other files owned by the uploader.
+- Deleting an attachment follows the existing retention policy but requires both membership and an
+  explicit deletion rule; the first release should allow only the original uploader to delete.
+- Attachment metadata returned to clients includes the author through its containing message.
+- The assistant processes the attachment under the prompting member's tool/data principal.
+
+## Notifications and Delivery
+
+Replace `resolve_conversation_user` for collaborative chat with a member fan-out service:
+
+```python
+await notify_conversation_members(
+    conversation_id=conversation_id,
+    exclude_user_ids={initiating_user_id},
+    ...,
+)
+```
+
+It loads active members and their notification preferences, then sends through Web Push and APNs.
+Confirmation notifications bypass member fan-out and target only the confirmation's user.
+
+Disconnect-push suppression can no longer be a single `TurnRecord.delivered` boolean: one member's
+acknowledgement must not suppress another member's notification. Delivery/ack state must be tracked
+per `(turn_id, user_id)` or compared with a durable per-member conversation cursor.
+
+The in-memory implementation remains acceptable for the current single-worker deployment. The data
+and API model should not assume it is permanent; a future shared broker must be able to reproduce
+membership-aware fan-out and per-user acknowledgements.
+
+## Web Client Requirements
+
+- Create a conversation before starting its first turn.
+- Add a configured-user member picker to new-chat creation.
+- Display member summaries in the sidebar/header.
+- Render human author label/avatar on every user message.
+- Show queued/running member attribution.
+- Apply live human messages from other members or refetch on `message_committed`.
+- Add member-list, add-member, leave-conversation, and notification controls.
+- Hide full confirmation detail/actions from non-requesters while showing redacted status.
+- Remove a conversation immediately when the current user's membership ends.
+- Treat a future `turn_ended(status="silent")` as successful completion with no assistant bubble.
+- Preserve resumable streaming, history reconciliation, stop behavior, attachment previews, and
+  profile selection.
+
+## Native iOS Requirements
+
+Native iOS uses the same APIs and semantics as web:
+
+- add conversation, member, author, queue, and redacted-confirmation models;
+- create the server conversation before the first send;
+- add configured-user member selection and conversation membership screens;
+- render attributed human messages accessibly;
+- update the conversation list from membership-aware activity events;
+- refresh/remove open conversations when membership changes;
+- fan out APNs deep links through the normal membership authorization path;
+- preserve background/foreground stream resume and push acknowledgement; and
+- treat future silent terminal turns as success rather than an interrupted/missing reply.
+
+Browser and iOS remain interchangeable clients for the same canonical user and conversation.
+
+## Telegram Group Requirements
+
+Telegram collaboration is independent of web/iOS collaboration. The existing bot handler accepts
+group messages without an explicit private-chat filter, but the behavior needs hardening before it
+is documented as supported.
+
+- Resolve and authorize the actual sender of every update through configured Telegram identities.
+- Use the Telegram chat id as the Telegram-only conversation boundary.
+- Never expose that conversation through web/iOS APIs.
+- Ensure batching cannot combine messages from different human authors into one prompt attributed to
+  the last sender. Batch keys must include sender or batches must flush on author change.
+- Serialize assistant work per Telegram chat using the same queue semantics, preserving each
+  message's initiating user.
+- A member message that arrives during another member's turn creates a queued turn rather than a
+  cross-user steer.
+- Only the initiating member may interrupt, steer, approve, or reject their turn.
+- Preserve Telegram reply/thread metadata and author labels in LLM context.
+- Every authorized message received by the bot is delivered to the assistant. Telegram Bot privacy
+  mode still controls which group messages Telegram delivers to the bot; the application cannot
+  process updates it never receives.
+- A future `end_turn_without_reply` result posts no Telegram message but records a successful
+  terminal turn.
+
+No Telegram work in this design introduces a channel binding, shared conversation id, mirrored
+message, or web/iOS visibility.
+
+## `end_turn_without_reply` Integration Contract
+
+The separate tool design must satisfy these collaborative-chat invariants:
+
+- it is available only during an assistant turn;
+- invoking it ends the current turn successfully and stops further model/tool iterations;
+- it does not send an assistant message to web, iOS, or Telegram;
+- it persists an unambiguous durable terminal state (`silent` or equivalent);
+- SSE emits `turn_ended` with that terminal state;
+- clients remove loading/queued indicators without showing an error or an empty bubble;
+- history reconciliation does not classify the turn as incomplete;
+- the next queued turn proceeds normally; and
+- diagnostics retain who initiated the turn and why it ended without a reply, without exposing
+  hidden reasoning to users.
+
+Until this contract is implemented, collaborative turns must use existing terminal reply behavior.
+
+## Migration
+
+### Existing web/iOS conversations
+
+For every existing conversation whose user messages resolve to exactly one canonical user:
+
+1. create a `conversations` row using the existing id;
+2. add that canonical user as its active member;
+3. populate `created_by_user_id` with that user;
+4. copy a configured label snapshot onto historical human messages where possible; and
+5. retain timestamps, turn ids, interface types, and attachments unchanged.
+
+Legacy owner ids are canonicalized through `UserIdentityResolver`. A row that cannot be resolved to
+a configured user is not silently assigned; migration reports it for operator action.
+
+Existing conversations containing several canonical authors are not automatically imported into
+web/iOS collaboration. They are expected to be Telegram groups or anomalous legacy data and remain
+outside web/iOS listing until explicitly handled. This prevents the migration from turning an
+accidental id collision into data sharing.
+
+### New writes during rollout
+
+Prefer a maintenance migration or a single coordinated deployment over a long dual-write period.
+Internal code has no backward-compatibility requirement: once the new repositories are active,
+conversation authorization must use membership everywhere and the sole-owner path should be deleted.
+
+### Rollback
+
+The database migration must preserve existing message rows. A rollback may stop exposing
+collaborative conversations, but must not delete their transcript. Because old code refuses
+multi-owner conversations, rolling back application code will fail closed for shared conversations.
+
+## Security Invariants
+
+01. Authentication establishes a canonical configured user before any chat operation.
+02. Membership authorizes transcript visibility; message authorship never grants membership.
+03. Non-members receive `404`, including for attachments and live streams.
+04. A turn's initiating user is derived from authentication and is immutable.
+05. Tool and data access use only that initiating user.
+06. Confirmations target and may be resolved only by that initiating user.
+07. Shared transcript text cannot change identity, membership, tool principal, or approval
+    authority.
+08. Member fan-out never includes former or non-members.
+09. Full confirmation details never fan out to other members.
+10. Telegram data never enters a web/iOS collaborative conversation.
+11. A missing/ambiguous identity or membership check fails closed.
+12. Membership removal invalidates long-lived delivery and pending authority promptly.
+
+These invariants should be expressed in service APIs and tests, not only in prompts or client UI.
+
+## Implementation Milestones
+
+### Milestone 1: Conversation foundation
+
+- Add conversation, membership, and membership-audit tables/repositories.
+- Add server-side conversation creation and member management endpoints.
+- Migrate existing single-user web/iOS histories.
+- Replace message-derived sole-owner checks with centralized membership authorization.
+- Add author metadata to storage and API responses.
+- Keep existing one-member web/iOS UX functional.
+
+### Milestone 2: Safe collaborative turns
+
+- Add deterministic per-conversation turn serialization.
+- Preserve initiating user throughout processing, tools, delegation, and confirmations.
+- Add author-aware LLM history and participant/current-speaker prompt context.
+- Add requester-only full confirmation delivery plus redacted member status.
+- Add attachment membership authorization.
+- Add backend functional and concurrency coverage.
+
+### Milestone 3: Web collaboration UX
+
+- Add member selection, member list, add, and leave flows.
+- Render author identity and queued/running member state.
+- Make per-conversation and activity SSE membership-aware.
+- Implement per-member notification delivery/acknowledgement.
+- Add two-user/two-browser functional tests.
+- Update `docs/user/USER_GUIDE.md`, relevant tool descriptions, and system prompts as required for
+  the user-visible feature.
+
+### Milestone 4: Native iOS parity
+
+- Extend models, API client, view model, and SwiftUI screens.
+- Add member and author UI.
+- Add membership-aware live updates, APNs behavior, and deep-link handling.
+- Add unit and UI tests for two authenticated users.
+- Update the native app documentation and user guide.
+
+### Milestone 5: Telegram group hardening
+
+- Fix author-safe batching and per-user turn controls.
+- Serialize group turns while retaining the initiating user.
+- Add attributed LLM context and requester-only confirmation behavior.
+- Test Telegram privacy-mode expectations and multiple authorized senders.
+- Document Telegram groups as a separate collaboration surface.
+
+### Separate feature: silent turn completion
+
+- Design and implement `end_turn_without_reply` against the integration contract above.
+- Add backend, web, iOS, and Telegram tests for intentional no-reply completion.
+
+## Testing Requirements
+
+### Storage and migration
+
+- Creating a conversation atomically creates initial memberships.
+- Existing one-user conversations migrate to one-member conversations.
+- Ambiguous/unconfigured legacy owners are reported and not assigned.
+- Historical authors retain labels after membership ends or config labels change.
+- Re-add/leave operations produce correct audit events.
+
+### Authorization
+
+- A member can list, read, post, stream, acknowledge, and access conversation attachments.
+- A non-member gets `404` from every conversation-specific surface.
+- Adding a member grants access immediately.
+- Leaving revokes reads, writes, streams, attachments, activity, and notifications.
+- An API token and OIDC/iOS session for the same canonical user see the same memberships.
+- A Telegram identity does not make a Telegram group visible on web/iOS.
+
+### Tool and confirmation isolation
+
+- A prompt from user A executes tools with user A's id even when user B is a member.
+- A prompt from user B executes the same tool with user B's id.
+- Shared history containing instructions from B cannot change A's tool principal.
+- A confirmation created by A is fully visible and resolvable only by A.
+- B sees at most redacted waiting state and receives authorization errors on direct approval calls.
+- Removing A rejects A's pending confirmations for that conversation.
+- Deferred work retains the originating user's id.
+
+### Concurrency
+
+- Near-simultaneous prompts are persisted once and processed in deterministic order.
+- The second member's message appears live while the first turn is running.
+- The second prompt is not injected as a steer into the first turn.
+- Stop/steer by a different member is rejected.
+- A failed/cancelled/silent first turn releases the next queued turn.
+- Retried client turn ids do not duplicate messages, tools, or replies.
+
+### Streaming and notifications
+
+- Two authenticated members receive committed messages and turn events live.
+- A non-member cannot subscribe by guessing a conversation id.
+- Leaving disconnects or invalidates an existing stream.
+- Activity pings reach all active members and no non-members.
+- One member's acknowledgement does not suppress another member's offline push.
+- The initiating member does not receive a redundant notification for their own human message.
+- Confirmation pushes go only to the requester.
+
+### Web and iOS
+
+- Conversation creation with multiple configured members works end to end.
+- Each client renders current-user and other-member messages with correct attribution.
+- New members see existing history after joining.
+- Former members lose the open conversation without leaking subsequent content.
+- Attachments uploaded by either member render for all active members.
+- Redacted confirmations never expose tool arguments to other members.
+- Browser and iOS clients can participate concurrently in the same conversation.
+
+### Telegram
+
+- Two configured Telegram users in one group are attributed separately.
+- Rapid messages by different users never merge under one author.
+- Turns execute serially with their original sender's identity.
+- One sender cannot interrupt, steer, or approve another sender's turn.
+- Telegram group history remains absent from web/iOS lists and APIs.
+
+## Acceptance Criteria
+
+The feature is complete when:
+
+- two configured, authenticated users can join one web/iOS conversation;
+- both can send text and attachments and see each other's messages live;
+- every human message is delivered to the assistant in deterministic order;
+- the assistant can distinguish participants and the current prompting member;
+- each turn can access only the prompting user's data and tools;
+- only the prompting user receives and resolves full confirmations;
+- non-members cannot discover or access the conversation or attachments;
+- notifications and stream acknowledgements operate independently per member;
+- existing one-user browser/iOS chats continue to work after migration;
+- Telegram group collaboration is tested as a separate surface; and
+- no Telegram message or conversation is bridged into web/iOS.
+
+## Relevant Existing Components
+
+- `src/family_assistant/web/routers/chat_api.py`: current sole-owner authorization and chat APIs.
+- `src/family_assistant/web/conversation_stream_hub.py`: conversation and activity SSE.
+- `src/family_assistant/storage/message_history.py` and repository: transcript and inferred owners.
+- `src/family_assistant/services/user_identity.py`: canonical user resolution.
+- `src/family_assistant/services/confirmation_service.py`: requester-targeted durable approvals.
+- `src/family_assistant/services/notification_targets.py`: current single-owner notification lookup.
+- `src/family_assistant/processing/service.py`: history, prompt construction, and turn setup.
+- `frontend/src/chat/`: browser chat client.
+- `ios/FamilyAssistant/FamilyAssistant/Chat/`: native iOS chat client.
+- `src/family_assistant/telegram/`: Telegram updates, batching, delivery, and confirmation UI.
