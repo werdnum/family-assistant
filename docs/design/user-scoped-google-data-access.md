@@ -95,12 +95,17 @@ New table `user_google_connections` (Alembic migration):
 | `provider_account_email`  | string(255)       | the Google account that was connected            |
 | `scopes`                  | JSON list[str]    | granted scopes as returned by the token exchange |
 | `refresh_token_encrypted` | text              | Fernet ciphertext, never logged                  |
+| `credential_version`      | int               | incremented on every refresh-token write         |
 | `status`                  | string(32)        | `active` \| `needs_reauth`                       |
 | `created_at`/`updated_at` | datetime          |                                                  |
 | `last_used_at`            | datetime nullable | updated on successful API use                    |
 
-Access tokens are cached **in memory only** (per-process dict keyed by connection id, with expiry
-and an asyncio lock per connection to serialize refreshes). They are never persisted.
+Access tokens are cached **in memory only**, keyed by `(connection_id, credential_version)`, with
+expiry and an asyncio lock per connection to serialize refreshes. They are never persisted.
+`credential_version` is bumped whenever the stored refresh token changes (reconnect, account
+switch), so a reconnect to a different Google account can never keep serving cached tokens for the
+previous account. Disconnect and `needs_reauth` transitions additionally evict the cache entry
+eagerly.
 
 Repository access follows the existing pattern: `db.google_connections` on `DatabaseContext`,
 returning Pydantic models.
@@ -127,8 +132,10 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
   status; never tokens).
 - `GET /api/integrations/google/authorize` — starts the authorization-code flow. Generates a random
   nonce, stores `{nonce, user_id}` server-side (session), redirects to Google's consent screen with
-  `state=nonce`, `access_type=offline`, `prompt=consent`, and the configured scopes (v1 default:
-  `gmail.readonly`, `drive.readonly`, plus `openid email` to identify the account).
+  `state=nonce`, `access_type=offline`, `prompt=consent`, and the requested scopes: the configured
+  data scopes (v1 default: `gmail.readonly`, `drive.readonly`) plus `openid` and `email`, which are
+  always appended in code — not operator-configurable — so the callback can identify the connected
+  account.
 - `GET /api/integrations/google/callback` — validates `state` against the stored nonce **and** that
   the session's canonical user matches the user who initiated the flow, exchanges the code
   (server-side, client secret from `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`), fetches
@@ -205,17 +212,38 @@ Implementation notes:
 
 #### Taint provenance
 
-All five tools are tagged `OUTPUT_UNTRUSTED` and emit per-result provenance metadata
-(`source_trust_tier`, consumed by `tools/taint_helpers.py` / `derive_tool_result_taint_source`):
+All five tools are tagged `OUTPUT_UNTRUSTED`. Statically, that means the runtime records an
+`unknown_external` taint source for every result — the correct fail-safe default. Graduated tiers
+are layered on top as follows.
 
-- Gmail: sender classified against the configured `users` block and their
-  `email_intake.sender_addresses` → `known_contact` for configured household/known senders,
-  `unknown_external` otherwise. This mirrors how email intake already thinks about senders; refined
-  sender classification (e.g. `recognized_machine` for authenticated bulk mail) can improve later
-  without changing the interface.
-- Drive: `unknown_external` unless the file is owned by the connected account itself, which maps to
-  `known_contact` (a user's own stored file is not the same as direct authenticated input — it may
-  contain pasted or shared content).
+**Classification.** Tier reduction below `unknown_external` requires the same evidence contract as
+inbound email intake (`email_intake/taint.py::email_initial_taint_source`): the sender must match
+the existing `email_intake.known_contact_sender_addresses` / `recognized_machine_sender_addresses`
+allowlists **and** sender authentication must pass. A bare `From` header match is never sufficient —
+`From` is attacker-controlled. For Gmail-fetched messages, authentication evidence comes from the
+`Authentication-Results` header that Gmail's own delivery pipeline stamps on received mail: the
+classifier parses only the topmost `Authentication-Results` instance with authserv-id
+`mx.google.com` (receivers strip inbound headers claiming their own authserv-id per RFC 8601, and
+taking only the topmost instance is a second defensive layer) and requires `dmarc=pass`, mirroring
+`email_authentication_passed`. Any parse failure, missing header (e.g. self-sent mail in the Sent
+folder), or non-pass result classifies as `unknown_external`. Drive results are always
+`unknown_external` in v1 — Drive has no equivalent authentication evidence, and file ownership
+metadata does not establish who authored the content.
+
+**Runtime path.** The current runtime cannot honor per-result tiers on a statically tagged tool:
+`_record_result_taint` derives its source from the static descriptor alone, and the
+`OUTPUT_UNTRUSTED` tag adds an `unknown_external` source unconditionally, which dominates any lower
+tier under the max rule. Milestone 2 therefore includes a small, general runtime extension: a tool
+implementation may record explicit per-result taint sources during execution (as
+`merge_artifact_taint_into_context` already does for stored artifacts) and mark the call as
+provenance-recorded via a new explicit signal on the execution context (e.g.
+`exec_context.mark_result_taint_recorded(call_id)`). `_record_result_taint` skips the
+static-descriptor source only for calls carrying that mark; every other `OUTPUT_UNTRUSTED` tool —
+including a Gmail tool code path that forgets to classify — still gets the unconditional
+`unknown_external` source. Provenance is computed exclusively by first-party connector code from the
+authentication evidence above; it is never derived from LLM-supplied arguments or message content.
+Tests cover both directions: an authenticated known-contact message yields `known_contact`, and a
+result whose classification path is skipped still taints the turn as `unknown_external`.
 
 The turn's taint state then does its job: after a Gmail read, attacker-addressable egress sinks and
 sensitive-read broadening are gated by the configured taint matrix. Where the matrix is still in
@@ -265,10 +293,14 @@ google_integration:
   oauth_client_id: ""        # env GOOGLE_OAUTH_CLIENT_ID
   oauth_client_secret: ""    # env GOOGLE_OAUTH_CLIENT_SECRET (secret, redacted)
   credential_encryption_key: ""  # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
-  scopes:                    # operator-tunable; v1 defaults
+  scopes:                    # operator-tunable DATA scopes; v1 defaults
     - "https://www.googleapis.com/auth/gmail.readonly"
     - "https://www.googleapis.com/auth/drive.readonly"
 ```
+
+The identity scopes `openid` and `email` are **not** part of the operator-tunable `scopes` list: the
+authorize endpoint always appends them in code, so the callback reliably receives an ID token
+identifying the connected account regardless of operator configuration.
 
 Integration is enabled only when client id, secret, and encryption key are all present.
 
@@ -281,9 +313,10 @@ Each lands independently with tests and passes `poe test`.
    section, `GoogleCredentialResolver` with refresh + `needs_reauth` handling. Deliverable: a user
    can connect/disconnect and the row round-trips encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
-   `GoogleApiBackend`; taint provenance; policy defaults; per-user isolation tests (two connected
-   users, assert each context reads only its own data; unconnected and no-acting-user contexts fail
-   closed with actionable messages).
+   `GoogleApiBackend`; the per-result taint runtime extension (`mark_result_taint_recorded` +
+   `_record_result_taint` skip logic) with authenticated sender classification; policy defaults;
+   per-user isolation tests (two connected users, assert each context reads only its own data;
+   unconnected and no-acting-user contexts fail closed with actionable messages).
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
    same test posture.
 4. **Docs & prompts** — USER_GUIDE section (connect flow, what the assistant can/can't do, token
