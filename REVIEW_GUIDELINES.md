@@ -90,6 +90,31 @@ fallback: the review comment should demand a specific justification (what failur
 wrong answer better than an exception, how will the caller know degradation occurred) and block the
 change until that justification exists in the code or commit message.
 
+## Proportionality and Accepted Trade-offs
+
+Review demands must be proportionate to the scenario they protect. Sensible scenarios must have good
+behavior; obscure scenarios need *reasonable* behavior, not ideal behavior. This applies with
+special force to design-document reviews and to findings about races, TOCTOU windows, and exotic
+misuse — the categories where iterative review most easily accretes machinery whose complexity is
+not justified by the scenarios it perfects.
+
+- **Weigh exposure before demanding machinery.** Ask who can actually observe the bad outcome. A
+  race in which a user can only affect their own data through their own actions (e.g. racing their
+  own reconnect of an account) does not justify leases, drain barriers, or generation fencing. A
+  cross-user or attacker-facing hole does — flag those regardless of how narrow the window is.
+- **Machinery vs. a sentence.** When the honest resolution is to document an accepted residual
+  behavior, prefer requiring that documentation over requiring new synchronization, classification,
+  or plumbing. A *silent* gap is a finding; a documented, reasoned acceptance is not.
+- **Respect documented deliberate simplifications.** If the change (or its design doc) explicitly
+  records an accepted trade-off with rationale — for example a "Deliberate simplifications" section
+  — do not re-flag it as a defect. Comment only if the stated rationale is factually wrong (e.g. the
+  exposure is claimed to be self-only but actually crosses users).
+- **Operator sovereignty over security trade-offs.** This deployment's security posture is
+  operator-owned (`tools_policy`, `operator_minimum`, taint policy mode). Prefer safe-by-default
+  with an explicit, logged operator override to unconditional gates; do not demand that a feature
+  hard-refuse configurations an informed operator may legitimately choose. Do flag *silent* insecure
+  defaults — the difference is whether the operator made a visible, deliberate choice.
+
 ## Severity Levels
 
 ### BREAKS_BUILD
@@ -632,7 +657,8 @@ The reviewer should **NOT** focus on:
   to be backwards-compatible with (e.g. changing a hash format where the commit message tells you
   that the hash has never been persisted).
 - Do NOT make blocking comments for issues that have been explicitly acknowledged in the commit
-  message or where a TODO has been left. Advise, don't block.
+  message, the design doc (e.g. a "Deliberate simplifications" section), or where a TODO has been
+  left. Advise, don't block. See "Proportionality and Accepted Trade-offs" above.
 - Do NOT correct library usage based on your knowledge - your information might be outdated. Library
   APIs evolve over time and the code may be using newer APIs that you're not aware of. That's what
   type checking and tests are for. Only flag library usage if you can demonstrate it's objectively
