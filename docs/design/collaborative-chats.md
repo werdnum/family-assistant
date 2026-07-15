@@ -227,6 +227,7 @@ Add a first-class conversation table:
 | `title`                    | text                    | Non-empty display title; may initially be generated from the first prompt |
 | `created_by_user_id`       | string                  | Canonical configured user; audit metadata, not an access role             |
 | `creation_idempotency_key` | UUID                    | Unique with `created_by_user_id`; supplied by the creating client         |
+| `creation_request_hash`    | string                  | Immutable hash of the normalized original create payload                  |
 | `processing_profile_id`    | string                  | Required and fixed for the lifetime of the conversation                   |
 | `created_at`               | timezone-aware datetime | Required                                                                  |
 | `updated_at`               | timezone-aware datetime | Required; bumped on visible activity                                      |
@@ -250,6 +251,24 @@ membership.
 Re-adding a former member clears `left_at` and records a new audited membership event. Repository
 queries expose active membership through one shared predicate rather than open-coding
 `left_at IS NULL` throughout the application.
+
+### `conversation_membership_mutations`
+
+Persist member-add request outcomes so a lost response can be retried without unintentionally
+rejoining a user who subsequently left:
+
+| Column               | Purpose                                                                    |
+| -------------------- | -------------------------------------------------------------------------- |
+| `conversation_id`    | Owning conversation                                                        |
+| `acting_user_id`     | Authenticated member that submitted the mutation                           |
+| `idempotency_key`    | Client-supplied UUID; unique with conversation and acting user             |
+| `request_hash`       | Immutable hash of the normalized target user and operation                 |
+| `resulting_event_id` | Durable reference to the membership event produced by the original request |
+| `created_at`         | Timestamp for retention and diagnostics                                    |
+
+An identical retry returns the original result without changing current membership. Reusing a key
+with a different target or operation returns `409`, even if conversation membership has changed
+since the original request.
 
 ### `conversation_membership_events`
 
@@ -293,7 +312,8 @@ Add a durable turn table:
 
 | Column                  | Purpose                                                          |
 | ----------------------- | ---------------------------------------------------------------- |
-| `id`                    | Client-supplied idempotency key                                  |
+| `id`                    | Server-generated primary key                                     |
+| `client_request_id`     | Nullable client-supplied idempotency key for direct client turns |
 | `conversation_id`       | Owning conversation                                              |
 | `initiating_user_id`    | Tool/data/confirmation principal                                 |
 | `status`                | `queued`, `running`, `complete`, `failed`, `cancelled`, `silent` |
@@ -304,7 +324,9 @@ Today turn state is partly inferred from message rows and partly retained in mem
 introduces a queue, system-triggered continuations, and an intentional no-reply terminal state, so
 durable turn state is required. `initiating_user_id` is non-null and immutable. Scheduled,
 delegated, and other system-triggered continuations copy the originating turn's user id into their
-own durable turn row before processing begins.
+own durable turn row before processing begins. The server generates `id` for every turn. Direct
+client submissions additionally require `client_request_id`, unique within the conversation;
+scheduled or delegated continuations leave it `NULL` and retain their causal parent turn id.
 
 ## Membership Service and Authorization
 
@@ -348,8 +370,11 @@ initial membership rows commit atomically.
 Clients optimistically allocate a local UUID as `creation_idempotency_key`, but it never becomes an
 authorization identifier. Retrying creation with the same
 `(authenticated user, creation_idempotency_key)` and identical request returns the existing
-conversation. Reusing that key with different members, title, or profile returns `409`. The server
-returns the durable conversation id before the first turn starts.
+conversation. Before the original transaction commits, the server normalizes the title, sorted
+member ids, and profile id and stores their immutable request hash. Retries compare against that
+stored hash rather than mutable conversation or membership rows. Reusing the key with a different
+original payload returns `409`, even if the title or membership changed later. The server returns
+the durable conversation id before the first turn starts.
 
 ## API Requirements
 
@@ -385,7 +410,13 @@ Create request:
 ```
 
 The server ignores any attempt to omit the authenticated creator and rejects unknown/unconfigured
-user ids. Member addition accepts exactly one configured user per idempotent request.
+user ids. It also rejects an unknown profile, a profile that is disabled, or a profile restricted to
+delegation/remote invocation rather than direct chat. It must not apply the current turn endpoint's
+unknown-profile fallback because the selected profile is immutable.
+
+Member addition accepts exactly one configured user per request and requires a client-supplied
+`idempotency_key`. Its durable result follows `conversation_membership_mutations`; a retry returns
+the original outcome and never re-adds someone who left after the first request.
 `PATCH .../members/me` accepts `{"notification_level": "all"}` or `{"notification_level": "muted"}`
 and may update only the caller's active membership.
 
@@ -537,6 +568,10 @@ and cannot contribute history to a web/iOS conversation.
 - Once attached to a collaborative conversation, every current member may read/preview that
   attachment through the conversation membership check.
 - A former member loses attachment access when membership ends.
+- Collaborative attachment responses must be private, authenticated, and non-cacheable
+  (`Cache-Control: private, no-store` or equivalent). They must not use the existing public,
+  year-long immutable cache policy. Every fetch, including previews and downloads, rechecks active
+  membership so removal revokes future access. Already downloaded local copies cannot be revoked.
 - Attaching a file does not transfer authority to access other files owned by the uploader.
 - Deleting an attachment follows the existing retention policy but requires both membership and an
   explicit deletion rule; the first release should allow only the original uploader to delete.
@@ -644,7 +679,8 @@ Until this contract is implemented, collaborative turns must use existing termin
 
 ### Existing web/iOS conversations
 
-For every existing conversation whose user messages resolve to exactly one canonical user:
+For every existing conversation whose user messages resolve to exactly one canonical user and whose
+turns resolve to exactly one direct-chat processing profile:
 
 1. create a `conversations` row using the existing id;
 2. add that canonical user as its active member;
@@ -663,6 +699,13 @@ Existing conversations containing several canonical authors are not automaticall
 web/iOS collaboration. They are expected to be Telegram groups or anomalous legacy data and remain
 outside web/iOS listing until explicitly handled. This prevents the migration from turning an
 accidental id collision into data sharing.
+
+Likewise, a legacy conversation containing turns from more than one processing profile is not
+automatically imported, because one collaborative conversation cannot preserve that history while
+also enforcing an immutable profile. Migration reports those conversation ids and their profile sets
+for operator handling. The operator may archive the legacy thread or explicitly split it at profile
+boundaries into separate conversations; migration never silently chooses a profile or hides
+mismatched turns.
 
 ### New writes during rollout
 
