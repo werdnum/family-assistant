@@ -644,6 +644,7 @@ async def send_message_to_user_tool(
             conversation_id=str(target_chat_id),  # Pass as string
             text=message_content,
             attachment_ids=validated_attachment_ids,
+            on_behalf_of_user_id=exec_context.user_id,
             # parse_mode can be added if needed, default is plain text
         )
 

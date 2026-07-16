@@ -374,10 +374,11 @@ async def _fetch_message_summaries(
                 exec_context,
                 GoogleScope.GMAIL_READONLY,
                 url=f"{_GMAIL_API_BASE}/users/me/messages/{message_id}",
-                params={
-                    "format": "metadata",
-                    "metadataHeaders": "From,To,Subject,Date",
-                },
+                # metadataHeaders is a repeated query parameter, which the
+                # backend's flat params mapping cannot express; format=metadata
+                # returns all headers by default and the summarizer picks the
+                # four it needs.
+                params={"format": "metadata"},
             )
         ).json()
         results.append(_summarize_message(detail))

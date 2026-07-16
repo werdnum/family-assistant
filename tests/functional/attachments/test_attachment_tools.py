@@ -270,6 +270,7 @@ class TestSendMessageToUserWithAttachments:
                 interface_type="telegram",
                 turn_id="turn_123",
                 user_name="test_user",
+                user_id="test_user",
                 db_context=db_context,
                 processing_service=None,
                 clock=None,
@@ -290,11 +291,13 @@ class TestSendMessageToUserWithAttachments:
                 attachment_ids=[mock_attachment_metadata.id],
             )
 
-            # Verify message was sent with attachments
+            # Verify message was sent with attachments, delivered on behalf of
+            # the acting user so owner-scoped attachments survive delivery.
             mock_chat_interface.send_message.assert_called_once_with(
                 conversation_id="456789",
                 text="Here's your document",
                 attachment_ids=[mock_attachment_metadata.id],
+                on_behalf_of_user_id="test_user",
             )
 
             assert "Message sent successfully" in result
@@ -341,6 +344,7 @@ class TestSendMessageToUserWithAttachments:
                 conversation_id="456789",
                 text="Just a message",
                 attachment_ids=None,
+                on_behalf_of_user_id=None,
             )
 
             assert "Message sent successfully" in result
