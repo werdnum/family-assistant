@@ -298,6 +298,10 @@ You can ask the assistant a wide variety of things:
   - **What the assistant cannot do:** send email, modify or delete anything, or see another
     household member's mailbox or Drive. Access is strictly read-only and strictly limited to your
     own connected account.
+  - **Mind the audience:** the assistant replies wherever you asked. If you ask about your email in
+    a group chat, the answer (and any fetched attachment) is visible to everyone in that chat. The
+    assistant is instructed to prefer summaries and offer private delivery for personal content in
+    shared conversations, but the simplest rule is to ask about private matters in a direct chat.
 
 - **Interact with Your Smart Home (Home Assistant):** \*If your family uses Home Assistant and it's
   connected to the assistant, you can control devices with your voice: \*"Turn on the kitchen

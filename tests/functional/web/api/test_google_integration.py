@@ -22,13 +22,16 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, GoogleIntegrationConfig
 from family_assistant.services.credential_encryption import CredentialEncryption
-from family_assistant.services.google_integration_state import GoogleIntegrationState
+from family_assistant.services.google_integration_state import (
+    GoogleIntegrationState,
+    evaluate_google_integration_state,
+)
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.repositories.google_connections import (
     GoogleConnectionModel,
 )
-from family_assistant.web.dependencies import get_current_user
+from family_assistant.web.dependencies import get_current_session_user
 from family_assistant.web.routers.google_integration import google_integration_router
 
 PLAINTEXT_REFRESH_TOKEN = "1//refresh-token-plaintext-value"
@@ -146,10 +149,34 @@ def _google_integration_config(**overrides: object) -> GoogleIntegrationConfig:
         "oauth_client_secret": "test-client-secret",
         "credential_encryption_key": CredentialEncryption.generate_key(),
         "scopes": [GMAIL_SCOPE, DRIVE_SCOPE],
-        "require_taint_enforcement": True,
+        "require_taint_enforcement": False,
     }
     base.update(overrides)
     return GoogleIntegrationConfig.model_validate(base)
+
+
+def _app_config(integration: GoogleIntegrationConfig, database_url: str) -> AppConfig:
+    """Build an AppConfig with a populated users block for canonical resolution."""
+    return AppConfig.model_validate({
+        "database_url": database_url,
+        "google_integration": integration,
+        "users": [{"id": "alice", "oidc": {"emails": ["alice@example.com"]}}],
+    })
+
+
+def _install_integration_state(app: FastAPI) -> None:
+    """Recompute and install the startup Google integration state on the app.
+
+    The router is the sole authority on ``app.state.google_integration_state``
+    (it fails closed when absent), so tests that build or mutate config must
+    install a real state the way startup does.
+    """
+    config = app.state.config
+    auth_service = getattr(app.state, "auth_service", None)
+    auth_enabled = bool(getattr(auth_service, "auth_enabled", False))
+    app.state.google_integration_state = evaluate_google_integration_state(
+        config, auth_enabled=auth_enabled
+    )
 
 
 @dataclass
@@ -160,7 +187,7 @@ class _GoogleTestApp:
     integration: GoogleIntegrationConfig
 
     def set_user(self, user_id: str) -> None:
-        self.app.dependency_overrides[get_current_user] = lambda: {
+        self.app.dependency_overrides[get_current_session_user] = lambda: {
             "user_identifier": user_id
         }
 
@@ -181,11 +208,9 @@ async def google_app(
     app = FastAPI()
     app.include_router(google_integration_router, prefix="/api/integrations/google")
     app.state.database_engine = db_engine
-    app.state.config = AppConfig(
-        database_url=str(db_engine.url),
-        google_integration=integration,
-    )
+    app.state.config = _app_config(integration, str(db_engine.url))
     app.state.auth_service = _FakeAuthService(auth_enabled=True)
+    _install_integration_state(app)
     app.state.notification_dispatcher = dispatcher
     google_client = google_server.client()
     app.state.google_oauth_http_client = google_client
@@ -195,7 +220,9 @@ async def google_app(
         "revoke": "https://oauth2.googleapis.test/revoke",
         "userinfo": "https://www.googleapis.test/oauth2/v3/userinfo",
     }
-    app.dependency_overrides[get_current_user] = lambda: {"user_identifier": "alice"}
+    app.dependency_overrides[get_current_session_user] = lambda: {
+        "user_identifier": "alice"
+    }
 
     try:
         yield _GoogleTestApp(
@@ -436,6 +463,7 @@ async def test_disabled_integration_status_and_authorize(
     google_app.app.state.config.google_integration = _google_integration_config(
         credential_encryption_key=""
     )
+    _install_integration_state(google_app.app)
 
     status_response = await google_client.get("/api/integrations/google")
     assert status_response.status_code == 200
@@ -465,6 +493,7 @@ async def test_disabled_but_connected_status_shows_connection(
     google_app.app.state.config.google_integration = _google_integration_config(
         credential_encryption_key=""
     )
+    _install_integration_state(google_app.app)
 
     body = (await google_client.get("/api/integrations/google")).json()
     assert body["enabled"] is False
@@ -493,6 +522,7 @@ async def test_disconnect_while_disabled_deletes_without_revoke(
     google_app.app.state.config.google_integration = _google_integration_config(
         credential_encryption_key=""
     )
+    _install_integration_state(google_app.app)
 
     # Disconnect must still work even though the integration is disabled.
     disconnect = await google_client.request("DELETE", "/api/integrations/google")
@@ -509,6 +539,7 @@ async def test_disabled_when_auth_not_enabled(
 ) -> None:
     # Even fully configured, dev test_user mode (auth disabled) must refuse.
     google_app.app.state.auth_service = _FakeAuthService(auth_enabled=False)
+    _install_integration_state(google_app.app)
 
     body = (await google_client.get("/api/integrations/google")).json()
     assert body["enabled"] is False
@@ -566,6 +597,75 @@ async def test_enabled_shared_state_allows_authorize(
         "/api/integrations/google/authorize", follow_redirects=False
     )
     assert authorize.status_code == 302
+
+
+@pytest.mark.asyncio
+async def test_missing_shared_state_fails_closed(
+    google_client: AsyncClient,
+    google_app: _GoogleTestApp,
+) -> None:
+    # With no startup-computed state installed the router must fail closed rather
+    # than re-deriving a reduced local enablement check.
+    del google_app.app.state.google_integration_state
+
+    status_response = await google_client.get("/api/integrations/google")
+    assert status_response.status_code == 200
+    body = status_response.json()
+    assert body["enabled"] is False
+    assert body["reason"] == "Google integration state unavailable"
+
+    authorize = await google_client.get(
+        "/api/integrations/google/authorize", follow_redirects=False
+    )
+    assert authorize.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_api_token_auth_refused_for_session_only_routes(
+    db_engine: AsyncEngine,
+) -> None:
+    """An API-token-sourced caller (no browser session) must be refused (403).
+
+    The OAuth connect/disconnect routes are session-only; a valid API-token
+    identity is rejected by ``get_current_session_user`` even though it would
+    otherwise authenticate.
+    """
+    async with get_db_context(engine=db_engine) as temp_ctx:
+        await init_db(db_engine)
+        await temp_ctx.init_vector_db()
+
+    integration = _google_integration_config()
+    app = FastAPI()
+    app.include_router(google_integration_router, prefix="/api/integrations/google")
+    app.state.database_engine = db_engine
+    app.state.config = _app_config(integration, str(db_engine.url))
+
+    @dataclass
+    class _ApiTokenAuthService:
+        auth_enabled: bool = True
+
+        async def get_user_from_api_token(
+            self, auth_header: str, request: object
+        ) -> dict[str, object]:
+            return {"sub": "alice", "source": "api_token"}
+
+    app.state.auth_service = _ApiTokenAuthService()
+    _install_integration_state(app)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        status_response = await client.get(
+            "/api/integrations/google",
+            headers={"Authorization": "Bearer some-api-token"},
+        )
+        authorize = await client.get(
+            "/api/integrations/google/authorize",
+            headers={"Authorization": "Bearer some-api-token"},
+            follow_redirects=False,
+        )
+
+    assert status_response.status_code == 403
+    assert authorize.status_code == 403
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,9 @@ from family_assistant.services.google_credentials import (
     GoogleCredentialResolver,
     GoogleScope,
 )
+from family_assistant.services.google_integration_state import (
+    evaluate_google_integration_state,
+)
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
@@ -65,7 +68,10 @@ from family_assistant.tools.google_data import (
 )
 from family_assistant.tools.metadata import build_tool_descriptor
 from family_assistant.tools.types import ToolExecutionContext
-from family_assistant.web.dependencies import get_current_user
+from family_assistant.web.dependencies import (
+    get_current_session_user,
+    get_current_user,
+)
 from family_assistant.web.routers.attachments_api import attachments_api_router
 from family_assistant.web.routers.google_integration import google_integration_router
 
@@ -319,7 +325,7 @@ def _google_integration_config() -> GoogleIntegrationConfig:
         "oauth_client_secret": "test-client-secret",
         "credential_encryption_key": CredentialEncryption.generate_key(),
         "scopes": [GMAIL_SCOPE, DRIVE_SCOPE],
-        "require_taint_enforcement": True,
+        "require_taint_enforcement": False,
     })
 
 
@@ -334,9 +340,9 @@ class _E2EApp:
 
     def set_user(self, user_id: str) -> None:
         """Override the session user for both the OAuth and attachment routes."""
-        self.app.dependency_overrides[get_current_user] = lambda: {
-            "user_identifier": user_id
-        }
+        payload = {"user_identifier": user_id}
+        self.app.dependency_overrides[get_current_user] = lambda: payload
+        self.app.dependency_overrides[get_current_session_user] = lambda: payload
 
 
 @pytest_asyncio.fixture
@@ -357,11 +363,18 @@ async def e2e(db_engine: AsyncEngine) -> AsyncGenerator[_E2EApp]:
     app.include_router(google_integration_router, prefix="/api/integrations/google")
     app.include_router(attachments_api_router, prefix="/api/attachments")
     app.state.database_engine = db_engine
-    app.state.config = AppConfig(
-        database_url=str(db_engine.url),
-        google_integration=integration,
-    )
+    app.state.config = AppConfig.model_validate({
+        "database_url": str(db_engine.url),
+        "google_integration": integration,
+        "users": [
+            {"id": "alice", "oidc": {"emails": ["alice@example.com"]}},
+            {"id": "bob", "oidc": {"emails": ["bob@example.com"]}},
+        ],
+    })
     app.state.auth_service = _FakeAuthService(auth_enabled=True)
+    app.state.google_integration_state = evaluate_google_integration_state(
+        app.state.config, auth_enabled=True
+    )
     app.state.notification_dispatcher = notifier
     app.state.attachment_registry = registry
 
@@ -374,6 +387,9 @@ async def e2e(db_engine: AsyncEngine) -> AsyncGenerator[_E2EApp]:
         "userinfo": "https://www.googleapis.test/oauth2/v3/userinfo",
     }
     app.dependency_overrides[get_current_user] = lambda: {"user_identifier": "alice"}
+    app.dependency_overrides[get_current_session_user] = lambda: {
+        "user_identifier": "alice"
+    }
 
     try:
         yield _E2EApp(

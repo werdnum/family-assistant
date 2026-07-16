@@ -251,6 +251,38 @@ async def get_diagnostics_reader(request: Request) -> dict:
     return await get_current_user(request)
 
 
+# Auth-source markers indicating the caller authenticated with an API token
+# (bearer / X-API-Token / app-token session) rather than a browser session.
+_TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
+
+
+async def get_current_session_user(request: Request) -> dict:
+    """Authenticate the current user, rejecting API-token-sourced callers.
+
+    Wraps :func:`get_current_user` for endpoints that must be driven from a
+    browser session only (e.g. the Google OAuth connect/disconnect routes, per
+    ``docs/design/user-scoped-google-data-access.md``): initiating an OAuth flow
+    or deleting a user's Google connection is a session-only action, so an
+    API-token holder must not be able to perform it. The auth-disabled dev
+    ``test_user`` path (no ``source``/``identity_source``) passes through
+    unchanged so tests keep working.
+    """
+    user = await get_current_user(request)
+    if (
+        user.get("source") in _TOKEN_IDENTITY_SOURCES
+        or user.get("identity_source") in _TOKEN_IDENTITY_SOURCES
+    ):
+        logger.warning(
+            "API-token auth rejected for session-only endpoint. User: %s",
+            user.get("sub", user.get("user_identifier")),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint requires a browser session.",
+        )
+    return user
+
+
 async def get_current_api_user(request: Request) -> dict:
     """
     Legacy dependency for API token authentication only.

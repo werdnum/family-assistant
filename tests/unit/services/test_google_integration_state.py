@@ -83,15 +83,22 @@ def _profile(
     )
 
 
+def _users() -> list[dict[str, object]]:
+    """A minimal populated users block so OIDC identities resolve canonically."""
+    return [{"id": "alice", "oidc": {"emails": ["alice@example.com"]}}]
+
+
 def _app_config(
     google: GoogleIntegrationConfig,
     *,
     taint_policy: TaintPolicyConfig | None = None,
     profiles: list[ServiceProfile] | None = None,
+    users: list[dict[str, object]] | None = None,
 ) -> AppConfig:
     kwargs: dict[str, object] = {
         "database_url": "sqlite+aiosqlite:///:memory:",
         "google_integration": google,
+        "users": _users() if users is None else users,
     }
     if taint_policy is not None:
         kwargs["taint_policy"] = taint_policy
@@ -167,6 +174,18 @@ def test_auth_disabled_refuses_even_when_fully_configured() -> None:
     state = evaluate_google_integration_state(config, auth_enabled=False)
     assert state.enabled is False
     assert "web authentication" in (state.reason or "")
+
+
+def test_empty_users_block_refuses_even_with_auth_enabled() -> None:
+    # With OIDC on but no users block, connections would be keyed by raw OIDC
+    # identifiers instead of canonical user ids, so enablement must refuse.
+    config = _app_config(
+        _google_config(require_taint_enforcement=False),
+        users=[],
+    )
+    state = evaluate_google_integration_state(config, auth_enabled=True)
+    assert state.enabled is False
+    assert "users block" in (state.reason or "")
 
 
 # --- Taint floor ------------------------------------------------------------

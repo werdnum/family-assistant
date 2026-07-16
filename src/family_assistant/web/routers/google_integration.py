@@ -37,7 +37,7 @@ from family_assistant.services.credential_encryption import (
 )
 from family_assistant.services.google_integration_state import GoogleIntegrationState
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.web.dependencies import get_current_user, get_db
+from family_assistant.web.dependencies import get_current_session_user, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def get_google_oauth_http_client(request: Request) -> httpx.AsyncClient:
     return _default_http_client
 
 
-CurrentUser = Annotated[dict, Depends(get_current_user)]
+CurrentUser = Annotated[dict, Depends(get_current_session_user)]
 Db = Annotated[DatabaseContext, Depends(get_db)]
 GoogleOAuthClient = Annotated[httpx.AsyncClient, Depends(get_google_oauth_http_client)]
 
@@ -133,45 +133,17 @@ def _shared_integration_state(request: Request) -> GoogleIntegrationState | None
 def _integration_enablement(request: Request) -> tuple[bool, str | None]:
     """Return ``(enabled, reason)`` for the Google integration in this deployment.
 
-    Prefers the single startup-computed :class:`GoogleIntegrationState` (which
-    also validates the taint floor) when the app installed one. Falls back to a
-    live config+auth computation for lightweight apps (e.g. router-only tests)
-    that do not wire the shared state: OAuth client id/secret + encryption key
-    present AND real web authentication active. The dev ``test_user`` mode (auth
-    disabled) must refuse: in that mode any caller shares one identity, so
-    connecting a Google account would attach it to that shared identity.
+    Reads the single startup-computed :class:`GoogleIntegrationState` — the sole
+    authority, which validates credentials, the read-only scope allowlist, real
+    web authentication, and the taint floor together. When the app did not
+    install that state we fail closed rather than re-deriving a reduced local
+    check: a partial fallback could authorize a scope the startup evaluator would
+    refuse (e.g. a write scope), so an absent state is treated as DISABLED.
     """
     shared = _shared_integration_state(request)
-    if shared is not None:
-        return shared.enabled, shared.reason
-
-    integration = _google_integration_config(request)
-    if integration is None:
-        return False, "Google integration is not configured."
-    if not integration.oauth_client_id:
-        return (
-            False,
-            "Google integration is disabled: GOOGLE_OAUTH_CLIENT_ID is not set.",
-        )
-    if not integration.oauth_client_secret:
-        return (
-            False,
-            "Google integration is disabled: GOOGLE_OAUTH_CLIENT_SECRET is not set.",
-        )
-    if not integration.credential_encryption_key:
-        return (
-            False,
-            "Google integration is disabled: CREDENTIAL_ENCRYPTION_KEY is not set.",
-        )
-
-    auth_service = getattr(request.app.state, "auth_service", None)
-    if auth_service is None or not getattr(auth_service, "auth_enabled", False):
-        return (
-            False,
-            "Google integration is disabled: real web authentication must be enabled "
-            "so each user has a distinct identity.",
-        )
-    return True, None
+    if shared is None:
+        return False, "Google integration state unavailable"
+    return shared.enabled, shared.reason
 
 
 def _require_enabled(request: Request) -> GoogleIntegrationConfig:

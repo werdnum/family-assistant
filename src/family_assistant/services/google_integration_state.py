@@ -16,7 +16,9 @@ The evaluation walks the design's conditions IN ORDER (first failure wins,
    validation, not a policy knob).
 4. Real web authentication is enabled (the dev ``test_user`` mode, which serves
    one shared synthetic identity, must refuse so a Google account is never
-   attached to that shared identity).
+   attached to that shared identity) AND the ``users`` block is populated so
+   OIDC identities resolve to canonical user ids (with an empty ``users`` list,
+   connections would be keyed by raw OIDC identifiers).
 5. The **taint floor** — only when ``require_taint_enforcement`` is ``True``:
    ``taint_policy.mode`` is ``enforce`` AND, for every profile in which any
    Google tool is policy-allowed, the *fully merged effective* taint policy —
@@ -342,6 +344,17 @@ def evaluate_google_integration_state(
             "Google integration is disabled: real web authentication must be "
             "enabled so each user has a distinct identity (the dev test_user mode "
             "shares one identity and is refused)."
+        )
+
+    # 4b. Canonical identities resolve: with OIDC on but an empty ``users`` block,
+    # connections would be keyed by raw OIDC identifiers instead of canonical user
+    # ids, so require the users block to be populated (the same signal
+    # ``UserIdentityResolver.users_configured`` derives from ``config.users``).
+    if not config.users:
+        return disabled(
+            "Google integration is disabled: configure the users block so OIDC "
+            "identities resolve to canonical user ids "
+            "(google_integration keys connections by canonical user id)."
         )
 
     # 5. Taint floor (unless waived).

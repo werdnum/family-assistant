@@ -466,6 +466,16 @@ not oversights:
   and the swap is immediately visible — the connect/reconnect notification names the Google account
   that was linked and the settings page displays it. A victim who sees an unexpected account
   disconnects with one click.
+- **The requesting user chooses the audience of their reply.** In a shared conversation (e.g. a
+  Telegram group), a user who asks the assistant to read their own mail gets the answer in that
+  shared conversation, where other participants (and the shared history) can see it. This is not a
+  cross-user read: the acting user for a turn is the message sender, so Bob's message can never
+  cause Alice's mailbox to be read — only Alice can expose Alice's data, by asking in a channel she
+  is in, the same way anything she pastes there is shared. Ambient profiles that act without a
+  requesting user are denied the tools entirely. We do not add group-chat refusal machinery, which
+  would also break legitimate household use ("check my mail and tell us all when the flight lands");
+  instead the system prompt directs the assistant to prefer summaries and offer private delivery
+  before posting personal content into shared chats.
 
 ## Configuration
 
