@@ -551,6 +551,12 @@ async def test_two_users_connect_and_read_only_own_mailbox(
     assert any(token == "at-alice" for _, _, token in backend.requests)
     assert any(token == "at-bob" for _, _, token in backend.requests)
 
+    # last_used_at reflects the successful data API use.
+    async with DatabaseContext(engine=db_engine) as db:
+        alice_conn = await db.google_connections.get_connection("alice")
+    assert alice_conn is not None
+    assert alice_conn.last_used_at is not None
+
 
 # --------------------------------------------------------------------------- #
 # 3. Fail-closed matrix.

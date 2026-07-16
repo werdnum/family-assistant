@@ -263,9 +263,6 @@ class GoogleCredentialResolver:
         if response.status_code == httpx.codes.OK:
             token, expiry = self._parse_token_response(response)
             self._store_token(user_id, generation, token, expiry)
-            await exec_context.db_context.google_connections.update_last_used(
-                user_id, connection.provider
-            )
             return token
 
         if self._is_invalid_grant(response):

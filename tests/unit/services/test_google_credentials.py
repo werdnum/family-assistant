@@ -244,7 +244,7 @@ async def test_scope_not_granted_fails_closed(db_context: DatabaseContext) -> No
 
 
 @pytest.mark.asyncio
-async def test_happy_path_refresh_caches_and_updates_last_used(
+async def test_happy_path_refresh_caches_token(
     db_context: DatabaseContext,
 ) -> None:
     encryption = CredentialEncryption(generate_key())
@@ -262,7 +262,9 @@ async def test_happy_path_refresh_caches_and_updates_last_used(
 
     connection = await db_context.google_connections.get_connection(USER_ID)
     assert connection is not None
-    assert connection.last_used_at is not None
+    # last_used_at reflects successful API use, not token refreshes; the
+    # tools' request helper records it after a 2xx data response.
+    assert connection.last_used_at is None
 
 
 @pytest.mark.asyncio

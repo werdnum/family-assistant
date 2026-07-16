@@ -291,6 +291,10 @@ async def _google_request(
         )
 
     if 200 <= response.status_code < 300:
+        if exec_context.user_id is not None:
+            await exec_context.db_context.google_connections.update_last_used(
+                exec_context.user_id, "google"
+            )
         return response
     raise _GoogleToolError(_format_api_error(response))
 
