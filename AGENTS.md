@@ -323,10 +323,11 @@ The following environment variable can be used instead of hardcoding the value i
 ### Environment Variable for Read-Only Diagnostics Access
 
 - **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret that grants read-only access to the
-  error-log, diagnostics-export, and per-profile tool-inventory endpoints (`GET /api/errors/`,
-  `GET /api/errors/{id}`, `GET /api/diagnostics/export`, and `GET /api/debug/profiles/tools`)
-  without a full user session or API token. Intended for an external monitor or scraper that only
-  needs to pull diagnostics.
+  error-log, diagnostics-export, taint-audit, and per-profile tool-inventory endpoints
+  (`GET /api/errors/`, `GET /api/errors/{id}`, `GET /api/diagnostics/export`,
+  `GET /api/diagnostics/taint-audit`, and `GET /api/debug/profiles/tools`) without a full user
+  session or API token. Intended for an external monitor or scraper that only needs to pull
+  diagnostics.
 
   - When set, supply it as either `Authorization: Bearer <token>` or `X-API-Token: <token>`.
   - It only unlocks the diagnostics/error read endpoints and the tool-inventory endpoint (which

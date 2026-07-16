@@ -18,7 +18,11 @@ if TYPE_CHECKING:
     import httpx
     import pytest as _pytest
 
-READONLY_ENDPOINTS = ["/api/errors/", "/api/diagnostics/export"]
+READONLY_ENDPOINTS = [
+    "/api/errors/",
+    "/api/diagnostics/export",
+    "/api/diagnostics/taint-audit",
+]
 READONLY_TOKEN = "ro-secret-token-value"
 
 
