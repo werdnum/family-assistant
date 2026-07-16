@@ -142,6 +142,7 @@ class AttachmentProcessor:
 
     async def convert_urls_to_data_uris(
         self,
+        db_context: DatabaseContext,
         content_parts: list[ContentPartDict],
         *,
         acting_user_id: str | None,
@@ -153,6 +154,8 @@ class AttachmentProcessor:
         server URLs like /api/attachments/...
 
         Args:
+            db_context: The turn's database context — attachments registered
+                earlier in this transaction must be visible here.
             content_parts: List of content parts that may contain image_url entries
             acting_user_id: Acting user for owner-scoped attachment resolution.
 
@@ -185,7 +188,7 @@ class AttachmentProcessor:
                     # internally so externally-managed files (e.g. email
                     # attachments in the mailbox directory) resolve too.
                     file_path = await self.attachment_registry.resolve_attachment_path(
-                        attachment_id, acting_user_id=acting_user_id
+                        attachment_id, db_context, acting_user_id=acting_user_id
                     )
                     if not file_path or not file_path.exists():
                         raise FileNotFoundError(
@@ -224,6 +227,7 @@ class AttachmentProcessor:
 
     async def convert_message_urls(
         self,
+        db_context: DatabaseContext,
         messages: list[LLMMessage],
         *,
         acting_user_id: str | None,
@@ -234,6 +238,7 @@ class AttachmentProcessor:
         This applies the URL-to-data-URI conversion to all user messages in the list.
 
         Args:
+            db_context: The turn's database context.
             messages: List of LLM messages
             acting_user_id: Acting user for owner-scoped attachment resolution.
 
@@ -258,7 +263,7 @@ class AttachmentProcessor:
 
                 # Apply URL conversion
                 converted_dicts = await self.convert_urls_to_data_uris(
-                    content_dicts, acting_user_id=acting_user_id
+                    db_context, content_dicts, acting_user_id=acting_user_id
                 )
 
                 # Deserialize back to ContentPart objects using TypeAdapter

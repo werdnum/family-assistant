@@ -176,7 +176,7 @@ async def test_prepare_turn_messages_uses_isolated_writes() -> None:
     service._render_system_prompt = MagicMock(return_value="")  # type: ignore[method-assign]
     service.attachment_processor.process_content_parts = AsyncMock(return_value=[])
     service.attachment_processor.convert_message_urls = AsyncMock(
-        side_effect=lambda messages, acting_user_id=None: messages
+        side_effect=lambda db_context, messages, acting_user_id=None: messages
     )
 
     (
@@ -752,6 +752,7 @@ async def test_convert_urls_to_data_uris_invalid_internal_url_raises() -> None:
 
     with pytest.raises(ValueError, match="Invalid attachment URL format"):
         await processor.convert_urls_to_data_uris(
+            MagicMock(),
             [
                 {
                     "type": "image_url",
@@ -778,6 +779,7 @@ async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
 
     with pytest.raises(FileNotFoundError, match="Attachment file not found"):
         await processor.convert_urls_to_data_uris(
+            MagicMock(),
             [
                 {
                     "type": "image_url",

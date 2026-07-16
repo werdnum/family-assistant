@@ -754,7 +754,7 @@ class ProcessingService:
             trigger_attachments=trigger_attachments,
         )
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
-            messages_for_llm, acting_user_id=user_id
+            db_context, messages_for_llm, acting_user_id=user_id
         )
         return thread_root_id_for_turn, typed_messages_for_llm, context_taint_sources
 
