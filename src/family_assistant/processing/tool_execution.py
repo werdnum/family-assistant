@@ -22,6 +22,7 @@ from family_assistant.tools import (
     ToolPolicyDeniedError,
     ToolsProvider,
 )
+from family_assistant.tools.attachment_utils import is_attachment_id
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
@@ -56,6 +57,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+def _argument_attachment_ids(value: object) -> set[str]:
+    """Collect attachment-id-shaped strings from a tool-argument structure."""
+    found: set[str] = set()
+    if isinstance(value, str):
+        if is_attachment_id(value):
+            found.add(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            found |= _argument_attachment_ids(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found |= _argument_attachment_ids(item)
+    return found
 
 
 class ToolExecutor:
@@ -340,24 +356,45 @@ class ToolExecutor:
         return cast("dict[str, object]", arguments)
 
     async def _large_result_owner(
-        self, function_name: str, acting_user_id: str | None
+        self,
+        function_name: str,
+        acting_user_id: str | None,
+        *,
+        arguments: dict[str, object] | None,
+        db_context: DatabaseContext,
     ) -> str | None:
         """Owner for a large-result auto-conversion.
 
         Personal-data tools (descriptor tag ``google_personal_data``) own their
-        auto-converted large results so they inherit the same per-user
-        enforcement as the tool that produced them. Every other tool's large
-        result stays ownerless, preserving today's behavior.
+        auto-converted large results. Derived results inherit ownership too: a
+        helper such as ``jq_query`` or ``execute_script`` run over an
+        owner-scoped attachment must not launder its content into an ownerless
+        attachment, so when any attachment referenced in the tool's arguments
+        is owned, the conversion is owned by the acting user (the only actor
+        for whom the owned input was readable). Every other tool's large
+        result stays ownerless, preserving prior behavior.
         """
         if acting_user_id is None:
             return None
-        if not isinstance(self.tools_provider, ToolDescriptorProvider):
-            return None
-        descriptor = await self.tools_provider.get_tool_descriptor(function_name)
-        if descriptor is None:
-            return None
-        if any(tag.value == "google_personal_data" for tag in descriptor.tags):
-            return acting_user_id
+        if isinstance(self.tools_provider, ToolDescriptorProvider):
+            descriptor = await self.tools_provider.get_tool_descriptor(function_name)
+            if descriptor is not None and any(
+                tag.value == "google_personal_data" for tag in descriptor.tags
+            ):
+                return acting_user_id
+        if arguments and self.attachment_registry is not None:
+            candidate_ids = _argument_attachment_ids(arguments)
+            if candidate_ids:
+                metadata_by_id = await self.attachment_registry.get_attachments(
+                    db_context,
+                    sorted(candidate_ids),
+                    acting_user_id=acting_user_id,
+                )
+                if any(
+                    metadata.owner_user_id is not None
+                    for metadata in metadata_by_id.values()
+                ):
+                    return acting_user_id
         return None
 
     async def _handle_large_text_result(
@@ -370,9 +407,12 @@ class ToolExecutor:
         call_id: str,
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
+        arguments: dict[str, object] | None,
     ) -> tuple[str, list[str]]:
         """Convert oversized text results into attachment references."""
-        owner_user_id = await self._large_result_owner(function_name, acting_user_id)
+        owner_user_id = await self._large_result_owner(
+            function_name, acting_user_id, arguments=arguments, db_context=db_context
+        )
         (
             new_content,
             auto_attachment_id,
@@ -399,11 +439,14 @@ class ToolExecutor:
         call_id: str,
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
+        arguments: dict[str, object] | None,
     ) -> tuple[list[dict[str, str | int | None]], list[str]]:
         """Store/normalize ToolResult attachments for streaming and history."""
         attachments_data: list[dict[str, str | int | None]] = []
         auto_attachment_ids: list[str] = []
-        owner_user_id = await self._large_result_owner(function_name, acting_user_id)
+        owner_user_id = await self._large_result_owner(
+            function_name, acting_user_id, arguments=arguments, db_context=db_context
+        )
 
         for attachment in attachments:
             attachment_data: dict[str, str | int | None] = {
@@ -466,6 +509,7 @@ class ToolExecutor:
         provider_metadata: GeminiProviderMetadata | ProviderMetadataDict | None,
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
+        arguments: dict[str, object] | None,
     ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
         """Convert ToolResult into stream payload, message, and attachment IDs."""
         content_for_stream = result.get_text()
@@ -477,6 +521,7 @@ class ToolExecutor:
             call_id=call_id,
             taint_metadata=taint_metadata,
             acting_user_id=acting_user_id,
+            arguments=arguments,
         )
         if auto_attachment_ids:
             # Result data is now persisted as attachment; keep content as hint text.
@@ -496,6 +541,7 @@ class ToolExecutor:
                 call_id=call_id,
                 taint_metadata=taint_metadata,
                 acting_user_id=acting_user_id,
+                arguments=arguments,
             )
             auto_attachment_ids.extend(new_attachment_ids)
 
@@ -535,6 +581,7 @@ class ToolExecutor:
         call_id: str,
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
+        arguments: dict[str, object] | None,
     ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
         """Convert plain string-like tool output into stream/message payload."""
         content_for_stream = str(result)
@@ -546,6 +593,7 @@ class ToolExecutor:
             call_id=call_id,
             taint_metadata=taint_metadata,
             acting_user_id=acting_user_id,
+            arguments=arguments,
         )
         return (
             content_for_stream,
@@ -709,6 +757,7 @@ class ToolExecutor:
                     provider_metadata=tool_call_item_obj.provider_metadata,
                     taint_metadata=result_taint_metadata,
                     acting_user_id=user_id,
+                    arguments=arguments,
                 )
             else:
                 result_taint_metadata = (
@@ -727,6 +776,7 @@ class ToolExecutor:
                     call_id=call_id,
                     taint_metadata=result_taint_metadata,
                     acting_user_id=user_id,
+                    arguments=arguments,
                 )
                 if result_taint_metadata is not None:
                     llm_message = llm_message.model_copy(
