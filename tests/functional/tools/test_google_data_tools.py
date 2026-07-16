@@ -1,6 +1,6 @@
 """Functional tests for the read-only Gmail/Drive tools.
 
-The tools are exercised against a fake :class:`GoogleApiBackend` and a fake
+The tools are exercised against a fake :class:`ApiBackend` and a fake
 credential resolver (both implementing the real protocols, no monkeypatching),
 plus a real :class:`AttachmentRegistry` and database so owner enforcement and
 attachment references are validated end to end.
@@ -23,13 +23,13 @@ from family_assistant.security.taint import (
     derive_tool_result_taint_source,
     resolve_tool_sink_class,
 )
+from family_assistant.services.api_backend import ApiResponse
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.services.google_api import GoogleApiResponse
-from family_assistant.services.google_credentials import (
-    GoogleNoActingUserError,
-    GoogleNotConnectedError,
-    GoogleScope,
-    GoogleScopeNotGrantedError,
+from family_assistant.services.google_provider import GoogleScope
+from family_assistant.services.oauth_credentials import (
+    OAuthNoActingUserError,
+    OAuthNotConnectedError,
+    OAuthScopeNotGrantedError,
 )
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
@@ -49,8 +49,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.services.google_api import GoogleApiBackend
-    from family_assistant.services.google_credentials import GoogleCredentialResolver
+    from family_assistant.services.api_backend import ApiBackend
+    from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.tools.metadata import ToolDescriptor
 
 
@@ -65,8 +65,8 @@ def _b64url(text: str) -> str:
 
 
 @dataclass
-class FakeGoogleApiBackend:
-    """A :class:`GoogleApiBackend` serving canned payloads keyed by access token.
+class FakeApiBackend:
+    """A :class:`ApiBackend` serving canned payloads keyed by access token.
 
     ``routes`` maps ``access_token -> {(method, url_substring): payload_dict}``.
     A ``scripted`` sequence of ``(status_code, body_bytes)`` responses, when set,
@@ -85,11 +85,11 @@ class FakeGoogleApiBackend:
         url: str,
         access_token: str,
         params: Mapping[str, str] | None = None,
-    ) -> GoogleApiResponse:
+    ) -> ApiResponse:
         self.requests.append((method, url, access_token))
         if self.scripted:
             status, body = self.scripted.pop(0)
-            return GoogleApiResponse(status_code=status, content=body)
+            return ApiResponse(status_code=status, content=body)
         # Match on the URL path suffix (ignoring query string) so a list route
         # (`.../messages`) does not also match a detail route
         # (`.../messages/{id}`).
@@ -97,22 +97,22 @@ class FakeGoogleApiBackend:
         token_routes = self.routes.get(access_token, {})
         for (route_method, needle), payload in token_routes.items():
             if route_method == method and path.endswith(needle):
-                return GoogleApiResponse(
+                return ApiResponse(
                     status_code=200,
                     content=json.dumps(payload).encode("utf-8")
                     if not isinstance(payload, bytes)
                     else payload,
                 )
-        return GoogleApiResponse(status_code=404, content=b'{"error": "not found"}')
+        return ApiResponse(status_code=404, content=b'{"error": "not found"}')
 
 
 @dataclass
-class FakeGoogleCredentialResolver:
+class FakeCredentialResolver:
     """A resolver returning a per-user token and tracking scope grants/evictions.
 
     ``tokens`` maps ``user_id -> access_token``. ``granted_scopes`` maps
     ``user_id -> set(scope values)``; a missing/ungranted scope raises
-    :class:`GoogleScopeNotGrantedError`. ``raise_for_user`` maps a user id to an
+    :class:`OAuthScopeNotGrantedError`. ``raise_for_user`` maps a user id to an
     exception to raise instead of returning a token (fail-closed tests).
     """
 
@@ -126,12 +126,12 @@ class FakeGoogleCredentialResolver:
     ) -> str:
         user_id = exec_context.user_id
         if user_id is None:
-            raise GoogleNoActingUserError()
+            raise OAuthNoActingUserError("Google")
         if user_id in self.raise_for_user:
             raise self.raise_for_user[user_id]
         granted = self.granted_scopes.get(user_id, set(GoogleScope))
         if scope.value not in granted:
-            raise GoogleScopeNotGrantedError(scope)
+            raise OAuthScopeNotGrantedError("Google", scope.value)
         return self.tokens[user_id]
 
     def evict_cached_token(self, user_id: str) -> None:
@@ -142,8 +142,8 @@ def _make_context(
     db: DatabaseContext,
     *,
     user_id: str | None,
-    resolver: FakeGoogleCredentialResolver | None,
-    backend: FakeGoogleApiBackend | None,
+    resolver: FakeCredentialResolver | None,
+    backend: FakeApiBackend | None,
     attachment_registry: AttachmentRegistry | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
@@ -158,8 +158,10 @@ def _make_context(
         event_sources=None,
         attachment_registry=attachment_registry,
         camera_backend=None,
-        google_credentials=cast("GoogleCredentialResolver | None", resolver),
-        google_api_backend=cast("GoogleApiBackend | None", backend),
+        credential_resolvers=(
+            {"google": cast("OAuthCredentialResolver", resolver)} if resolver else None
+        ),
+        api_backend=cast("ApiBackend | None", backend),
         timezone=ZoneInfo("UTC"),
         user_id=user_id,
     )
@@ -189,10 +191,10 @@ async def test_missing_backend_or_resolver_is_actionable_error(
 
 @pytest.mark.asyncio
 async def test_not_connected_message_surfaces(db_engine: AsyncEngine) -> None:
-    resolver = FakeGoogleCredentialResolver(
-        raise_for_user={"user-a": GoogleNotConnectedError()}
+    resolver = FakeCredentialResolver(
+        raise_for_user={"user-a": OAuthNotConnectedError("Google")}
     )
-    backend = FakeGoogleApiBackend()
+    backend = FakeApiBackend()
     async with DatabaseContext(engine=db_engine) as db:
         context = _make_context(
             db, user_id="user-a", resolver=resolver, backend=backend
@@ -203,8 +205,8 @@ async def test_not_connected_message_surfaces(db_engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_no_acting_user_fails_closed(db_engine: AsyncEngine) -> None:
-    resolver = FakeGoogleCredentialResolver()
-    backend = FakeGoogleApiBackend()
+    resolver = FakeCredentialResolver()
+    backend = FakeApiBackend()
     async with DatabaseContext(engine=db_engine) as db:
         context = _make_context(db, user_id=None, resolver=resolver, backend=backend)
         result = await gmail_search_tool(context, query="hello")
@@ -244,8 +246,8 @@ async def test_gmail_search_marks_paged_results_partial(
     routes = _gmail_search_routes("msg-1", "hello world")
     listing = {"messages": [{"id": "msg-1"}], "nextPageToken": "page-2"}
     routes[("GET", "/users/me/messages")] = listing
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(routes={"token-a": routes})
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(routes={"token-a": routes})
     async with DatabaseContext(engine=db_engine) as db:
         context = _make_context(
             db, user_id="user-a", resolver=resolver, backend=backend
@@ -262,10 +264,8 @@ async def test_gmail_search_marks_paged_results_partial(
 
 @pytest.mark.asyncio
 async def test_two_user_isolation_gmail_search(db_engine: AsyncEngine) -> None:
-    resolver = FakeGoogleCredentialResolver(
-        tokens={"user-a": "token-a", "user-b": "token-b"}
-    )
-    backend = FakeGoogleApiBackend(
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a", "user-b": "token-b"})
+    backend = FakeApiBackend(
         routes={
             "token-a": _gmail_search_routes("msg-a", "Mailbox A only"),
             "token-b": _gmail_search_routes("msg-b", "Mailbox B only"),
@@ -298,9 +298,9 @@ async def test_two_user_isolation_gmail_search(db_engine: AsyncEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_401_then_200_retries_once_and_evicts(db_engine: AsyncEngine) -> None:
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     listing = json.dumps({"messages": []}).encode("utf-8")
-    backend = FakeGoogleApiBackend(scripted=[(401, b"{}"), (200, listing)])
+    backend = FakeApiBackend(scripted=[(401, b"{}"), (200, listing)])
     async with DatabaseContext(engine=db_engine) as db:
         context = _make_context(
             db, user_id="user-a", resolver=resolver, backend=backend
@@ -316,8 +316,8 @@ async def test_401_then_200_retries_once_and_evicts(db_engine: AsyncEngine) -> N
 
 @pytest.mark.asyncio
 async def test_401_then_401_is_error(db_engine: AsyncEngine) -> None:
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(scripted=[(401, b"{}"), (401, b"{}")])
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(scripted=[(401, b"{}"), (401, b"{}")])
     async with DatabaseContext(engine=db_engine) as db:
         context = _make_context(
             db, user_id="user-a", resolver=resolver, backend=backend
@@ -364,10 +364,8 @@ async def test_gmail_get_message_prefers_plain_and_lists_attachments(
             ],
         },
     }
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(
-        routes={"token-a": {("GET", "/messages/msg-1"): payload}}
-    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(routes={"token-a": {("GET", "/messages/msg-1"): payload}})
     async with DatabaseContext(engine=db_engine) as db:
         context = _make_context(
             db, user_id="user-a", resolver=resolver, backend=backend
@@ -398,10 +396,8 @@ async def test_gmail_get_message_html_fallback_and_truncation(
             "body": {"data": _b64url(f"<p>{big}</p>")},
         },
     }
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(
-        routes={"token-a": {("GET", "/messages/msg-2"): payload}}
-    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(routes={"token-a": {("GET", "/messages/msg-2"): payload}})
     async with DatabaseContext(engine=db_engine) as db:
         context = _make_context(
             db, user_id="user-a", resolver=resolver, backend=backend
@@ -440,8 +436,8 @@ async def test_gmail_get_attachment_registers_with_owner(
             ],
         },
     }
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
         routes={
             "token-a": {
                 ("GET", "/attachments/att-1"): payload,
@@ -507,8 +503,8 @@ async def test_gmail_get_attachment_without_filename_uses_part_metadata(
             ],
         },
     }
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
         routes={
             "token-a": {
                 ("GET", "/attachments/att-1"): payload,
@@ -568,8 +564,8 @@ async def test_gmail_get_attachment_filename_cannot_reclassify_content(
             ],
         },
     }
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
         routes={
             "token-a": {
                 ("GET", "/attachments/att-1"): payload,
@@ -616,11 +612,11 @@ async def test_gmail_get_attachment_filename_cannot_reclassify_content(
 async def test_drive_search_falls_back_to_metadata_scope(
     db_engine: AsyncEngine,
 ) -> None:
-    resolver = FakeGoogleCredentialResolver(
+    resolver = FakeCredentialResolver(
         tokens={"user-a": "token-a"},
         granted_scopes={"user-a": {GoogleScope.DRIVE_METADATA_READONLY.value}},
     )
-    backend = FakeGoogleApiBackend(
+    backend = FakeApiBackend(
         routes={
             "token-a": {
                 ("GET", "/files"): {
@@ -662,8 +658,8 @@ async def test_drive_search_falls_back_to_metadata_scope(
 
 @pytest.mark.asyncio
 async def test_drive_get_file_exports_google_doc(db_engine: AsyncEngine) -> None:
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
-    backend = FakeGoogleApiBackend(
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
         routes={
             "token-a": {
                 ("GET", "/files/doc-1"): {
@@ -689,10 +685,10 @@ async def test_drive_get_file_exports_google_doc(db_engine: AsyncEngine) -> None
 
 @pytest.mark.asyncio
 async def test_drive_get_file_inlines_small_text(db_engine: AsyncEngine) -> None:
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     # drive_get_file issues two GETs to /files/txt-1 (metadata then alt=media);
     # scripting the responses in order keeps them unambiguous.
-    backend = FakeGoogleApiBackend(
+    backend = FakeApiBackend(
         scripted=[
             (
                 200,
@@ -721,9 +717,9 @@ async def test_drive_get_file_inlines_small_text(db_engine: AsyncEngine) -> None
 async def test_drive_get_file_large_binary_goes_to_attachment(
     db_engine: AsyncEngine,
 ) -> None:
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     binary = b"\x00\x01\x02BINARY" * 100
-    backend = FakeGoogleApiBackend(
+    backend = FakeApiBackend(
         scripted=[
             (
                 200,
@@ -766,9 +762,9 @@ async def test_drive_get_file_large_binary_goes_to_attachment(
 async def test_drive_get_file_oversized_metadata_errors_without_media_request(
     db_engine: AsyncEngine,
 ) -> None:
-    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
     oversized = 50 * 1024 * 1024
-    backend = FakeGoogleApiBackend(
+    backend = FakeApiBackend(
         routes={
             "token-a": {
                 ("GET", "/files/huge-1"): {

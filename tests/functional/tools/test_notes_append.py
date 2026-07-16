@@ -27,8 +27,8 @@ async def test_add_or_update_note_append(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create initial note
@@ -109,8 +109,8 @@ async def test_append_multiple_times(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create initial note
@@ -159,8 +159,8 @@ async def test_add_or_update_note_append_postgres(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create initial note

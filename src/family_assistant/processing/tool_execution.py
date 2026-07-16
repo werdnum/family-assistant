@@ -34,6 +34,8 @@ from .types import (
 from .utils import get_file_extension_from_mime_type
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
@@ -44,9 +46,9 @@ if TYPE_CHECKING:
         TaintMetadata,
         TurnTaintTracker,
     )
+    from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
-    from family_assistant.services.google_api import GoogleApiBackend
-    from family_assistant.services.google_credentials import GoogleCredentialResolver
+    from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById
@@ -84,16 +86,16 @@ class ToolExecutor:
         attachment_processor: AttachmentProcessor,
         attachment_registry: AttachmentRegistry | None,
         clock: Clock,
-        google_credentials: GoogleCredentialResolver | None,
-        google_api_backend: GoogleApiBackend | None,
+        credential_resolvers: Mapping[str, OAuthCredentialResolver] | None,
+        api_backend: ApiBackend | None,
     ) -> None:
         self.tools_provider = tools_provider
         self.config = config
         self.attachment_processor = attachment_processor
         self.attachment_registry = attachment_registry
         self.clock = clock
-        self.google_credentials = google_credentials
-        self.google_api_backend = google_api_backend
+        self.credential_resolvers = credential_resolvers
+        self.api_backend = api_backend
 
     @staticmethod
     def _extract_queued_attachment_ids(result_payload: str) -> list[str] | None:
@@ -216,8 +218,8 @@ class ToolExecutor:
             ),
             attachment_registry=self.attachment_registry,
             camera_backend=camera_backend,
-            google_credentials=self.google_credentials,
-            google_api_backend=self.google_api_backend,
+            credential_resolvers=self.credential_resolvers,
+            api_backend=self.api_backend,
             visibility_grants=self.config.visibility_grants,
             default_note_visibility_labels=self.config.default_note_visibility_labels,
             required_note_visibility_labels=self.config.required_note_visibility_labels,
@@ -365,7 +367,7 @@ class ToolExecutor:
     ) -> str | None:
         """Owner for a large-result auto-conversion.
 
-        Personal-data tools (descriptor tag ``google_personal_data``) own their
+        Personal-data tools (descriptor tag ``connected_account_data``) own their
         auto-converted large results. Derived results inherit ownership too: a
         helper such as ``jq_query`` or ``execute_script`` run over an
         owner-scoped attachment must not launder its content into an ownerless
@@ -379,7 +381,7 @@ class ToolExecutor:
         if isinstance(self.tools_provider, ToolDescriptorProvider):
             descriptor = await self.tools_provider.get_tool_descriptor(function_name)
             if descriptor is not None and any(
-                tag.value == "google_personal_data" for tag in descriptor.tags
+                tag.value == "connected_account_data" for tag in descriptor.tags
             ):
                 return acting_user_id
         if arguments and self.attachment_registry is not None:

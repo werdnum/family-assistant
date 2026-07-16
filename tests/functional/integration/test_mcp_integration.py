@@ -622,8 +622,8 @@ async def test_mcp_time_conversion_streamable_http(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
         result = await mcp_provider.execute_tool(
             MCP_TIME_TOOL_NAME,

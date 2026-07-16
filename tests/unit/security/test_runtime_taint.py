@@ -324,8 +324,8 @@ def _minimal_context(
         note_registry=None,
         taint_tracker=tracker,
         taint_policy_snapshot=tracker.snapshot(),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 

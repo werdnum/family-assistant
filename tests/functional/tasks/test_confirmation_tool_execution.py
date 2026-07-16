@@ -311,8 +311,8 @@ def _processing_service(
     provider: object,
     *,
     attachment_registry: object | None = None,
-    google_credentials: object | None = None,
-    google_api_backend: object | None = None,
+    credential_resolvers: object | None = None,
+    api_backend: object | None = None,
 ) -> ProcessingService:
     service_config = SimpleNamespace(
         id="test-profile",
@@ -331,8 +331,8 @@ def _processing_service(
         attachment_registry=attachment_registry,
         home_assistant_client=None,
         camera_backend=None,
-        google_credentials=google_credentials,
-        google_api_backend=google_api_backend,
+        credential_resolvers=credential_resolvers,
+        api_backend=api_backend,
         processing_services_registry=None,
     )
     return cast("ProcessingService", service)
@@ -532,15 +532,15 @@ async def test_approved_confirmation_preserves_google_dependencies(
     )
     task_id = await _approve_request(db_engine, request_id)
     provider = RecordingToolsProvider()
-    google_credentials = object()
-    google_api_backend = object()
+    credential_resolvers = object()
+    api_backend = object()
 
     await _run_worker_until_task_finishes(
         db_engine,
         processing_service=_processing_service(
             provider,
-            google_credentials=google_credentials,
-            google_api_backend=google_api_backend,
+            credential_resolvers=credential_resolvers,
+            api_backend=api_backend,
         ),
         chat_interface=RecordingChatInterface(),
         task_id=task_id,
@@ -548,8 +548,8 @@ async def test_approved_confirmation_preserves_google_dependencies(
 
     assert len(provider.contexts) == 1
     executed_context = provider.contexts[0]
-    assert executed_context.google_credentials is google_credentials
-    assert executed_context.google_api_backend is google_api_backend
+    assert executed_context.credential_resolvers is credential_resolvers
+    assert executed_context.api_backend is api_backend
 
 
 @pytest.mark.asyncio

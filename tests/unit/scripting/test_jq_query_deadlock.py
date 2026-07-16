@@ -81,8 +81,8 @@ async def test_jq_query_from_script_no_deadlock(
             processing_service=None,
             tools_provider=policy_provider,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Script that creates an attachment and then calls jq_query() on it

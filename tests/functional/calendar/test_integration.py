@@ -284,8 +284,8 @@ async def test_add_event_and_verify_in_system_prompt(
         service_config=service_config,
         server_url=None,
         app_config=AppConfig(),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
     user_message_create = f"Please schedule {event_summary} for tomorrow at 10 AM."

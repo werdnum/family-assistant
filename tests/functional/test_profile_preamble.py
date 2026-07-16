@@ -55,8 +55,8 @@ def _make_service(
         context_providers=[],
         server_url="http://localhost:8000",
         app_config=AppConfig(),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
     return service, mock_llm
 

@@ -4,7 +4,7 @@ This module wires the *real* chain end to end and fakes only the outermost seam:
 Google's own HTTP endpoints (token / revoke / userinfo), served by a single
 ``httpx.MockTransport`` handler that dispatches on the request path and
 ``grant_type``. Everything between — the OAuth connect router, the encrypted
-connection storage, the real :class:`GoogleCredentialResolver` (per-user token
+connection storage, the real :class:`OAuthCredentialResolver` (per-user token
 refresh against the stubbed token endpoint using the *stored, encrypted* refresh
 token), the real attachment registry with owner enforcement, and the attachment
 HTTP routes — is exercised as it runs in production.
@@ -49,20 +49,19 @@ from family_assistant.security.taint import (
     SourceTrustTier,
     derive_tool_result_taint_source,
 )
+from family_assistant.services.api_backend import ApiResponse
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.credential_encryption import CredentialEncryption
-from family_assistant.services.google_api import GoogleApiResponse
-from family_assistant.services.google_credentials import (
-    GoogleCredentialResolver,
-    GoogleScope,
-)
-from family_assistant.services.google_integration_state import (
-    evaluate_google_integration_state,
+from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
+from family_assistant.services.oauth_credentials import OAuthCredentialResolver
+from family_assistant.services.oauth_integration_state import (
+    evaluate_oauth_integration_state,
 )
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.google_data import (
+    GOOGLE_TOOL_REQUIRED_SCOPES,
     gmail_get_attachment_tool,
     gmail_search_tool,
 )
@@ -73,16 +72,18 @@ from family_assistant.web.dependencies import (
     get_current_user,
 )
 from family_assistant.web.routers.attachments_api import attachments_api_router
-from family_assistant.web.routers.google_integration import google_integration_router
+from family_assistant.web.routers.oauth_integration import (
+    create_oauth_integration_router,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from family_assistant.services.google_api import GoogleApiBackend
-    from family_assistant.storage.repositories.google_connections import (
-        GoogleConnectionModel,
+    from family_assistant.services.api_backend import ApiBackend
+    from family_assistant.storage.repositories.oauth_connections import (
+        OAuthConnectionModel,
     )
 
 GMAIL_SCOPE = GoogleScope.GMAIL_READONLY.value
@@ -258,8 +259,8 @@ class _FakeAuthService:
 
 
 @dataclass
-class _FakeGoogleApiBackend:
-    """A :class:`GoogleApiBackend` serving canned mailbox payloads by access token.
+class _FakeApiBackend:
+    """A :class:`ApiBackend` serving canned mailbox payloads by access token.
 
     ``routes`` maps ``access_token -> {(method, url_suffix): payload}``. A payload
     that is ``bytes`` is returned verbatim (attachment/download bodies); anything
@@ -278,7 +279,7 @@ class _FakeGoogleApiBackend:
         url: str,
         access_token: str,
         params: Mapping[str, str] | None = None,
-    ) -> GoogleApiResponse:
+    ) -> ApiResponse:
         self.requests.append((method, url, access_token))
         path = url.split("?", 1)[0]
         for (route_method, needle), payload in self.routes.get(
@@ -290,8 +291,8 @@ class _FakeGoogleApiBackend:
                     if isinstance(payload, bytes)
                     else json.dumps(payload).encode("utf-8")
                 )
-                return GoogleApiResponse(status_code=200, content=content)
-        return GoogleApiResponse(status_code=404, content=b'{"error": "not found"}')
+                return ApiResponse(status_code=200, content=content)
+        return ApiResponse(status_code=404, content=b'{"error": "not found"}')
 
 
 def _gmail_mailbox(message_id: str, subject: str) -> dict[tuple[str, str], object]:
@@ -360,7 +361,10 @@ async def e2e(db_engine: AsyncEngine) -> AsyncGenerator[_E2EApp]:
     )
 
     app = FastAPI()
-    app.include_router(google_integration_router, prefix="/api/integrations/google")
+    app.include_router(
+        create_oauth_integration_router(GOOGLE_PROVIDER),
+        prefix="/api/integrations/google",
+    )
     app.include_router(attachments_api_router, prefix="/api/attachments")
     app.state.database_engine = db_engine
     app.state.config = AppConfig.model_validate({
@@ -372,19 +376,25 @@ async def e2e(db_engine: AsyncEngine) -> AsyncGenerator[_E2EApp]:
         ],
     })
     app.state.auth_service = _FakeAuthService(auth_enabled=True)
-    app.state.google_integration_state = evaluate_google_integration_state(
-        app.state.config, auth_enabled=True
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        app.state.config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
     )
+    app.state.oauth_integration_states = {"google": state}
     app.state.notification_dispatcher = notifier
     app.state.attachment_registry = registry
 
     google_client = google_server.client()
-    app.state.google_oauth_http_client = google_client
-    app.state.google_oauth_urls = {
-        "authorize": "https://accounts.google.test/o/oauth2/v2/auth",
-        "token": "https://oauth2.googleapis.test/token",
-        "revoke": "https://oauth2.googleapis.test/revoke",
-        "userinfo": "https://www.googleapis.test/oauth2/v3/userinfo",
+    app.state.oauth_http_client = google_client
+    app.state.oauth_url_overrides = {
+        "google": {
+            "authorize": "https://accounts.google.test/o/oauth2/v2/auth",
+            "token": "https://oauth2.googleapis.test/token",
+            "revoke": "https://oauth2.googleapis.test/revoke",
+            "userinfo": "https://www.googleapis.test/oauth2/v3/userinfo",
+        }
     }
     app.dependency_overrides[get_current_user] = lambda: {"user_identifier": "alice"}
     app.dependency_overrides[get_current_session_user] = lambda: {
@@ -452,19 +462,20 @@ async def _status(http: AsyncClient, e2e: _E2EApp, user_id: str) -> dict[str, ob
 
 async def _fetch_connection(
     db_engine: AsyncEngine, user_id: str
-) -> GoogleConnectionModel | None:
+) -> OAuthConnectionModel | None:
     async with get_db_context(engine=db_engine) as db:
-        return await db.google_connections.get_connection(user_id)
+        return await db.oauth_connections.get_connection(user_id, "google")
 
 
-def _real_resolver(e2e: _E2EApp) -> GoogleCredentialResolver:
+def _real_resolver(e2e: _E2EApp) -> OAuthCredentialResolver:
     """Construct the REAL resolver against the same fake Google token endpoint."""
-    return GoogleCredentialResolver(
+    return OAuthCredentialResolver(
+        provider=GOOGLE_PROVIDER,
         config=e2e.integration,
         encryption=CredentialEncryption(e2e.integration.credential_encryption_key),
         http_client=e2e.google_server.client(),
         notifier=e2e.notifier,
-        token_endpoint=e2e.app.state.google_oauth_urls["token"],
+        token_endpoint=e2e.app.state.oauth_url_overrides["google"]["token"],
     )
 
 
@@ -472,8 +483,8 @@ def _exec_context(
     db: DatabaseContext,
     *,
     user_id: str | None,
-    resolver: GoogleCredentialResolver,
-    backend: _FakeGoogleApiBackend,
+    resolver: OAuthCredentialResolver,
+    backend: _FakeApiBackend,
     registry: AttachmentRegistry | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
@@ -488,8 +499,8 @@ def _exec_context(
         event_sources=None,
         attachment_registry=registry,
         camera_backend=None,
-        google_credentials=resolver,
-        google_api_backend=cast("GoogleApiBackend | None", backend),
+        credential_resolvers={"google": resolver},
+        api_backend=cast("ApiBackend | None", backend),
         timezone=ZoneInfo("UTC"),
         user_id=user_id,
     )
@@ -541,7 +552,7 @@ async def test_two_users_connect_and_read_only_own_mailbox(
     # 2. Read as each user through the REAL resolver: refresh-alice -> at-alice
     # (which sees alice's mailbox), refresh-bob -> at-bob (bob's mailbox).
     resolver = _real_resolver(e2e)
-    backend = _FakeGoogleApiBackend(
+    backend = _FakeApiBackend(
         routes={
             "at-alice": _gmail_mailbox("msg-alice", "Alice mailbox only"),
             "at-bob": _gmail_mailbox("msg-bob", "Bob mailbox only"),
@@ -569,7 +580,7 @@ async def test_two_users_connect_and_read_only_own_mailbox(
 
     # last_used_at reflects the successful data API use.
     async with DatabaseContext(engine=db_engine) as db:
-        alice_conn = await db.google_connections.get_connection("alice")
+        alice_conn = await db.oauth_connections.get_connection("alice", "google")
     assert alice_conn is not None
     assert alice_conn.last_used_at is not None
 
@@ -592,7 +603,7 @@ async def test_fail_closed_unconnected_no_user_and_after_disconnect(
     )
 
     resolver = _real_resolver(e2e)
-    backend = _FakeGoogleApiBackend(
+    backend = _FakeApiBackend(
         routes={"at-alice": _gmail_mailbox("msg-alice", "Alice mailbox only")}
     )
 
@@ -645,7 +656,7 @@ async def test_attachment_ownership_across_stack(
 
     attachment_bytes = b"PDF-PERMISSION-FORM-BYTES"
     resolver = _real_resolver(e2e)
-    backend = _FakeGoogleApiBackend(
+    backend = _FakeApiBackend(
         routes={
             "at-alice": {
                 ("GET", "/attachments/att-1"): {
@@ -737,7 +748,7 @@ async def test_needs_reauth_then_reconnect(
     e2e.google_server.invalid_grant_refresh_tokens.add(REFRESH_BOB)
 
     resolver = _real_resolver(e2e)
-    backend = _FakeGoogleApiBackend(
+    backend = _FakeApiBackend(
         routes={"at-bob-2": _gmail_mailbox("msg-bob", "Bob mailbox only")}
     )
 
@@ -795,7 +806,7 @@ async def test_gmail_read_taints_turn_unknown_external(
     )
 
     resolver = _real_resolver(e2e)
-    backend = _FakeGoogleApiBackend(
+    backend = _FakeApiBackend(
         routes={"at-alice": _gmail_mailbox("msg-alice", "Alice mailbox only")}
     )
     async with DatabaseContext(engine=db_engine) as db:

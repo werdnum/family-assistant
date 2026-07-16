@@ -1,4 +1,4 @@
-"""Repository for per-user Google OAuth connections and pending flows."""
+"""Repository for per-user OAuth connections and pending flows."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 
-from family_assistant.storage.google_connections import (
-    pending_google_oauth_flows_table,
-    user_google_connections_table,
+from family_assistant.storage.oauth_connections import (
+    pending_oauth_flows_table,
+    user_oauth_connections_table,
 )
 from family_assistant.storage.repositories.base import BaseRepository
 
 
-class GoogleConnectionModel(BaseModel):
-    """A stored per-user Google connection row."""
+class OAuthConnectionModel(BaseModel):
+    """A stored per-user OAuth connection row."""
 
     id: int
     user_id: str
@@ -37,7 +37,7 @@ class GoogleConnectionModel(BaseModel):
 
 
 class PendingOAuthFlowModel(BaseModel):
-    """A stored pending Google OAuth authorization-code flow."""
+    """A stored pending OAuth authorization-code flow."""
 
     id: int
     state_hash: str
@@ -57,9 +57,9 @@ def _coerce_scopes(value: list[str] | str | None) -> list[str]:
 
 
 # ast-grep-ignore: no-dict-any - dict[str, Any] from DatabaseContext.fetch_one
-def _row_to_connection(row: dict[str, Any]) -> GoogleConnectionModel:
-    """Convert a database row dict to a GoogleConnectionModel."""
-    return GoogleConnectionModel(
+def _row_to_connection(row: dict[str, Any]) -> OAuthConnectionModel:
+    """Convert a database row dict to a OAuthConnectionModel."""
+    return OAuthConnectionModel(
         id=row["id"],
         user_id=row["user_id"],
         provider=row["provider"],
@@ -86,17 +86,17 @@ def _row_to_pending_flow(row: dict[str, Any]) -> PendingOAuthFlowModel:
     )
 
 
-class GoogleConnectionsRepository(BaseRepository):
-    """Repository for per-user Google connections and pending OAuth flows."""
+class OAuthConnectionsRepository(BaseRepository):
+    """Repository for per-user OAuth connections and pending flows."""
 
     async def get_connection(
-        self, user_id: str, provider: str = "google"
-    ) -> GoogleConnectionModel | None:
+        self, user_id: str, provider: str
+    ) -> OAuthConnectionModel | None:
         """Return the connection for a user/provider, or None."""
         try:
-            stmt = select(user_google_connections_table).where(
-                user_google_connections_table.c.user_id == user_id,
-                user_google_connections_table.c.provider == provider,
+            stmt = select(user_oauth_connections_table).where(
+                user_oauth_connections_table.c.user_id == user_id,
+                user_oauth_connections_table.c.provider == provider,
             )
             row = await self._db.fetch_one(stmt)
             return _row_to_connection(row) if row is not None else None
@@ -106,12 +106,12 @@ class GoogleConnectionsRepository(BaseRepository):
             )
             raise
 
-    async def list_connections(self) -> list[GoogleConnectionModel]:
+    async def list_connections(self) -> list[OAuthConnectionModel]:
         """Return all connections, for status/diagnostics surfaces."""
         try:
-            stmt = select(user_google_connections_table).order_by(
-                user_google_connections_table.c.user_id,
-                user_google_connections_table.c.provider,
+            stmt = select(user_oauth_connections_table).order_by(
+                user_oauth_connections_table.c.user_id,
+                user_oauth_connections_table.c.provider,
             )
             rows = await self._db.fetch_all(stmt)
             return [_row_to_connection(row) for row in rows]
@@ -128,7 +128,7 @@ class GoogleConnectionsRepository(BaseRepository):
         provider_account_email: str,
         scopes: list[str],
         refresh_token_encrypted: str,
-    ) -> GoogleConnectionModel:
+    ) -> OAuthConnectionModel:
         """Create or replace a connection, rotating ``credential_generation``.
 
         Every write sets ``status='active'`` and rotates
@@ -147,7 +147,7 @@ class GoogleConnectionsRepository(BaseRepository):
         insert_ctor = (
             pg_insert if self._db.engine.dialect.name == "postgresql" else sqlite_insert
         )
-        base_stmt = insert_ctor(user_google_connections_table).values(
+        base_stmt = insert_ctor(user_oauth_connections_table).values(
             user_id=user_id,
             provider=provider,
             provider_account_email=provider_account_email,
@@ -160,8 +160,8 @@ class GoogleConnectionsRepository(BaseRepository):
         )
         stmt = base_stmt.on_conflict_do_update(
             index_elements=[
-                user_google_connections_table.c.user_id,
-                user_google_connections_table.c.provider,
+                user_oauth_connections_table.c.user_id,
+                user_oauth_connections_table.c.provider,
             ],
             set_={
                 "provider_account_email": base_stmt.excluded.provider_account_email,
@@ -190,13 +190,13 @@ class GoogleConnectionsRepository(BaseRepository):
         """
         now = datetime.now(UTC)
         stmt = (
-            update(user_google_connections_table)
+            update(user_oauth_connections_table)
             .where(
-                user_google_connections_table.c.user_id == user_id,
-                user_google_connections_table.c.provider == provider,
-                user_google_connections_table.c.credential_generation
+                user_oauth_connections_table.c.user_id == user_id,
+                user_oauth_connections_table.c.provider == provider,
+                user_oauth_connections_table.c.credential_generation
                 == expected_generation,
-                user_google_connections_table.c.status == "active",
+                user_oauth_connections_table.c.status == "active",
             )
             .values(
                 status="needs_reauth",
@@ -211,20 +211,20 @@ class GoogleConnectionsRepository(BaseRepository):
         """Stamp ``last_used_at`` after a successful API use."""
         now = datetime.now(UTC)
         stmt = (
-            update(user_google_connections_table)
+            update(user_oauth_connections_table)
             .where(
-                user_google_connections_table.c.user_id == user_id,
-                user_google_connections_table.c.provider == provider,
+                user_oauth_connections_table.c.user_id == user_id,
+                user_oauth_connections_table.c.provider == provider,
             )
             .values(last_used_at=now)
         )
         await self._db.execute_with_retry(stmt)
 
-    async def delete_connection(self, user_id: str, provider: str = "google") -> bool:
+    async def delete_connection(self, user_id: str, provider: str) -> bool:
         """Delete a connection. Returns True iff a row was removed."""
-        stmt = delete(user_google_connections_table).where(
-            user_google_connections_table.c.user_id == user_id,
-            user_google_connections_table.c.provider == provider,
+        stmt = delete(user_oauth_connections_table).where(
+            user_oauth_connections_table.c.user_id == user_id,
+            user_oauth_connections_table.c.provider == provider,
         )
         result = await self._db.execute_with_retry(stmt)
         return result.rowcount > 0  # type: ignore[union-attr] # rowcount available on CursorResult
@@ -234,7 +234,7 @@ class GoogleConnectionsRepository(BaseRepository):
     ) -> None:
         """Persist a pending OAuth flow keyed by the hashed state nonce."""
         now = datetime.now(UTC)
-        stmt = insert(pending_google_oauth_flows_table).values(
+        stmt = insert(pending_oauth_flows_table).values(
             state_hash=state_hash,
             code_verifier=code_verifier,
             user_id=user_id,
@@ -256,15 +256,15 @@ class GoogleConnectionsRepository(BaseRepository):
         the claim deletes them but returns None.
         """
         current = now if now is not None else datetime.now(UTC)
-        select_stmt = select(pending_google_oauth_flows_table).where(
-            pending_google_oauth_flows_table.c.state_hash == state_hash
+        select_stmt = select(pending_oauth_flows_table).where(
+            pending_oauth_flows_table.c.state_hash == state_hash
         )
         row = await self._db.fetch_one(select_stmt)
         if row is None:
             return None
 
-        delete_stmt = delete(pending_google_oauth_flows_table).where(
-            pending_google_oauth_flows_table.c.id == row["id"]
+        delete_stmt = delete(pending_oauth_flows_table).where(
+            pending_oauth_flows_table.c.id == row["id"]
         )
         result = await self._db.execute_with_retry(delete_stmt)
         if result.rowcount != 1:  # type: ignore[union-attr] # rowcount available on CursorResult
@@ -285,8 +285,8 @@ class GoogleConnectionsRepository(BaseRepository):
         """Delete pending flows older than ``max_age_seconds``. Returns count."""
         current = now if now is not None else datetime.now(UTC)
         expiry_cutoff = current - timedelta(seconds=max_age_seconds)
-        stmt = delete(pending_google_oauth_flows_table).where(
-            pending_google_oauth_flows_table.c.created_at < expiry_cutoff
+        stmt = delete(pending_oauth_flows_table).where(
+            pending_oauth_flows_table.c.created_at < expiry_cutoff
         )
         result = await self._db.execute_with_retry(stmt)
         return result.rowcount or 0  # type: ignore[union-attr] # rowcount available on CursorResult

@@ -1316,8 +1316,8 @@ class AsteriskLiveHandler:
                         allow_wake_llm=(
                             self.processing_service.service_config.allow_wake_llm
                         ),
-                        google_credentials=None,
-                        google_api_backend=None,
+                        credential_resolvers=None,
+                        api_backend=None,
                     )
 
                     result = await self.processing_service.tools_provider.execute_tool(

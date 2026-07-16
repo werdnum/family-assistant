@@ -1,7 +1,7 @@
-"""Storage tables for per-user Google OAuth connections and pending flows.
+"""Storage tables for per-user OAuth connections and pending flows.
 
-``user_google_connections`` holds one active connection per (user, provider) with
-the Fernet-encrypted refresh token. ``pending_google_oauth_flows`` holds
+``user_oauth_connections`` holds one active connection per (user, provider) with
+the Fernet-encrypted refresh token. ``pending_oauth_flows`` holds
 short-lived, single-use OAuth authorization-code flows (hashed state nonce, PKCE
 verifier) that the callback atomically claims.
 """
@@ -22,8 +22,8 @@ from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.base import metadata
 
-user_google_connections_table = Table(
-    "user_google_connections",
+user_oauth_connections_table = Table(
+    "user_oauth_connections",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("user_id", String(255), nullable=False),
@@ -51,12 +51,12 @@ user_google_connections_table = Table(
     ),
     Column("last_used_at", DateTime(timezone=True), nullable=True),
     UniqueConstraint(
-        "user_id", "provider", name="uq_user_google_connections_user_provider"
+        "user_id", "provider", name="uq_user_oauth_connections_user_provider"
     ),
 )
 
-pending_google_oauth_flows_table = Table(
-    "pending_google_oauth_flows",
+pending_oauth_flows_table = Table(
+    "pending_oauth_flows",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("state_hash", String(64), nullable=False, unique=True),
@@ -68,5 +68,5 @@ pending_google_oauth_flows_table = Table(
         nullable=False,
         server_default=func.now(),
     ),
-    Index("ix_pending_google_oauth_flows_created_at", "created_at"),
+    Index("ix_pending_oauth_flows_created_at", "created_at"),
 )

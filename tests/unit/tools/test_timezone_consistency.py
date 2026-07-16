@@ -133,8 +133,8 @@ def sydney_exec_context(
         attachment_registry=None,
         camera_backend=camera_backend_with_events,
         timezone=SYDNEY,
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 

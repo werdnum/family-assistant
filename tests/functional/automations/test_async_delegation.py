@@ -183,8 +183,8 @@ class FakeDelegatableService:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
                 request_confirmation_callback=callback,
                 confirmation_ui_managers=kwargs["confirmation_ui_managers"],
             )
@@ -401,8 +401,8 @@ def _tool_context(
         attachment_registry=attachment_registry,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
         chat_interface=chat_interface,
         chat_interfaces={TEST_INTERFACE_TYPE: chat_interface}
         if chat_interface
@@ -1963,8 +1963,8 @@ class FakeConfirmingWakeSourceService:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
             processing_profile_id="source_profile",
             request_confirmation_callback=callback,
             confirmation_ui_managers=kwargs["confirmation_ui_managers"],

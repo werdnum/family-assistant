@@ -115,8 +115,8 @@ def _build_script_exec_context(
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
         processing_profile_id=processing_profile_id,
     )
 
@@ -437,8 +437,8 @@ async def test_get_automation_stats_event(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -484,8 +484,8 @@ async def test_get_automation_stats_not_found(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         result = await get_automation_stats_tool(
@@ -534,8 +534,8 @@ async def test_event_automation_with_script_execution(
             camera_backend=None,
             tools_provider=tools_provider,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         script_code = f"""

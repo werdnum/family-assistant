@@ -69,6 +69,7 @@ from family_assistant.processing import (
     ProcessingServiceConfig,
 )
 from family_assistant.security.taint import merge_taint_policy_config
+from family_assistant.services.api_backend import HttpApiBackend
 from family_assistant.services.apns import APNsService, load_apns_auth_key
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
@@ -78,14 +79,14 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.credential_encryption import CredentialEncryption
-from family_assistant.services.google_api import HttpGoogleApiBackend
-from family_assistant.services.google_credentials import GoogleCredentialResolver
-from family_assistant.services.google_integration_state import (
-    GoogleIntegrationState,
-    evaluate_google_integration_state,
-    filter_google_tool_registrations,
-)
+from family_assistant.services.google_provider import GOOGLE_PROVIDER
 from family_assistant.services.notification_dispatcher import NotificationDispatcher
+from family_assistant.services.oauth_credentials import OAuthCredentialResolver
+from family_assistant.services.oauth_integration_state import (
+    OAuthIntegrationState,
+    evaluate_oauth_integration_state,
+    filter_oauth_tool_registrations,
+)
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.services.worker_backend import get_worker_backend
@@ -137,6 +138,7 @@ from family_assistant.tools import (
     _scan_user_docs,
     build_local_tool_registrations,
 )
+from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
@@ -318,9 +320,9 @@ class Assistant:
         self.notification_dispatcher: NotificationDispatcher | None = None
         self.confirmation_service: ConfirmationService | None = None
         self.confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
-        self.google_integration_state: GoogleIntegrationState | None = None
-        self.google_credentials: GoogleCredentialResolver | None = None
-        self.google_api_backend: HttpGoogleApiBackend | None = None
+        self.oauth_integration_states: dict[str, OAuthIntegrationState] = {}
+        self.credential_resolvers: dict[str, OAuthCredentialResolver] = {}
+        self.api_backend: HttpApiBackend | None = None
         # Pool of in-process TaskWorker instances and their run() tasks, kept
         # index-aligned so the health monitor can restart an individual worker.
         self.task_workers: list[TaskWorker] = []
@@ -464,7 +466,7 @@ class Assistant:
             self.apns_service.enabled,
         )
 
-    def _log_google_integration_state(self, state: GoogleIntegrationState) -> None:
+    def _log_google_integration_state(self, state: OAuthIntegrationState) -> None:
         """Log the resolved Google integration state at the right severity.
 
         A disabled integration that the operator *tried* to configure is a
@@ -799,23 +801,28 @@ class Assistant:
         # endpoint, and the connect-flow 409s. Disabled Google tools are dropped
         # from the shared root definitions so no profile (nor UI/API) can advertise
         # a tool whose credentials cannot serve it.
-        self.google_integration_state = evaluate_google_integration_state(
-            self.config, auth_enabled=AUTH_ENABLED
+        google_integration_state = evaluate_oauth_integration_state(
+            GOOGLE_PROVIDER,
+            self.config,
+            auth_enabled=AUTH_ENABLED,
+            tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
         )
-        self.fastapi_app.state.google_integration_state = self.google_integration_state
-        self.fastapi_app.state.google_oauth_http_client = self.shared_httpx_client
-        self._log_google_integration_state(self.google_integration_state)
-        if self.google_integration_state.enabled:
+        self.oauth_integration_states[GOOGLE_PROVIDER.name] = google_integration_state
+        self.fastapi_app.state.oauth_integration_states = self.oauth_integration_states
+        self.fastapi_app.state.oauth_http_client = self.shared_httpx_client
+        self._log_google_integration_state(google_integration_state)
+        if google_integration_state.enabled:
             encryption = CredentialEncryption(
                 self.config.google_integration.credential_encryption_key
             )
-            self.google_credentials = GoogleCredentialResolver(
+            self.credential_resolvers[GOOGLE_PROVIDER.name] = OAuthCredentialResolver(
+                GOOGLE_PROVIDER,
                 self.config.google_integration,
                 encryption,
                 self.shared_httpx_client,
                 self.notification_dispatcher,
             )
-            self.google_api_backend = HttpGoogleApiBackend(self.shared_httpx_client)
+            self.api_backend = HttpApiBackend(self.shared_httpx_client)
 
         # Create root providers with ALL tools for UI/API access
         logger.info("Creating root ToolsProvider with all available tools")
@@ -827,8 +834,8 @@ class Assistant:
             implementations=local_tool_implementations,
             metadata_by_name=local_tool_metadata_by_name,
         )
-        root_local_registrations = filter_google_tool_registrations(
-            root_local_registrations, self.google_integration_state
+        root_local_registrations = filter_oauth_tool_registrations(
+            root_local_registrations, google_integration_state
         )
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
@@ -1211,8 +1218,8 @@ class Assistant:
                 home_assistant_client=home_assistant_client_for_profile,
                 camera_backend=camera_backend_for_profile,
                 on_demand_view=profile_on_demand_view,
-                google_credentials=self.google_credentials,
-                google_api_backend=self.google_api_backend,
+                credential_resolvers=self.credential_resolvers,
+                api_backend=self.api_backend,
             )
 
             self.processing_services_registry[profile_id] = processing_service_instance

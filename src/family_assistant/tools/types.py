@@ -197,12 +197,12 @@ if TYPE_CHECKING:
         TurnTaintState,
         TurnTaintTracker,
     )
+    from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
     )
-    from family_assistant.services.google_api import GoogleApiBackend
-    from family_assistant.services.google_credentials import GoogleCredentialResolver
+    from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.storage.repositories.notes import NoteWritePolicy
@@ -327,10 +327,10 @@ class ToolExecutionContext:
         AttachmentRegistry | None
     )  # NO DEFAULT - must specify explicitly
     camera_backend: CameraBackend | None  # NO DEFAULT - must specify explicitly
-    google_credentials: (
-        GoogleCredentialResolver | None
+    credential_resolvers: (
+        Mapping[str, OAuthCredentialResolver] | None
     )  # NO DEFAULT - must specify explicitly
-    google_api_backend: GoogleApiBackend | None  # NO DEFAULT - must specify explicitly
+    api_backend: ApiBackend | None  # NO DEFAULT - must specify explicitly
     timezone: ZoneInfo  # NO DEFAULT - must specify explicitly
     # Optional fields with defaults (for backward compatibility and convenience)
     user_id: str | None = None  # User identifier

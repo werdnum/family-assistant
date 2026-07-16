@@ -111,8 +111,8 @@ class TestAttachToResponseTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             # Create ScriptAttachment object for the tool
@@ -173,8 +173,8 @@ class TestAttachToResponseTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             # Create a mock ScriptAttachment that will fail validation
@@ -211,8 +211,8 @@ class TestAttachToResponseTool:
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             # Create a mock ScriptAttachment for this test
@@ -280,8 +280,8 @@ class TestSendMessageToUserWithAttachments:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             result = await send_message_to_user_tool(
@@ -329,8 +329,8 @@ class TestSendMessageToUserWithAttachments:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             result = await send_message_to_user_tool(
@@ -473,8 +473,8 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             # Get attachment metadata
@@ -583,8 +583,8 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
@@ -666,8 +666,8 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
@@ -755,8 +755,8 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(

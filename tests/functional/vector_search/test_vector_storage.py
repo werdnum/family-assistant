@@ -385,8 +385,8 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
             chat_interface=None,  # Add chat_interface (None for this tool context)
             embedding_generator=mock_generator,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # --- Act: Execute the tool via the provider ---
@@ -537,8 +537,8 @@ async def test_get_full_document_content_with_raw_content(
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             # Test retrieval of full content

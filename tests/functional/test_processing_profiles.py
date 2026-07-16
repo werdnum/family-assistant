@@ -119,8 +119,8 @@ async def test_reply_with_different_profile_includes_history(
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
     profile_b_config = ProcessingServiceConfig(
@@ -139,8 +139,8 @@ async def test_reply_with_different_profile_includes_history(
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
     # --- 1. Simulate initial message from Profile A ---
     async with get_db_context(db_engine) as db_context:

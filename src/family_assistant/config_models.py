@@ -373,7 +373,25 @@ class ApnsConfig(BaseModel):
     use_sandbox: bool = False
 
 
-class GoogleIntegrationConfig(BaseModel):
+class OAuthIntegrationConfig(BaseModel):
+    """Per-user OAuth integration configuration for one provider.
+
+    OAuth client credentials, the Fernet key used to encrypt stored refresh
+    tokens at rest, the operator-tunable data scopes requested at consent, and
+    whether the provider's data tools require taint enforcement before they
+    register.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    oauth_client_id: str = ""
+    oauth_client_secret: str = ""
+    credential_encryption_key: str = ""
+    scopes: list[str] = Field(default_factory=list)
+    require_taint_enforcement: bool = True
+
+
+class GoogleIntegrationConfig(OAuthIntegrationConfig):
     """Per-user Gmail/Drive integration configuration.
 
     Enables the user-scoped Google data feature: OAuth client credentials, the
@@ -382,18 +400,12 @@ class GoogleIntegrationConfig(BaseModel):
     taint enforcement before they register.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
-    oauth_client_id: str = ""
-    oauth_client_secret: str = ""
-    credential_encryption_key: str = ""
     scopes: list[str] = Field(
         default_factory=lambda: [
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/drive.readonly",
         ]
     )
-    require_taint_enforcement: bool = True
 
 
 class GeminiVoiceConfig(BaseModel):

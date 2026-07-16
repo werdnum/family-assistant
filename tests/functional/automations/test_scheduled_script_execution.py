@@ -144,8 +144,8 @@ print("Script executed - note created: " + str(result))
         context_providers=[],
         server_url=None,
         clock=mock_clock,
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
     mock_chat_interface = AsyncMock(spec=ChatInterface)
@@ -307,8 +307,8 @@ if True  # Missing colon
         context_providers=[],
         server_url=None,
         clock=mock_clock,
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
     mock_chat_interface = AsyncMock(spec=ChatInterface)
