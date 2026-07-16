@@ -451,6 +451,58 @@ async def test_disabled_integration_status_and_authorize(
 
 
 @pytest.mark.asyncio
+async def test_disabled_but_connected_status_shows_connection(
+    google_client: AsyncClient,
+    google_app: _GoogleTestApp,
+) -> None:
+    # Connect while enabled, then disable the integration (lost encryption key).
+    state, _ = await _authorize_and_extract_state(google_client)
+    await google_client.get(
+        "/api/integrations/google/callback",
+        params={"code": "code", "state": state},
+        follow_redirects=False,
+    )
+    google_app.app.state.config.google_integration = _google_integration_config(
+        credential_encryption_key=""
+    )
+
+    body = (await google_client.get("/api/integrations/google")).json()
+    assert body["enabled"] is False
+    assert body["reason"]
+    # The stored connection is still reported so the user can see and remove it.
+    assert body["connected"] is True
+    assert body["provider_account_email"] == "connected-user@gmail.com"
+    assert body["status"] == "active"
+    assert set(body["granted_scopes"]) >= {GMAIL_SCOPE, DRIVE_SCOPE}
+
+
+@pytest.mark.asyncio
+async def test_disconnect_while_disabled_deletes_without_revoke(
+    google_client: AsyncClient,
+    google_app: _GoogleTestApp,
+    db_engine: AsyncEngine,
+) -> None:
+    # Connect while enabled, then disable by clearing the encryption key.
+    state, _ = await _authorize_and_extract_state(google_client)
+    await google_client.get(
+        "/api/integrations/google/callback",
+        params={"code": "code", "state": state},
+        follow_redirects=False,
+    )
+    assert await _fetch_connection(db_engine, "alice") is not None
+    google_app.app.state.config.google_integration = _google_integration_config(
+        credential_encryption_key=""
+    )
+
+    # Disconnect must still work even though the integration is disabled.
+    disconnect = await google_client.request("DELETE", "/api/integrations/google")
+    assert disconnect.status_code == 204
+    assert await _fetch_connection(db_engine, "alice") is None
+    # No revocation is attempted without a well-formed encryption key.
+    assert google_app.google_server.revoke_calls == []
+
+
+@pytest.mark.asyncio
 async def test_disabled_when_auth_not_enabled(
     google_client: AsyncClient,
     google_app: _GoogleTestApp,

@@ -49,6 +49,12 @@ _DRIVE_SEARCH_CAP = 25
 _MESSAGE_BODY_CHAR_LIMIT = 50_000
 # Drive files below this size are pulled inline as text; larger go to attachments.
 _DRIVE_INLINE_TEXT_LIMIT = 200 * 1024
+# Hard ceiling on a Drive download. When the metadata already reports a larger
+# ``size`` we refuse without issuing the ``alt=media`` request, so a multi-gigabyte
+# file can never be materialized in memory. This mirrors the backend's own
+# response-body cap (``HttpGoogleApiBackend.max_response_bytes``), which is the
+# defense for Google-native exports that report no size.
+_DRIVE_DOWNLOAD_LIMIT = 25 * 1024 * 1024
 
 # Google-native mime types and the export format we fetch them as.
 _GOOGLE_DOC_EXPORTS: dict[str, str] = {
@@ -703,9 +709,17 @@ async def drive_get_file_tool(
         mime_type = meta.get("mimeType") or "application/octet-stream"
         if mime_type in _GOOGLE_DOC_EXPORTS:
             return await _drive_export_native(exec_context, file_id, name, mime_type)
-        return await _drive_fetch_content(
-            exec_context, file_id, name, mime_type, _coerce_int(meta.get("size"))
-        )
+        size = _coerce_int(meta.get("size"))
+        # Pre-check on the ``alt=media`` path: the metadata already reports the
+        # byte size for non-native files, so a file over the download limit is
+        # refused before any body is fetched (Google-native exports report no
+        # size and rely on the backend's response-body cap instead).
+        if size is not None and size > _DRIVE_DOWNLOAD_LIMIT:
+            raise _GoogleToolError(
+                f"Drive file {name} is {size} bytes, which exceeds the "
+                f"{_DRIVE_DOWNLOAD_LIMIT}-byte download limit."
+            )
+        return await _drive_fetch_content(exec_context, file_id, name, mime_type, size)
 
     return await _guard(_impl)
 

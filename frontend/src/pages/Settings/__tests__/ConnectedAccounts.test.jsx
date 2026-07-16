@@ -91,6 +91,30 @@ describe('ConnectedAccounts', () => {
     expect(screen.queryByRole('button', { name: /connect/i })).not.toBeInTheDocument();
   });
 
+  it('renders disabled-but-connected state with disconnect button and no connect button', async () => {
+    const disabledConnected = {
+      ...googleConnectedResponse,
+      enabled: false,
+      reason: 'Google integration is disabled: taint floor not met.',
+    };
+    server.use(http.get('/api/integrations/google', () => HttpResponse.json(disabledConnected)));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Google integration is disabled: taint floor not met.')
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('user@example.com')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /connect google account/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reconnect/i })).not.toBeInTheDocument();
+  });
+
   it('renders not-connected state with connect button', async () => {
     server.use(
       http.get('/api/integrations/google', () => HttpResponse.json(googleNotConnectedResponse))

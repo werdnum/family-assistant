@@ -75,6 +75,44 @@ async def test_error_status_is_returned_not_raised() -> None:
 
 
 @pytest.mark.asyncio
+async def test_response_body_over_cap_raises_google_api_error() -> None:
+    body = b"x" * (64 * 1024)
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    backend = HttpGoogleApiBackend(client, max_response_bytes=1024)
+
+    with pytest.raises(GoogleApiError, match="response limit"):
+        await backend.request(
+            method="GET",
+            url="https://www.googleapis.com/drive/v3/files/huge?alt=media",
+            access_token="tok",
+        )
+
+
+@pytest.mark.asyncio
+async def test_response_body_within_cap_is_returned() -> None:
+    body = b"small-body"
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    backend = HttpGoogleApiBackend(client, max_response_bytes=1024)
+
+    response = await backend.request(
+        method="GET",
+        url="https://www.googleapis.com/drive/v3/files/small?alt=media",
+        access_token="tok",
+    )
+
+    assert response.status_code == 200
+    assert response.content == body
+
+
+@pytest.mark.asyncio
 async def test_transport_failure_raises_google_api_error() -> None:
     def _handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")

@@ -232,10 +232,11 @@ async def get_google_integration_status(
         else (integration is not None and not integration.require_taint_enforcement)
     )
 
-    connection = None
-    if enabled:
-        user_id = current_user["user_identifier"]
-        connection = await db.google_connections.get_connection(user_id)
+    # Report the stored connection even when the integration is currently
+    # disabled (lost config / taint floor). Otherwise a user who connected while
+    # it was enabled could neither see nor remove their persisted refresh token.
+    user_id = current_user["user_identifier"]
+    connection = await db.google_connections.get_connection(user_id)
 
     granted_scopes = list(connection.scopes) if connection is not None else []
     missing_configured_scopes = [
@@ -492,8 +493,14 @@ async def disconnect_google_integration(
     db: Db,
     http_client: GoogleOAuthClient,
 ) -> None:
-    """Best-effort revoke the refresh token, then delete the connection row."""
-    integration = _require_enabled(request)
+    """Best-effort revoke the refresh token, then delete the connection row.
+
+    Deliberately NOT gated on enablement: if the integration becomes disabled
+    (lost config / taint floor) after a user connected, they must still be able
+    to remove their stored refresh token. Revocation is attempted only when the
+    config still carries a well-formed encryption key so the token can be
+    decrypted; otherwise the row is deleted regardless.
+    """
     user_id = current_user["user_identifier"]
 
     connection = await db.google_connections.get_connection(user_id)
@@ -503,22 +510,25 @@ async def disconnect_google_integration(
             detail="No Google connection to disconnect.",
         )
 
-    # Best-effort revocation: a decryption failure or a failed revoke still deletes.
-    try:
-        encryption = CredentialEncryption(integration.credential_encryption_key)
-        refresh_token = encryption.decrypt(connection.refresh_token_encrypted)
-        await http_client.post(
-            _google_oauth_urls(request)["revoke"],
-            data={"token": refresh_token},
-        )
-    except (
-        CredentialEncryptionError,
-        CredentialDecryptionError,
-        httpx.HTTPError,
-    ):
-        logger.warning(
-            "Google token revocation failed; deleting connection anyway",
-            exc_info=True,
-        )
+    integration = _google_integration_config(request)
+    if integration is not None and integration.credential_encryption_key:
+        # Best-effort revocation: a decryption failure or a failed revoke still
+        # deletes the row below.
+        try:
+            encryption = CredentialEncryption(integration.credential_encryption_key)
+            refresh_token = encryption.decrypt(connection.refresh_token_encrypted)
+            await http_client.post(
+                _google_oauth_urls(request)["revoke"],
+                data={"token": refresh_token},
+            )
+        except (
+            CredentialEncryptionError,
+            CredentialDecryptionError,
+            httpx.HTTPError,
+        ):
+            logger.warning(
+                "Google token revocation failed; deleting connection anyway",
+                exc_info=True,
+            )
 
     await db.google_connections.delete_connection(user_id)

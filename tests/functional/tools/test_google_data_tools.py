@@ -594,6 +594,38 @@ async def test_drive_get_file_large_binary_goes_to_attachment(
         )
 
 
+@pytest.mark.asyncio
+async def test_drive_get_file_oversized_metadata_errors_without_media_request(
+    db_engine: AsyncEngine,
+) -> None:
+    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    oversized = 50 * 1024 * 1024
+    backend = FakeGoogleApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/files/huge-1"): {
+                    "id": "huge-1",
+                    "name": "movie.mp4",
+                    "mimeType": "video/mp4",
+                    "size": str(oversized),
+                }
+            }
+        }
+    )
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        result = await drive_get_file_tool(context, file_id="huge-1")
+
+    text = result.get_text()
+    assert "exceeds" in text.lower()
+    assert str(oversized) in text
+    # Only the metadata GET was issued — the alt=media download never ran.
+    assert len(backend.requests) == 1
+    assert backend.requests[0][1].endswith("/files/huge-1")
+
+
 # --------------------------------------------------------------------------- #
 # Taint metadata
 # --------------------------------------------------------------------------- #

@@ -160,11 +160,33 @@ const ConnectedAccounts = () => {
         </CardHeader>
         <CardContent className="space-y-4">
           {status && !status.enabled && (
-            <Alert>
-              <AlertDescription>
-                {status.reason ?? 'Google integration is not available in this deployment.'}
-              </AlertDescription>
-            </Alert>
+            <div className="space-y-4">
+              <Alert>
+                <AlertDescription>
+                  {status.reason ?? 'Google integration is not available in this deployment.'}
+                </AlertDescription>
+              </Alert>
+
+              {status.connected && (
+                <div className="space-y-3">
+                  <div>
+                    <span className="text-sm font-medium">Account: </span>
+                    <span className="text-sm">{status.provider_account_email ?? 'Unknown'}</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Your Google account is still connected. New connections are unavailable while
+                    the integration is disabled, but you can remove your stored connection.
+                  </p>
+                  <Button
+                    variant="destructive"
+                    onClick={() => setConfirmDisconnect(true)}
+                    disabled={disconnecting}
+                  >
+                    Disconnect
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
 
           {status && status.enabled && !status.connected && (

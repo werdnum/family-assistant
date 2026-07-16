@@ -1,5 +1,6 @@
 """Unit tests for GoogleConnectionsRepository (SQLite + PostgreSQL)."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
@@ -79,6 +80,64 @@ class TestGoogleConnections:
         assert second.scopes == ["s1", "s2"]
         assert second.refresh_token_encrypted == "cipher-2"
         assert second.status == "active"
+
+    @pytest.mark.asyncio
+    async def test_upsert_preserves_created_at_on_update(
+        self, db_context: DatabaseContext
+    ) -> None:
+        """The atomic upsert keeps ``created_at`` while bumping ``updated_at``."""
+        first = await db_context.google_connections.upsert_connection(
+            user_id="user-a",
+            provider="google",
+            provider_account_email="a@example.com",
+            scopes=["s1"],
+            refresh_token_encrypted="cipher-1",
+        )
+        second = await db_context.google_connections.upsert_connection(
+            user_id="user-a",
+            provider="google",
+            provider_account_email="a2@example.com",
+            scopes=["s1"],
+            refresh_token_encrypted="cipher-2",
+        )
+
+        assert second.id == first.id
+        assert second.created_at == first.created_at
+        assert second.updated_at >= first.updated_at
+
+    @pytest.mark.asyncio
+    async def test_concurrent_upserts_yield_single_active_row(
+        self, db_engine: AsyncEngine
+    ) -> None:
+        """Two concurrent same-user upserts converge on one active connection.
+
+        Each callback runs in its own :class:`DatabaseContext` (a separate
+        transaction, mirroring two concurrent OAuth callbacks). The dialect-native
+        ``INSERT ... ON CONFLICT DO UPDATE`` means neither raises on the unique
+        constraint — the second becomes an update — so exactly one row survives.
+        """
+
+        async def _upsert(email: str, cipher: str) -> None:
+            async with DatabaseContext(engine=db_engine) as ctx:
+                await ctx.google_connections.upsert_connection(
+                    user_id="user-a",
+                    provider="google",
+                    provider_account_email=email,
+                    scopes=["s1"],
+                    refresh_token_encrypted=cipher,
+                )
+
+        await asyncio.gather(
+            _upsert("a1@example.com", "cipher-1"),
+            _upsert("a2@example.com", "cipher-2"),
+        )
+
+        async with DatabaseContext(engine=db_engine) as ctx:
+            connections = await ctx.google_connections.list_connections()
+        user_a = [c for c in connections if c.user_id == "user-a"]
+        assert len(user_a) == 1
+        assert user_a[0].status == "active"
+        assert user_a[0].provider_account_email in {"a1@example.com", "a2@example.com"}
 
     @pytest.mark.asyncio
     async def test_upsert_reactivates_needs_reauth_connection(

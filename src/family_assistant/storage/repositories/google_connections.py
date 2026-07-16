@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.storage.google_connections import (
@@ -135,35 +137,41 @@ class GoogleConnectionsRepository(BaseRepository):
         """
         now = datetime.now(UTC)
         new_generation = str(uuid.uuid4())
-        existing = await self.get_connection(user_id, provider)
-        if existing is None:
-            stmt = insert(user_google_connections_table).values(
-                user_id=user_id,
-                provider=provider,
-                provider_account_email=provider_account_email,
-                scopes=scopes,
-                refresh_token_encrypted=refresh_token_encrypted,
-                credential_generation=new_generation,
-                status="active",
-                created_at=now,
-                updated_at=now,
-            )
-        else:
-            stmt = (
-                update(user_google_connections_table)
-                .where(
-                    user_google_connections_table.c.user_id == user_id,
-                    user_google_connections_table.c.provider == provider,
-                )
-                .values(
-                    provider_account_email=provider_account_email,
-                    scopes=scopes,
-                    refresh_token_encrypted=refresh_token_encrypted,
-                    credential_generation=new_generation,
-                    status="active",
-                    updated_at=now,
-                )
-            )
+
+        # Dialect-native atomic upsert (single INSERT ... ON CONFLICT DO UPDATE)
+        # so two concurrent same-user callbacks cannot both pick INSERT and have
+        # one die on the unique constraint after its authorization code was
+        # already consumed. ``created_at`` is only in the INSERT values, so it is
+        # preserved on an update; every write rotates ``credential_generation``,
+        # resets ``status`` to active, and bumps ``updated_at``.
+        insert_ctor = (
+            pg_insert if self._db.engine.dialect.name == "postgresql" else sqlite_insert
+        )
+        base_stmt = insert_ctor(user_google_connections_table).values(
+            user_id=user_id,
+            provider=provider,
+            provider_account_email=provider_account_email,
+            scopes=scopes,
+            refresh_token_encrypted=refresh_token_encrypted,
+            credential_generation=new_generation,
+            status="active",
+            created_at=now,
+            updated_at=now,
+        )
+        stmt = base_stmt.on_conflict_do_update(
+            index_elements=[
+                user_google_connections_table.c.user_id,
+                user_google_connections_table.c.provider,
+            ],
+            set_={
+                "provider_account_email": base_stmt.excluded.provider_account_email,
+                "scopes": base_stmt.excluded.scopes,
+                "refresh_token_encrypted": base_stmt.excluded.refresh_token_encrypted,
+                "credential_generation": base_stmt.excluded.credential_generation,
+                "status": base_stmt.excluded.status,
+                "updated_at": base_stmt.excluded.updated_at,
+            },
+        )
         await self._db.execute_with_retry(stmt)
         connection = await self.get_connection(user_id, provider)
         if connection is None:  # pragma: no cover - row always exists after write
