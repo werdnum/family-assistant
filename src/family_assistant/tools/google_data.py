@@ -47,6 +47,9 @@ _DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 _GMAIL_SEARCH_CAP = 25
 _DRIVE_SEARCH_CAP = 25
 _MESSAGE_BODY_CHAR_LIMIT = 50_000
+# Cap on HTML fed to the HTML->text conversion; the rendered body is truncated
+# to _MESSAGE_BODY_CHAR_LIMIT afterwards, so converting more is pure waste.
+_HTML_CONVERSION_CHAR_LIMIT = 400_000
 # Drive files below this size are pulled inline as text; larger go to attachments.
 _DRIVE_INLINE_TEXT_LIMIT = 200 * 1024
 # Hard ceiling on a Drive download. When the metadata already reports a larger
@@ -166,8 +169,8 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "filename": {
                         "type": "string",
                         "description": (
-                            "Optional filename to store the attachment under; defaults "
-                            "to the one reported by Gmail."
+                            "Optional display name for the attachment; the file "
+                            "is stored under the name and type Gmail reports."
                         ),
                     },
                 },
@@ -427,7 +430,7 @@ async def gmail_get_message_tool(
             )
         ).json()
         headers = _headers_map(message)
-        body_text, attachments = _walk_message_payload(message.get("payload", {}))
+        body_text, attachments = await _walk_message_payload(message.get("payload", {}))
         body = _truncate(body_text, _MESSAGE_BODY_CHAR_LIMIT)
         return ToolResult(
             text=_render_message_text(headers, body, attachments),
@@ -469,7 +472,7 @@ def _render_message_text(
     return "\n".join(lines)
 
 
-def _walk_message_payload(payload: GoogleJson) -> tuple[str, list[GoogleJson]]:
+async def _walk_message_payload(payload: GoogleJson) -> tuple[str, list[GoogleJson]]:
     """Extract the best text body and attachment metadata from a MIME payload.
 
     Prefers a ``text/plain`` part, falling back to converting ``text/html`` to
@@ -483,7 +486,13 @@ def _walk_message_payload(payload: GoogleJson) -> tuple[str, list[GoogleJson]]:
     if plain_parts:
         body = "\n".join(plain_parts).strip()
     elif html_parts:
-        body = markdownify("\n".join(html_parts), heading_style="ATX").strip()
+        # A hostile message can carry megabytes of HTML; cap the conversion
+        # input (the rendered body is truncated far smaller anyway) and run the
+        # CPU-bound conversion off the event loop.
+        joined_html = "\n".join(html_parts)[:_HTML_CONVERSION_CHAR_LIMIT]
+        body = (
+            await asyncio.to_thread(markdownify, joined_html, heading_style="ATX")
+        ).strip()
     else:
         body = ""
     return body, attachments
@@ -558,27 +567,32 @@ async def gmail_get_attachment_tool(
         content = _decode_attachment_payload(payload)
         if content is None:
             return ToolResult(text="Error: Gmail attachment has no usable content.")
-        # The MIME type always comes from the message's part metadata — the
-        # caller-supplied filename is untrusted model input and using its
-        # extension would let a fetched file be reclassified (e.g. a PDF
-        # registered as text/plain) or slip past the registry's allowlist. The
-        # filename argument is only a display-name override.
+        # Both the MIME type and the STORED filename come from the message's
+        # part metadata — the caller-supplied filename is untrusted model input;
+        # its extension would otherwise reclassify the file (the HTTP attachment
+        # route derives Content-Type from the storage path, so a PDF stored as
+        # "invoice.txt" would be served as text/plain). The filename argument
+        # survives only as display metadata in the description.
         part_filename, part_mime = await _lookup_attachment_part(
             exec_context, message_id, attachment_id
         )
-        stored_name = filename or part_filename or f"gmail_attachment_{attachment_id}"
         content_type = (
             part_mime
             or (mimetypes.guess_type(part_filename)[0] if part_filename else None)
             or "application/octet-stream"
         )
+        stored_name = part_filename or (
+            f"gmail_attachment_{attachment_id}"
+            f"{mimetypes.guess_extension(content_type) or ''}"
+        )
+        display_name = filename or stored_name
         return await _register_attachment(
             exec_context,
             content=content,
             filename=stored_name,
             content_type=content_type,
             tool_name="gmail_get_attachment",
-            description=f"Gmail attachment {stored_name}",
+            description=f"Gmail attachment {display_name}",
         )
 
     return await _guard(_impl)
@@ -604,7 +618,7 @@ async def _lookup_attachment_part(
             params={"format": "full"},
         )
     ).json()
-    _, attachments = _walk_message_payload(message.get("payload", {}))
+    _, attachments = await _walk_message_payload(message.get("payload", {}))
     for attachment in attachments:
         if attachment.get("attachment_id") != attachment_id:
             continue

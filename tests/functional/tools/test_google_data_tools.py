@@ -511,6 +511,73 @@ async def test_gmail_get_attachment_without_filename_uses_part_metadata(
     assert stored.description == "Gmail attachment invite.pdf"
 
 
+@pytest.mark.asyncio
+async def test_gmail_get_attachment_filename_cannot_reclassify_content(
+    db_engine: AsyncEngine,
+) -> None:
+    """A caller-supplied filename must not change the stored type or extension.
+
+    The HTTP attachment route derives Content-Type from the storage path, so a
+    PDF stored under a model-chosen "invoice.txt" would be served as
+    text/plain; the part metadata is the storage authority and the argument
+    survives only in the description.
+    """
+    content = b"PDF-BYTES-HERE"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "invite.pdf",
+                    "body": {"attachmentId": "att-1", "size": len(content)},
+                }
+            ],
+        },
+    }
+    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeGoogleApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-1"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db,
+            user_id="user-a",
+            resolver=resolver,
+            backend=backend,
+            attachment_registry=registry,
+        )
+        result = await gmail_get_attachment_tool(
+            context,
+            message_id="msg-1",
+            attachment_id="att-1",
+            filename="invoice.txt",
+        )
+        data = result.get_data()
+        assert isinstance(data, dict), f"expected attachment reference, got {data}"
+        stored = await registry.get_attachment(
+            db, data["attachment_id"], acting_user_id="user-a"
+        )
+        stored_path = await registry.resolve_attachment_path(
+            data["attachment_id"], db, acting_user_id="user-a"
+        )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+    assert stored.description == "Gmail attachment invoice.txt"
+    assert stored_path is not None
+    assert stored_path.suffix == ".pdf"
+
+
 # --------------------------------------------------------------------------- #
 # drive_search scope fallback
 # --------------------------------------------------------------------------- #
