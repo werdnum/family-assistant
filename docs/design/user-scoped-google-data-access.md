@@ -201,7 +201,8 @@ class GoogleCredentialResolver:
         """Return a valid access token for the turn's acting user, refreshing if needed.
 
         Raises GoogleNotConnectedError / GoogleReauthRequiredError /
-        GoogleNoActingUserError — all rendered as actionable tool errors.
+        GoogleScopeNotGrantedError / GoogleNoActingUserError — all rendered
+        as actionable tool errors.
         """
 ```
 
@@ -222,6 +223,16 @@ Deliberate properties:
 - A `401` from a Google API call (token revoked before its cached expiry) evicts the cached access
   token and retries the request once through the resolver; if the forced refresh then fails with
   `invalid_grant`, the `needs_reauth` path above fires immediately instead of after cache expiry.
+- **Partial grants are per-user, not deployment-wide.** Google's granular consent lets a user
+  approve only a subset of the requested scopes (e.g. Gmail yes, Drive no), and grants must be
+  checked, not assumed. The connection row already stores the scopes actually granted at the token
+  exchange; the resolver validates the tool's required scope against *that* list and raises
+  `GoogleScopeNotGrantedError` ("your Google connection doesn't include Drive access — reconnect
+  from Settings and approve it") when missing. A partial grant is a legitimate user choice, so the
+  callback accepts it rather than rejecting the connection; tool registration stays
+  deployment-scoped (configured scopes), and the per-user gap surfaces as this actionable error plus
+  a "missing configured scopes" indicator with a reconnect button on the settings UI and status
+  endpoint.
 
 ### 3. Tools
 
@@ -294,11 +305,20 @@ All five tools carry the tags `google_personal_data`, `OUTPUT_UNTRUSTED`, `READ_
 friction is small: at `unknown_external` the default matrix still freely allows replying to the user
 (`user_local`) and audits artifact writes; confirmation appears only on external messaging,
 attacker-addressable egress, sandbox network, and read broadening, which is where it belongs.
-Graduated tiers for authenticated household senders (classifying Gmail's `Authentication-Results`
-DMARC evidence against the email-intake allowlists, plus a per-result provenance runtime extension
-so a classified tier can override the static tag) are future work; a detailed sketch was worked out
-during design review and can be recovered from this document's git history if the friction ever
-warrants it.
+
+One existing metadata fix is required for that claim to hold on the primary flow. "Find the school
+permission form and send it to me" delivers the file via `attach_to_response`, which is currently
+tagged `EXTERNAL_COMM` and therefore resolves to the `arbitrary_external_message` sink — under the
+matrix floor, every same-user attachment reply after a Gmail read would demand confirmation. That
+tag is a misclassification independent of this feature: `attach_to_response` can only attach files
+to the current turn's reply in the current conversation; it cannot address any external recipient.
+Milestone 2 retags it (e.g. `USER_FACING_MEDIA` or an explicit sink override) so
+`resolve_tool_sink_class` yields `user_local`, keeping same-user attachment replies un-gated while
+genuinely external channels remain confirm-gated. Graduated tiers for authenticated household
+senders (classifying Gmail's `Authentication-Results` DMARC evidence against the email-intake
+allowlists, plus a per-result provenance runtime extension so a classified tier can override the
+static tag) are future work; a detailed sketch was worked out during design review and can be
+recovered from this document's git history if the friction ever warrants it.
 
 **Taint enforcement interaction.** The taint matrix only blocks anything when `taint_policy.mode` is
 `enforce`; the shipped default is `observe`, which converts confirm/deny outcomes to audit events.
@@ -475,21 +495,22 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
 
 1. **Connection infrastructure** — config models, migration, repository, Fernet encryption helper,
    OAuth endpoints with a fake Google token/userinfo server in functional web tests, settings UI
-   section, `GoogleCredentialResolver` with refresh + `needs_reauth` handling. Docs in the same PR:
-   USER_GUIDE "Connect your Google account" section (flow, disconnect, test-mode 7-day token expiry)
-   and AGENTS.md env var documentation (`GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`,
+   section, `GoogleCredentialResolver` with refresh + `needs_reauth` handling + per-connection
+   granted-scope validation (partial-grant indicator on the settings UI/status endpoint). Docs in
+   the same PR: USER_GUIDE "Connect your Google account" section (flow, disconnect, test-mode 7-day
+   token expiry) and AGENTS.md env var documentation (`GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`,
    `CREDENTIAL_ENCRYPTION_KEY`). Deliverable: a user can connect/disconnect and the row round-trips
    encrypted.
 2. **Gmail read tools** — `gmail_search`, `gmail_get_message`, `gmail_get_attachment` against a fake
    `GoogleApiBackend`; attachment `owner_user_id` registration + registry enforcement; the
-   `require_taint_enforcement` startup check (tools unregistered + surfaced reason when unmet,
-   explicit logged waiver path); policy defaults; per-user isolation tests (two connected users,
-   assert each context reads only its own data; unconnected and no-acting-user contexts fail closed
-   with actionable messages). Docs in the same PR: USER_GUIDE Gmail section (what the assistant
-   can/can't do, the operator security notes incl. the `home_local` override callout) and
-   `prompts.yaml` system-prompt guidance (tools act as the requesting user; suggest connecting when
-   not connected). Before enabling this in a deployment, the operator either flips
-   `taint_policy.mode` to `enforce` or explicitly waives the requirement.
+   `attach_to_response` sink retag to `user_local`; the `require_taint_enforcement` startup check
+   (tools unregistered + surfaced reason when unmet, explicit logged waiver path); policy defaults;
+   per-user isolation tests (two connected users, assert each context reads only its own data;
+   unconnected and no-acting-user contexts fail closed with actionable messages). Docs in the same
+   PR: USER_GUIDE Gmail section (what the assistant can/can't do, the operator security notes incl.
+   the `home_local` override callout) and `prompts.yaml` system-prompt guidance (tools act as the
+   requesting user; suggest connecting when not connected). Before enabling this in a deployment,
+   the operator either flips `taint_policy.mode` to `enforce` or explicitly waives the requirement.
 3. **Drive read tools** — `drive_search`, `drive_get_file` incl. export/attachment-registry paths;
    same test posture. Docs in the same PR: USER_GUIDE Drive section and the matching `prompts.yaml`
    additions.
