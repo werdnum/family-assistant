@@ -238,6 +238,26 @@ def _gmail_search_routes(
 
 
 @pytest.mark.asyncio
+async def test_gmail_search_marks_paged_results_partial(
+    db_engine: AsyncEngine,
+) -> None:
+    routes = _gmail_search_routes("msg-1", "hello world")
+    listing = {"messages": [{"id": "msg-1"}], "nextPageToken": "page-2"}
+    routes[("GET", "/users/me/messages")] = listing
+    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeGoogleApiBackend(routes={"token-a": routes})
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        result = await gmail_search_tool(context, query="hello")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["more_results_available"] is True
+    assert "More matches exist" in result.get_text()
+
+
+@pytest.mark.asyncio
 async def test_two_user_isolation_gmail_search(db_engine: AsyncEngine) -> None:
     resolver = FakeGoogleCredentialResolver(
         tokens={"user-a": "token-a", "user-b": "token-b"}
@@ -515,12 +535,13 @@ async def test_gmail_get_attachment_without_filename_uses_part_metadata(
 async def test_gmail_get_attachment_filename_cannot_reclassify_content(
     db_engine: AsyncEngine,
 ) -> None:
-    """A caller-supplied filename must not change the stored type or extension.
+    """Neither the model's nor the sender's filename may reclassify content.
 
     The HTTP attachment route derives Content-Type from the storage path, so a
-    PDF stored under a model-chosen "invoice.txt" would be served as
-    text/plain; the part metadata is the storage authority and the argument
-    survives only in the description.
+    PDF stored under "invoice.txt" would be served as text/plain. The caller
+    argument survives only in the description, and even Gmail's own
+    (sender-controlled) part filename is normalized to an extension matching
+    the part's MIME type.
     """
     content = b"PDF-BYTES-HERE"
     payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
@@ -533,7 +554,8 @@ async def test_gmail_get_attachment_filename_cannot_reclassify_content(
             "parts": [
                 {
                     "mimeType": "application/pdf",
-                    "filename": "invite.pdf",
+                    # Sender-controlled name disagreeing with the part MIME.
+                    "filename": "sender-chosen.txt",
                     "body": {"attachmentId": "att-1", "size": len(content)},
                 }
             ],

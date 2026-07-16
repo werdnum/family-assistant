@@ -16,6 +16,7 @@ import base64
 import binascii
 import logging
 import mimetypes
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from markdownify import markdownify
@@ -352,9 +353,16 @@ async def gmail_search_tool(
             )
         ).json()
         results = await _fetch_message_summaries(exec_context, listing, capped)
+        more_available = bool(listing.get("nextPageToken"))
+        summary = f"Found {len(results)} message(s) matching '{query}'."
+        if more_available:
+            summary += (
+                " More matches exist beyond this page — narrow the query or"
+                " raise max_results to see them."
+            )
         return ToolResult(
-            text=f"Found {len(results)} message(s) matching '{query}'.",
-            data={"messages": results},
+            text=summary,
+            data={"messages": results, "more_results_available": more_available},
         )
 
     return await _guard(_impl)
@@ -642,6 +650,23 @@ def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
         return None
 
 
+def _mime_consistent_filename(name: str, content_type: str) -> str:
+    """Force the stored name's extension to agree with the authoritative MIME type.
+
+    Filenames are sender-controlled (a Gmail part or Drive file can be a PDF
+    named ``invoice.txt``), and the attachment HTTP route derives its served
+    Content-Type from the storage path — so a disagreeing extension would let
+    allowed content be served back as a different type.
+    """
+    if mimetypes.guess_type(name)[0] == content_type:
+        return name
+    extension = mimetypes.guess_extension(content_type)
+    if extension is None:
+        return name
+    stem = PurePosixPath(name).stem or name
+    return f"{stem}{extension}"
+
+
 async def _register_attachment(
     exec_context: ToolExecutionContext,
     *,
@@ -654,6 +679,7 @@ async def _register_attachment(
     """Register owned content and return the standard attachment reference."""
     registry = exec_context.attachment_registry
     assert registry is not None
+    filename = _mime_consistent_filename(filename, content_type)
     try:
         metadata = await registry.store_and_register_tool_attachment(
             file_content=content,
@@ -699,6 +725,7 @@ async def drive_search_tool(
             "q": query,
             "pageSize": str(capped),
             "fields": (
+                "nextPageToken,"
                 "files(id,name,mimeType,owners(displayName,emailAddress),"
                 "modifiedTime,webViewLink)"
             ),
@@ -706,9 +733,16 @@ async def drive_search_tool(
         listing = (await _drive_search_request(exec_context, params)).json()
         files = listing.get("files") or []
         results = [_summarize_drive_file(entry) for entry in files[:capped]]
+        more_available = bool(listing.get("nextPageToken"))
+        summary = f"Found {len(results)} Drive file(s) matching '{query}'."
+        if more_available:
+            summary += (
+                " More matches exist beyond this page — narrow the query or"
+                " raise max_results to see them."
+            )
         return ToolResult(
-            text=f"Found {len(results)} Drive file(s) matching '{query}'.",
-            data={"files": results},
+            text=summary,
+            data={"files": results, "more_results_available": more_available},
         )
 
     return await _guard(_impl)
