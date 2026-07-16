@@ -557,9 +557,19 @@ async def gmail_get_attachment_tool(
         content = _decode_attachment_payload(payload)
         if content is None:
             return ToolResult(text="Error: Gmail attachment has no usable content.")
-        stored_name = filename or f"gmail_attachment_{attachment_id}"
+        stored_name = filename
+        content_type = mimetypes.guess_type(filename)[0] if filename else None
+        if stored_name is None or content_type is None:
+            part_filename, part_mime = await _lookup_attachment_part(
+                exec_context, message_id, attachment_id
+            )
+            stored_name = stored_name or part_filename
+            content_type = content_type or part_mime
+        stored_name = stored_name or f"gmail_attachment_{attachment_id}"
         content_type = (
-            mimetypes.guess_type(stored_name)[0] or "application/octet-stream"
+            content_type
+            or mimetypes.guess_type(stored_name)[0]
+            or "application/octet-stream"
         )
         return await _register_attachment(
             exec_context,
@@ -571,6 +581,39 @@ async def gmail_get_attachment_tool(
         )
 
     return await _guard(_impl)
+
+
+async def _lookup_attachment_part(
+    exec_context: ToolExecutionContext,
+    message_id: str,
+    attachment_id: str,
+) -> tuple[str | None, str | None]:
+    """Recover an attachment's filename and MIME type from its message's parts.
+
+    Gmail's attachment download endpoint returns only the raw bytes, so when the
+    caller omitted the filename the part metadata is the only source for a real
+    name and content type (a bare fallback name would guess
+    ``application/octet-stream``, which the attachment allowlist rejects).
+    """
+    message = (
+        await _google_request(
+            exec_context,
+            GoogleScope.GMAIL_READONLY,
+            url=f"{_GMAIL_API_BASE}/users/me/messages/{message_id}",
+            params={"format": "full"},
+        )
+    ).json()
+    _, attachments = _walk_message_payload(message.get("payload", {}))
+    for attachment in attachments:
+        if attachment.get("attachment_id") != attachment_id:
+            continue
+        part_filename = attachment.get("filename")
+        part_mime = attachment.get("mime_type")
+        return (
+            part_filename if isinstance(part_filename, str) and part_filename else None,
+            part_mime if isinstance(part_mime, str) and part_mime else None,
+        )
+    return (None, None)
 
 
 def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:

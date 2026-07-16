@@ -439,6 +439,58 @@ async def test_gmail_get_attachment_registers_with_owner(
         )
 
 
+@pytest.mark.asyncio
+async def test_gmail_get_attachment_without_filename_uses_part_metadata(
+    db_engine: AsyncEngine,
+) -> None:
+    content = b"PDF-BYTES-HERE"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "invite.pdf",
+                    "body": {"attachmentId": "att-1", "size": len(content)},
+                }
+            ],
+        },
+    }
+    resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeGoogleApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-1"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db,
+            user_id="user-a",
+            resolver=resolver,
+            backend=backend,
+            attachment_registry=registry,
+        )
+        result = await gmail_get_attachment_tool(
+            context, message_id="msg-1", attachment_id="att-1"
+        )
+        data = result.get_data()
+        assert isinstance(data, dict), f"expected attachment reference, got {data}"
+        stored = await registry.get_attachment(
+            db, data["attachment_id"], acting_user_id="user-a"
+        )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+    assert stored.description == "Gmail attachment invite.pdf"
+
+
 # --------------------------------------------------------------------------- #
 # drive_search scope fallback
 # --------------------------------------------------------------------------- #
