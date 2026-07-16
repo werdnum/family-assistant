@@ -556,7 +556,7 @@ async def test_legacy_history_row_missing_taint_metadata_restores_unknown_extern
     db_engine: AsyncEngine,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.ERROR)
+    caplog.set_level(logging.WARNING)
     async with get_db_context(db_engine) as db_context:
         internal_id = await db_context.message_history.add_message(
             UserMessage(content="legacy untrusted text"),
@@ -585,6 +585,13 @@ async def test_legacy_history_row_missing_taint_metadata_restores_unknown_extern
     assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert state.history_high_taint_present
     assert "legacy_missing_taint_metadata" in caplog.text
+    legacy_records = [
+        record
+        for record in caplog.records
+        if "legacy_missing_taint_metadata" in record.getMessage()
+    ]
+    assert legacy_records
+    assert all(record.levelno == logging.WARNING for record in legacy_records)
 
 
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (

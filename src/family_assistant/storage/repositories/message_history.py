@@ -89,7 +89,7 @@ def _message_history_taint_metadata(msg: Mapping[str, Any]) -> TaintMetadata | N
         return None
 
     internal_id = msg.get("internal_id")
-    logger.error(
+    logger.warning(
         "legacy_missing_taint_metadata: message_history row %s role=%s has no "
         "runtime taint metadata; treating as unknown_external until backfilled.",
         internal_id,
