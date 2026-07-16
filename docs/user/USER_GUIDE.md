@@ -829,6 +829,15 @@ various tasks with dark mode support and mobile optimization.
   processing; the response explicitly reports when that cap truncates the audit breakdown. It does
   not expose message content, conversation IDs, tool arguments, or source IDs.
 
+- **Classifying MCP tools for runtime taint:** Configure `tool_metadata` for MCP servers whose
+  protocol annotations do not describe their security boundary. Use `code_execution` or `worker` for
+  network-capable sandboxes, `home_auto` for actions confined to the household system, and
+  `low_bandwidth_external` for constrained providers such as a search API that receives only a
+  query. Add `external_comm` or `browser` instead when a Home Assistant service sends messages,
+  invokes webhooks, or accepts attacker-controlled destinations. Every configured entry should also
+  declare `output_trusted` or `output_untrusted`; an exact `tool_metadata` entry replaces the tool's
+  MCP annotation-derived tags rather than adding to them.
+
 - **If you need more help:** Contact the family member who set up and manages the assistant for your
   family. They can help with configuration issues or more complex problems.
 

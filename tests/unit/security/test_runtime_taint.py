@@ -653,6 +653,40 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
     assert (
         resolve_tool_sink_class(
             descriptor(
+                "search_provider",
+                ToolTag.READ_ONLY,
+                ToolTag.LOW_BANDWIDTH_EXTERNAL,
+                ToolTag.OUTPUT_UNTRUSTED,
+            )
+        )
+        is SinkClass.LOW_BANDWIDTH_EXTERNAL
+    )
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "turn_on_light",
+                ToolTag.HOME_AUTOMATION,
+                ToolTag.STATE_CHANGING,
+                ToolTag.OUTPUT_TRUSTED,
+            )
+        )
+        is SinkClass.HOME_LOCAL
+    )
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "send_ha_notification",
+                ToolTag.HOME_AUTOMATION,
+                ToolTag.EXTERNAL_COMM,
+                ToolTag.STATE_CHANGING,
+                ToolTag.OUTPUT_TRUSTED,
+            )
+        )
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
                 "add_calendar_event",
                 ToolTag.STATE_CHANGING,
                 ToolTag.SENSITIVE_DATA,
