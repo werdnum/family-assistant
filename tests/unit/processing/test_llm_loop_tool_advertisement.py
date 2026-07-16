@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -262,10 +263,25 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
             trigger_interface_message_id=None,
             user_name="Test User",
         )
+        saved_messages = await db_context.message_history.get_recent(
+            interface_type="web",
+            conversation_id="conversation-activate",
+            limit=10,
+            max_age=timedelta(hours=1),
+            processing_profile_id="llm-loop-activate-tools",
+            current_time=service.clock.now(),
+        )
 
     assert result.status.value == "success"
     # Two LLM turns: the first issues activate_tools, the second is the final reply.
     assert state["calls"] == 2
+    activate_message = next(
+        message
+        for message in saved_messages
+        if isinstance(message, ToolMessage) and message.name == "activate_tools"
+    )
+    assert activate_message.taint_metadata is not None
+    assert activate_message.taint_metadata.get("max_tier") == "trusted_user"
 
     # The second LLM call must see lazy_b as an activated regular tool, not just
     # the activate_tools meta-tool, proving activation actually took effect.

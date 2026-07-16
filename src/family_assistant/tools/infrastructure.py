@@ -1309,14 +1309,14 @@ class TaintTrackingToolsProvider(ToolsProvider):
             return None
         if source is None:
             state = context.taint_tracker.snapshot()
+            context.tool_result_taint_metadata[call_id or descriptor.name] = (
+                state.to_metadata()
+            )
             if (
                 state_before_execution is None
                 or state.sources == state_before_execution.sources
             ):
                 return None
-            context.tool_result_taint_metadata[call_id or descriptor.name] = (
-                state.to_metadata()
-            )
             logger.info(
                 "Tool result inherited dynamic taint: tool=%s call_id=%s max_tier=%s",
                 descriptor.name,

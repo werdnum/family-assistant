@@ -688,7 +688,10 @@ async def test_tool_output_tags_update_turn_taint(
 
         await provider.execute_tool("trusted_tool", {}, context, "call_trusted")
         assert tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
-        assert "call_trusted" not in context.tool_result_taint_metadata
+        assert (
+            context.tool_result_taint_metadata["call_trusted"].get("max_tier")
+            == "trusted_user"
+        )
 
         await provider.execute_tool("untrusted_tool", {}, context, "call_untrusted")
         assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
