@@ -243,6 +243,8 @@ class TestProcessingServiceMultimodal:
         assert "error" in event.tool_result.lower()
         assert "invalid arguments" in tool_message.content.lower()
         assert tool_message.error_traceback is not None
+        assert tool_message.taint_metadata is not None
+        assert tool_message.taint_metadata.get("max_tier") == "trusted_user"
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_invalid_json_args_does_not_log_payload(
@@ -309,6 +311,7 @@ class TestProcessingServiceMultimodal:
         assert event.tool_result is not None
         assert "invalid arguments" in event.tool_result.lower()
         assert "Expected JSON object" in (tool_message.error_traceback or "")
+        assert tool_message.taint_metadata is not None
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_execution_error(

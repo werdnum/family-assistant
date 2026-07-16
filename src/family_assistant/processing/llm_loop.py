@@ -647,6 +647,7 @@ class LLMStreamingLoop:
                         content=non_executed_message,
                         name=tool_call.function.name,
                         error_traceback="max_iterations_reached",
+                        taint_metadata=taint_tracker.snapshot().to_metadata(),
                     )
                     yield (tool_result_event, tool_result_message)
                 break
@@ -712,6 +713,7 @@ class LLMStreamingLoop:
                         tool_call_id=activate_call.id,
                         content=result_text,
                         name="activate_tools",
+                        taint_metadata=taint_tracker.snapshot().to_metadata(),
                     )
                     yield (activate_event, activate_message)
                     messages.append(activate_message)

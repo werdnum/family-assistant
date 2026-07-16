@@ -15,6 +15,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     tool_result_to_llm_message,
 )
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.tools import (
     ToolExecutionContext,
     ToolNotFoundError,
@@ -39,7 +40,6 @@ if TYPE_CHECKING:
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.security.taint import (
         TaintMetadata,
-        TurnTaintState,
         TurnTaintTracker,
     )
     from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -206,6 +206,7 @@ class ToolExecutor:
         function_name: str,
         error_content: str,
         error_traceback: str,
+        taint_metadata: TaintMetadata,
     ) -> ToolExecutionResult:
         """Build a standardized tool error result for stream and history."""
         return ToolExecutionResult(
@@ -220,6 +221,7 @@ class ToolExecutor:
                 content=error_content,
                 error_traceback=error_traceback,
                 name=function_name,
+                taint_metadata=taint_metadata,
             ),
             auto_attachment_ids=None,
             explicit_attachment_ids=None,
@@ -252,6 +254,11 @@ class ToolExecutor:
                 function_name=function_name,
                 error_content=error_content,
                 error_traceback=error_traceback,
+                taint_metadata=(
+                    tool_execution_context.taint_tracker.snapshot().to_metadata()
+                    if tool_execution_context.taint_tracker is not None
+                    else TurnTaintState.empty().to_metadata()
+                ),
             )
         except ToolNotFoundError:
             logger.error("Tool '%s' not found.", function_name)
@@ -264,6 +271,11 @@ class ToolExecutor:
                 function_name=function_name,
                 error_content=error_content,
                 error_traceback=error_traceback,
+                taint_metadata=(
+                    tool_execution_context.taint_tracker.snapshot().to_metadata()
+                    if tool_execution_context.taint_tracker is not None
+                    else TurnTaintState.empty().to_metadata()
+                ),
             )
         except Exception as exc:  # Tool implementation/runtime error
             logger.error(
@@ -282,6 +294,11 @@ class ToolExecutor:
                 function_name=function_name,
                 error_content=error_content,
                 error_traceback=error_traceback,
+                taint_metadata=(
+                    tool_execution_context.taint_tracker.snapshot().to_metadata()
+                    if tool_execution_context.taint_tracker is not None
+                    else TurnTaintState.empty().to_metadata()
+                ),
             )
 
     @staticmethod
@@ -548,6 +565,11 @@ class ToolExecutor:
             )
 
         function_args = tool_call_item_obj.function.arguments
+        initial_taint_metadata = (
+            taint_tracker.snapshot().to_metadata()
+            if taint_tracker is not None
+            else TurnTaintState.empty().to_metadata()
+        )
 
         with tracer.start_as_current_span(
             f"tool.execute.{function_name}",
@@ -566,6 +588,7 @@ class ToolExecutor:
                     function_name=function_name,
                     error_content=f"Error: Invalid arguments format for {function_name}.",
                     error_traceback=str(exc),
+                    taint_metadata=initial_taint_metadata,
                 )
             except TypeError as exc:
                 logger.error(
@@ -578,6 +601,7 @@ class ToolExecutor:
                     function_name=function_name,
                     error_content=f"Error: Invalid arguments format for {function_name}.",
                     error_traceback=str(exc),
+                    taint_metadata=initial_taint_metadata,
                 )
 
             # Execute tool
