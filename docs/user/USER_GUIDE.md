@@ -543,17 +543,17 @@ various tasks with dark mode support and mobile optimization.
   button next to the composer — it lights up whenever an image is on the clipboard (text can be
   pasted straight into the message field as usual). The Photos share sheet itself does not list
   Family Assistant (that would need a share extension); copy the photo and paste it, pick it with
-  the composer's photo button, or share it from Files instead. A very long message (or
-  a large tool result) renders a section at a time with a **Show more** control, so the thread stays
-  responsive no matter how big the content is. The Chat tab opens directly to a fresh composer when
-  there is no recent conversation to restore, and long-pressing the app icon shows **New Chat** and
-  **Voice** quick actions that jump straight to a blank composer or the native Voice tab. You can
-  search, read, create, edit, and delete notes on iOS, including changing whether a note is included
-  in the assistant's system prompt. The native Voice tab asks for microphone permission, shows a
-  microphone level meter while audio is being captured, and reports an error instead of connecting
-  silently if the microphone pipeline does not start. The **More** tab gathers the remaining
-  long-tail destinations — Events, History, Automations, Tools, and more — and a single **Settings**
-  screen with notification controls and sign-out. Use the tab bar to move between sections; each tab
+  the composer's photo button, or share it from Files instead. A very long message (or a large tool
+  result) renders a section at a time with a **Show more** control, so the thread stays responsive
+  no matter how big the content is. The Chat tab opens directly to a fresh composer when there is no
+  recent conversation to restore, and long-pressing the app icon shows **New Chat** and **Voice**
+  quick actions that jump straight to a blank composer or the native Voice tab. You can search,
+  read, create, edit, and delete notes on iOS, including changing whether a note is included in the
+  assistant's system prompt. The native Voice tab asks for microphone permission, shows a microphone
+  level meter while audio is being captured, and reports an error instead of connecting silently if
+  the microphone pipeline does not start. The **More** tab gathers the remaining long-tail
+  destinations — Events, History, Automations, Tools, and more — and a single **Settings** screen
+  with notification controls and sign-out. Use the tab bar to move between sections; each tab
   remembers where you were. When enabled, iOS notifications can open the relevant tab or page, and
   confirmation notifications are actionable: they include approve/reject actions, and tapping the
   notification opens an in-app confirmation dialog showing the full request.
@@ -819,6 +819,15 @@ various tasks with dark mode support and mobile optimization.
   application's error log, where the family member who manages the assistant can review it on the
   web **Error Logs** page (`/errors`) or in the diagnostics export. This only files a report; it
   doesn't fix the problem on its own.
+
+- **Reviewing runtime taint rollout:** Administrators can call `GET /api/diagnostics/taint-audit`
+  with a normal authenticated session/API token or the confined `DIAGNOSTICS_READONLY_TOKEN`. The
+  response summarizes recent taint policy decisions by tool, sink, tier, outcome, and source
+  category. It also inventories every stored message-history row by interface, role, metadata
+  version, and taint tier, so repeated reads of the same legacy row do not inflate the apparent
+  backfill size. Use the `days` query parameter for the audit window and `max_events` to bound
+  processing; the response explicitly reports when that cap truncates the audit breakdown. It does
+  not expose message content, conversation IDs, tool arguments, or source IDs.
 
 - **If you need more help:** Contact the family member who set up and manages the assistant for your
   family. They can help with configuration issues or more complex problems.

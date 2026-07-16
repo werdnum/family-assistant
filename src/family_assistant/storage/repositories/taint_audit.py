@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import insert, select
+from sqlalchemy import func, insert, select
 
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.taint_audit import taint_audit_events_table
@@ -83,5 +83,31 @@ class TaintAuditEventsRepository(BaseRepository):
         if since is not None:
             stmt = stmt.where(taint_audit_events_table.c.created_at >= since)
         stmt = stmt.order_by(taint_audit_events_table.c.created_at.desc()).limit(limit)
+        rows = await self._db.fetch_all(stmt)
+        return rows  # type: ignore[return-value]  # rows match TaintAuditEventRow
+
+    async def count_since(self, since: datetime) -> int:
+        """Return the number of audit events created at or after ``since``."""
+        stmt = (
+            select(func.count().label("count"))
+            .select_from(taint_audit_events_table)
+            .where(taint_audit_events_table.c.created_at >= since)
+        )
+        row = await self._db.fetch_one(stmt)
+        return int(row["count"]) if row is not None else 0
+
+    async def list_since(
+        self,
+        since: datetime,
+        *,
+        limit: int,
+    ) -> list[TaintAuditEventRow]:
+        """Return recent audit events in the diagnostics window."""
+        stmt = (
+            select(taint_audit_events_table)
+            .where(taint_audit_events_table.c.created_at >= since)
+            .order_by(taint_audit_events_table.c.created_at.desc())
+            .limit(limit)
+        )
         rows = await self._db.fetch_all(stmt)
         return rows  # type: ignore[return-value]  # rows match TaintAuditEventRow

@@ -55,6 +55,22 @@ _MAX_CONTEXT_MESSAGES_PER_SIDE = 10
 MessageHistoryScope = Literal["current_conversation", "same_user", "all_accessible"]
 MessageHistorySearchMode = Literal["structured", "semantic", "hybrid"]
 
+
+class MessageHistoryTaintDiagnosticsRow(TypedDict):
+    """One grouped message-history taint inventory row."""
+
+    status: Literal["classified", "malformed", "missing", "not_applicable"]
+    interface_type: str
+    role: str
+    processing_profile_id: str | None
+    tool_name: str | None
+    metadata_version: str | None
+    max_tier: str | None
+    oldest_timestamp: datetime
+    newest_timestamp: datetime
+    count: int
+
+
 _DELEGATION_WAKE_SYSTEM_PREFIXES = (
     "System: Delegated profile task completed.",
     "System: Delegated profile task failed.",
@@ -217,6 +233,89 @@ class ToolHistoryExample:
 
 class MessageHistoryRepository(BaseRepository):
     """Repository for managing message history in the database."""
+
+    async def get_taint_diagnostics(
+        self,
+    ) -> list[MessageHistoryTaintDiagnosticsRow]:
+        """Return a distinct-row inventory of persisted history taint state."""
+        max_tier = (
+            message_history_table.c
+            .taint_metadata_json["max_tier"]
+            .as_string()
+            .label("max_tier")
+        )
+        stmt = (
+            select(
+                message_history_table.c.interface_type,
+                message_history_table.c.role,
+                message_history_table.c.processing_profile_id,
+                message_history_table.c.tool_name,
+                message_history_table.c.taint_metadata_version,
+                max_tier,
+                func.min(message_history_table.c.timestamp).label("oldest_timestamp"),
+                func.max(message_history_table.c.timestamp).label("newest_timestamp"),
+                func.count(message_history_table.c.internal_id).label("count"),
+            )
+            .group_by(
+                message_history_table.c.interface_type,
+                message_history_table.c.role,
+                message_history_table.c.processing_profile_id,
+                message_history_table.c.tool_name,
+                message_history_table.c.taint_metadata_version,
+                max_tier,
+            )
+            .order_by(
+                message_history_table.c.interface_type,
+                message_history_table.c.role,
+                message_history_table.c.processing_profile_id,
+                message_history_table.c.tool_name,
+                message_history_table.c.taint_metadata_version,
+                max_tier,
+            )
+        )
+        rows = await self._db.fetch_all(stmt)
+        valid_tiers = {tier.config_value for tier in SourceTrustTier}
+        valid_versions = {TAINT_METADATA_VERSION, "legacy_inferred"}
+        diagnostics: list[MessageHistoryTaintDiagnosticsRow] = []
+        for row in rows:
+            role = str(row["role"])
+            metadata_version = row["taint_metadata_version"]
+            tier = row["max_tier"]
+            if metadata_version is None and tier is None:
+                status: Literal[
+                    "classified", "malformed", "missing", "not_applicable"
+                ] = (
+                    "missing"
+                    if role in _HISTORY_ROLES_REQUIRING_TAINT_METADATA
+                    else "not_applicable"
+                )
+            elif metadata_version not in valid_versions or tier not in valid_tiers:
+                status = "malformed"
+            else:
+                status = "classified"
+            diagnostics.append(
+                MessageHistoryTaintDiagnosticsRow(
+                    status=status,
+                    interface_type=str(row["interface_type"]),
+                    role=role,
+                    processing_profile_id=(
+                        str(row["processing_profile_id"])
+                        if row["processing_profile_id"] is not None
+                        else None
+                    ),
+                    tool_name=(
+                        str(row["tool_name"]) if row["tool_name"] is not None else None
+                    ),
+                    metadata_version=(
+                        str(metadata_version) if metadata_version is not None else None
+                    ),
+                    max_tier=str(tier) if tier is not None else None,
+                    oldest_timestamp=row["oldest_timestamp"],
+                    newest_timestamp=row["newest_timestamp"],
+                    count=int(row["count"]),
+                )
+            )
+        return diagnostics
 
     async def query_history(
         self, query: MessageHistoryQuery

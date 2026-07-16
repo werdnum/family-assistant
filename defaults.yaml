@@ -1585,6 +1585,8 @@ service_profiles:
           - **Configuration**: Inspect the live AppConfig and individual service profile configs (with secrets redacted)
           - **MCP servers**: View live MCP server connection status and the tools each server provides
           - **System info**: Python version, OS platform, database dialect
+          - **Runtime taint diagnostics**: Query the taint audit and message-history metadata tables
+            to distinguish distinct legacy rows from repeated warning-log accesses
 
           ## Your Limitations
 
