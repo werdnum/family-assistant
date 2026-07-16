@@ -568,6 +568,30 @@ export const handlers = [
       status: 'reported',
     });
   }),
+
+  // Mock Google integration status endpoint (default: enabled, not connected)
+  http.get('/api/integrations/google', () => {
+    return HttpResponse.json({
+      enabled: true,
+      reason: null,
+      require_taint_enforcement_waived: false,
+      connected: false,
+      provider_account_email: null,
+      status: null,
+      granted_scopes: [],
+      configured_scopes: [
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/drive.readonly',
+      ],
+      missing_configured_scopes: [],
+      last_used_at: null,
+    });
+  }),
+
+  // Mock Google integration disconnect endpoint
+  http.delete('/api/integrations/google', () => {
+    return new HttpResponse(null, { status: 204 });
+  }),
 ];
 
 // Helper function to generate test responses based on input

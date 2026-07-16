@@ -300,6 +300,26 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                         <span>Error Logs</span>
                       </NavLink>
                     </NavigationMenuLink>
+                    <NavigationMenuLink asChild>
+                      <NavLink
+                        to="/settings/accounts"
+                        isActive={location.pathname === '/settings/accounts'}
+                        className="whitespace-nowrap"
+                      >
+                        <Settings className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>Connected Accounts</span>
+                      </NavLink>
+                    </NavigationMenuLink>
+                    <NavigationMenuLink asChild>
+                      <NavLink
+                        to="/settings/tokens"
+                        isActive={location.pathname === '/settings/tokens'}
+                        className="whitespace-nowrap"
+                      >
+                        <Settings className="mr-2 h-4 w-4 flex-shrink-0" />
+                        <span>API Tokens</span>
+                      </NavLink>
+                    </NavigationMenuLink>
                   </div>
                 </NavigationMenuContent>
               </NavigationMenuItem>
