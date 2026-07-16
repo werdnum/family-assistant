@@ -77,6 +77,14 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
+from family_assistant.services.credential_encryption import CredentialEncryption
+from family_assistant.services.google_api import HttpGoogleApiBackend
+from family_assistant.services.google_credentials import GoogleCredentialResolver
+from family_assistant.services.google_integration_state import (
+    GoogleIntegrationState,
+    evaluate_google_integration_state,
+    filter_google_tool_registrations,
+)
 from family_assistant.services.notification_dispatcher import NotificationDispatcher
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.user_identity import UserIdentityResolver
@@ -133,6 +141,7 @@ from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
 from family_assistant.utils.scraping import PlaywrightScraper
 from family_assistant.web.app_creator import configure_app_auth, create_app
+from family_assistant.web.auth import AUTH_ENABLED
 from family_assistant.web.web_confirmation_ui_manager import WebConfirmationUIManager
 
 from .telegram.service import TelegramService
@@ -309,6 +318,9 @@ class Assistant:
         self.notification_dispatcher: NotificationDispatcher | None = None
         self.confirmation_service: ConfirmationService | None = None
         self.confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
+        self.google_integration_state: GoogleIntegrationState | None = None
+        self.google_credentials: GoogleCredentialResolver | None = None
+        self.google_api_backend: HttpGoogleApiBackend | None = None
         # Pool of in-process TaskWorker instances and their run() tasks, kept
         # index-aligned so the health monitor can restart an individual worker.
         self.task_workers: list[TaskWorker] = []
@@ -450,6 +462,44 @@ class Assistant:
             "Notifications initialized (web_push=%s, apns=%s)",
             self.push_notification_service.enabled,
             self.apns_service.enabled,
+        )
+
+    def _log_google_integration_state(self, state: GoogleIntegrationState) -> None:
+        """Log the resolved Google integration state at the right severity.
+
+        A disabled integration that the operator *tried* to configure is a
+        root-logger error (so it lands in the DB error log); a fully unconfigured
+        one is only debug. A waiver is a warning stating the explicit risk
+        acceptance.
+        """
+        if state.enabled:
+            if state.taint_enforcement_waived:
+                logger.warning(
+                    "Google integration ENABLED with taint enforcement WAIVED "
+                    "(google_integration.require_taint_enforcement: false): the "
+                    "Gmail/Drive tools run without the taint floor. This is a "
+                    "deliberate, logged risk acceptance. Enabled tools: %s",
+                    sorted(state.enabled_tool_names),
+                )
+            else:
+                logger.info(
+                    "Google integration enabled. Enabled tools: %s",
+                    sorted(state.enabled_tool_names),
+                )
+            return
+
+        if self._any_google_config_field_set():
+            logger.error("Google integration disabled: %s", state.reason)
+        else:
+            logger.debug("Google integration not configured: %s", state.reason)
+
+    def _any_google_config_field_set(self) -> bool:
+        """Return True if the operator set any Google config field."""
+        integration = self.config.google_integration
+        return bool(
+            integration.oauth_client_id
+            or integration.oauth_client_secret
+            or integration.credential_encryption_key
         )
 
     async def setup_dependencies(self) -> None:
@@ -744,14 +794,40 @@ class Assistant:
                     )
                 break
 
+        # Resolve Google (Gmail/Drive) integration enablement ONCE. The state is
+        # the single source of truth consumed by the tool-gating below, the status
+        # endpoint, and the connect-flow 409s. Disabled Google tools are dropped
+        # from the shared root definitions so no profile (nor UI/API) can advertise
+        # a tool whose credentials cannot serve it.
+        self.google_integration_state = evaluate_google_integration_state(
+            self.config, auth_enabled=AUTH_ENABLED
+        )
+        self.fastapi_app.state.google_integration_state = self.google_integration_state
+        self._log_google_integration_state(self.google_integration_state)
+        if self.google_integration_state.enabled:
+            encryption = CredentialEncryption(
+                self.config.google_integration.credential_encryption_key
+            )
+            self.google_credentials = GoogleCredentialResolver(
+                self.config.google_integration,
+                encryption,
+                self.shared_httpx_client,
+                self.notification_dispatcher,
+            )
+            self.google_api_backend = HttpGoogleApiBackend(self.shared_httpx_client)
+
         # Create root providers with ALL tools for UI/API access
         logger.info("Creating root ToolsProvider with all available tools")
 
-        # Create root local provider with ALL tools
+        # Create root local provider with ALL tools, then drop Google tools the
+        # integration cannot serve so no profile (nor UI/API) advertises them.
         root_local_registrations = build_local_tool_registrations(
             definitions=base_local_tools_definition,
             implementations=local_tool_implementations,
             metadata_by_name=local_tool_metadata_by_name,
+        )
+        root_local_registrations = filter_google_tool_registrations(
+            root_local_registrations, self.google_integration_state
         )
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
@@ -1134,8 +1210,8 @@ class Assistant:
                 home_assistant_client=home_assistant_client_for_profile,
                 camera_backend=camera_backend_for_profile,
                 on_demand_view=profile_on_demand_view,
-                google_credentials=None,
-                google_api_backend=None,
+                google_credentials=self.google_credentials,
+                google_api_backend=self.google_api_backend,
             )
 
             self.processing_services_registry[profile_id] = processing_service_instance

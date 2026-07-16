@@ -35,6 +35,7 @@ from family_assistant.services.credential_encryption import (
     CredentialEncryption,
     CredentialEncryptionError,
 )
+from family_assistant.services.google_integration_state import GoogleIntegrationState
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import get_current_user, get_db
 
@@ -121,14 +122,29 @@ def _google_integration_config(request: Request) -> GoogleIntegrationConfig | No
     return None
 
 
+def _shared_integration_state(request: Request) -> GoogleIntegrationState | None:
+    """Return the startup-computed integration state, if the app installed one."""
+    state = getattr(request.app.state, "google_integration_state", None)
+    if isinstance(state, GoogleIntegrationState):
+        return state
+    return None
+
+
 def _integration_enablement(request: Request) -> tuple[bool, str | None]:
     """Return ``(enabled, reason)`` for the Google integration in this deployment.
 
-    Enabled only when OAuth client id/secret and the credential encryption key are
-    all configured AND real web authentication is active. The dev ``test_user``
-    mode (auth disabled) must refuse: in that mode any caller shares one identity,
-    so connecting a Google account would attach it to that shared identity.
+    Prefers the single startup-computed :class:`GoogleIntegrationState` (which
+    also validates the taint floor) when the app installed one. Falls back to a
+    live config+auth computation for lightweight apps (e.g. router-only tests)
+    that do not wire the shared state: OAuth client id/secret + encryption key
+    present AND real web authentication active. The dev ``test_user`` mode (auth
+    disabled) must refuse: in that mode any caller shares one identity, so
+    connecting a Google account would attach it to that shared identity.
     """
+    shared = _shared_integration_state(request)
+    if shared is not None:
+        return shared.enabled, shared.reason
+
     integration = _google_integration_config(request)
     if integration is None:
         return False, "Google integration is not configured."
@@ -209,8 +225,11 @@ async def get_google_integration_status(
     configured_scopes = (
         _configured_scopes(integration) if integration is not None else []
     )
+    shared_state = _shared_integration_state(request)
     require_taint_enforcement_waived = (
-        integration is not None and not integration.require_taint_enforcement
+        shared_state.taint_enforcement_waived
+        if shared_state is not None
+        else (integration is not None and not integration.require_taint_enforcement)
     )
 
     connection = None

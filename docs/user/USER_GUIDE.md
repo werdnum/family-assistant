@@ -284,6 +284,21 @@ You can ask the assistant a wide variety of things:
     "quick" or "fast" video and it can switch to Gemini Omni Flash, which trades some polish for
     much faster, lower-cost generation.*
 
+- **Search Your Gmail and Drive:** If you have connected a Google account (see
+  [Connect your Google account](#connect-your-google-account) below), the assistant can search and
+  read your own Gmail and Google Drive on your behalf:
+
+  - "Did the school send the excursion permission form?" — the assistant searches your inbox.
+  - "Find the tax PDF my accountant shared with me" — the assistant searches your Drive.
+  - "Show me the email from Jane last week about the lease renewal."
+  - "Get the spreadsheet called Family Budget."
+  - The assistant can also fetch attachments from emails and return them to you inline.
+  - Gmail results use standard Gmail search syntax (e.g. `from:school has:attachment`); Drive
+    results use Drive query syntax (e.g. `name contains 'budget'`).
+  - **What the assistant cannot do:** send email, modify or delete anything, or see another
+    household member's mailbox or Drive. Access is strictly read-only and strictly limited to your
+    own connected account.
+
 - **Interact with Your Smart Home (Home Assistant):** \*If your family uses Home Assistant and it's
   connected to the assistant, you can control devices with your voice: \*"Turn on the kitchen
   lights." \*"Is the garage door closed?" \*"Set the thermostat to 70 degrees." \*"What's the
@@ -679,6 +694,10 @@ various tasks with dark mode support and mobile optimization.
     ![Automations Page](../../screenshots/desktop/automations.png) *The Automations page for
     managing event and schedule-based automations*
 
+  - **Connected Accounts:** The Connected Accounts page (Settings → Connected Accounts) lets you
+    link your Google account so the assistant can search and read your Gmail and Drive. See
+    [Connect your Google account](#connect-your-google-account) for the full setup walkthrough.
+
 - **Long-Running Profile Delegation:** For tasks better handled by a specialized assistant profile
   (for example browsing, research, visualization, or complex planning), the assistant may delegate
   the work. Fast delegated work is returned inline. If it takes longer, the assistant gives you a
@@ -840,6 +859,111 @@ various tasks with dark mode support and mobile optimization.
 
 - **If you need more help:** Contact the family member who set up and manages the assistant for your
   family. They can help with configuration issues or more complex problems.
+
+## Connect your Google account
+
+If the operator has configured Google integration, you can connect your own Google account so the
+assistant can search and read your Gmail and Drive on your behalf.
+
+### What it enables
+
+Once connected, you can ask things like:
+
+- "Did the school send the excursion permission form?"
+- "Find the tax PDF my accountant shared with me."
+- "Show me emails from Jane about the lease."
+- "Get the spreadsheet called Family Budget."
+
+The assistant can search your inbox, read full messages (HTML is converted to readable text), fetch
+email attachments, search your Drive, and fetch or export files (Google Docs/Sheets/Slides are
+exported as text; other small text files are returned inline; larger or binary files come back as
+downloadable attachments). Everything is read-only — the assistant cannot send email, modify or
+delete anything, or see another household member's account.
+
+### How to connect
+
+1. Go to **Settings → Connected Accounts** in the web interface.
+2. Click **Connect Google account**.
+3. You are redirected to Google's consent screen — sign in with the account you want to connect and
+   approve the requested permissions.
+4. You are redirected back to Connected Accounts. A notification is sent naming the Google account
+   that was just linked. If you ever see an account you don't recognize there, disconnect
+   immediately — one click from the same page removes the connection.
+
+You only need to connect once via the web interface. The assistant then uses the connection in any
+interface (Telegram, web chat, etc.).
+
+**Partial grants.** Google's consent screen lets you approve only some permissions (for example,
+Gmail but not Drive). That is fine — the assistant will tell you if you try to use a feature that
+requires a permission you didn't grant, and you can reconnect to add it. The Connected Accounts page
+also shows which permissions are missing and prompts you to reconnect.
+
+### Reconnecting and disconnecting
+
+- **Reconnect** — click the Reconnect button on Connected Accounts. This replaces the existing
+  connection with the new consent you give. A notification confirms which account is now linked.
+- **Disconnect** — click Disconnect on Connected Accounts. The connection is removed and the
+  assistant can no longer access your Gmail or Drive until you reconnect.
+
+### "Needs re-authorization" notifications
+
+You may occasionally receive a notification saying your Google connection needs to be renewed. This
+happens when Google revokes the stored authorization (for example, after a password change, or if
+the OAuth client is in "testing" mode — see the operator notes below). Go to Settings → Connected
+Accounts and click Reconnect to restore access.
+
+### Operator notes (for whoever manages this deployment)
+
+The following applies to the person who configured the Family Assistant server, not to everyday
+users.
+
+**Google Cloud OAuth client setup.** Create an OAuth 2.0 client in Google Cloud Console with the
+redirect URI pointing to `<your-server>/api/integrations/google/callback`. Add every household
+member who will use this feature as a test user in the OAuth consent screen. A client in "testing"
+mode is sufficient and requires no Google verification for these sensitive scopes — however, refresh
+tokens issued to test-mode clients expire after **7 days**, which triggers re-authorization
+notifications for all users on that cycle. To avoid this, publish the OAuth client to production
+mode; for Gmail and Drive read scopes this may involve Google's verification process. The design
+intentionally does not work around this in code — the right fix is production mode, not silence.
+
+**Required environment variables** (see also the `google_integration` section in AGENTS.md):
+
+- `GOOGLE_OAUTH_CLIENT_ID` — your OAuth client ID.
+
+- `GOOGLE_OAUTH_CLIENT_SECRET` — your OAuth client secret (treated as a secret; redacted from config
+  dumps).
+
+- `CREDENTIAL_ENCRYPTION_KEY` — a Fernet key used to encrypt stored refresh tokens at rest. Generate
+  one with:
+
+  ```bash
+  python -c "from family_assistant.services.credential_encryption import generate_key; print(generate_key())"
+  ```
+
+  Keep this key stable. If it changes (or is lost), stored tokens cannot be decrypted and users will
+  need to reconnect. The integration treats a decryption failure as a configuration error and leaves
+  the connection row untouched, so restoring the correct key restores service without any user
+  action.
+
+**Taint enforcement.** By default (`google_integration.require_taint_enforcement: true`), the Gmail
+and Drive tools only register when `taint_policy.mode` is `enforce` and the policy matrix floors the
+key exfiltration sinks at `confirm` for untrusted content. This prevents a prompt-injected email
+from silently driving external messages or further sensitive reads. You can waive this requirement
+by setting `require_taint_enforcement: false`; the waiver is logged at startup and shown on the
+integration status endpoint so it is a visible, deliberate choice. Two sink classes are
+intentionally softer at `unknown_external` in the shipped default matrix and are not part of the
+floor check:
+
+- **`home_local`** (Home Assistant actions) — if your deployment has high-consequence actuators such
+  as locks, garage doors, or alarms, consider raising this sink to `confirm` at `unknown_external`
+  via `taint_policy.matrix_overrides` or `operator_minimum`.
+- **`artifact_write`** (notes and calendar writes) — destructive mutations (`delete_note`,
+  `delete_calendar_event`, …) resolve to this sink and run unconfirmed at `unknown_external` by
+  default. Provenance stamping prevents injected instructions from laundering themselves into
+  trusted storage, but if you want confirmation on deletes after any external content is read, raise
+  `artifact_write` to `confirm` via `matrix_overrides`.
+
+See `docs/design/user-scoped-google-data-access.md` for the full security analysis.
 
 ## Additional Resources
 

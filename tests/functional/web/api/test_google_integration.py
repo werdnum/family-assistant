@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, GoogleIntegrationConfig
 from family_assistant.services.credential_encryption import CredentialEncryption
+from family_assistant.services.google_integration_state import GoogleIntegrationState
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.repositories.google_connections import (
@@ -464,6 +465,55 @@ async def test_disabled_when_auth_not_enabled(
         "/api/integrations/google/authorize", follow_redirects=False
     )
     assert authorize.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_status_reads_shared_state_when_installed(
+    google_client: AsyncClient,
+    google_app: _GoogleTestApp,
+) -> None:
+    # When the app installs the startup-computed state, the router reports its
+    # enabled/reason/waived rather than re-deriving from config+auth. Here the
+    # shared state disables the integration for a floor reason even though the
+    # config is fully valid — proving the router defers to the shared state.
+    google_app.app.state.google_integration_state = GoogleIntegrationState(
+        enabled=False,
+        reason="Google integration is disabled: taint floor not met.",
+        taint_enforcement_waived=True,
+        enabled_tool_names=frozenset(),
+    )
+
+    body = (await google_client.get("/api/integrations/google")).json()
+    assert body["enabled"] is False
+    assert body["reason"] == "Google integration is disabled: taint floor not met."
+    assert body["require_taint_enforcement_waived"] is True
+
+    authorize = await google_client.get(
+        "/api/integrations/google/authorize", follow_redirects=False
+    )
+    assert authorize.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_enabled_shared_state_allows_authorize(
+    google_client: AsyncClient,
+    google_app: _GoogleTestApp,
+) -> None:
+    google_app.app.state.google_integration_state = GoogleIntegrationState(
+        enabled=True,
+        reason=None,
+        taint_enforcement_waived=False,
+        enabled_tool_names=frozenset({"gmail_search"}),
+    )
+
+    body = (await google_client.get("/api/integrations/google")).json()
+    assert body["enabled"] is True
+    assert body["require_taint_enforcement_waived"] is False
+
+    authorize = await google_client.get(
+        "/api/integrations/google/authorize", follow_redirects=False
+    )
+    assert authorize.status_code == 302
 
 
 @pytest.mark.asyncio
