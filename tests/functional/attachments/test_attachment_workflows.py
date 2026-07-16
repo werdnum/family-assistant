@@ -394,6 +394,7 @@ class TestAttachmentWorkflows:
                 conversation_id=str(target_chat_id),
                 text="Here's your enhanced photo!",
                 attachment_ids=[processed_attachment_id],
+                on_behalf_of_user_id=None,
             )
 
             # Verify the workflow created the expected attachments
