@@ -206,7 +206,9 @@ async def test_email_indexer_registers_email_attachment(
         assert registry_row["storage_path"] == str(external_file)
         assert registry_row["mime_type"] == "application/pdf"
 
-        content = await registry.get_attachment_content(db_context, attachment_id)
+        content = await registry.get_attachment_content(
+            db_context, attachment_id, acting_user_id=None
+        )
         assert content == b"PDF bytes here"
 
 
@@ -736,7 +738,9 @@ async def test_reindex_email_then_get_full_document_content_populates_ids(
         assert populated_id is not None
 
         # The populated ID resolves back to the external mailbox file.
-        content = await registry.get_attachment_content(db_context, populated_id)
+        content = await registry.get_attachment_content(
+            db_context, populated_id, acting_user_id=None
+        )
         assert content == b"PDF body"
 
 
@@ -878,7 +882,7 @@ async def test_delete_email_attachment_clears_email_row(
         attachment_id = attachments[0].attachment_id
         assert attachment_id is not None
 
-        await registry.delete_attachment(db_context, attachment_id)
+        await registry.delete_attachment(db_context, attachment_id, acting_user_id=None)
 
         # External file is preserved (owned by the email record), but the
         # ``attachment_id`` entry in received_emails is cleared.
@@ -1169,7 +1173,9 @@ async def test_delete_email_attachment_tolerates_malformed_sibling(
         )
         email_db_id = insert_result.scalar_one()
 
-        deleted = await registry.delete_attachment(db_context, attachment_id)
+        deleted = await registry.delete_attachment(
+            db_context, attachment_id, acting_user_id=None
+        )
         assert deleted is True
 
         refreshed = await db_context.fetch_one(
@@ -1465,4 +1471,7 @@ async def test_email_indexer_reregisters_when_stored_id_is_dangling(
         # Row was replaced, not retained.
         assert new_id != dangling_id
         # The new id resolves in the registry.
-        assert await registry.get_attachment(db_context, new_id) is not None
+        assert (
+            await registry.get_attachment(db_context, new_id, acting_user_id=None)
+            is not None
+        )

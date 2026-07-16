@@ -124,7 +124,7 @@ async def read_text_attachment_tool(
 
     try:
         attachment_metadata = await exec_context.attachment_registry.get_attachment(
-            db_context, attachment_id_str
+            db_context, attachment_id_str, acting_user_id=exec_context.user_id
         )
         record_sensitive_read(
             exec_context,
@@ -143,7 +143,7 @@ async def read_text_attachment_tool(
 
         # Fetch attachment content
         content_bytes = await exec_context.attachment_registry.get_attachment_content(
-            db_context, attachment_id_str
+            db_context, attachment_id_str, acting_user_id=exec_context.user_id
         )
 
         if content_bytes is None:

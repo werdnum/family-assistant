@@ -214,6 +214,8 @@ class ProcessingService:
         replied_to_interface_id: str | None,
         thread_root_id_for_turn: int | None,
         subconversation_id: str | None,
+        *,
+        acting_user_id: str | None,
     ) -> tuple[list[LLMMessage], str]:
         """Load history and optional full-thread context for LLM processing."""
         history_limit, history_max_age = self.context_preparer.get_history_limits(
@@ -263,6 +265,7 @@ class ProcessingService:
                     conversation_id,
                     self.service_config.history_max_age_hours,
                     self.service_config.prompts,
+                    acting_user_id=acting_user_id,
                 )
             )
             if thread_attachments_context:
@@ -689,6 +692,7 @@ class ProcessingService:
             replied_to_interface_id=replied_to_interface_id,
             thread_root_id_for_turn=thread_root_id_for_turn,
             subconversation_id=subconversation_id,
+            acting_user_id=user_id,
         )
         if trigger_role == "system" and self._is_delegation_wake_trigger_content(
             user_content_for_history
@@ -733,6 +737,7 @@ class ProcessingService:
                 db_context,
                 conversation_id,
                 trigger_content_parts,
+                acting_user_id=user_id,
             )
         )
         messages_for_llm.extend(attachment_injection_messages)
@@ -741,7 +746,7 @@ class ProcessingService:
             trigger_attachments=trigger_attachments,
         )
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
-            messages_for_llm
+            messages_for_llm, acting_user_id=user_id
         )
         return thread_root_id_for_turn, typed_messages_for_llm, context_taint_sources
 

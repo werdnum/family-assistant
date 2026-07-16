@@ -70,6 +70,7 @@ class WebChatInterface(ChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         """
         Sends a message to the web UI by saving it to the database.
@@ -84,6 +85,10 @@ class WebChatInterface(ChatInterface):
             parse_mode: Unused for web (kept for protocol compatibility)
             reply_to_interface_id: Optional message ID to reply to
             attachment_ids: Optional list of attachment IDs
+            on_behalf_of_user_id: Acting user for owner-scoped attachment reads.
+                The web path stores attachment references (resolved later by the
+                owner-scoped HTTP attachment routes) and does not itself read
+                attachment content, so this is accepted for protocol parity.
 
         Returns:
             The internal_id of the saved message as a string, or None if saving failed

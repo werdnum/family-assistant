@@ -8,6 +8,7 @@ from .delegation_runs import DelegationRunsRepository
 from .email import EmailRepository
 from .error_logs import ErrorLogsRepository
 from .events import EventsRepository
+from .google_connections import GoogleConnectionsRepository
 from .ios_push_token import IosPushTokenRepository
 from .message_history import MessageHistoryRepository
 from .notes import NotesRepository
@@ -28,6 +29,7 @@ __all__ = [
     "EmailRepository",
     "ErrorLogsRepository",
     "EventsRepository",
+    "GoogleConnectionsRepository",
     "IosPushTokenRepository",
     "MessageHistoryRepository",
     "NotesRepository",

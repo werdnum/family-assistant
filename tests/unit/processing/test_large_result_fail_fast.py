@@ -266,6 +266,7 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         call_id="call_explicit",
         provider_metadata=None,
         taint_metadata=taint_metadata,
+        acting_user_id=None,
     )
 
     assert attachment_ids == ["att_explicit_1"]

@@ -171,10 +171,12 @@ class EmailChatInterface:
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         """Send a reply to the original authenticated inbound email sender."""
         _ = parse_mode
         _ = reply_to_interface_id
+        _ = on_behalf_of_user_id
         if attachment_ids:
             raise OutboundEmailDeliveryError(
                 "Email replies with attachments are not supported"

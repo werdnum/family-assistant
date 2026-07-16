@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import aiofiles
 from fastapi import HTTPException, UploadFile
-from sqlalchemy import and_, delete, insert, select, update
+from sqlalchemy import and_, delete, insert, or_, select, update
 
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.context import DatabaseContext
@@ -30,6 +30,7 @@ from family_assistant.storage.email import (
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
+    from sqlalchemy.sql.elements import ColumnElement
 
 
 class AttachmentRegistryConfig(TypedDict, total=False):
@@ -62,6 +63,7 @@ class AttachmentRowDict(TypedDict):
     email_identity_hash: str | None
     conversation_id: str | None
     message_id: int | None
+    owner_user_id: str | None
     created_at: datetime
     accessed_at: datetime | None
     # ast-grep-ignore: no-dict-any - Free-form JSON metadata column stored in DB
@@ -93,6 +95,7 @@ class AttachmentMetadataDict(TypedDict):
     storage_path: str | None
     conversation_id: str | None
     message_id: int | None
+    owner_user_id: str | None
     created_at: str | None
     accessed_at: str | None
     # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
@@ -142,6 +145,7 @@ class AttachmentMetadata:
         email_identity_hash: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        owner_user_id: str | None = None,
         created_at: datetime | None = None,
         accessed_at: datetime | None = None,
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
@@ -158,6 +162,7 @@ class AttachmentMetadata:
         self.email_identity_hash = email_identity_hash
         self.conversation_id = conversation_id
         self.message_id = message_id
+        self.owner_user_id = owner_user_id
         self.created_at = created_at or datetime.now(UTC)
         self.accessed_at = accessed_at
         self.metadata = metadata or {}
@@ -186,6 +191,7 @@ class AttachmentMetadata:
             "storage_path": path,
             "conversation_id": self.conversation_id,
             "message_id": self.message_id,
+            "owner_user_id": self.owner_user_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "accessed_at": self.accessed_at.isoformat() if self.accessed_at else None,
             "metadata": self.metadata,
@@ -206,6 +212,7 @@ class AttachmentMetadata:
             email_identity_hash=row.get("email_identity_hash"),
             conversation_id=row["conversation_id"],
             message_id=row["message_id"],
+            owner_user_id=row.get("owner_user_id"),
             created_at=row["created_at"],
             accessed_at=row["accessed_at"],
             metadata=row["metadata"],
@@ -307,6 +314,23 @@ class AttachmentRegistry:
             f"allowed_types: {len(self.allowed_mime_types)} types"
         )
 
+    @staticmethod
+    def _owner_visibility_clause(acting_user_id: str | None) -> ColumnElement[bool]:
+        """SQL predicate restricting rows to those the actor may see/operate on.
+
+        Ownerless rows (``owner_user_id IS NULL``) are visible to everyone. An
+        owned row is visible only to a matching actor; ``acting_user_id=None``
+        (no user context) sees ownerless rows only. This is the single
+        chokepoint the registry enforces on every public read/mutate accessor.
+        """
+        ownerless = attachment_metadata_table.c.owner_user_id.is_(None)
+        if acting_user_id is None:
+            return ownerless
+        return or_(
+            ownerless,
+            attachment_metadata_table.c.owner_user_id == acting_user_id,
+        )
+
     async def register_attachment(
         self,
         db_context: DatabaseContext,
@@ -320,6 +344,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        owner_user_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
@@ -364,6 +389,7 @@ class AttachmentRegistry:
             email_identity_hash=email_identity_hash,
             conversation_id=conversation_id,
             message_id=message_id,
+            owner_user_id=owner_user_id,
             metadata=metadata,
         )
 
@@ -380,6 +406,7 @@ class AttachmentRegistry:
             email_identity_hash=attachment_metadata.email_identity_hash,
             conversation_id=attachment_metadata.conversation_id,
             message_id=attachment_metadata.message_id,
+            owner_user_id=attachment_metadata.owner_user_id,
             created_at=attachment_metadata.created_at,
             metadata=attachment_metadata.metadata,
         )
@@ -396,21 +423,28 @@ class AttachmentRegistry:
         self,
         db_context: DatabaseContext,
         attachment_id: str,
+        *,
+        acting_user_id: str | None,
     ) -> AttachmentMetadata | None:
         """
-        Get attachment metadata by ID.
+        Get attachment metadata by ID, enforcing owner scoping.
 
         Args:
             db_context: Database context
             attachment_id: Attachment identifier
+            acting_user_id: Canonical id of the acting user, or ``None`` for no
+                user context. An owned attachment is returned only when it
+                matches; a mismatch (including ``None`` actor) is reported as
+                not-found (``None``).
 
         Returns:
-            AttachmentMetadata if found and accessible, None otherwise
+            AttachmentMetadata if found and visible to the actor, None otherwise
         """
-        # Since API endpoints are public and we don't worry excessively about
-        # security between authenticated users, allow access to any attachment
         query = select(attachment_metadata_table).where(
-            attachment_metadata_table.c.attachment_id == attachment_id
+            and_(
+                attachment_metadata_table.c.attachment_id == attachment_id,
+                self._owner_visibility_clause(acting_user_id),
+            )
         )
 
         row = await db_context.fetch_one(query)
@@ -423,17 +457,24 @@ class AttachmentRegistry:
         self,
         db_context: DatabaseContext,
         attachment_ids: list[str],
+        *,
+        acting_user_id: str | None,
     ) -> dict[str, AttachmentMetadata]:
         """Fetch metadata for multiple attachments in a single query.
 
-        Returns a mapping of attachment_id to metadata; ids without a row are
-        omitted from the result.
+        ``acting_user_id`` acts as a filter: owned rows appear only for a
+        matching actor, ownerless rows appear for everyone, and ``None`` sees
+        ownerless rows only. Returns a mapping of attachment_id to metadata;
+        ids without a visible row are omitted from the result.
         """
         if not attachment_ids:
             return {}
 
         query = select(attachment_metadata_table).where(
-            attachment_metadata_table.c.attachment_id.in_(attachment_ids)
+            and_(
+                attachment_metadata_table.c.attachment_id.in_(attachment_ids),
+                self._owner_visibility_clause(acting_user_id),
+            )
         )
         rows = await db_context.fetch_all(query)
         return {
@@ -446,6 +487,8 @@ class AttachmentRegistry:
     async def list_attachments(
         self,
         db_context: DatabaseContext,
+        *,
+        acting_user_id: str | None,
         conversation_id: str | None = None,
         source_type: str | None = None,
         limit: int = 50,
@@ -455,6 +498,9 @@ class AttachmentRegistry:
 
         Args:
             db_context: Database context
+            acting_user_id: Acts as an owner filter — owned rows appear only for
+                a matching actor, ownerless rows for everyone, ``None`` for
+                ownerless only.
             conversation_id: Filter by conversation
             source_type: Filter by source type ("user", "tool", "script")
             limit: Maximum number of results
@@ -463,7 +509,9 @@ class AttachmentRegistry:
             List of AttachmentMetadata objects
         """
         # Build query with optional filters
-        query = select(attachment_metadata_table)
+        query = select(attachment_metadata_table).where(
+            self._owner_visibility_clause(acting_user_id)
+        )
 
         if conversation_id:
             query = query.where(
@@ -487,6 +535,8 @@ class AttachmentRegistry:
         db_context: DatabaseContext,
         conversation_id: str,
         max_age: datetime,
+        *,
+        acting_user_id: str | None,
     ) -> list[AttachmentMetadata]:
         """
         Get recent attachments for a conversation within a time window.
@@ -495,6 +545,9 @@ class AttachmentRegistry:
             db_context: Database context
             conversation_id: Conversation identifier
             max_age: Cutoff time - only attachments created after this time are returned
+            acting_user_id: Acts as an owner filter — owned rows appear only for
+                a matching actor, ownerless rows for everyone, ``None`` for
+                ownerless only.
 
         Returns:
             List of AttachmentMetadata objects ordered by creation time (newest first)
@@ -503,6 +556,7 @@ class AttachmentRegistry:
             select(attachment_metadata_table)
             .where(attachment_metadata_table.c.conversation_id == conversation_id)
             .where(attachment_metadata_table.c.created_at >= max_age)
+            .where(self._owner_visibility_clause(acting_user_id))
             .order_by(attachment_metadata_table.c.created_at.desc())
         )
 
@@ -569,6 +623,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        owner_user_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
@@ -586,6 +641,8 @@ class AttachmentRegistry:
             storage_path: File system path
             conversation_id: Associated conversation
             message_id: Associated message
+            owner_user_id: Canonical owner (personal-data tools set this;
+                ``None`` keeps the attachment ownerless).
             metadata: Additional metadata
 
         Returns:
@@ -603,6 +660,7 @@ class AttachmentRegistry:
             storage_path=storage_path,
             conversation_id=conversation_id,
             message_id=message_id,
+            owner_user_id=owner_user_id,
             metadata=metadata or {},
         )
 
@@ -610,19 +668,26 @@ class AttachmentRegistry:
         self,
         db_context: DatabaseContext,
         attachment_id: str,
+        *,
+        acting_user_id: str | None,
     ) -> bytes | None:
         """
-        Get attachment content by ID.
+        Get attachment content by ID, enforcing owner scoping.
 
         Args:
             db_context: Database context
             attachment_id: Attachment identifier
+            acting_user_id: Canonical id of the acting user, or ``None`` for no
+                user context. Owned content is returned only for a matching
+                actor; otherwise reported as not-found.
 
         Returns:
             File content bytes if found, None otherwise
         """
         # First verify access
-        metadata = await self.get_attachment(db_context, attachment_id)
+        metadata = await self.get_attachment(
+            db_context, attachment_id, acting_user_id=acting_user_id
+        )
         if not metadata:
             return None
 
@@ -647,25 +712,38 @@ class AttachmentRegistry:
         self,
         db_context: DatabaseContext,
         attachment_id: str,
+        *,
+        acting_user_id: str | None,
     ) -> bool:
         """
-        Delete an attachment (metadata and file).
+        Delete an attachment (metadata and file), enforcing owner scoping.
 
         Args:
             db_context: Database context
             attachment_id: Attachment identifier
+            acting_user_id: Canonical id of the acting user, or ``None`` for no
+                user context. An owned attachment is deleted only by a matching
+                actor; a mismatch is reported as not-found (``False``) and
+                leaves the row untouched.
 
         Returns:
             True if deleted, False if not found
         """
         # Load metadata before deletion so we can locate the file (including
-        # external paths like email attachments) after the row is gone.
-        metadata = await self.get_attachment(db_context, attachment_id)
+        # external paths like email attachments) after the row is gone. The
+        # owner-scoped read here also means a non-matching actor sees no
+        # metadata and the scoped DELETE below cannot remove the row.
+        metadata = await self.get_attachment(
+            db_context, attachment_id, acting_user_id=acting_user_id
+        )
         stored_path = metadata.storage_path if metadata else None
         source_type = metadata.source_type if metadata else None
         source_id = metadata.source_id if metadata else None
 
-        conditions = [attachment_metadata_table.c.attachment_id == attachment_id]
+        conditions = [
+            attachment_metadata_table.c.attachment_id == attachment_id,
+            self._owner_visibility_clause(acting_user_id),
+        ]
 
         # Atomic delete
         delete_stmt = delete(attachment_metadata_table).where(and_(*conditions))
@@ -703,9 +781,12 @@ class AttachmentRegistry:
         return success
 
     async def _update_access_time(
-        self, db_context: DatabaseContext, attachment_id: str
+        self,
+        db_context: DatabaseContext,
+        attachment_id: str,
+        acting_user_id: str | None,
     ) -> None:
-        """Update the access time for an attachment.
+        """Update the access time for an attachment (owner-scoped).
 
         Silently ignores cancellation and database errors during shutdown,
         since access time tracking is not critical to application functionality.
@@ -713,7 +794,12 @@ class AttachmentRegistry:
         try:
             update_stmt = (
                 update(attachment_metadata_table)
-                .where(attachment_metadata_table.c.attachment_id == attachment_id)
+                .where(
+                    and_(
+                        attachment_metadata_table.c.attachment_id == attachment_id,
+                        self._owner_visibility_clause(acting_user_id),
+                    )
+                )
                 .values(accessed_at=datetime.now(UTC))
             )
             await db_context.execute_with_retry(update_stmt)
@@ -725,19 +811,26 @@ class AttachmentRegistry:
             # Access time tracking is informational and shouldn't break operations
             pass
 
-    async def update_access_time_background(self, attachment_id: str) -> None:
+    async def update_access_time_background(
+        self,
+        attachment_id: str,
+        *,
+        acting_user_id: str | None,
+    ) -> None:
         """
-        Update attachment access time in a background task.
+        Update attachment access time in a background task (owner-scoped).
 
         Creates its own database context since this is called from FastAPI
         BackgroundTasks after the request context is closed.
 
         Args:
             attachment_id: The attachment ID to update
+            acting_user_id: Canonical id of the acting user, or ``None`` for no
+                user context. An owned row is touched only for a matching actor.
         """
         try:
             async with DatabaseContext(engine=self.db_engine) as db:
-                await self._update_access_time(db, attachment_id)
+                await self._update_access_time(db, attachment_id, acting_user_id)
         except Exception as e:
             # Log but don't fail - access time tracking is not critical
             logger.debug(
@@ -768,6 +861,8 @@ class AttachmentRegistry:
         db_context: DatabaseContext,
         attachment_id: str,
         conversation_id: str,
+        *,
+        acting_user_id: str | None,
     ) -> bool:
         """
         Update an attachment's conversation_id for security linking.
@@ -776,13 +871,20 @@ class AttachmentRegistry:
             db_context: Database context
             attachment_id: Attachment identifier
             conversation_id: New conversation ID to link to
+            acting_user_id: Canonical id of the acting user, or ``None`` for no
+                user context. An owned row is relinked only by a matching actor.
 
         Returns:
             True if updated successfully, False if attachment not found
         """
         update_stmt = (
             update(attachment_metadata_table)
-            .where(attachment_metadata_table.c.attachment_id == attachment_id)
+            .where(
+                and_(
+                    attachment_metadata_table.c.attachment_id == attachment_id,
+                    self._owner_visibility_clause(acting_user_id),
+                )
+            )
             .values(conversation_id=conversation_id)
         )
 
@@ -801,6 +903,8 @@ class AttachmentRegistry:
         db_context: DatabaseContext,
         attachment_id: str,
         conversation_id: str,
+        *,
+        acting_user_id: str | None,
         required_source_id: str = "api_user",
     ) -> AttachmentMetadata | None:
         """
@@ -813,6 +917,9 @@ class AttachmentRegistry:
             db_context: Database context
             attachment_id: Attachment identifier
             conversation_id: Conversation to link the attachment to
+            acting_user_id: Canonical id of the acting user, or ``None`` for no
+                user context. An owned row is claimable only by a matching
+                actor.
             required_source_id: Required source_id for security validation
 
         Returns:
@@ -829,6 +936,7 @@ class AttachmentRegistry:
                     ),  # Only unlinked
                     attachment_metadata_table.c.source_type == "user",
                     attachment_metadata_table.c.source_id == required_source_id,
+                    self._owner_visibility_clause(acting_user_id),
                 )
             )
             .values(
@@ -845,7 +953,10 @@ class AttachmentRegistry:
 
         # Successfully claimed, now fetch the updated record
         query = select(attachment_metadata_table).where(
-            attachment_metadata_table.c.attachment_id == attachment_id
+            and_(
+                attachment_metadata_table.c.attachment_id == attachment_id,
+                self._owner_visibility_clause(acting_user_id),
+            )
         )
         row = await db_context.fetch_one(query)
 
@@ -871,6 +982,7 @@ class AttachmentRegistry:
         storage_path: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        owner_user_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
     ) -> AttachmentMetadata:
@@ -892,19 +1004,30 @@ class AttachmentRegistry:
                 storage_path=storage_path,
                 conversation_id=conversation_id,
                 message_id=message_id,
+                owner_user_id=owner_user_id,
                 metadata=metadata,
             )
 
     async def get_attachment_with_context(
-        self, attachment_id: str
+        self,
+        attachment_id: str,
+        *,
+        acting_user_id: str | None,
     ) -> AttachmentMetadata | None:
         """
         Get attachment metadata by ID using internal database context.
 
         This is a convenience method that creates its own DatabaseContext.
+
+        Args:
+            attachment_id: Attachment identifier
+            acting_user_id: Canonical id of the acting user, or ``None`` for no
+                user context. Owned rows are visible only to a matching actor.
         """
         async with DatabaseContext(self.db_engine) as db_context:
-            return await self.get_attachment(db_context, attachment_id)
+            return await self.get_attachment(
+                db_context, attachment_id, acting_user_id=acting_user_id
+            )
 
     async def store_and_register_tool_attachment(
         self,
@@ -915,6 +1038,7 @@ class AttachmentRegistry:
         description: str | None = None,
         conversation_id: str | None = None,
         message_id: int | None = None,
+        owner_user_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
         db_context: DatabaseContext | None = None,
@@ -932,6 +1056,8 @@ class AttachmentRegistry:
             description: Optional description
             conversation_id: Associated conversation
             message_id: Associated message
+            owner_user_id: Canonical owner (personal-data tools set this;
+                ``None`` keeps the attachment ownerless).
             metadata: Additional metadata
             db_context: Optional DatabaseContext to use for registration
 
@@ -966,6 +1092,7 @@ class AttachmentRegistry:
                 else None,
                 conversation_id=conversation_id,
                 message_id=message_id,
+                owner_user_id=owner_user_id,
                 metadata=final_metadata,
             )
         else:
@@ -982,6 +1109,7 @@ class AttachmentRegistry:
                 else None,
                 conversation_id=conversation_id,
                 message_id=message_id,
+                owner_user_id=owner_user_id,
                 metadata=final_metadata,
             )
 
@@ -1208,29 +1336,38 @@ class AttachmentRegistry:
         self,
         attachment_id: str,
         db_context: DatabaseContext | None = None,
+        *,
+        acting_user_id: str | None,
     ) -> Path | None:
         """Async counterpart of ``get_attachment_path`` that resolves the
-        ``storage_path`` column internally.
+        ``storage_path`` column internally, enforcing owner scoping.
 
         Use this from call sites that don't already have the attachment
         metadata handy (for example, URL→data-URI conversion in the
         processing layer). External-path attachments such as email files
         are surfaced transparently without the caller needing to pre-fetch
-        metadata.
+        metadata. Owned attachments resolve only for a matching actor.
         """
         metadata: AttachmentMetadata | None = None
         if db_context is None:
             async with DatabaseContext(engine=self.db_engine) as own_db_context:
-                metadata = await self.get_attachment(own_db_context, attachment_id)
+                metadata = await self.get_attachment(
+                    own_db_context, attachment_id, acting_user_id=acting_user_id
+                )
         else:
-            metadata = await self.get_attachment(db_context, attachment_id)
+            metadata = await self.get_attachment(
+                db_context, attachment_id, acting_user_id=acting_user_id
+            )
 
-        stored_path = metadata.storage_path if metadata else None
-        source_type = metadata.source_type if metadata else None
+        # A row invisible to the actor (owned by someone else, or absent) must
+        # not resolve to a file path — otherwise the sharded-storage fallback in
+        # ``get_attachment_path`` would serve an owned attachment to a non-owner.
+        if metadata is None:
+            return None
         return self.get_attachment_path(
             attachment_id,
-            stored_path=stored_path,
-            source_type=source_type,
+            stored_path=metadata.storage_path,
+            source_type=metadata.source_type,
         )
 
     def get_attachment_path(

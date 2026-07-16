@@ -32,6 +32,7 @@ SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset({
     "vapid_private_key",
     "session_secret_key",
     "token_env",
+    "credential_encryption_key",
 })
 
 # Substring patterns used as a defense-in-depth fallback so config fields added

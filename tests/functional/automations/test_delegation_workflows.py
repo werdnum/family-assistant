@@ -630,7 +630,7 @@ async def test_delegate_to_service_propagates_generated_attachments(
     async with DatabaseContext(engine=db_engine) as db_context:
         for att_id in attachment_ids:
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, att_id
+                db_context, att_id, acting_user_id=None
             )
             assert attachment_metadata is not None
             assert (

@@ -136,7 +136,7 @@ class TestGetAttachmentPathExternal:
                 )
 
                 content = await registry.get_attachment_content(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=None
                 )
 
             assert content == payload
@@ -163,7 +163,7 @@ class TestGetAttachmentPathExternal:
                 assert managed_path is not None and managed_path.exists()
 
                 deleted = await registry.delete_attachment(
-                    db_context, metadata.attachment_id
+                    db_context, metadata.attachment_id, acting_user_id=None
                 )
 
             assert deleted is True
@@ -196,9 +196,16 @@ class TestGetAttachmentPathExternal:
                     storage_path=str(external_file),
                 )
 
-                deleted = await registry.delete_attachment(db_context, attachment_id)
+                deleted = await registry.delete_attachment(
+                    db_context, attachment_id, acting_user_id=None
+                )
 
                 # Registry row was removed but the external file survives.
                 assert deleted is True
                 assert external_file.exists()
-                assert await registry.get_attachment(db_context, attachment_id) is None
+                assert (
+                    await registry.get_attachment(
+                        db_context, attachment_id, acting_user_id=None
+                    )
+                    is None
+                )

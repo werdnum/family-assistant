@@ -82,7 +82,7 @@ async def jq_query_tool(
 
         # Retrieve attachment metadata
         attachment = await attachment_registry.get_attachment(
-            db_context, attachment_id_str
+            db_context, attachment_id_str, acting_user_id=exec_context.user_id
         )
 
         if not attachment:

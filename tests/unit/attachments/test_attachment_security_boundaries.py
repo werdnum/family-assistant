@@ -44,14 +44,14 @@ class TestAttachmentSecurityBoundaries:
                 # Verify attachment exists and is accessible regardless of context
                 # Having the ID is enough.
                 retrieved = await attachment_registry.get_attachment(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=None
                 )
                 assert retrieved is not None
                 assert retrieved.conversation_id == conversation_a_id
 
                 # Content should also be accessible
                 content = await attachment_registry.get_attachment_content(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=None
                 )
                 assert content == test_content
 
@@ -87,7 +87,7 @@ class TestAttachmentSecurityBoundaries:
                 async with DatabaseContext(engine=db_engine) as db_context:
                     # Attachment should remain accessible
                     retrieved = await attachment_registry.get_attachment(
-                        db_context, attachment_id
+                        db_context, attachment_id, acting_user_id=None
                     )
                     assert retrieved is not None
                     assert retrieved.conversation_id == conversation_id
@@ -98,7 +98,7 @@ class TestAttachmentSecurityBoundaries:
 
                     # Content should remain accessible
                     content = await attachment_registry.get_attachment_content(
-                        db_context, attachment_id
+                        db_context, attachment_id, acting_user_id=None
                     )
                     assert content == test_content
 
@@ -135,10 +135,10 @@ class TestAttachmentSecurityBoundaries:
 
                 # Both services should be able to access the same attachment
                 attachment_from_a = await attachment_registry.get_attachment(
-                    db_context, service_a_id
+                    db_context, service_a_id, acting_user_id=None
                 )
                 attachment_from_b = await attachment_registry.get_attachment(
-                    db_context, service_b_id
+                    db_context, service_b_id, acting_user_id=None
                 )
 
                 assert attachment_from_a is not None
@@ -153,10 +153,10 @@ class TestAttachmentSecurityBoundaries:
 
                 # Content should be identical
                 content_a = await attachment_registry.get_attachment_content(
-                    db_context, service_a_id
+                    db_context, service_a_id, acting_user_id=None
                 )
                 content_b = await attachment_registry.get_attachment_content(
-                    db_context, service_b_id
+                    db_context, service_b_id, acting_user_id=None
                 )
 
                 assert content_a == content_b == test_content
@@ -174,20 +174,20 @@ class TestAttachmentSecurityBoundaries:
                 # Test with completely invalid UUID - registry doesn't validate format, just queries DB
                 invalid_id = "not-a-uuid"
                 result = await attachment_registry.get_attachment(
-                    db_context, invalid_id
+                    db_context, invalid_id, acting_user_id=None
                 )
                 assert result is None  # Database simply won't find it
 
                 # Test with valid UUID format but non-existent attachment
                 non_existent_id = str(uuid.uuid4())
                 result = await attachment_registry.get_attachment(
-                    db_context, non_existent_id
+                    db_context, non_existent_id, acting_user_id=None
                 )
                 assert result is None
 
                 # Test content access for non-existent attachment
                 content = await attachment_registry.get_attachment_content(
-                    db_context, non_existent_id
+                    db_context, non_existent_id, acting_user_id=None
                 )
                 assert content is None
 
@@ -221,7 +221,7 @@ class TestAttachmentSecurityBoundaries:
 
                 # Retrieve and verify all metadata
                 retrieved = await attachment_registry.get_attachment(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=None
                 )
                 assert retrieved is not None
                 assert retrieved.attachment_id == attachment_id
@@ -235,6 +235,6 @@ class TestAttachmentSecurityBoundaries:
 
                 # Verify content matches exactly
                 content = await attachment_registry.get_attachment_content(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=None
                 )
                 assert content == test_content

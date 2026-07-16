@@ -384,7 +384,9 @@ async def execute_script_tool(
                     try:
                         metadata = (
                             await exec_context.attachment_registry.get_attachment(
-                                exec_context.db_context, aid
+                                exec_context.db_context,
+                                aid,
+                                acting_user_id=exec_context.user_id,
                             )
                         )
                         if metadata:

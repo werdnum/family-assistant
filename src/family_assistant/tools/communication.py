@@ -611,7 +611,9 @@ async def send_message_to_user_tool(
                         actual_attachment_id = attachment_id
 
                     attachment = await attachment_registry.get_attachment(
-                        exec_context.db_context, actual_attachment_id
+                        exec_context.db_context,
+                        actual_attachment_id,
+                        acting_user_id=exec_context.user_id,
                     )
 
                     if not attachment:
@@ -727,7 +729,9 @@ async def get_attachment_info_tool(
         attachment_registry = exec_context.attachment_registry
 
         # Retrieve attachment metadata
-        attachment = await attachment_registry.get_attachment(db_context, attachment_id)
+        attachment = await attachment_registry.get_attachment(
+            db_context, attachment_id, acting_user_id=exec_context.user_id
+        )
 
         if not attachment:
             logger.warning(f"Attachment {attachment_id} not found")

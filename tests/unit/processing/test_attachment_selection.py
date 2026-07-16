@@ -83,7 +83,7 @@ class TestAttachmentSelectionThreshold:
         pending_attachment_ids = ["att1", "att2", "att3"]
 
         processing_service.attachment_processor.attachment_registry.get_attachment_with_context = AsyncMock(  # type: ignore[union-attr]
-            side_effect=lambda att_id: AttachmentMetadata(
+            side_effect=lambda att_id, acting_user_id=None: AttachmentMetadata(
                 attachment_id=att_id,
                 source_type="tool",
                 source_id="test_tool",
@@ -112,6 +112,7 @@ class TestAttachmentSelectionThreshold:
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_attachment_ids,
             original_query="Test query",
+            acting_user_id=None,
         )
 
         assert len(result) == 3
@@ -134,7 +135,7 @@ class TestAttachmentSelectionThreshold:
 
         # Create mock attachment metadata
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: AttachmentMetadata(
+            side_effect=lambda att_id, acting_user_id=None: AttachmentMetadata(
                 attachment_id=att_id,
                 source_type="tool",
                 source_id="test_tool",
@@ -165,6 +166,7 @@ class TestAttachmentSelectionThreshold:
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_attachment_ids,
             original_query="Test query",
+            acting_user_id=None,
         )
 
         # Should have called LLM for selection
@@ -251,7 +253,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry to return metadata for all attachments
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # Mock LLM response with tool call containing selected IDs
@@ -274,6 +278,7 @@ class TestSelectAttachmentsForResponse:
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Show me the most relevant images",
+            acting_user_id=None,
         )
 
         assert result == ["att2", "att4", "att5"]
@@ -295,7 +300,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # LLM returns arguments as JSON string (common with some LLM providers)
@@ -318,6 +325,7 @@ class TestSelectAttachmentsForResponse:
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
+            acting_user_id=None,
         )
 
         assert result == ["att1", "att3"]
@@ -338,7 +346,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # LLM returns no tool calls (just content)
@@ -353,6 +363,7 @@ class TestSelectAttachmentsForResponse:
             await processing_service.attachment_processor.select_for_response(
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
+                acting_user_id=None,
             )
 
     @pytest.mark.asyncio
@@ -371,7 +382,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # LLM calls different tool
@@ -395,6 +408,7 @@ class TestSelectAttachmentsForResponse:
             await processing_service.attachment_processor.select_for_response(
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
+                acting_user_id=None,
             )
 
     @pytest.mark.asyncio
@@ -414,7 +428,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # LLM selects all 10, but should be truncated to max (6)
@@ -439,6 +455,7 @@ class TestSelectAttachmentsForResponse:
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
+            acting_user_id=None,
         )
 
         # Should be limited to max_response_attachments (6)
@@ -462,7 +479,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # LLM returns no tool calls - triggers fallback
@@ -477,6 +496,7 @@ class TestSelectAttachmentsForResponse:
             await processing_service.attachment_processor.select_for_response(
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
+                acting_user_id=None,
             )
 
     @pytest.mark.asyncio
@@ -505,6 +525,7 @@ class TestSelectAttachmentsForResponse:
             await processing_service.attachment_processor.select_for_response(
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
+                acting_user_id=None,
             )
 
     @pytest.mark.asyncio
@@ -523,7 +544,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # LLM raises exception
@@ -538,6 +561,7 @@ class TestSelectAttachmentsForResponse:
             await processing_service.attachment_processor.select_for_response(
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
+                acting_user_id=None,
             )
 
     @pytest.mark.asyncio
@@ -554,6 +578,7 @@ class TestSelectAttachmentsForResponse:
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=[],
             original_query="Select images",
+            acting_user_id=None,
         )
 
         # Should return empty list
@@ -573,6 +598,7 @@ class TestSelectAttachmentsForResponse:
         result = await processing_service.attachment_processor.select_for_response(
             pending_attachment_ids=pending_ids,
             original_query="Select images",
+            acting_user_id=None,
         )
 
         # Should return original list when no registry
@@ -596,7 +622,9 @@ class TestSelectAttachmentsForResponse:
 
         # Mock registry
         mock_attachment_registry.get_attachment_with_context = AsyncMock(
-            side_effect=lambda att_id: self._create_attachment_metadata(att_id)
+            side_effect=lambda att_id, acting_user_id=None: (
+                self._create_attachment_metadata(att_id)
+            )
         )
 
         # LLM returns malformed arguments (not a dict, not a list)
@@ -620,4 +648,5 @@ class TestSelectAttachmentsForResponse:
             await processing_service.attachment_processor.select_for_response(
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
+                acting_user_id=None,
             )

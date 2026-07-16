@@ -177,3 +177,24 @@ def testredact_sensitive_config_walks_nested_structures() -> None:
     # Falsy secret values stay falsy (no "[REDACTED]") since there's nothing to leak.
     assert not redacted["empty_token"]
     assert redacted["unrelated"] == "visible"
+
+
+def test_google_integration_secrets_are_redacted() -> None:
+    """oauth_client_secret and credential_encryption_key are redacted."""
+    input_payload = {
+        "google_integration": {
+            "oauth_client_id": "client-id-visible.apps.googleusercontent.com",
+            "oauth_client_secret": "GOCSPX-super-secret",
+            "credential_encryption_key": "fernet-key-material",
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            "require_taint_enforcement": True,
+        }
+    }
+    redacted = redact_sensitive_config(input_payload)
+    google = redacted["google_integration"]
+    assert google["oauth_client_secret"] == "[REDACTED]"
+    assert google["credential_encryption_key"] == "[REDACTED]"
+    # Non-secret fields remain visible.
+    assert google["oauth_client_id"] == "client-id-visible.apps.googleusercontent.com"
+    assert google["scopes"] == ["https://www.googleapis.com/auth/gmail.readonly"]
+    assert google["require_taint_enforcement"] is True

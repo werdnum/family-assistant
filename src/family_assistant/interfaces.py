@@ -18,6 +18,7 @@ class ChatInterface(Protocol):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str]
         | None = None,  # Attachment IDs to send with the message
+        on_behalf_of_user_id: str | None = None,
         # Potentially add other common parameters like inline keyboard markup
         # For now, keeping it simple with text, parse_mode, reply_to, and attachments.
     ) -> str | None:  # Returns interface-specific message ID if successful, else None
@@ -30,6 +31,9 @@ class ChatInterface(Protocol):
             parse_mode: Optional string indicating the formatting mode (e.g., "MarkdownV2").
             reply_to_interface_id: Optional interface-specific ID of the message to reply to.
             attachment_ids: Optional list of attachment IDs to send with the message.
+            on_behalf_of_user_id: Canonical id of the user the delivery acts as,
+                used as the acting user when reading owner-scoped attachments.
+                ``None`` reads ownerless attachments only.
 
         Returns:
             The interface-specific ID of the sent message, or None if sending failed.

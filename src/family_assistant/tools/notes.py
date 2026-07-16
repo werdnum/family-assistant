@@ -105,7 +105,7 @@ async def add_or_update_note_tool(
             if attachment_registry:
                 # Verify attachment exists
                 metadata = await attachment_registry.get_attachment(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=exec_context.user_id
                 )
                 if metadata:
                     valid_attachment_ids.append(attachment_id)
@@ -370,12 +370,12 @@ async def get_note_tool(
         for attachment_id in attachment_ids:
             try:
                 metadata = await attachment_registry.get_attachment(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=exec_context.user_id
                 )
                 if metadata:
                     # Fetch content
                     content = await attachment_registry.get_attachment_content(
-                        db_context, attachment_id
+                        db_context, attachment_id, acting_user_id=exec_context.user_id
                     )
                     if content:
                         attachments.append(

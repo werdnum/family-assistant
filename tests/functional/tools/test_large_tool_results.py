@@ -105,7 +105,9 @@ async def test_large_tool_result_auto_attachment(
         att_id = result.auto_attachment_ids[0]
 
         # Verify attachment content
-        saved_content = await attachment_registry.get_attachment_content(db, att_id)
+        saved_content = await attachment_registry.get_attachment_content(
+            db, att_id, acting_user_id=None
+        )
         assert saved_content is not None
         assert saved_content.decode("utf-8") == large_content
 
@@ -134,7 +136,9 @@ async def test_large_tool_result_auto_attachment(
         assert "jq_query" in result.llm_message.content
         assert result.auto_attachment_ids is not None
         att_id = result.auto_attachment_ids[0]
-        metadata = await attachment_registry.get_attachment(db, att_id)
+        metadata = await attachment_registry.get_attachment(
+            db, att_id, acting_user_id=None
+        )
         assert metadata is not None
         assert metadata.mime_type == "application/json"
 
@@ -315,7 +319,9 @@ async def test_script_attachment_read_same_transaction(
         att_id = reg_metadata.attachment_id
 
         # Verify the attachment exists in this transaction
-        metadata = await attachment_registry.get_attachment(db, att_id)
+        metadata = await attachment_registry.get_attachment(
+            db, att_id, acting_user_id=None
+        )
         assert metadata is not None, "Attachment should exist in same transaction"
 
         exec_ctx = ToolExecutionContext(
@@ -548,7 +554,9 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
         assert len(result.auto_attachment_ids) == 1
         att_id = result.auto_attachment_ids[0]
 
-        saved_content = await attachment_registry.get_attachment_content(db, att_id)
+        saved_content = await attachment_registry.get_attachment_content(
+            db, att_id, acting_user_id=None
+        )
         assert saved_content is not None
         saved_json = json.loads(saved_content.decode("utf-8"))
         assert saved_json == large_data

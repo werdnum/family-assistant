@@ -214,10 +214,11 @@ class RecordingChatInterface:
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - fake chat I/O must yield to exercise cancellation cleanup
         await asyncio.sleep(0)
-        _ = parse_mode
+        _ = (parse_mode, on_behalf_of_user_id)
         self.messages.append((conversation_id, text, reply_to_interface_id))
         self.attachment_ids.append(attachment_ids)
         return f"chat-message-{len(self.messages)}"
@@ -233,6 +234,7 @@ class FailingChatInterface(RecordingChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -240,6 +242,7 @@ class FailingChatInterface(RecordingChatInterface):
             parse_mode=parse_mode,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
+            on_behalf_of_user_id=on_behalf_of_user_id,
         )
         raise RuntimeError("chat send failed")
 
@@ -254,6 +257,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -261,6 +265,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
             parse_mode=parse_mode,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
+            on_behalf_of_user_id=on_behalf_of_user_id,
         )
         return None
 
@@ -281,12 +286,16 @@ class BlockingChatInterface(RecordingChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
-        _ = conversation_id
-        _ = text
-        _ = parse_mode
-        _ = reply_to_interface_id
-        _ = attachment_ids
+        _ = (
+            conversation_id,
+            text,
+            parse_mode,
+            reply_to_interface_id,
+            attachment_ids,
+            on_behalf_of_user_id,
+        )
         self.started.set()
         try:
             await self._release.wait()
@@ -996,7 +1005,7 @@ async def test_fallback_notification_preserves_tool_result_attachments(
     assert attachment_ids is not None
     assert len(attachment_ids) == 1
     attachment = await attachment_registry.get_attachment_with_context(
-        attachment_ids[0]
+        attachment_ids[0], acting_user_id=None
     )
     assert attachment is not None
     assert attachment.mime_type == "text/plain"

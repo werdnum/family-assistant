@@ -876,6 +876,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     chat_id=chat_id,
                                     attachment_ids=response_attachment_ids,
                                     reply_to_msg_id=reply_target_message_id,
+                                    on_behalf_of_user_id=resolved_user.user_id,
                                 )
                             except Exception as attachment_err:
                                 logger.error(
@@ -1386,6 +1387,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     chat_id=chat_id,
                                     attachment_ids=response_attachment_ids,
                                     reply_to_msg_id=reply_target_message_id_for_bot,
+                                    on_behalf_of_user_id=resolved_user.user_id,
                                 )
                             )
                         except Exception as attachment_err:

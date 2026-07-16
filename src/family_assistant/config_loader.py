@@ -109,6 +109,14 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("APNS_AUTH_KEY_PATH", "apns.auth_key_path"),
     EnvVarMapping("APNS_BUNDLE_ID", "apns.bundle_id"),
     EnvVarMapping("APNS_USE_SANDBOX", "apns.use_sandbox", bool),
+    # Google integration (per-user Gmail & Drive)
+    EnvVarMapping("GOOGLE_OAUTH_CLIENT_ID", "google_integration.oauth_client_id"),
+    EnvVarMapping(
+        "GOOGLE_OAUTH_CLIENT_SECRET", "google_integration.oauth_client_secret"
+    ),
+    EnvVarMapping(
+        "CREDENTIAL_ENCRYPTION_KEY", "google_integration.credential_encryption_key"
+    ),
     # Profile settings
     EnvVarMapping("DEFAULT_SERVICE_PROFILE_ID", "default_service_profile_id"),
     EnvVarMapping("TIMEZONE", "default_profile_settings.processing_config.timezone"),
@@ -1170,6 +1178,14 @@ def _log_config(
     if "apns" in loggable:
         loggable["apns"] = {
             k: v for k, v in loggable["apns"].items() if k != "auth_key"
+        }
+
+    # Remove Google integration secret material
+    if "google_integration" in loggable:
+        loggable["google_integration"] = {
+            k: v
+            for k, v in loggable["google_integration"].items()
+            if k not in {"oauth_client_secret", "credential_encryption_key"}
         }
 
     # Remove UCP private key material

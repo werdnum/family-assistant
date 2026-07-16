@@ -22,6 +22,7 @@ from family_assistant.tools import (
     ToolPolicyDeniedError,
     ToolsProvider,
 )
+from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 from .types import (
@@ -93,6 +94,8 @@ class ToolExecutor:
         self,
         db_context: DatabaseContext,
         attachment_ids: list[str],
+        *,
+        acting_user_id: str | None,
     ) -> list[dict[str, str | int | None]]:
         """Fetch metadata for queued attachments to enrich stream output."""
         if not self.attachment_registry:
@@ -103,7 +106,7 @@ class ToolExecutor:
         attachment_metadata_list: list[dict[str, str | int | None]] = []
         for attachment_id in attachment_ids:
             attachment_info = await self.attachment_registry.get_attachment(
-                db_context, attachment_id
+                db_context, attachment_id, acting_user_id=acting_user_id
             )
             if attachment_info is None:
                 raise ValueError(
@@ -124,6 +127,8 @@ class ToolExecutor:
         self,
         db_context: DatabaseContext,
         result_payload: str,
+        *,
+        acting_user_id: str | None,
     ) -> tuple[list[str] | None, StreamEventMetadata | None]:
         """Build explicit attachment IDs and metadata for attach_to_response output."""
         queued_attachment_ids = self._extract_queued_attachment_ids(result_payload)
@@ -131,7 +136,7 @@ class ToolExecutor:
             return None, None
 
         attachment_metadata_list = await self._build_attach_to_response_metadata(
-            db_context, queued_attachment_ids
+            db_context, queued_attachment_ids, acting_user_id=acting_user_id
         )
         logger.info(
             "Enriched attach_to_response result with %d attachment metadata entries",
@@ -326,6 +331,27 @@ class ToolExecutor:
 
         return cast("dict[str, object]", arguments)
 
+    async def _large_result_owner(
+        self, function_name: str, acting_user_id: str | None
+    ) -> str | None:
+        """Owner for a large-result auto-conversion.
+
+        Personal-data tools (descriptor tag ``google_personal_data``) own their
+        auto-converted large results so they inherit the same per-user
+        enforcement as the tool that produced them. Every other tool's large
+        result stays ownerless, preserving today's behavior.
+        """
+        if acting_user_id is None:
+            return None
+        if not isinstance(self.tools_provider, ToolDescriptorProvider):
+            return None
+        descriptor = await self.tools_provider.get_tool_descriptor(function_name)
+        if descriptor is None:
+            return None
+        if any(tag.value == "google_personal_data" for tag in descriptor.tags):
+            return acting_user_id
+        return None
+
     async def _handle_large_text_result(
         self,
         *,
@@ -335,8 +361,10 @@ class ToolExecutor:
         conversation_id: str,
         call_id: str,
         taint_metadata: TaintMetadata | None,
+        acting_user_id: str | None,
     ) -> tuple[str, list[str]]:
         """Convert oversized text results into attachment references."""
+        owner_user_id = await self._large_result_owner(function_name, acting_user_id)
         (
             new_content,
             auto_attachment_id,
@@ -347,6 +375,7 @@ class ToolExecutor:
             conversation_id,
             call_id,
             taint_metadata,
+            owner_user_id=owner_user_id,
         )
         if auto_attachment_id is None:
             return new_content, []
@@ -361,10 +390,12 @@ class ToolExecutor:
         conversation_id: str,
         call_id: str,
         taint_metadata: TaintMetadata | None,
+        acting_user_id: str | None,
     ) -> tuple[list[dict[str, str | int | None]], list[str]]:
         """Store/normalize ToolResult attachments for streaming and history."""
         attachments_data: list[dict[str, str | int | None]] = []
         auto_attachment_ids: list[str] = []
+        owner_user_id = await self._large_result_owner(function_name, acting_user_id)
 
         for attachment in attachments:
             attachment_data: dict[str, str | int | None] = {
@@ -391,6 +422,7 @@ class ToolExecutor:
                         description=attachment.description
                         or f"Output from {function_name}",
                         conversation_id=conversation_id,
+                        owner_user_id=owner_user_id,
                         metadata=metadata,
                     )
                 )
@@ -425,6 +457,7 @@ class ToolExecutor:
         call_id: str,
         provider_metadata: GeminiProviderMetadata | ProviderMetadataDict | None,
         taint_metadata: TaintMetadata | None,
+        acting_user_id: str | None,
     ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
         """Convert ToolResult into stream payload, message, and attachment IDs."""
         content_for_stream = result.get_text()
@@ -435,6 +468,7 @@ class ToolExecutor:
             conversation_id=conversation_id,
             call_id=call_id,
             taint_metadata=taint_metadata,
+            acting_user_id=acting_user_id,
         )
         if auto_attachment_ids:
             # Result data is now persisted as attachment; keep content as hint text.
@@ -453,6 +487,7 @@ class ToolExecutor:
                 conversation_id=conversation_id,
                 call_id=call_id,
                 taint_metadata=taint_metadata,
+                acting_user_id=acting_user_id,
             )
             auto_attachment_ids.extend(new_attachment_ids)
 
@@ -491,6 +526,7 @@ class ToolExecutor:
         conversation_id: str,
         call_id: str,
         taint_metadata: TaintMetadata | None,
+        acting_user_id: str | None,
     ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
         """Convert plain string-like tool output into stream/message payload."""
         content_for_stream = str(result)
@@ -501,6 +537,7 @@ class ToolExecutor:
             conversation_id=conversation_id,
             call_id=call_id,
             taint_metadata=taint_metadata,
+            acting_user_id=acting_user_id,
         )
         return (
             content_for_stream,
@@ -663,6 +700,7 @@ class ToolExecutor:
                     call_id=call_id,
                     provider_metadata=tool_call_item_obj.provider_metadata,
                     taint_metadata=result_taint_metadata,
+                    acting_user_id=user_id,
                 )
             else:
                 result_taint_metadata = (
@@ -680,6 +718,7 @@ class ToolExecutor:
                     conversation_id=conversation_id,
                     call_id=call_id,
                     taint_metadata=result_taint_metadata,
+                    acting_user_id=user_id,
                 )
                 if result_taint_metadata is not None:
                     llm_message = llm_message.model_copy(
@@ -691,7 +730,7 @@ class ToolExecutor:
                     explicit_attachment_ids,
                     explicit_stream_metadata,
                 ) = await self._build_attach_to_response_output(
-                    db_context, content_for_stream
+                    db_context, content_for_stream, acting_user_id=user_id
                 )
                 if explicit_stream_metadata is not None:
                     stream_metadata = explicit_stream_metadata

@@ -485,7 +485,7 @@ wake_llm({
         # Verify the attachment ID is actually registered and has correct content
         async with DatabaseContext(engine=db_engine) as db_ctx:
             attachment_metadata = await attachment_registry.get_attachment(
-                db_ctx, received_attachment_id
+                db_ctx, received_attachment_id, acting_user_id=None
             )
         assert attachment_metadata is not None, (
             f"Attachment {received_attachment_id} should exist in registry"

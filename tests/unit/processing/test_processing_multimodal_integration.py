@@ -650,15 +650,17 @@ class TestProcessingServiceMultimodal:
         mock_tools_provider = AsyncMock()
         mock_attachment_registry = Mock()
         mock_attachment_registry.get_attachment = AsyncMock(
-            side_effect=lambda _db, attachment_id: AttachmentMetadata(
-                attachment_id=attachment_id,
-                source_type="tool",
-                source_id="attach_to_response",
-                mime_type="image/png",
-                description=f"Attachment {attachment_id}",
-                size=10,
-                content_url=f"http://localhost:8000/attachments/{attachment_id}",
-                storage_path=f"/tmp/{attachment_id}.png",
+            side_effect=lambda _db, attachment_id, acting_user_id=None: (
+                AttachmentMetadata(
+                    attachment_id=attachment_id,
+                    source_type="tool",
+                    source_id="attach_to_response",
+                    mime_type="image/png",
+                    description=f"Attachment {attachment_id}",
+                    size=10,
+                    content_url=f"http://localhost:8000/attachments/{attachment_id}",
+                    storage_path=f"/tmp/{attachment_id}.png",
+                )
             )
         )
         processing_service.tool_executor.attachment_registry = mock_attachment_registry

@@ -1,0 +1,505 @@
+"""Web endpoints for the per-user Google (Gmail/Drive) OAuth connect flow.
+
+Session-authenticated via :func:`get_current_user` — deliberately NOT covered by
+the diagnostics read-only token, so ``DIAGNOSTICS_READONLY_TOKEN`` never unlocks
+connecting, disconnecting, or reading a user's Google connection status.
+
+The flow follows the approved design in
+``docs/design/user-scoped-google-data-access.md`` (§"1. Connections > OAuth flow"):
+
+- ``GET  /api/integrations/google``           — connection status for the current user.
+- ``GET  /api/integrations/google/authorize`` — start the authorization-code + PKCE flow.
+- ``GET  /api/integrations/google/callback``  — atomically consume the pending flow,
+  exchange the code, upsert the connection, and notify the user naming the account.
+- ``DELETE /api/integrations/google``         — best-effort revoke, then delete the row.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import logging
+import secrets
+from typing import Annotated
+from urllib.parse import urlencode
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
+
+from family_assistant.config_models import GoogleIntegrationConfig
+from family_assistant.services.credential_encryption import (
+    CredentialDecryptionError,
+    CredentialEncryption,
+    CredentialEncryptionError,
+)
+from family_assistant.storage.context import DatabaseContext
+from family_assistant.web.dependencies import get_current_user, get_db
+
+logger = logging.getLogger(__name__)
+
+google_integration_router = APIRouter()
+
+
+class GoogleIntegrationStatus(BaseModel):
+    """Connection status for the current user (never any token material)."""
+
+    enabled: bool
+    reason: str | None
+    require_taint_enforcement_waived: bool
+    connected: bool
+    provider_account_email: str | None
+    status: str | None
+    granted_scopes: list[str]
+    configured_scopes: list[str]
+    missing_configured_scopes: list[str]
+    last_used_at: str | None
+
+
+# Identity scopes always appended in code (not operator-configurable) so the
+# callback can reliably identify the connected account from the ID token.
+IDENTITY_SCOPES = ("openid", "email")
+
+# Pending flows expire after 10 minutes (enforced on claim + opportunistic cleanup).
+PENDING_FLOW_TTL_SECONDS = 600
+
+# Settings page the browser lands on after connect/disconnect / errors.
+SETTINGS_REDIRECT_PATH = "/settings/accounts"
+
+# Google OAuth endpoint base URLs. Overridable per-app for tests via
+# ``app.state.google_oauth_urls`` (a dict with these keys).
+DEFAULT_GOOGLE_OAUTH_URLS: dict[str, str] = {
+    "authorize": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token": "https://oauth2.googleapis.com/token",
+    "revoke": "https://oauth2.googleapis.com/revoke",
+    "userinfo": "https://www.googleapis.com/oauth2/v3/userinfo",
+}
+
+# Module-default shared client used when the app does not inject one.
+_default_http_client: httpx.AsyncClient | None = None
+
+
+def get_google_oauth_http_client(request: Request) -> httpx.AsyncClient:
+    """Return the async HTTP client used for Google OAuth outbound calls.
+
+    Tests inject an ``httpx.MockTransport``-backed client via
+    ``app.state.google_oauth_http_client``; production shares a module-default
+    client.
+    """
+    injected = getattr(request.app.state, "google_oauth_http_client", None)
+    if isinstance(injected, httpx.AsyncClient):
+        return injected
+    global _default_http_client
+    if _default_http_client is None:
+        _default_http_client = httpx.AsyncClient(timeout=30.0)
+    return _default_http_client
+
+
+CurrentUser = Annotated[dict, Depends(get_current_user)]
+Db = Annotated[DatabaseContext, Depends(get_db)]
+GoogleOAuthClient = Annotated[httpx.AsyncClient, Depends(get_google_oauth_http_client)]
+
+
+def _google_oauth_urls(request: Request) -> dict[str, str]:
+    """Return the Google OAuth endpoint URLs, honoring a per-app test override."""
+    override = getattr(request.app.state, "google_oauth_urls", None)
+    if isinstance(override, dict):
+        return {**DEFAULT_GOOGLE_OAUTH_URLS, **override}
+    return DEFAULT_GOOGLE_OAUTH_URLS
+
+
+def _google_integration_config(request: Request) -> GoogleIntegrationConfig | None:
+    """Return the ``google_integration`` config section from app state."""
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        return None
+    integration = getattr(config, "google_integration", None)
+    if isinstance(integration, GoogleIntegrationConfig):
+        return integration
+    return None
+
+
+def _integration_enablement(request: Request) -> tuple[bool, str | None]:
+    """Return ``(enabled, reason)`` for the Google integration in this deployment.
+
+    Enabled only when OAuth client id/secret and the credential encryption key are
+    all configured AND real web authentication is active. The dev ``test_user``
+    mode (auth disabled) must refuse: in that mode any caller shares one identity,
+    so connecting a Google account would attach it to that shared identity.
+    """
+    integration = _google_integration_config(request)
+    if integration is None:
+        return False, "Google integration is not configured."
+    if not integration.oauth_client_id:
+        return (
+            False,
+            "Google integration is disabled: GOOGLE_OAUTH_CLIENT_ID is not set.",
+        )
+    if not integration.oauth_client_secret:
+        return (
+            False,
+            "Google integration is disabled: GOOGLE_OAUTH_CLIENT_SECRET is not set.",
+        )
+    if not integration.credential_encryption_key:
+        return (
+            False,
+            "Google integration is disabled: CREDENTIAL_ENCRYPTION_KEY is not set.",
+        )
+
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if auth_service is None or not getattr(auth_service, "auth_enabled", False):
+        return (
+            False,
+            "Google integration is disabled: real web authentication must be enabled "
+            "so each user has a distinct identity.",
+        )
+    return True, None
+
+
+def _require_enabled(request: Request) -> GoogleIntegrationConfig:
+    """Return the integration config, or raise 409 if the integration is disabled."""
+    enabled, reason = _integration_enablement(request)
+    integration = _google_integration_config(request)
+    if not enabled or integration is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
+    return integration
+
+
+def _sha256_hex(value: str) -> str:
+    """Return the SHA-256 hex digest of a string (used to hash the state nonce)."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """Return an (RFC 7636) ``(code_verifier, code_challenge)`` S256 PKCE pair."""
+    # 32 random bytes -> 43-char urlsafe string, within the 43-128 char range.
+    code_verifier = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return code_verifier, code_challenge
+
+
+def _callback_redirect_uri(request: Request) -> str:
+    """Return the absolute callback redirect URI for this deployment."""
+    return str(request.url_for("google_integration_callback"))
+
+
+def _configured_scopes(integration: GoogleIntegrationConfig) -> list[str]:
+    """Return the operator-configured data scopes."""
+    return list(integration.scopes)
+
+
+def _settings_redirect(query: dict[str, str]) -> RedirectResponse:
+    """302-redirect the browser back to the settings page with query params."""
+    url = f"{SETTINGS_REDIRECT_PATH}?{urlencode(query)}"
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+@google_integration_router.get("")
+async def get_google_integration_status(
+    request: Request,
+    current_user: CurrentUser,
+    db: Db,
+) -> GoogleIntegrationStatus:
+    """Return the current user's Google connection status (never token material)."""
+    enabled, reason = _integration_enablement(request)
+    integration = _google_integration_config(request)
+    configured_scopes = (
+        _configured_scopes(integration) if integration is not None else []
+    )
+    require_taint_enforcement_waived = (
+        integration is not None and not integration.require_taint_enforcement
+    )
+
+    connection = None
+    if enabled:
+        user_id = current_user["user_identifier"]
+        connection = await db.google_connections.get_connection(user_id)
+
+    granted_scopes = list(connection.scopes) if connection is not None else []
+    missing_configured_scopes = [
+        scope for scope in configured_scopes if scope not in granted_scopes
+    ]
+
+    return GoogleIntegrationStatus(
+        enabled=enabled,
+        reason=reason,
+        require_taint_enforcement_waived=require_taint_enforcement_waived,
+        connected=connection is not None,
+        provider_account_email=(
+            connection.provider_account_email if connection is not None else None
+        ),
+        status=connection.status if connection is not None else None,
+        granted_scopes=granted_scopes,
+        configured_scopes=configured_scopes,
+        missing_configured_scopes=missing_configured_scopes,
+        last_used_at=(
+            connection.last_used_at.isoformat()
+            if connection is not None and connection.last_used_at is not None
+            else None
+        ),
+    )
+
+
+@google_integration_router.get("/authorize")
+async def start_google_authorize(
+    request: Request,
+    current_user: CurrentUser,
+    db: Db,
+) -> RedirectResponse:
+    """Start the authorization-code + PKCE flow and redirect to Google consent."""
+    integration = _require_enabled(request)
+    user_id = current_user["user_identifier"]
+
+    state = secrets.token_urlsafe(32)
+    code_verifier, code_challenge = _pkce_pair()
+
+    await db.google_connections.cleanup_expired_flows(PENDING_FLOW_TTL_SECONDS)
+    await db.google_connections.create_pending_flow(
+        _sha256_hex(state), code_verifier, user_id
+    )
+
+    scopes = [*_configured_scopes(integration), *IDENTITY_SCOPES]
+    params = {
+        "client_id": integration.oauth_client_id,
+        "redirect_uri": _callback_redirect_uri(request),
+        "response_type": "code",
+        "scope": " ".join(scopes),
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    authorize_url = f"{_google_oauth_urls(request)['authorize']}?{urlencode(params)}"
+    return RedirectResponse(url=authorize_url, status_code=status.HTTP_302_FOUND)
+
+
+def _decode_id_token_email(id_token: str) -> str | None:
+    """Return the ``email`` claim from an ID token JWT payload, if present.
+
+    The token arrived directly from Google's token endpoint over TLS, so an
+    unverified payload decode is acceptable here — we are not relying on it as a
+    security assertion, only to display which account was connected.
+    """
+    parts = id_token.split(".")
+    if len(parts) != 3:
+        return None
+    payload_b64 = parts[1]
+    padding = "=" * (-len(payload_b64) % 4)
+    try:
+        payload_bytes = base64.urlsafe_b64decode(payload_b64 + padding)
+        payload = json.loads(payload_bytes)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    email = payload.get("email")
+    return email if isinstance(email, str) else None
+
+
+async def _resolve_account_email(
+    request: Request,
+    http_client: httpx.AsyncClient,
+    id_token: str | None,
+    access_token: str | None,
+) -> str | None:
+    """Return the connected account email from the ID token or userinfo endpoint."""
+    if id_token is not None:
+        email = _decode_id_token_email(id_token)
+        if email:
+            return email
+
+    if not access_token:
+        return None
+    try:
+        response = await http_client.get(
+            _google_oauth_urls(request)["userinfo"],
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    except httpx.HTTPError:
+        return None
+    if response.status_code != 200:
+        return None
+    data = response.json()
+    email = data.get("email")
+    return email if isinstance(email, str) else None
+
+
+@google_integration_router.get("/callback", name="google_integration_callback")
+async def google_authorize_callback(
+    request: Request,
+    current_user: CurrentUser,
+    db: Db,
+    http_client: GoogleOAuthClient,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
+    """Complete the OAuth flow: consume the pending flow, exchange, upsert, notify."""
+    integration = _require_enabled(request)
+
+    # Google reports user-denied consent via the ``error`` param; no pending-flow
+    # consumption is required (the user never authorized).
+    if error:
+        return _settings_redirect({"google": "error", "message": error})
+
+    if not code or not state:
+        return _settings_redirect({
+            "google": "error",
+            "message": "missing_code_or_state",
+        })
+
+    # a. Atomically claim (single-use consume) the pending flow.
+    flow = await db.google_connections.claim_pending_flow(
+        _sha256_hex(state), PENDING_FLOW_TTL_SECONDS
+    )
+    if flow is None:
+        # Tampering / replay / expiry — a JSON error is appropriate; there is no
+        # trusted flow to tie a friendly redirect to.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unknown, expired, or already-used state.",
+        )
+
+    # b. The session user must match the flow's initiating user.
+    user_id = current_user["user_identifier"]
+    if user_id != flow.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated user does not match the initiating user of this flow.",
+        )
+
+    redirect_uri = _callback_redirect_uri(request)
+
+    # c. Exchange the code (server-side, including the claimed PKCE code_verifier).
+    try:
+        token_result = await http_client.post(
+            _google_oauth_urls(request)["token"],
+            data={
+                "client_id": integration.oauth_client_id,
+                "client_secret": integration.oauth_client_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+                "code_verifier": flow.code_verifier,
+            },
+        )
+    except httpx.HTTPError:
+        logger.warning("Google token exchange request failed", exc_info=True)
+        return _settings_redirect({
+            "google": "error",
+            "message": "token_exchange_failed",
+        })
+    if token_result.status_code != 200:
+        # Never echo the code or any token material back to the user.
+        logger.warning(
+            "Google token exchange returned status %s", token_result.status_code
+        )
+        return _settings_redirect({
+            "google": "error",
+            "message": "token_exchange_failed",
+        })
+    token_response = token_result.json()
+
+    # d. A refresh token is required (we request prompt=consent + access_type=offline).
+    refresh_token = token_response.get("refresh_token")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        logger.warning("Google token exchange returned no refresh_token")
+        return _settings_redirect({"google": "error", "message": "no_refresh_token"})
+
+    # Granted scopes: partial grants are accepted (store what was granted).
+    granted_scope_str = token_response.get("scope", "")
+    granted_scopes = granted_scope_str.split() if granted_scope_str else []
+
+    # e. Identify the connected account.
+    id_token = token_response.get("id_token")
+    access_token = token_response.get("access_token")
+    account_email = await _resolve_account_email(
+        request,
+        http_client,
+        id_token if isinstance(id_token, str) else None,
+        access_token if isinstance(access_token, str) else None,
+    )
+    if not account_email:
+        logger.warning("Could not resolve connected Google account email")
+        return _settings_redirect({"google": "error", "message": "account_unresolved"})
+
+    # f. Encrypt the refresh token and upsert the connection.
+    try:
+        encryption = CredentialEncryption(integration.credential_encryption_key)
+    except CredentialEncryptionError:
+        logger.error("Invalid CREDENTIAL_ENCRYPTION_KEY", exc_info=True)
+        return _settings_redirect({
+            "google": "error",
+            "message": "encryption_key_invalid",
+        })
+    refresh_token_encrypted = encryption.encrypt(refresh_token)
+
+    await db.google_connections.upsert_connection(
+        user_id=user_id,
+        provider="google",
+        provider_account_email=account_email,
+        scopes=granted_scopes,
+        refresh_token_encrypted=refresh_token_encrypted,
+    )
+
+    # g. Notify the user, naming the account, so any swap is immediately visible.
+    dispatcher = getattr(request.app.state, "notification_dispatcher", None)
+    if dispatcher is not None:
+        try:
+            await dispatcher.send_notification(
+                user_identifier=user_id,
+                title="Google account connected",
+                body=(
+                    f"Google account {account_email} was connected to your "
+                    "Family Assistant account"
+                ),
+                db_context=db,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send Google connection notification", exc_info=True
+            )
+
+    # h. Redirect to the settings page.
+    return _settings_redirect({"google": "connected"})
+
+
+@google_integration_router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+async def disconnect_google_integration(
+    request: Request,
+    current_user: CurrentUser,
+    db: Db,
+    http_client: GoogleOAuthClient,
+) -> None:
+    """Best-effort revoke the refresh token, then delete the connection row."""
+    integration = _require_enabled(request)
+    user_id = current_user["user_identifier"]
+
+    connection = await db.google_connections.get_connection(user_id)
+    if connection is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No Google connection to disconnect.",
+        )
+
+    # Best-effort revocation: a decryption failure or a failed revoke still deletes.
+    try:
+        encryption = CredentialEncryption(integration.credential_encryption_key)
+        refresh_token = encryption.decrypt(connection.refresh_token_encrypted)
+        await http_client.post(
+            _google_oauth_urls(request)["revoke"],
+            data={"token": refresh_token},
+        )
+    except (
+        CredentialEncryptionError,
+        CredentialDecryptionError,
+        httpx.HTTPError,
+    ):
+        logger.warning(
+            "Google token revocation failed; deleting connection anyway",
+            exc_info=True,
+        )
+
+    await db.google_connections.delete_connection(user_id)

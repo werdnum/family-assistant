@@ -53,7 +53,7 @@ async def fetch_attachment_object(
         # Fetch attachment metadata
         logger.debug(f"Looking up attachment {attachment_id} in registry")
         metadata = await attachment_registry.get_attachment(
-            context.db_context, attachment_id
+            context.db_context, attachment_id, acting_user_id=context.user_id
         )
 
         if metadata is None:
@@ -74,6 +74,7 @@ async def fetch_attachment_object(
             metadata=metadata,
             registry=attachment_registry,
             db_context_getter=db_context_getter,
+            user_id=context.user_id,
         )
 
     except Exception as e:

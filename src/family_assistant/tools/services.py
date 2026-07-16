@@ -174,7 +174,9 @@ async def _delegated_attachment_refs(
 
     try:
         metadata_by_id = await exec_context.attachment_registry.get_attachments(
-            exec_context.db_context, response_attachment_ids
+            exec_context.db_context,
+            response_attachment_ids,
+            acting_user_id=exec_context.user_id,
         )
     except Exception:
         logger.error(
@@ -709,7 +711,7 @@ async def delegate_to_service_tool(
             # is reported now rather than failing opaquely inside the worker.
             async with exec_context.db_context.create_isolated_context() as isolated_db:
                 found = await exec_context.attachment_registry.get_attachments(
-                    isolated_db, attachment_ids
+                    isolated_db, attachment_ids, acting_user_id=exec_context.user_id
                 )
             missing = [aid for aid in attachment_ids if aid not in found]
             if missing:

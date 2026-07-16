@@ -223,6 +223,7 @@ class TestAttachmentWorkflows:
             all_attachments = await attachment_registry.list_attachments(
                 db_context=db_context,
                 conversation_id="test_conversation",
+                acting_user_id=None,
             )
 
             assert len(all_attachments) == 2
@@ -394,6 +395,7 @@ class TestAttachmentWorkflows:
             all_attachments = await attachment_registry.list_attachments(
                 db_context=db_context,
                 conversation_id="test_conversation",
+                acting_user_id=None,
             )
 
             assert len(all_attachments) == 2  # User + processed attachment

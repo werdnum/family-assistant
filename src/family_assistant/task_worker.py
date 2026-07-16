@@ -758,6 +758,7 @@ async def handle_llm_callback(
                 or "",  # Use empty string if no text but have attachments
                 parse_mode="MarkdownV2",
                 attachment_ids=response_attachment_ids,
+                on_behalf_of_user_id=callback_owner_user_id,
             )
             logger.info(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
@@ -1955,6 +1956,7 @@ class TaskWorker:
                     text=message_text,
                     parse_mode=None,
                     attachment_ids=run["result_attachment_ids_json"] or None,
+                    on_behalf_of_user_id=run["user_id"],
                 )
                 if sent_message_id is None:
                     # Delivery failed (invalid chat, Bot API error, ...). Roll back
@@ -2180,6 +2182,7 @@ class TaskWorker:
             text=delivery_text,
             parse_mode=None,
             attachment_ids=delivery_attachment_ids,
+            on_behalf_of_user_id=run["user_id"],
         )
         if sent_message_id is None:
             raise DelegationNotificationError(
@@ -3525,6 +3528,7 @@ async def _process_script_wake_llm(
                     attachment_metadata = await attachment_registry.get_attachment(
                         db_context=exec_context.db_context,
                         attachment_id=attachment_id,
+                        acting_user_id=exec_context.user_id,
                     )
 
                     if attachment_metadata:
@@ -4344,6 +4348,7 @@ async def _notify_confirmation_execution_result(
             text=message,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
+            on_behalf_of_user_id=context.user_id,
         )
         if sent_message_id is None:
             raise ConfirmationNotificationError(

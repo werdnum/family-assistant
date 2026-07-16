@@ -116,7 +116,7 @@ class TestAttachToResponseTool:
             # Create ScriptAttachment object for the tool
             # Get the attachment metadata from registry
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, mock_attachment_metadata.id
+                db_context, mock_attachment_metadata.id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -463,7 +463,7 @@ class TestHighlightImageTool:
 
             # Get attachment metadata
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, image_id
+                db_context, image_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -570,7 +570,7 @@ class TestHighlightImageTool:
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, file_id
+                db_context, file_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -651,7 +651,7 @@ class TestHighlightImageTool:
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, image_id
+                db_context, image_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -738,7 +738,7 @@ class TestHighlightImageTool:
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, image_id
+                db_context, image_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 

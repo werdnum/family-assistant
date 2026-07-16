@@ -116,7 +116,7 @@ async def upload_attachment(
 async def serve_attachment(
     attachment_id: str,
     background_tasks: BackgroundTasks,
-    _: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
@@ -142,17 +142,22 @@ async def serve_attachment(
             status_code=400, detail="Invalid attachment ID format"
         ) from e
 
-    # Check access via attachment registry
+    acting_user_id = current_user["user_identifier"]
+
+    # Check access via attachment registry (owner-scoped: an owned attachment
+    # is only visible to its owner; a mismatch reads as not-found).
     # Note: get_attachment() no longer updates access time synchronously
     attachment_metadata = await attachment_registry.get_attachment(
-        db_context, attachment_id
+        db_context, attachment_id, acting_user_id=acting_user_id
     )
     if not attachment_metadata:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Schedule access time update as background task (non-blocking)
     background_tasks.add_task(
-        attachment_registry.update_access_time_background, attachment_id
+        attachment_registry.update_access_time_background,
+        attachment_id,
+        acting_user_id=acting_user_id,
     )
 
     # Get file path (honoring externally-managed storage_path for e.g. email attachments)
@@ -173,15 +178,27 @@ async def serve_attachment(
     # the attachment by ID and expect the original name back.
     display_filename = _display_filename(attachment_metadata, file_path)
 
+    # Owned attachments must never be shareable through a cache: a shared
+    # cache keyed only on the URL could hand user A's personal file to user B
+    # without ever reaching the ownership check above. Ownerless attachments
+    # keep the long-lived immutable cache.
+    if attachment_metadata.owner_user_id is not None:
+        cache_headers = {
+            "Cache-Control": "private, no-store",
+            "ETag": f'"{attachment_id}"',
+        }
+    else:
+        cache_headers = {
+            "Cache-Control": "public, max-age=31536000, immutable",  # Cache for 1 year (files are immutable)
+            "ETag": f'"{attachment_id}"',  # Use attachment ID as ETag
+        }
+
     # Return file response with proper headers
     return FileResponse(
         path=str(file_path),
         media_type=content_type,
         filename=display_filename,
-        headers={
-            "Cache-Control": "public, max-age=31536000, immutable",  # Cache for 1 year (files are immutable)
-            "ETag": f'"{attachment_id}"',  # Use attachment ID as ETag
-        },
+        headers=cache_headers,
     )
 
 
@@ -192,7 +209,7 @@ async def serve_attachment(
 )
 async def delete_attachment(
     attachment_id: str,
-    _: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_user)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
@@ -218,9 +235,12 @@ async def delete_attachment(
             status_code=400, detail="Invalid attachment ID format"
         ) from e
 
-    # Use attachment registry for deletion
+    # Use attachment registry for deletion (owner-scoped: an owned attachment
+    # is only deletable by its owner; a mismatch reads as not-found).
     # This handles both database deletion and file cleanup in the correct order
-    deleted = await attachment_registry.delete_attachment(db_context, attachment_id)
+    deleted = await attachment_registry.delete_attachment(
+        db_context, attachment_id, acting_user_id=current_user["user_identifier"]
+    )
     if not deleted:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
@@ -234,6 +254,7 @@ async def delete_attachment(
 )
 async def get_attachment_metadata(
     attachment_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
@@ -263,10 +284,14 @@ async def get_attachment_metadata(
         ) from e
 
     # Look up the registry row so we honor externally-managed ``storage_path``
-    # (for example, email attachments saved to the mailbox directory).
+    # (for example, email attachments saved to the mailbox directory). The read
+    # is owner-scoped, so an owned attachment is invisible to a non-owner and
+    # must not fall through to the sharded-path lookup below.
     registry_metadata = await attachment_registry.get_attachment(
-        db_context, attachment_id
+        db_context, attachment_id, acting_user_id=current_user["user_identifier"]
     )
+    if registry_metadata is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
 
     file_path = attachment_registry.get_attachment_path(
         attachment_id,

@@ -61,6 +61,8 @@ class AttachmentProcessor:
         db_context: DatabaseContext,
         conversation_id: str,
         content_parts: list[ContentPartDict],
+        *,
+        acting_user_id: str | None,
     ) -> list[LLMMessage]:
         """
         Process attachment content parts by fetching and injecting them as user messages.
@@ -73,6 +75,7 @@ class AttachmentProcessor:
             db_context: Database context for attachment queries
             conversation_id: Current conversation ID for security validation
             content_parts: List of content parts that may contain attachment references
+            acting_user_id: Acting user for owner-scoped attachment access.
 
         Returns:
             LLM injection messages created from attachment and image content parts.
@@ -92,7 +95,7 @@ class AttachmentProcessor:
                     )
 
                 attachment_metadata = await self.attachment_registry.get_attachment(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=acting_user_id
                 )
                 if not attachment_metadata:
                     raise ValueError(
@@ -100,7 +103,7 @@ class AttachmentProcessor:
                     )
 
                 content = await self.attachment_registry.get_attachment_content(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=acting_user_id
                 )
                 if content is None:
                     raise RuntimeError(
@@ -140,6 +143,8 @@ class AttachmentProcessor:
     async def convert_urls_to_data_uris(
         self,
         content_parts: list[ContentPartDict],
+        *,
+        acting_user_id: str | None,
     ) -> list[ContentPartDict]:
         """
         Convert any attachment server URLs in content parts to data URIs.
@@ -149,6 +154,7 @@ class AttachmentProcessor:
 
         Args:
             content_parts: List of content parts that may contain image_url entries
+            acting_user_id: Acting user for owner-scoped attachment resolution.
 
         Returns:
             Modified content parts with server URLs converted to data URIs
@@ -179,7 +185,7 @@ class AttachmentProcessor:
                     # internally so externally-managed files (e.g. email
                     # attachments in the mailbox directory) resolve too.
                     file_path = await self.attachment_registry.resolve_attachment_path(
-                        attachment_id
+                        attachment_id, acting_user_id=acting_user_id
                     )
                     if not file_path or not file_path.exists():
                         raise FileNotFoundError(
@@ -219,6 +225,8 @@ class AttachmentProcessor:
     async def convert_message_urls(
         self,
         messages: list[LLMMessage],
+        *,
+        acting_user_id: str | None,
     ) -> list[LLMMessage]:
         """
         Convert any attachment server URLs in message content to data URIs.
@@ -227,6 +235,7 @@ class AttachmentProcessor:
 
         Args:
             messages: List of LLM messages
+            acting_user_id: Acting user for owner-scoped attachment resolution.
 
         Returns:
             Modified messages with server URLs converted to data URIs
@@ -248,7 +257,9 @@ class AttachmentProcessor:
                 ]
 
                 # Apply URL conversion
-                converted_dicts = await self.convert_urls_to_data_uris(content_dicts)
+                converted_dicts = await self.convert_urls_to_data_uris(
+                    content_dicts, acting_user_id=acting_user_id
+                )
 
                 # Deserialize back to ContentPart objects using TypeAdapter
                 converted_parts: list[ContentPart] = [
@@ -270,6 +281,8 @@ class AttachmentProcessor:
         conversation_id: str,
         max_age_hours: float,
         prompts: dict[str, str],
+        *,
+        acting_user_id: str | None,
     ) -> str:
         """
         Extracts recent attachment information from the conversation and formats it for LLM context.
@@ -279,6 +292,7 @@ class AttachmentProcessor:
             conversation_id: Conversation identifier to query attachments for.
             max_age_hours: Maximum age of attachments to include (in hours).
             prompts: Dictionary of prompt templates.
+            acting_user_id: Acting user; owned rows are surfaced only for a match.
 
         Returns:
             Formatted string with attachment context, or empty string if no attachments found.
@@ -293,6 +307,7 @@ class AttachmentProcessor:
                 db_context=db_context,
                 conversation_id=conversation_id,
                 max_age=cutoff_time,
+                acting_user_id=acting_user_id,
             )
         )
 
@@ -338,6 +353,8 @@ class AttachmentProcessor:
         self,
         pending_attachment_ids: list[str],
         original_query: str,
+        *,
+        acting_user_id: str | None,
     ) -> list[str]:
         """
         Select the most relevant attachments to include in the response.
@@ -348,6 +365,7 @@ class AttachmentProcessor:
         Args:
             pending_attachment_ids: List of available attachment IDs to choose from
             original_query: The original user query to evaluate relevance
+            acting_user_id: Acting user; owned rows are surfaced only for a match.
 
         Returns:
             List of selected attachment IDs (up to max_response_attachments)
@@ -358,7 +376,7 @@ class AttachmentProcessor:
         attachment_descriptions: list[str] = []
         for att_id in pending_attachment_ids:
             metadata = await self.attachment_registry.get_attachment_with_context(
-                att_id
+                att_id, acting_user_id=acting_user_id
             )
             if metadata:
                 attachment_descriptions.append(
@@ -502,6 +520,8 @@ Call attach_to_response with your selected attachment IDs."""
         conversation_id: str,
         call_id: str,
         taint_metadata: Mapping[str, object] | None = None,
+        *,
+        owner_user_id: str | None = None,
     ) -> tuple[str, str | None]:
         """
         Check if a tool result is too large and convert it to an attachment if necessary.
@@ -512,6 +532,10 @@ Call attach_to_response with your selected attachment IDs."""
             tool_name: Name of the tool that generated the result.
             conversation_id: Conversation ID for context.
             call_id: Tool call ID for metadata.
+            taint_metadata: Optional taint metadata to stamp on the attachment.
+            owner_user_id: Owner recorded on the auto-converted attachment. Set
+                only for personal-data tool results so ordinary tool output
+                stays ownerless (backward-compatible).
 
         Returns:
             Tuple of (new_content, auto_attachment_id)
@@ -566,6 +590,7 @@ Call attach_to_response with your selected attachment IDs."""
                 tool_name=tool_name,
                 description=f"Large output from {tool_name}",
                 conversation_id=conversation_id,
+                owner_user_id=owner_user_id,
                 metadata=attachment_metadata,
                 db_context=db_context,
             )

@@ -332,8 +332,15 @@ class AttachmentVisibilityChatInterface:
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
-        _ = (conversation_id, text, parse_mode, reply_to_interface_id)
+        _ = (
+            conversation_id,
+            text,
+            parse_mode,
+            reply_to_interface_id,
+            on_behalf_of_user_id,
+        )
         self.sent_text = text
         self.sent_attachment_ids = attachment_ids
         if attachment_ids:
@@ -341,6 +348,7 @@ class AttachmentVisibilityChatInterface:
                 visible = await self.attachment_registry.get_attachments(
                     db_context,
                     attachment_ids,
+                    acting_user_id=None,
                 )
             self.visible_attachment_ids = list(visible)
         return "external_message_id"

@@ -40,6 +40,10 @@ from family_assistant.storage.events import (
     event_listeners_table,
     recent_events_table,
 )
+from family_assistant.storage.google_connections import (
+    pending_google_oauth_flows_table,
+    user_google_connections_table,
+)
 from family_assistant.storage.ios_push_token import ios_push_tokens_table
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.notes import notes_table
@@ -343,6 +347,8 @@ __all__ = [
     "InterfaceType",
     "delegation_runs_table",
     "taint_audit_events_table",
+    "user_google_connections_table",
+    "pending_google_oauth_flows_table",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API

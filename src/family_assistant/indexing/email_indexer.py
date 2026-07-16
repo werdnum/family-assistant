@@ -232,6 +232,7 @@ async def _register_or_reuse_email_attachment(
     # rolled back we can safely re-query for the canonical row.
     savepoint = await conn.begin_nested()
     try:
+        # Email indexing is ambient (ownerless attachment)
         await attachment_registry.register_attachment(
             db_context=db_context,
             attachment_id=new_id,
@@ -545,8 +546,9 @@ class EmailIndexer:
                 # ``attachment_id is None`` branch below re-registers
                 # the attachment on this same pass.
                 if att.attachment_id is not None:
+                    # Email indexing is ambient (no acting user)
                     existing_metadata = await attachment_registry.get_attachment(
-                        db_context, att.attachment_id
+                        db_context, att.attachment_id, acting_user_id=None
                     )
                     if existing_metadata is None:
                         logger.warning(

@@ -176,7 +176,7 @@ async def test_prepare_turn_messages_uses_isolated_writes() -> None:
     service._render_system_prompt = MagicMock(return_value="")  # type: ignore[method-assign]
     service.attachment_processor.process_content_parts = AsyncMock(return_value=[])
     service.attachment_processor.convert_message_urls = AsyncMock(
-        side_effect=lambda messages: messages
+        side_effect=lambda messages, acting_user_id=None: messages
     )
 
     (
@@ -686,6 +686,7 @@ async def test_process_content_parts_missing_attachment_id_raises() -> None:
             db_context=MagicMock(),
             conversation_id="conv",
             content_parts=cast("list[ContentPartDict]", [{"type": "attachment"}]),
+            acting_user_id=None,
         )
 
 
@@ -709,6 +710,7 @@ async def test_process_content_parts_missing_attachment_metadata_raises() -> Non
                 "list[ContentPartDict]",
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
+            acting_user_id=None,
         )
 
 
@@ -733,6 +735,7 @@ async def test_process_content_parts_missing_attachment_content_raises() -> None
                 "list[ContentPartDict]",
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
+            acting_user_id=None,
         )
 
 
@@ -748,9 +751,15 @@ async def test_convert_urls_to_data_uris_invalid_internal_url_raises() -> None:
     )
 
     with pytest.raises(ValueError, match="Invalid attachment URL format"):
-        await processor.convert_urls_to_data_uris([
-            {"type": "image_url", "image_url": {"url": "/api/attachments/not-a-uuid"}}
-        ])
+        await processor.convert_urls_to_data_uris(
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "/api/attachments/not-a-uuid"},
+                }
+            ],
+            acting_user_id=None,
+        )
 
 
 @pytest.mark.no_db
@@ -768,14 +777,17 @@ async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
     )
 
     with pytest.raises(FileNotFoundError, match="Attachment file not found"):
-        await processor.convert_urls_to_data_uris([
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": "/api/attachments/550e8400-e29b-41d4-a716-446655440000"
-                },
-            }
-        ])
+        await processor.convert_urls_to_data_uris(
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "/api/attachments/550e8400-e29b-41d4-a716-446655440000"
+                    },
+                }
+            ],
+            acting_user_id=None,
+        )
 
 
 @pytest.mark.no_db
@@ -798,6 +810,7 @@ async def test_extract_conversation_context_propagates_registry_failures() -> No
             conversation_id="conv",
             max_age_hours=24,
             prompts={},
+            acting_user_id=None,
         )
 
 

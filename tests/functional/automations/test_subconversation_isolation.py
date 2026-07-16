@@ -83,8 +83,9 @@ class RecordingChatInterface:
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
-        _ = (parse_mode, reply_to_interface_id)
+        _ = (parse_mode, reply_to_interface_id, on_behalf_of_user_id)
         self.messages.append(
             RecordedChatMessage(
                 conversation_id=conversation_id,

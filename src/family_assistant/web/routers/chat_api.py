@@ -213,6 +213,7 @@ async def _process_user_attachments(
                             db_context=db_context,
                             attachment_id=attachment_id,
                             conversation_id=conversation_id,
+                            acting_user_id=user_id,
                             required_source_id=user_id,
                         )
 
@@ -222,6 +223,7 @@ async def _process_user_attachments(
                                 await attachment_registry.get_attachment(
                                     db_context=db_context,
                                     attachment_id=attachment_id,
+                                    acting_user_id=user_id,
                                 )
                             )
 

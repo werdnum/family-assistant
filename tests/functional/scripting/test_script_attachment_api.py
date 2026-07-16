@@ -270,7 +270,7 @@ class TestAttachmentAPI:
         # Verify we can retrieve it
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_metadata = await attachment_registry.get_attachment(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_metadata is not None
             assert retrieved_metadata.source_type == "script"
@@ -280,7 +280,7 @@ class TestAttachmentAPI:
 
             # Verify content
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_content == content.encode("utf-8")
 
@@ -311,7 +311,7 @@ class TestAttachmentAPI:
         # Verify content
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_content == content
 
@@ -340,7 +340,7 @@ class TestAttachmentAPI:
         # Verify attachment was created and content is correct
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_content is not None
             retrieved_data = json.loads(retrieved_content.decode("utf-8"))
@@ -768,7 +768,7 @@ attachment_id
         # Verify the attachment exists and has correct metadata
         async with DatabaseContext(engine=db_engine) as verify_context:
             metadata = await attachment_registry.get_attachment(
-                verify_context, attachment_id
+                verify_context, attachment_id, acting_user_id=None
             )
             assert metadata is not None
             assert metadata.source_type == "script"
@@ -778,7 +778,7 @@ attachment_id
 
             # Verify content
             content = await attachment_registry.get_attachment_content(
-                verify_context, attachment_id
+                verify_context, attachment_id, acting_user_id=None
             )
             assert content == b"Hello from script!"
 
@@ -851,7 +851,7 @@ attachment_id
         # Verify the attachment content is valid JSON
         async with DatabaseContext(engine=db_engine) as verify_context:
             content = await attachment_registry.get_attachment_content(
-                verify_context, attachment_id
+                verify_context, attachment_id, acting_user_id=None
             )
             assert content is not None
             data = json.loads(content.decode("utf-8"))
