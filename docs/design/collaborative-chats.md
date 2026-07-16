@@ -322,6 +322,7 @@ Add a durable turn table:
 | `parent_turn_id`        | Nullable FK to the causal turn for a continuation                |
 | `conversation_id`       | Owning conversation                                              |
 | `initiating_user_id`    | Tool/data/confirmation principal                                 |
+| `initiating_label`      | Immutable display-label snapshot taken when the turn is created  |
 | `status`                | `queued`, `running`, `complete`, `failed`, `cancelled`, `silent` |
 | `processing_profile_id` | Profile selected for this turn                                   |
 | `lease_owner_id`        | Nullable worker identity while running                           |
@@ -330,11 +331,17 @@ Add a durable turn table:
 
 Today turn state is partly inferred from message rows and partly retained in memory. Collaboration
 introduces a queue, system-triggered continuations, and an intentional no-reply terminal state, so
-durable turn state is required. `initiating_user_id` is non-null and immutable. Scheduled,
-delegated, and other system-triggered continuations copy the originating turn's user id into their
-own durable turn row before processing begins. The server generates `id` for every turn. Direct
-client submissions additionally require `client_request_id`, unique within the conversation;
-scheduled or delegated continuations leave it `NULL` and retain their causal parent turn id.
+durable turn state is required. `initiating_user_id` is non-null and immutable, and
+`initiating_label` is a non-null immutable snapshot of the member's configured display label taken
+when the turn row is created (continuations copy the originating turn's snapshot). The
+`initiating_member` summary in the message API is served from these two turn columns — not from live
+configuration and not from human message rows — so assistant, tool, and system-continuation rows
+remain attributable and redactable even when a page contains no human message and even after a
+configured label changes or its user is removed. Scheduled, delegated, and other system-triggered
+continuations copy the originating turn's user id into their own durable turn row before processing
+begins. The server generates `id` for every turn. Direct client submissions additionally require
+`client_request_id`, unique within the conversation; scheduled or delegated continuations leave it
+`NULL` and retain their causal parent turn id.
 
 ## Membership Service and Authorization
 
@@ -477,10 +484,11 @@ Conversation messages include:
 ```
 
 Non-human rows return `"author": null`, but every row returns the immutable `initiating_member`
-summary joined from its durable turn. This lets a paginated reload attribute or redact assistant,
-tool, confirmation, and system-continuation rows even when the page contains no human message.
-Clients must not derive the current user from label text; the current authenticated canonical user
-id must be available in session/bootstrap data.
+summary joined from its durable turn (`initiating_user_id` + the turn's `initiating_label`
+snapshot). This lets a paginated reload attribute or redact assistant, tool, confirmation, and
+system-continuation rows even when the page contains no human message. Clients must not derive the
+current user from label text; the current authenticated canonical user id must be available in
+session/bootstrap data.
 
 ### Stream and activity events
 
@@ -534,7 +542,12 @@ turns per conversation.
 3. If no other turn is running, atomically claim the oldest queued turn and establish a renewable
    worker lease.
 4. Recheck that the initiating user is still an active member; cancel the turn if not.
-5. Build its LLM context from committed conversation history through that turn's user message.
+5. Build its LLM context by turn membership in the queue sequence: the committed rows of every
+   earlier turn (all terminal by claim time, since turns are serialized) plus this turn's own user
+   message, excluding rows of later queued turns. The boundary is deliberately not a message
+   timestamp cutoff at this turn's user message: a message posted while another turn is running
+   commits *before* that turn's assistant and tool rows, so a timestamp cutoff would wrongly exclude
+   the just-completed turn's results from the next turn's context.
 6. Run tools with the queued turn's `initiating_user_id`, rechecking membership at every tool and
    confirmation boundary.
 7. Persist and publish the terminal result only while the initiating user remains a member.
@@ -734,7 +747,13 @@ Until this contract is implemented, collaborative turns must use existing termin
 For every existing conversation whose user messages resolve to exactly one canonical user and whose
 turns resolve to exactly one direct-chat processing profile:
 
-1. create a `conversations` row using the existing id;
+1. create a `conversations` row using the existing id, with a deterministic migrated title: legacy
+   conversations store no title, so derive it from the first human message (whitespace-normalized,
+   truncated to 80 characters with an ellipsis), falling back to "Imported conversation" plus the
+   conversation's first-message date when no human message text exists — this satisfies the
+   non-empty `title` constraint without ad hoc placeholders, and does not contradict the
+   creation-API rule against prompt-derived titles, which exists because the first prompt is
+   *unavailable* at creation time (during migration it is available);
 2. add that canonical user as its active member;
 3. populate `created_by_user_id` with that user and assign a one-time migration idempotency key;
 4. set `collaborative_conversation_id` on only that conversation's web/iOS message rows;
