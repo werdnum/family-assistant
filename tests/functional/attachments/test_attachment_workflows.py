@@ -104,6 +104,8 @@ class TestAttachmentWorkflows:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Step 1: Get camera snapshot (using mock camera tool)
@@ -269,6 +271,8 @@ class TestAttachmentWorkflows:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Step 1: Simulate user uploading an image
@@ -358,6 +362,8 @@ class TestAttachmentWorkflows:
                 camera_backend=None,
                 chat_interface=mock_chat_interface,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             send_result = await attachment_tools_provider.execute_tool(

@@ -59,6 +59,8 @@ async def test_execute_script_return_single_attachment(
             processing_service=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create an attachment and return it
@@ -102,6 +104,8 @@ async def test_execute_script_return_multiple_attachments_list(
             processing_service=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create multiple attachments and return them as a list
@@ -200,6 +204,8 @@ async def test_execute_script_return_attachment_from_tool(
             processing_service=mock_service,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Call tool and return its result
@@ -333,6 +339,8 @@ async def test_execute_script_functional_composition(
             processing_service=mock_service,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Functional composition: pass result of one tool to another
@@ -422,6 +430,8 @@ async def test_execute_script_mixed_attachment_sources(
             processing_service=mock_service,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Mix attachment_create and tool results
@@ -474,6 +484,8 @@ async def test_execute_script_nested_list_attachments(
             processing_service=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Test nested structures
@@ -547,6 +559,8 @@ async def test_tool_chaining_json_query_workflow(
             processing_service=processing_service,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Script that creates JSON data and queries it with jq_query

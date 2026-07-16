@@ -125,6 +125,8 @@ def _build_indexer_context(
         attachment_registry=attachment_registry,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

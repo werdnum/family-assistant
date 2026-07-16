@@ -98,6 +98,8 @@ async def test_tool_executor_propagates_large_result_registry_unavailable() -> N
         attachment_processor=processor,
         attachment_registry=None,
         clock=SystemClock(),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     with pytest.raises(
@@ -234,6 +236,8 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         attachment_processor=processor,
         attachment_registry=cast("AttachmentRegistry", mock_registry),
         clock=SystemClock(),
+        google_credentials=None,
+        google_api_backend=None,
     )
     taint_metadata = cast(
         "TaintMetadata",

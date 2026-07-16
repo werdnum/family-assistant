@@ -2827,6 +2827,8 @@ class TaskWorker:
                         None,
                     ),
                     taint_tracker=InMemoryTurnTaintTracker(),
+                    google_credentials=None,
+                    google_api_backend=None,
                 )
                 # --- Execute Handler with Context ---
                 logger.debug(
@@ -4146,6 +4148,8 @@ async def _build_confirmation_execution_context(
         confirmation_result_waiters=exec_context.confirmation_result_waiters,
         taint_tracker=taint_tracker,
         taint_policy_snapshot=taint_state,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

@@ -55,6 +55,8 @@ def exec_context() -> ToolExecutionContext:
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

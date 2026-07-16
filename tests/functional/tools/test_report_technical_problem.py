@@ -37,6 +37,8 @@ def _make_exec_context(db: DatabaseContext) -> ToolExecutionContext:
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

@@ -32,6 +32,8 @@ def _make_exec_context(mqtt_config: MQTTConfig) -> ToolExecutionContext:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 
@@ -182,6 +184,8 @@ async def test_mqtt_publish_no_processing_service() -> None:
         event_sources=None,
         attachment_registry=None,
         camera_backend=None,
+        google_credentials=None,
+        google_api_backend=None,
     )
     with pytest.raises(ValueError, match="MQTT broker not configured"):
         await mqtt_publish_tool(

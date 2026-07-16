@@ -377,6 +377,8 @@ async def primary_processing_service(
         context_providers=[known_users_provider],
         server_url="http://test.server",
         app_config=AppConfig(),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 
@@ -407,6 +409,8 @@ async def specialized_processing_service(
             context_providers=[known_users_provider],
             server_url="http://test.server",
             app_config=AppConfig(),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
     return _factory

@@ -44,6 +44,8 @@ if TYPE_CHECKING:
         TurnTaintTracker,
     )
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.google_api import GoogleApiBackend
+    from family_assistant.services.google_credentials import GoogleCredentialResolver
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById
@@ -66,12 +68,16 @@ class ToolExecutor:
         attachment_processor: AttachmentProcessor,
         attachment_registry: AttachmentRegistry | None,
         clock: Clock,
+        google_credentials: GoogleCredentialResolver | None,
+        google_api_backend: GoogleApiBackend | None,
     ) -> None:
         self.tools_provider = tools_provider
         self.config = config
         self.attachment_processor = attachment_processor
         self.attachment_registry = attachment_registry
         self.clock = clock
+        self.google_credentials = google_credentials
+        self.google_api_backend = google_api_backend
 
     @staticmethod
     def _extract_queued_attachment_ids(result_payload: str) -> list[str] | None:
@@ -194,6 +200,8 @@ class ToolExecutor:
             ),
             attachment_registry=self.attachment_registry,
             camera_backend=camera_backend,
+            google_credentials=self.google_credentials,
+            google_api_backend=self.google_api_backend,
             visibility_grants=self.config.visibility_grants,
             default_note_visibility_labels=self.config.default_note_visibility_labels,
             required_note_visibility_labels=self.config.required_note_visibility_labels,

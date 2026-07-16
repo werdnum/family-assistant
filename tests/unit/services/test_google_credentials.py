@@ -139,6 +139,8 @@ def _exec_context(
         camera_backend=None,
         timezone=__import__("zoneinfo").ZoneInfo("UTC"),
         user_id=user_id,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

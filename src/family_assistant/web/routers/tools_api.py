@@ -129,6 +129,8 @@ async def execute_tool_api(
             if processing_service
             else True
         ),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     try:

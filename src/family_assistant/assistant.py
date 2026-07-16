@@ -1134,6 +1134,8 @@ class Assistant:
                 home_assistant_client=home_assistant_client_for_profile,
                 camera_backend=camera_backend_for_profile,
                 on_demand_view=profile_on_demand_view,
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             self.processing_services_registry[profile_id] = processing_service_instance

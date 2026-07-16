@@ -74,6 +74,8 @@ def _exec_context(
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
         processing_profile_id=processing_profile_id,
         user_id="user-1",
         allow_wake_llm=allow_wake_llm,

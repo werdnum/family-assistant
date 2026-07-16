@@ -59,6 +59,8 @@ def exec_context_with_db() -> ToolExecutionContext:
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 
@@ -94,6 +96,8 @@ async def test_get_system_info_handles_missing_engine() -> None:
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
     result = await get_system_info(ctx)
     data = result.get_data()
@@ -121,6 +125,8 @@ def _make_ctx_with_tools_provider(
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
         tools_provider=tools_provider,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 
@@ -236,6 +242,8 @@ def _ctx_with_app_config(app_config: Mock) -> ToolExecutionContext:
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 
@@ -382,6 +390,8 @@ def _ctx_with_registry(registry: object) -> ToolExecutionContext:
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

@@ -399,6 +399,8 @@ def _make_tool_context(
         visibility_grants=visibility_grants,
         default_note_visibility_labels=default_note_visibility_labels,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

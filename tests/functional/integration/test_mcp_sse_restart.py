@@ -116,6 +116,8 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
     args = {
         "time": "12:00",

@@ -498,6 +498,11 @@ default_profile_settings:
             - "ucp_add_to_cart"
             - "ucp_get_cart"
             - "ucp_transfer_checkout_to_human"
+            - "gmail_search"
+            - "gmail_get_message"
+            - "gmail_get_attachment"
+            - "drive_search"
+            - "drive_get_file"
         decision: "allow"
         priority: 10
       - match:
@@ -1523,6 +1528,11 @@ service_profiles:
               - "ucp_add_to_cart"
               - "ucp_get_cart"
               - "ucp_transfer_checkout_to_human"
+              - "gmail_search"
+              - "gmail_get_message"
+              - "gmail_get_attachment"
+              - "drive_search"
+              - "drive_get_file"
           decision: "allow"
           priority: 10
         - match:

@@ -69,6 +69,8 @@ class CallbackCapturingService:
                 processing_profile_id="callback_profile",
                 request_confirmation_callback=callback,
                 confirmation_ui_managers=kwargs["confirmation_ui_managers"],
+                google_credentials=None,
+                google_api_backend=None,
             )
             self.confirmation_outcome = await callback(
                 interface_type=kwargs["interface_type"],
@@ -102,6 +104,8 @@ def _exec_context(
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
         chat_interface=chat_interface,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

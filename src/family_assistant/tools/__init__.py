@@ -123,6 +123,14 @@ from family_assistant.tools.execute_script import (
     SCRIPT_TOOLS_DEFINITION,
     execute_script_tool,
 )
+from family_assistant.tools.google_data import (
+    GOOGLE_DATA_TOOLS_DEFINITION,
+    drive_get_file_tool,
+    drive_search_tool,
+    gmail_get_attachment_tool,
+    gmail_get_message_tool,
+    gmail_search_tool,
+)
 from family_assistant.tools.home_assistant import (
     HOME_ASSISTANT_TOOLS_DEFINITION,
     call_home_assistant_action_tool,
@@ -458,6 +466,13 @@ __all__ = [
     # Problem reporting
     "REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION",
     "report_technical_problem_tool",
+    # Google personal data (Gmail/Drive) tools
+    "GOOGLE_DATA_TOOLS_DEFINITION",
+    "gmail_search_tool",
+    "gmail_get_message_tool",
+    "gmail_get_attachment_tool",
+    "drive_search_tool",
+    "drive_get_file_tool",
 ]
 
 
@@ -512,6 +527,7 @@ _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     + MQTT_TOOLS_DEFINITION
     + SHOPPING_TOOLS_DEFINITION
     + REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION
+    + GOOGLE_DATA_TOOLS_DEFINITION
 )
 
 _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
@@ -651,6 +667,12 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "ucp_transfer_checkout_to_human": ucp_transfer_checkout_to_human_tool,
     # Problem reporting
     "report_technical_problem": report_technical_problem_tool,
+    # Google personal data (Gmail/Drive) tools
+    "gmail_search": gmail_search_tool,
+    "gmail_get_message": gmail_get_message_tool,
+    "gmail_get_attachment": gmail_get_attachment_tool,
+    "drive_search": drive_search_tool,
+    "drive_get_file": drive_get_file_tool,
 }
 
 LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
@@ -978,7 +1000,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNSPECIFIED,
     ),
     "attach_to_response": _metadata(
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.USER_FACING_MEDIA,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_TRUSTED,
     ),
@@ -1350,6 +1372,40 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.STATE_PERSISTING,
         ToolTag.OUTPUT_TRUSTED,
+    ),
+    # Google personal data (Gmail/Drive) tools. Content is attacker-addressable
+    # (anyone can email you / share a file), so it enters the turn untrusted; the
+    # read-only + sensitive tags make a second read after untrusted content a
+    # gated sensitive_read_broadening sink.
+    "gmail_search": _metadata(
+        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+    ),
+    "gmail_get_message": _metadata(
+        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+    ),
+    "gmail_get_attachment": _metadata(
+        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+    ),
+    "drive_search": _metadata(
+        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+    ),
+    "drive_get_file": _metadata(
+        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
     ),
 }
 

@@ -55,6 +55,8 @@ async def test_render_template_tool(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         try:
@@ -109,6 +111,8 @@ async def test_camera_snapshot_tool_list_cameras(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         try:
@@ -161,6 +165,8 @@ async def test_camera_snapshot_tool_get_snapshot(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         try:
@@ -229,6 +235,8 @@ async def test_history_tool_with_entities(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         try:
