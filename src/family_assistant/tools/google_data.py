@@ -558,18 +558,18 @@ async def gmail_get_attachment_tool(
         content = _decode_attachment_payload(payload)
         if content is None:
             return ToolResult(text="Error: Gmail attachment has no usable content.")
-        stored_name = filename
-        content_type = mimetypes.guess_type(filename)[0] if filename else None
-        if stored_name is None or content_type is None:
-            part_filename, part_mime = await _lookup_attachment_part(
-                exec_context, message_id, attachment_id
-            )
-            stored_name = stored_name or part_filename
-            content_type = content_type or part_mime
-        stored_name = stored_name or f"gmail_attachment_{attachment_id}"
+        # The MIME type always comes from the message's part metadata — the
+        # caller-supplied filename is untrusted model input and using its
+        # extension would let a fetched file be reclassified (e.g. a PDF
+        # registered as text/plain) or slip past the registry's allowlist. The
+        # filename argument is only a display-name override.
+        part_filename, part_mime = await _lookup_attachment_part(
+            exec_context, message_id, attachment_id
+        )
+        stored_name = filename or part_filename or f"gmail_attachment_{attachment_id}"
         content_type = (
-            content_type
-            or mimetypes.guess_type(stored_name)[0]
+            part_mime
+            or (mimetypes.guess_type(part_filename)[0] if part_filename else None)
             or "application/octet-stream"
         )
         return await _register_attachment(

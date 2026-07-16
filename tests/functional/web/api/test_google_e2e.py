@@ -653,7 +653,25 @@ async def test_attachment_ownership_across_stack(
                     .urlsafe_b64encode(attachment_bytes)
                     .decode("ascii")
                     .rstrip("=")
-                }
+                },
+                ("GET", "/messages/msg-1"): {
+                    "id": "msg-1",
+                    "payload": {
+                        "mimeType": "multipart/mixed",
+                        "filename": "",
+                        "body": {},
+                        "parts": [
+                            {
+                                "mimeType": "application/pdf",
+                                "filename": "form.pdf",
+                                "body": {
+                                    "attachmentId": "att-1",
+                                    "size": len(attachment_bytes),
+                                },
+                            }
+                        ],
+                    },
+                },
             }
         }
     )

@@ -398,9 +398,29 @@ async def test_gmail_get_attachment_registers_with_owner(
 ) -> None:
     content = b"PDF-BYTES-HERE"
     payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "form.pdf",
+                    "body": {"attachmentId": "att-1", "size": len(content)},
+                }
+            ],
+        },
+    }
     resolver = FakeGoogleCredentialResolver(tokens={"user-a": "token-a"})
     backend = FakeGoogleApiBackend(
-        routes={"token-a": {("GET", "/attachments/att-1"): payload}}
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-1"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
     )
     registry = _registry(db_engine)
     async with DatabaseContext(engine=db_engine) as db:

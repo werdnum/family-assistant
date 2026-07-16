@@ -330,9 +330,14 @@ async def google_authorize_callback(
     """Complete the OAuth flow: consume the pending flow, exchange, upsert, notify."""
     integration = _require_enabled(request)
 
-    # Google reports user-denied consent via the ``error`` param; no pending-flow
-    # consumption is required (the user never authorized).
+    # Google reports user-denied consent via the ``error`` param. Consume the
+    # pending flow so the authorization URL dies with the denial instead of
+    # remaining claimable for the rest of its TTL.
     if error:
+        if state:
+            await db.google_connections.claim_pending_flow(
+                _sha256_hex(state), PENDING_FLOW_TTL_SECONDS
+            )
         return _settings_redirect({"google": "error", "message": error})
 
     if not code or not state:
