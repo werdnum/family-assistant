@@ -173,14 +173,21 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
   attacker-controlled mailbox. Single-use consumption alone does not cover **first** use of a *live*
   leaked state — an attacker could start their own Google authorization and steer the victim's
   authenticated browser to the callback with a code for the attacker's mailbox before the legitimate
-  callback arrives. PKCE closes that: after claiming the flow, the handler exchanges the code
+  callback arrives. PKCE narrows that: after claiming the flow, the handler exchanges the code
   (server-side, client secret from `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`)
-  **including the claimed flow's `code_verifier`**, so a code minted outside this flow — under no
-  challenge or a different one — fails the exchange. The handler then fetches the account email from
-  the ID token / userinfo and upserts the connection row for the flow's canonical user. The Google
-  account email is recorded for display but plays no role in authorization — the binding is
-  initiating user → connection. Pending flows expire after a short TTL (10 minutes), enforced on
-  claim and cleaned up opportunistically.
+  **including the claimed flow's `code_verifier`**, so when only the callback-visible `state`
+  leaked, a code minted outside this flow — under no challenge or a different one — fails the
+  exchange. PKCE deliberately does **not** cover a leak of the full *authorization URL*, which
+  carries the `code_challenge` alongside `state`: an attacker holding that URL can authorize their
+  own account under the victim's challenge. A live authorization URL is treated as a bearer secret
+  for its TTL; the residual risk and its mitigations are recorded in
+  [Deliberate simplifications](#deliberate-simplifications-accepted-behavior). The handler then
+  fetches the account email from the ID token / userinfo, upserts the connection row for the flow's
+  canonical user, and **notifies that user through the existing user-scoped notification path naming
+  the Google account that was just connected**, so any account swap — however achieved — is visible
+  immediately, not just on the settings page. The Google account email is recorded for display but
+  plays no role in authorization — the binding is initiating user → connection. Pending flows expire
+  after a short TTL (10 minutes), enforced on claim and cleaned up opportunistically.
 - `DELETE /api/integrations/google` — best-effort token revocation against Google's revoke endpoint,
   then deletes the row.
 
@@ -424,8 +431,10 @@ In `defaults.yaml`:
 - **CSRF/linking safety**: OAuth `state` is a single-use nonce persisted in
   `pending_google_oauth_flows` and atomically claimed at callback time; the callback requires the
   session's canonical user to match the flow's initiating user; and the token exchange includes the
-  flow's PKCE `code_verifier`, so codes minted outside the flow fail. A crafted, replayed, or
-  code-substituted callback URL cannot attach an attacker's Google account to a victim's connection.
+  flow's PKCE `code_verifier`, so codes minted outside the flow fail when only `state` leaked. A
+  crafted, replayed, or state-only-substituted callback URL cannot attach an attacker's Google
+  account to a victim's connection; the narrower leaked-live-authorization-URL case is an accepted,
+  notified residual (see Deliberate simplifications).
 
 ## Deliberate simplifications (accepted behavior)
 
@@ -447,6 +456,16 @@ not oversights:
 - **Same-user stale reads are not "leaks."** Several smaller behaviors follow the same rule: a
   needs_reauth flip mid-request fails the *next* request rather than the in-flight one, and a
   disconnect does not chase down responses already on the wire.
+- **A live leaked authorization URL is a bearer secret.** The authorization URL carries both `state`
+  and the PKCE `code_challenge`, so an attacker who captures it *while the flow is live* (unclaimed,
+  within the 10-minute TTL) can authorize their own Google account under the victim's challenge and
+  steer the victim's authenticated browser to the callback — no server-side check can distinguish
+  that code from a legitimate one. We accept this rather than adding machinery: capturing the URL
+  requires access to the victim's device, browser history, or network path mid-flow; the payoff is
+  linking the *attacker's own mailbox* to the victim (no victim data is exposed to the attacker);
+  and the swap is immediately visible — the connect/reconnect notification names the Google account
+  that was linked and the settings page displays it. A victim who sees an unexpected account
+  disconnects with one click.
 
 ## Configuration
 
