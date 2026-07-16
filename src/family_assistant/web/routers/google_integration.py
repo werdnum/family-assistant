@@ -78,24 +78,23 @@ DEFAULT_GOOGLE_OAUTH_URLS: dict[str, str] = {
     "userinfo": "https://www.googleapis.com/oauth2/v3/userinfo",
 }
 
-# Module-default shared client used when the app does not inject one.
-_default_http_client: httpx.AsyncClient | None = None
-
 
 def get_google_oauth_http_client(request: Request) -> httpx.AsyncClient:
     """Return the async HTTP client used for Google OAuth outbound calls.
 
-    Tests inject an ``httpx.MockTransport``-backed client via
-    ``app.state.google_oauth_http_client``; production shares a module-default
-    client.
+    The app installs its lifecycle-managed shared client on
+    ``app.state.google_oauth_http_client`` at startup; tests inject an
+    ``httpx.MockTransport``-backed client the same way. There is deliberately
+    no module-default fallback — an unmanaged client would outlive the
+    application lifespan.
     """
     injected = getattr(request.app.state, "google_oauth_http_client", None)
     if isinstance(injected, httpx.AsyncClient):
         return injected
-    global _default_http_client
-    if _default_http_client is None:
-        _default_http_client = httpx.AsyncClient(timeout=30.0)
-    return _default_http_client
+    raise HTTPException(
+        status_code=503,
+        detail="Google OAuth HTTP client is not configured on this application.",
+    )
 
 
 CurrentUser = Annotated[dict, Depends(get_current_session_user)]

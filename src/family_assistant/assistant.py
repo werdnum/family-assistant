@@ -803,6 +803,7 @@ class Assistant:
             self.config, auth_enabled=AUTH_ENABLED
         )
         self.fastapi_app.state.google_integration_state = self.google_integration_state
+        self.fastapi_app.state.google_oauth_http_client = self.shared_httpx_client
         self._log_google_integration_state(self.google_integration_state)
         if self.google_integration_state.enabled:
             encryption = CredentialEncryption(
