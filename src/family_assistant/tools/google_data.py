@@ -354,16 +354,18 @@ async def gmail_search_tool(
         ).json()
         results = await _fetch_message_summaries(exec_context, listing, capped)
         more_available = bool(listing.get("nextPageToken"))
-        summary = f"Found {len(results)} message(s) matching '{query}'."
+        # Data-only result: the serialized JSON is what the LLM sees, so the
+        # message ids/subjects/snippets must live here, not in a summary text.
+        data: GoogleJson = {
+            "messages": results,
+            "more_results_available": more_available,
+        }
         if more_available:
-            summary += (
-                " More matches exist beyond this page — narrow the query or"
+            data["note"] = (
+                "More matches exist beyond this page — narrow the query or"
                 " raise max_results to see them."
             )
-        return ToolResult(
-            text=summary,
-            data={"messages": results, "more_results_available": more_available},
-        )
+        return ToolResult(data=data)
 
     return await _guard(_impl)
 
@@ -475,8 +477,13 @@ def _render_message_text(
         body,
     ]
     if attachments:
-        names = ", ".join(str(att.get("filename")) for att in attachments)
-        lines.append(f"\nAttachments: {names}")
+        # Include the ids the LLM needs to call gmail_get_attachment.
+        rendered = ", ".join(
+            f"{att.get('filename')} (attachment_id: {att.get('attachment_id')}, "
+            f"{att.get('mime_type')}, {att.get('size')} bytes)"
+            for att in attachments
+        )
+        lines.append(f"\nAttachments: {rendered}")
     return "\n".join(lines)
 
 
@@ -695,7 +702,10 @@ async def _register_attachment(
         # The registry rejects disallowed mime types / oversized files.
         return ToolResult(text=f"Error: could not store the file — {exc}")
     return ToolResult(
-        text=f"Stored {filename} ({len(content)} bytes) as attachment.",
+        text=(
+            f"Stored {filename} ({len(content)} bytes) as attachment"
+            f" {metadata.attachment_id}."
+        ),
         attachments=[
             ToolAttachment(
                 mime_type=metadata.mime_type,
@@ -734,16 +744,15 @@ async def drive_search_tool(
         files = listing.get("files") or []
         results = [_summarize_drive_file(entry) for entry in files[:capped]]
         more_available = bool(listing.get("nextPageToken"))
-        summary = f"Found {len(results)} Drive file(s) matching '{query}'."
+        # Data-only result so the file ids/names are LLM-visible (see
+        # gmail_search).
+        data: GoogleJson = {"files": results, "more_results_available": more_available}
         if more_available:
-            summary += (
-                " More matches exist beyond this page — narrow the query or"
+            data["note"] = (
+                "More matches exist beyond this page — narrow the query or"
                 " raise max_results to see them."
             )
-        return ToolResult(
-            text=summary,
-            data={"files": results, "more_results_available": more_available},
-        )
+        return ToolResult(data=data)
 
     return await _guard(_impl)
 

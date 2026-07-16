@@ -254,7 +254,10 @@ async def test_gmail_search_marks_paged_results_partial(
     data = result.get_data()
     assert isinstance(data, dict)
     assert data["more_results_available"] is True
+    # get_text() is what the LLM sees: it must carry both the ids and the note.
     assert "More matches exist" in result.get_text()
+    assert "msg-1" in result.get_text()
+    assert "hello world" in result.get_text()
 
 
 @pytest.mark.asyncio
@@ -304,7 +307,9 @@ async def test_401_then_200_retries_once_and_evicts(db_engine: AsyncEngine) -> N
         )
         result = await gmail_search_tool(context, query="anything")
 
-    assert "Found 0 message(s)" in result.get_text()
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["messages"] == []
     assert resolver.evicted == ["user-a"]
     assert len(backend.requests) == 2
 
@@ -375,6 +380,8 @@ async def test_gmail_get_message_prefers_plain_and_lists_attachments(
     assert len(data["attachments"]) == 1
     assert data["attachments"][0]["attachment_id"] == "att-1"
     assert data["attachments"][0]["filename"] == "form.pdf"
+    # The LLM sees get_text(), so the attachment id must be rendered there.
+    assert "att-1" in result.get_text()
 
 
 @pytest.mark.asyncio
