@@ -284,6 +284,23 @@ async def test_authorize_redirect_contains_expected_params(
 
 
 @pytest.mark.asyncio
+async def test_authorize_redirect_uri_honors_forwarded_proto(
+    google_client: AsyncClient,
+) -> None:
+    response = await google_client.get(
+        "/api/integrations/google/authorize",
+        follow_redirects=False,
+        headers={"x-forwarded-proto": "https"},
+    )
+    assert response.status_code == 302
+    params = {
+        k: v[0]
+        for k, v in parse_qs(urlparse(response.headers["location"]).query).items()
+    }
+    assert params["redirect_uri"].startswith("https://")
+
+
+@pytest.mark.asyncio
 async def test_full_connect_happy_path(
     google_client: AsyncClient,
     google_app: _GoogleTestApp,

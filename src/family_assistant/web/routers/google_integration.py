@@ -169,8 +169,19 @@ def _pkce_pair() -> tuple[str, str]:
 
 
 def _callback_redirect_uri(request: Request) -> str:
-    """Return the absolute callback redirect URI for this deployment."""
-    return str(request.url_for("google_integration_callback"))
+    """Return the absolute callback redirect URI for this deployment.
+
+    Behind an HTTPS-terminating proxy ``request.url_for`` yields the backend's
+    ``http://`` URL; honor ``x-forwarded-proto`` the same way the OIDC and
+    app-auth flows do, since Google validates the redirect_uri scheme.
+    """
+    redirect_uri = request.url_for("google_integration_callback")
+    if (
+        request.headers.get("x-forwarded-proto") == "https"
+        or request.url.scheme == "https"
+    ):
+        redirect_uri = redirect_uri.replace(scheme="https")
+    return str(redirect_uri)
 
 
 def _configured_scopes(integration: GoogleIntegrationConfig) -> list[str]:

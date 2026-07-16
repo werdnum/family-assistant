@@ -203,6 +203,12 @@ async def settings_tokens_ui(request: Request) -> Response:
     return _serve_vite_html_file(request, "router.html")
 
 
+@vite_pages_router.get("/settings/accounts", name="settings_accounts_ui")
+async def settings_accounts_ui(request: Request) -> Response:
+    """Serve the React connected-accounts settings interface via router."""
+    return _serve_vite_html_file(request, "router.html")
+
+
 @vite_pages_router.get("/documents", name="documents_ui")
 @vite_pages_router.get("/documents/", name="documents_ui_trailing")
 @vite_pages_router.get("/documents/upload", name="documents_upload_ui")
