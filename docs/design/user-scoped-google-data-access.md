@@ -154,9 +154,10 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
 - `GET /api/integrations/google` — connection status for the settings UI (account email, scopes,
   status; never tokens).
 - `GET /api/integrations/google/authorize` — starts the authorization-code flow. Generates a random
-  nonce and persists the pending flow **in the database** (a `pending_google_oauth_flows` table:
-  hashed nonce, initiating canonical `user_id`, `created_at`), then redirects to Google's consent
-  screen with `state=nonce`, `access_type=offline`, `prompt=consent`, and the requested scopes: the
+  nonce and a PKCE `code_verifier`, persists the pending flow **in the database** (a
+  `pending_google_oauth_flows` table: hashed nonce, `code_verifier`, initiating canonical `user_id`,
+  `created_at`), then redirects to Google's consent screen with `state=nonce`, the S256
+  `code_challenge`, `access_type=offline`, `prompt=consent`, and the requested scopes: the
   configured data scopes (v1 default: `gmail.readonly`, `drive.readonly`) plus `openid` and `email`,
   which are always appended in code — not operator-configurable — so the callback can identify the
   connected account. A database store is required, not a convenience: the app's `SessionMiddleware`
@@ -169,11 +170,16 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
   initiating user. Without single-use consumption, `state` is only echoed by the authorization
   server, so an attacker who learned an old value could mint a fresh code for *their* Google account
   and hand the victim a callback URL that overwrites the victim's connection with an
-  attacker-controlled mailbox. After claiming the flow, the handler exchanges the code (server-side,
-  client secret from `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`), fetches the account
-  email from the ID token / userinfo, and upserts the connection row for the flow's canonical user.
-  The Google account email is recorded for display but plays no role in authorization — the binding
-  is initiating user → connection. Pending flows expire after a short TTL (10 minutes), enforced on
+  attacker-controlled mailbox. Single-use consumption alone does not cover **first** use of a *live*
+  leaked state — an attacker could start their own Google authorization and steer the victim's
+  authenticated browser to the callback with a code for the attacker's mailbox before the legitimate
+  callback arrives. PKCE closes that: after claiming the flow, the handler exchanges the code
+  (server-side, client secret from `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`)
+  **including the claimed flow's `code_verifier`**, so a code minted outside this flow — under no
+  challenge or a different one — fails the exchange. The handler then fetches the account email from
+  the ID token / userinfo and upserts the connection row for the flow's canonical user. The Google
+  account email is recorded for display but plays no role in authorization — the binding is
+  initiating user → connection. Pending flows expire after a short TTL (10 minutes), enforced on
   claim and cleaned up opportunistically.
 - `DELETE /api/integrations/google` — best-effort token revocation against Google's revoke endpoint,
   then deletes the row.
@@ -416,9 +422,10 @@ In `defaults.yaml`:
   redacted from config dumps and diagnostics export; tool results and errors never include tokens.
   The new endpoints are excluded from the diagnostics read-only token's scope.
 - **CSRF/linking safety**: OAuth `state` is a single-use nonce persisted in
-  `pending_google_oauth_flows` and atomically claimed at callback time, and the callback requires
-  the session's canonical user to match the flow's initiating user — a crafted or replayed callback
-  URL cannot attach an attacker's Google account to a victim's connection.
+  `pending_google_oauth_flows` and atomically claimed at callback time; the callback requires the
+  session's canonical user to match the flow's initiating user; and the token exchange includes the
+  flow's PKCE `code_verifier`, so codes minted outside the flow fail. A crafted, replayed, or
+  code-substituted callback URL cannot attach an attacker's Google account to a victim's connection.
 
 ## Deliberate simplifications (accepted behavior)
 
