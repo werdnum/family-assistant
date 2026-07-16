@@ -618,6 +618,10 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     if "delegation" in tag_values:
         return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    if "low_bandwidth_external" in tag_values:
+        return SinkClass.LOW_BANDWIDTH_EXTERNAL
+    if "home_auto" in tag_values:
+        return SinkClass.HOME_LOCAL
     if "state_persisting" in tag_values or "automation" in tag_values:
         return SinkClass.ARTIFACT_WRITE
     if (
@@ -626,8 +630,6 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         or "calendar" in tag_values
     ):
         return SinkClass.ARTIFACT_WRITE
-    if "home_auto" in tag_values:
-        return SinkClass.HOME_LOCAL
     logger.warning(
         "Tool '%s' has no sink-class metadata; defaulting to arbitrary external "
         "message for runtime taint policy.",

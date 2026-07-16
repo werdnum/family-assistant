@@ -29,6 +29,7 @@ class ToolTag(StrEnum):
     STATE_CHANGING = "state_changing"
     STATE_PERSISTING = "state_persisting"
     EXTERNAL_COMM = "external_comm"
+    LOW_BANDWIDTH_EXTERNAL = "low_bandwidth_external"
     DESTRUCTIVE = "destructive"
     CODE_EXECUTION = "code_execution"
     BROWSER = "browser"

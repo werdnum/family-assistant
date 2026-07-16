@@ -83,7 +83,7 @@ def test_resolve_mcp_tool_tags_prefers_config_then_wildcard_then_annotations() -
         open_world_hint=True,
     )
     tool_metadata = normalize_mcp_tool_metadata({
-        "search_web": ["browser", "output_untrusted"],
+        "search_web": ["low_bandwidth_external", "output_untrusted"],
         "*": ["read_only", "output_trusted"],
     })
 
@@ -103,7 +103,10 @@ def test_resolve_mcp_tool_tags_prefers_config_then_wildcard_then_annotations() -
         annotation_tags=annotation_tags,
     )
 
-    assert exact_tags == {ToolTag.BROWSER, ToolTag.OUTPUT_UNTRUSTED}
+    assert exact_tags == {
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
+        ToolTag.OUTPUT_UNTRUSTED,
+    }
     assert wildcard_tags == {ToolTag.READ_ONLY, ToolTag.OUTPUT_TRUSTED}
     assert annotation_only_tags == {ToolTag.READ_ONLY, ToolTag.OUTPUT_UNTRUSTED}
 
