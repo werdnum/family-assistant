@@ -955,10 +955,20 @@ class ToolExecutor:
                 if confirmation_result is not None:
                     precomputed_result = confirmation_result
 
+            # The acknowledgement asserts to Gemini that the user consented AND
+            # the action ran (or was attempted). That holds for local execution
+            # after a live approval, and for a durable confirmation that came
+            # back with an executed ToolResult. A "completed" outcome carrying
+            # only a string is the deferred-pending placeholder ("waiting for
+            # approval, hasn't run") and must NOT claim consent.
+            acknowledge_safety = False
             result_or_error: ToolResult | object | ToolExecutionResult
             if precomputed_result is not None:
                 result_or_error = precomputed_result
+                acknowledge_safety = isinstance(precomputed_result, ToolResult)
             else:
+                if safety_confirmation_required:
+                    acknowledge_safety = True
                 result_or_error = await self._execute_tool_with_error_mapping(
                     function_name=function_name,
                     arguments=arguments,
@@ -967,7 +977,7 @@ class ToolExecutor:
                     span=span,
                 )
             if isinstance(result_or_error, ToolExecutionResult):
-                if safety_confirmation_required:
+                if acknowledge_safety:
                     # The user approved the safety-gated action, so the
                     # acknowledgement must reach the API even when the attempt
                     # then failed — otherwise the model cannot process the
@@ -988,13 +998,13 @@ class ToolExecutor:
             result = result_or_error
             explicit_attachment_ids: list[str] | None = None
 
-            if safety_confirmation_required and not isinstance(result, ToolResult):
+            if acknowledge_safety and not isinstance(result, ToolResult):
                 # String results have no data dict to carry the acknowledgement;
                 # wrap them so the approved action is acknowledged to the API.
                 result = ToolResult(data={"result": str(result)})
 
             if isinstance(result, ToolResult):
-                if safety_confirmation_required:
+                if acknowledge_safety:
                     self._merge_safety_acknowledgement(result)
                 result_taint_metadata = (
                     tool_execution_context.tool_result_taint_metadata.get(call_id)

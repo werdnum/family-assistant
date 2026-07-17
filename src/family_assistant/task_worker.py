@@ -4396,6 +4396,18 @@ async def handle_confirmation_tool_execution(
         )
         return
 
+    # Persisted args for computer-use actions may carry a Gemini
+    # safety_decision that was included for the confirmation prompt; those
+    # tool signatures don't accept it, so normalize the request to the
+    # executable form up front. This keeps execution and the nested
+    # confirmation callback's argument comparison (both read
+    # request["tool_args_json"]) consistent. Scoped the same way as
+    # ToolExecutor so other tools keep a legitimately-named parameter.
+    if request["tool_name"] in COMPUTER_USE_FUNCTION_NAMES:
+        executable_args = dict(request["tool_args_json"])
+        executable_args.pop("safety_decision", None)
+        request["tool_args_json"] = executable_args
+
     source_row = None
     source_message_internal_id = request["source_message_internal_id"]
     if source_message_internal_id is not None:

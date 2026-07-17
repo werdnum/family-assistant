@@ -724,3 +724,50 @@ async def test_safety_confirmation_oversized_type_text_refused() -> None:
     assert provider.executed_tool_names == []
     assert callback.calls == []
     assert "smaller pieces" in result.llm_message.content
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
+    """A deferred 'completed' placeholder (tool hasn't run) must not claim consent."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    pending_message = (
+        "Waiting on the user to approve this in Telegram or the web UI "
+        "(request abc123). It hasn't run yet."
+    )
+    callback = StubConfirmationCallback(
+        outcome=ConfirmationOutcome(kind="completed", result=pending_message)
+    )
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 1,
+                "y": 2,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "check",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert provider.executed_tool_names == []
+    assert "hasn't run yet" in result.llm_message.content
+    assert "safety_acknowledgement" not in result.llm_message.content
