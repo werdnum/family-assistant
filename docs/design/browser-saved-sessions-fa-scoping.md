@@ -100,8 +100,10 @@ cross-pod, including a noVNC watchdog. The design doc's two acceptance prerequis
     optional save-authorization gate (`BROWSER_JAR_REQUIRE_SAVE_AUTHORIZATION`), where FA renders
     its own save flow; (c) interim: re-login creates a new jar and FA offers to forget the stale one
     (loses human-approved multi-origin scope for SSO jars — they'd need the human path again).
-    Interim (c) is acceptable for shipping load/list/forget/save; the re-login *orchestration*
-    milestone should not start until (a) or (b) is decided.
+    browser-server is ours to change, so (a) is the plan: a small, additive browser-server change
+    (handoff request carries `refresh_jar_id`; the form includes it in its save POST; existing
+    ownership/subset-refresh checks apply unchanged). It gates only the re-login *orchestration*
+    milestone (M6), not M1–M5.
 12. **No API-exposed audit trail** (`jar-audit.jsonl` is file-only) and jar events arrive on the
     per-session SSE stream (`jar_loaded`, `jar_saved`, `session_closed` with
     `reason: jar_revoked|jar_deleted|jar_invalidated`). FA does not currently consume the SSE
@@ -210,17 +212,32 @@ default-off flag; nothing is reachable until an operator flips it.
   a shared helper rather than a copy. Load/save/forget keep their baseline confirms; taint only
   escalates.
 
-## Open questions (need a decision, none block M1–M4)
+## Companion browser-server changes
 
-1. **Gap #11 (human refresh-in-place)**: pursue the browser-server `refresh_jar_id` handoff hint
-   (a), the FA-relayed save-authorization flow (b), or accept new-jar-per-re-login (c) for now?
-   Recommendation: (c) now, file (a) as a browser-server issue — it's small and preserves the
-   designed SSO flow.
-2. **Server-side preconditions**: file a browser-server enhancement for `expected_generation` on
-   create/delete to close the residual FA-side races properly? Recommendation: yes, nice-to-have;
-   FA-side checks are adequate meanwhile.
-3. **`storage: "cookies_only"`**: expose to the agent save tool, or leave it human-path-only?
+browser-server is under our control, so the two shipped-API gaps get fixed at the mechanism rather
+than worked around in FA:
+
+1. **`refresh_jar_id` handoff hint** (gap #11): `POST /v1/sessions/{id}/handoff` accepts an optional
+   `refresh_jar_id`; the handover form pre-fills the jar's label and includes the id in its save
+   POST, turning the human save into an in-place refresh (existing ownership and subset-only-refresh
+   checks apply unchanged). Restores the designed SSO re-login flow. Prerequisite for M6's re-login
+   half only.
+2. **`expected_generation` precondition** (delta #4): optional field on `CreateSessionRequest` (jar
+   loads) and `DELETE /v1/jars/{id}`; mismatch ⇒ 409. Closes the confirm→execute races server-side
+   instead of via FA's compare-and-close/re-GET workarounds. FA still shows `jar_id` + `generation`
+   \+ origins at confirmation and passes the generation through. Nice-to-have before M3; the FA-side
+   checks in delta #4 remain the fallback if it lags.
+
+Both are small and additive; neither touches the human/sanitize guards or the crypto envelope.
+
+## Open questions (none block M1–M4)
+
+1. **`storage: "cookies_only"`**: expose to the agent save tool, or leave it human-path-only?
    Recommendation: leave it out of the tool surface initially.
+2. **Sequencing of the browser-server changes above**: land `expected_generation` before M3 (so the
+   load/forget confirmations bind server-side from day one), or ship M3 with the FA-side fallback
+   and swap in the precondition later? Recommendation: before M3 — it deletes the fallback code path
+   rather than deprecating it.
 
 ## Out of scope (unchanged from the design doc)
 
