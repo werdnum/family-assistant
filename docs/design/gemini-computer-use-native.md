@@ -106,7 +106,14 @@ machinery the API expects.
   (safety ack + policy confirm). Rare and harmless.
 - A safety confirmation approved through the *durable* (task-worker) confirmation path executes with
   `safety_decision` stripped but without merging `safety_acknowledgement` — that flow already
-  resumes in a later turn where the original function-call/response pairing no longer exists.
+  resumes in a later turn where the original function-call/response pairing no longer exists. (With
+  a live waiter, executed results and failed attempts do carry the acknowledgement.)
+- The action names are the ones the Gemini API mandates (`click`, `type`, `wait`, …) and are
+  registered in the global tool catalog like every other local tool. An operator who configures an
+  MCP server exposing an identically named tool hits the existing loud startup duplicate-name check
+  (with remediation guidance), the same failure mode the legacy `navigate`/`search` names already
+  had. Per-profile tool registration or MCP namespacing would remove the collision class entirely
+  but is an architectural change beyond this feature.
 
 ## Milestones
 

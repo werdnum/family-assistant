@@ -771,3 +771,50 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
     assert provider.executed_tool_names == []
     assert "hasn't run yet" in result.llm_message.content
     assert "safety_acknowledgement" not in result.llm_message.content
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_failed_durable_execution_acknowledged() -> None:
+    """An approved-but-failed durable execution carries the acknowledgement."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(
+        outcome=ConfirmationOutcome(
+            kind="failed",
+            result="Error executing approved tool 'click': backend exploded",
+        )
+    )
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 1,
+                "y": 2,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "check",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert provider.executed_tool_names == []
+    payload = json.loads(result.llm_message.content)
+    assert payload["safety_acknowledgement"] is True
+    assert "backend exploded" in payload["error"]

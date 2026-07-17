@@ -339,6 +339,15 @@ class ToolExecutor:
             if isinstance(outcome_result, str)
             else outcome_result.get_text()
         )
+        if confirmation_result.kind == "failed":
+            # "failed" means the user approved and the durable execution was
+            # attempted but errored — like a local post-approval failure, the
+            # acknowledgement must accompany the error so the model can move
+            # past the safety gate.
+            result_content = json.dumps({
+                "error": result_content,
+                "safety_acknowledgement": True,
+            })
         return ToolExecutionResult(
             stream_event=LLMStreamEvent(
                 type="tool_result",
