@@ -164,8 +164,8 @@ default-off flag; nothing is reachable until an operator flips it.
   doc: no disclosure side channel).
 - Registration in `tools/__init__.py` with metadata: `list_saved_sessions` tagged
   `READ_ONLY + SENSITIVE_DATA + OUTPUT_UNTRUSTED` (the tag triple that both raises turn taint on
-  planted labels via `derive_tool_output_taint` and classifies as the `sensitive_read_broadening`
-  sink); `forget_saved_session` tagged `STATE_CHANGING`.
+  planted labels via `derive_tool_result_taint_source()` and classifies as the
+  `sensitive_read_broadening` sink); `forget_saved_session` tagged `STATE_CHANGING`.
 - Policy in `defaults.yaml`: both confirm-by-default, placed only in `handoff_capable_profiles`
   (same gate as `browser_request_handoff`), never in untrusted-input profiles. `list_saved_sessions`
   keeps its **interim static confirm** until the deployment's taint policy is verified enforcing for
@@ -192,19 +192,24 @@ default-off flag; nothing is reachable until an operator flips it.
   preventing clean-output treatment — but the explicit tag is required, not the fallback.)
   Test-asserted alongside the M2 tag assertions.
 - Conversation-session conflict: `_remote_backends` keys one session per conversation
-  (`browser_backend.py:765`); if a session already exists, error with an explicit "close it first"
-  message (simplest safe behavior; close-and-recreate-on-confirm can come later). Never attach a jar
-  to an existing session (the API cannot anyway; this is about not silently closing prior browsing
-  state).
+  (`browser_backend.py:765`), and FA exposes **no** browser-close tool (`close_browser_backend()` is
+  not called from production code) — so a bare "close it first" error would strand the conversation
+  until the remote session expires. `load_saved_session` therefore **closes-and-recreates under the
+  load confirmation**: when a session already exists, the (always required) confirmation
+  additionally states that the current browser session will be closed, and on approval the tool
+  closes it and creates the jar-loaded one. Never attach a jar to an existing session (the API
+  cannot anyway); the point is the user approves the close explicitly rather than it happening
+  silently.
 - Handoff interplay (delta #7): `browser_request_handoff` forces `allowed_resume="never"` on
   jar-loaded sessions; `browser_claim_handback` returns a clear error for them.
 - Functional tests (design-doc acceptance list, adjusted): (a) confirmation fires before any
   jar-loaded session exists; (b) rebinding — a generation bump between confirm and create closes the
-  session and errors; (c) existing-session conflict errors; (d) the create request never carries
-  `confine_navigation: false`; (e) `load_saved_session` unavailable while `saved_sessions_enabled`
-  is false even in handoff-capable profiles. (Cross-origin navigation/exec refusal is
-  browser-server-enforced and tested there; FA's fake asserts the request shape that *selects* that
-  enforcement.)
+  session and errors; (c) existing-session conflict: the confirmation names the close, the old
+  session is closed only after approval, and a decline leaves it untouched; (d) the create request
+  never carries `confine_navigation: false`; (e) `load_saved_session` unavailable while
+  `saved_sessions_enabled` is false even in handoff-capable profiles. (Cross-origin navigation/exec
+  refusal is browser-server-enforced and tested there; FA's fake asserts the request shape that
+  *selects* that enforcement.)
 
 ### M4 — `save_browser_session` (agent path)
 
@@ -223,7 +228,11 @@ default-off flag; nothing is reachable until an operator flips it.
 - Post-save probe + result surfaced in the tool output (delta #8): "Saved, probe: fresh" vs "Saved,
   but freshness is unverified/stale — the capture may be logged out."
 - Tests: create + refresh paths, selector-dropped path (server returns jar with `has_probe` but
-  probe `uncertain`), refresh of a deleted jar (409 surfaces cleanly).
+  probe `uncertain`), refresh of a deleted jar. Note the deleted-jar case does **not** reliably
+  surface the tombstone 409: deleting the jar closes the jar-loaded session, so the next save fails
+  as an inactive session (**410**), and a registry lookup of the removed jar raises
+  `JarNotFoundError` (**404**) before the tombstone check; the tool maps 404/410 to a clear "this
+  saved login was deleted / session closed" error, and tests assert that mapping (not a 409).
 
 ### M5 — Prompts, user guide, docs
 
