@@ -149,6 +149,55 @@ async def test_evaluate_returns_serialisable_result() -> None:
 
 
 @pytest.mark.integration
+async def test_plain_left_single_click_is_accepted() -> None:
+    """mouse_click() with default button/click_count goes through to the server."""
+    backend = _make_backend(conversation_id="integ-click")
+    try:
+        await backend.goto("https://example.test/page")
+        await backend.mouse_click(10, 20)
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_non_left_button_click_raises_explicit_error() -> None:
+    """The browser-server API has no button parameter, so degrade explicitly."""
+    backend = _make_backend(conversation_id="integ-right-click")
+    try:
+        await backend.goto("https://example.test/page")
+        with pytest.raises(BrowserBackendError, match="left mouse clicks"):
+            await backend.mouse_click(10, 20, button="right")
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_multi_click_raises_explicit_error() -> None:
+    """The browser-server API has no click_count parameter, so degrade explicitly."""
+    backend = _make_backend(conversation_id="integ-double-click")
+    try:
+        await backend.goto("https://example.test/page")
+        with pytest.raises(BrowserBackendError, match="single clicks"):
+            await backend.mouse_click(10, 20, click_count=2)
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_keyboard_down_and_up_raise_explicit_errors() -> None:
+    """The browser-server API has no key down/up commands, so degrade explicitly."""
+    backend = _make_backend(conversation_id="integ-key-down")
+    try:
+        await backend.goto("https://example.test/page")
+        with pytest.raises(BrowserBackendError, match="keyboard_down"):
+            await backend.keyboard_down("Control")
+        with pytest.raises(BrowserBackendError, match="keyboard_up"):
+            await backend.keyboard_up("Control")
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
 async def test_request_handoff_returns_non_empty_url() -> None:
     """request_handoff() transitions the session to handoff state and returns a URL."""
     backend = _make_backend(conversation_id="integ-handoff")
