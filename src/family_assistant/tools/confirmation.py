@@ -528,16 +528,25 @@ def confirmation_payload_block_reason(
 ) -> str | None:
     """Return why a confirm-gated tool call must be refused before prompting, else None.
 
-    Lets the policy layer refuse a call whose confirmation prompt could not show
-    the approver the full payload they would be approving, instead of rendering a
-    truncated or misleading prompt. Only invoked once a call is known to be
-    confirm-gated, so it never constrains unconfirmed calls. Currently only
-    ``delegate_to_service`` is bounded.
+    Lets the policy and safety layers refuse a call whose confirmation prompt
+    could not show the approver the full payload they would be approving,
+    instead of rendering a truncated or misleading prompt. Only invoked once a
+    call is known to be confirm-gated, so it never constrains unconfirmed
+    calls. Currently ``delegate_to_service`` requests and the computer-use
+    ``type`` text are bounded.
     """
     if tool_name == "delegate_to_service":
         return over_length_delegation_block_reason(
             str(arguments.get("user_request", ""))
         )
+    if tool_name == "type":
+        text = str(arguments.get("text", ""))
+        if len(text) > CONFIRMATION_VALUE_MAX_CHARS:
+            return (
+                f"Error: the text to type is {len(text)} characters, which exceeds the "
+                f"{CONFIRMATION_VALUE_MAX_CHARS}-character limit that keeps it fully reviewable "
+                "in a confirmation prompt. Type the content in smaller pieces."
+            )
     return None
 
 

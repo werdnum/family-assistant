@@ -9,13 +9,18 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.tool_execution import ToolExecutor
 from family_assistant.processing.types import ToolExecutionResult
 from family_assistant.storage.context import DatabaseContext
-from family_assistant.tools.types import ConfirmationOutcome, ToolResult
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolAttachment,
+    ToolResult,
+)
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -49,7 +54,8 @@ class MinimalToolsProvider:
         if self.error is not None:
             raise self.error
         self.executed_tool_names.append(name)
-        assert "safety_decision" not in arguments
+        if name in COMPUTER_USE_FUNCTION_NAMES:
+            assert "safety_decision" not in arguments
         self.executed_arguments.append(dict(arguments))
         return self.result
 
@@ -59,6 +65,11 @@ class MinimalToolsProvider:
 
 class MinimalToolExecutorConfig:
     """Minimal config satisfying the ToolExecutorConfig protocol."""
+
+    def __init__(self, confirmation_timeout_seconds: float = 3600.0) -> None:
+        self.tools_config = ToolsConfig(
+            confirmation_timeout_seconds=confirmation_timeout_seconds
+        )
 
     timezone: ZoneInfo = ZoneInfo("UTC")
     id: str = "test"
@@ -72,6 +83,7 @@ class MinimalToolExecutorConfig:
 
 def make_tool_executor(
     provider: MinimalToolsProvider | None = None,
+    confirmation_timeout_seconds: float = 3600.0,
 ) -> ToolExecutor:
     """Create a ToolExecutor for testing."""
     # Real AttachmentProcessor with no registry: results in these tests stay
@@ -84,7 +96,7 @@ def make_tool_executor(
     )
     return ToolExecutor(
         tools_provider=provider or MinimalToolsProvider(),
-        config=MinimalToolExecutorConfig(),
+        config=MinimalToolExecutorConfig(confirmation_timeout_seconds),
         attachment_processor=attachment_processor,
         attachment_registry=None,
         clock=SystemClock(),
@@ -117,6 +129,7 @@ class StubConfirmationCallback:
             "tool_args": tool_args,
             "interface_type": interface_type,
             "conversation_id": conversation_id,
+            "timeout_seconds": timeout_seconds,
         })
         return self.outcome
 
@@ -131,9 +144,9 @@ async def test_safety_decision_stripped_before_execution() -> None:
         id="call_123",
         type="function",
         function=ToolCallFunction(
-            name="test_tool",
+            name="take_screenshot",
             arguments={
-                "param1": "value1",
+                "intent": "look around",
                 "safety_decision": {"decision": "allowed", "explanation": "none"},
             },
         ),
@@ -152,7 +165,7 @@ async def test_safety_decision_stripped_before_execution() -> None:
 
     assert isinstance(result, ToolExecutionResult)
     assert len(provider.executed_arguments) == 1
-    assert provider.executed_arguments[0] == {"param1": "value1"}
+    assert provider.executed_arguments[0] == {"intent": "look around"}
 
 
 @pytest.mark.asyncio
@@ -372,9 +385,10 @@ async def test_safety_decision_approved_but_tool_fails() -> None:
         id="call_123",
         type="function",
         function=ToolCallFunction(
-            name="test_tool",
+            name="click",
             arguments={
-                "param": "value",
+                "x": 1,
+                "y": 2,
                 "safety_decision": {
                     "decision": "require_confirmation",
                     "explanation": "Test failure",
@@ -539,3 +553,174 @@ async def test_safety_confirmation_unexpected_error_propagates() -> None:
                 RuntimeError("confirmation infrastructure broke")
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_not_interpreted_outside_action_space() -> None:
+    """Non-computer-use tools keep a legitimately named safety_decision arg."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="some_mcp_tool",
+            arguments={
+                "param1": "value1",
+                "safety_decision": {"decision": "blocked"},
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=None,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_arguments) == 1
+    assert provider.executed_arguments[0] == {
+        "param1": "value1",
+        "safety_decision": {"decision": "blocked"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_uses_configured_timeout() -> None:
+    """The profile's confirmation timeout flows into the safety callback."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider, confirmation_timeout_seconds=120.0)
+
+    callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="approved"))
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 1,
+                "y": 2,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "check",
+                },
+            },
+        ),
+    )
+
+    await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert [call["timeout_seconds"] for call in callback.calls] == [120.0]
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_completed_result_preserved_with_ack() -> None:
+    """A durable confirmation's completed ToolResult flows through with ack."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    completed_result = ToolResult(
+        data={"url": "https://example.com"},
+        attachments=[
+            ToolAttachment(
+                content=b"png-bytes",
+                mime_type="image/png",
+                description="Browser screenshot",
+            )
+        ],
+    )
+    callback = StubConfirmationCallback(
+        outcome=ConfirmationOutcome(kind="completed", result=completed_result)
+    )
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 1,
+                "y": 2,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "check",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    # The tool was NOT executed locally — the durable path already ran it.
+    assert provider.executed_tool_names == []
+    payload = json.loads(result.llm_message.content)
+    assert payload["safety_acknowledgement"] is True
+    assert payload["url"] == "https://example.com"
+    assert result.llm_message.transient_attachments is not None
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_oversized_type_text_refused() -> None:
+    """A safety-gated type call whose text can't be fully shown is refused."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="approved"))
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="type",
+            arguments={
+                "text": "x" * 2000,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "typing a lot",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert provider.executed_tool_names == []
+    assert callback.calls == []
+    assert "smaller pieces" in result.llm_message.content

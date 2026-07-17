@@ -110,6 +110,7 @@ from family_assistant.storage.tasks import (
     unregister_worker_wake_event,
 )
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
@@ -4469,11 +4470,14 @@ async def handle_confirmation_tool_execution(
             request_id,
             request["tool_name"],
         )
-        # Persisted args may carry a Gemini computer-use safety_decision that
-        # was included for the confirmation prompt; tool signatures don't
-        # accept it, so strip it before execution (mirrors ToolExecutor).
+        # Persisted args for computer-use actions may carry a Gemini
+        # safety_decision that was included for the confirmation prompt; those
+        # tool signatures don't accept it, so strip it before execution
+        # (mirrors ToolExecutor, and is scoped the same way so other tools
+        # keep a legitimately-named parameter).
         executable_args = dict(request["tool_args_json"])
-        executable_args.pop("safety_decision", None)
+        if request["tool_name"] in COMPUTER_USE_FUNCTION_NAMES:
+            executable_args.pop("safety_decision", None)
         result = await tools_provider.execute_tool(
             request["tool_name"],
             executable_args,

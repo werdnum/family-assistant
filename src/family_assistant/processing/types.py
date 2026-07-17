@@ -68,6 +68,7 @@ class ToolExecutorConfig(Protocol):
 
     timezone: ZoneInfo
     id: str
+    tools_config: ToolsConfig
     visibility_grants: set[str] | None
     default_note_visibility_labels: list[str] | None
     required_note_visibility_labels: list[str] | None

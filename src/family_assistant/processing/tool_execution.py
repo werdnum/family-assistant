@@ -23,6 +23,8 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.tools.attachment_utils import is_attachment_id
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
+from family_assistant.tools.confirmation import confirmation_payload_block_reason
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     confirmation_outcome_to_tool_result,
@@ -62,8 +64,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-SAFETY_CONFIRMATION_TIMEOUT_SECONDS = 3600.0
 
 
 def _argument_attachment_ids(value: object) -> set[str]:
@@ -263,11 +263,16 @@ class ToolExecutor:
         request_confirmation_callback: RequestConfirmationCallback,
         tool_execution_context: ToolExecutionContext,
         taint_metadata: TaintMetadata,
-    ) -> ToolExecutionResult | None:
+    ) -> ToolExecutionResult | ToolResult | str | None:
         """Handle safety confirmation for a tool call.
 
-        Returns None if confirmation was approved, else a ToolExecutionResult
-        indicating the rejection/failure.
+        Returns:
+            ``None`` when approval was granted and the caller should execute
+            the tool; a ``ToolResult``/``str`` when a durable confirmation
+            already executed the tool elsewhere (kind ``completed``) and its
+            result should flow through normal result processing (including the
+            safety acknowledgement); a ``ToolExecutionResult`` for declined /
+            timed-out / failed confirmations where the action never ran.
         """
         logger.info(
             "Tool '%s' requires safety confirmation: %s",
@@ -288,7 +293,7 @@ class ToolExecutor:
                 tool_name=function_name,
                 call_id=call_id,
                 tool_args=tool_args_with_safety,
-                timeout_seconds=SAFETY_CONFIRMATION_TIMEOUT_SECONDS,
+                timeout_seconds=self.config.tools_config.confirmation_timeout_seconds,
                 context=tool_execution_context,
             )
         except TimeoutError:
@@ -308,38 +313,47 @@ class ToolExecutor:
                 taint_metadata=taint_metadata,
             )
 
-        if confirmation_result.kind != "approved":
-            logger.info(
-                "Safety confirmation for tool '%s' was not approved: %s",
-                function_name,
-                confirmation_result.kind,
-            )
-            outcome_result = confirmation_outcome_to_tool_result(
+        if confirmation_result.kind == "approved":
+            return None
+
+        if confirmation_result.kind == "completed":
+            # A durable confirmation with a live waiter already executed the
+            # tool in the task worker; its result (screenshots included) must
+            # flow through normal result processing with the acknowledgement.
+            return confirmation_outcome_to_tool_result(
                 name=function_name,
                 outcome=confirmation_result,
             )
-            result_content = (
-                outcome_result
-                if isinstance(outcome_result, str)
-                else outcome_result.get_text()
-            )
-            return ToolExecutionResult(
-                stream_event=LLMStreamEvent(
-                    type="tool_result",
-                    tool_call_id=call_id,
-                    tool_result=result_content,
-                ),
-                llm_message=ToolMessage(
-                    tool_call_id=call_id,
-                    content=result_content,
-                    name=function_name,
-                    taint_metadata=taint_metadata,
-                ),
-                auto_attachment_ids=None,
-                explicit_attachment_ids=None,
-            )
 
-        return None
+        logger.info(
+            "Safety confirmation for tool '%s' was not approved: %s",
+            function_name,
+            confirmation_result.kind,
+        )
+        outcome_result = confirmation_outcome_to_tool_result(
+            name=function_name,
+            outcome=confirmation_result,
+        )
+        result_content = (
+            outcome_result
+            if isinstance(outcome_result, str)
+            else outcome_result.get_text()
+        )
+        return ToolExecutionResult(
+            stream_event=LLMStreamEvent(
+                type="tool_result",
+                tool_call_id=call_id,
+                tool_result=result_content,
+            ),
+            llm_message=ToolMessage(
+                tool_call_id=call_id,
+                content=result_content,
+                name=function_name,
+                taint_metadata=taint_metadata,
+            ),
+            auto_attachment_ids=None,
+            explicit_attachment_ids=None,
+        )
 
     @staticmethod
     def _build_error_result(
@@ -811,12 +825,19 @@ class ToolExecutor:
                 )
 
             # Gemini computer-use models may attach a safety_decision to the
-            # call arguments; it is always popped since tool signatures don't
-            # accept it. Only an absent safety_decision, an explicit allow, or
-            # a user-approved require_confirmation may execute; anything else
-            # ("blocked", unknown values, malformed payloads, a dict missing
-            # its decision) is refused outright — safety decisions fail closed.
-            safety_decision = arguments.pop("safety_decision", None)
+            # arguments of computer-use action calls; it is always popped for
+            # those calls since the tool signatures don't accept it. The key is
+            # interpreted ONLY for the computer-use action space — other tools
+            # may legitimately define a parameter with this name. Only an
+            # absent safety_decision, an explicit allow, or a user-approved
+            # require_confirmation may execute; anything else ("blocked",
+            # unknown values, malformed payloads, a dict missing its decision)
+            # is refused outright — safety decisions fail closed.
+            safety_decision = (
+                arguments.pop("safety_decision", None)
+                if function_name in COMPUTER_USE_FUNCTION_NAMES
+                else None
+            )
             decision_value = (
                 safety_decision.get("decision")
                 if isinstance(safety_decision, dict)
@@ -879,6 +900,9 @@ class ToolExecutor:
                 taint_policy_snapshot=taint_policy_snapshot,
             )
 
+            # Result of a durable "completed" confirmation that already
+            # executed the tool elsewhere; substitutes for local execution.
+            precomputed_result: ToolResult | str | None = None
             if safety_confirmation_required and isinstance(safety_decision, dict):
                 if not request_confirmation_callback:
                     logger.warning(
@@ -898,6 +922,25 @@ class ToolExecutor:
                         taint_metadata=initial_taint_metadata,
                     )
 
+                # Refuse when the confirmation prompt could not show the
+                # approver the full payload (same rule as policy confirms).
+                block_reason = confirmation_payload_block_reason(
+                    function_name, arguments
+                )
+                if block_reason is not None:
+                    logger.info(
+                        "Refusing safety-gated tool '%s': %s",
+                        function_name,
+                        block_reason,
+                    )
+                    return self._build_error_result(
+                        call_id=call_id,
+                        function_name=function_name,
+                        error_content=block_reason,
+                        error_traceback="",
+                        taint_metadata=initial_taint_metadata,
+                    )
+
                 confirmation_result = await self._handle_safety_confirmation(
                     call_id=call_id,
                     function_name=function_name,
@@ -907,16 +950,22 @@ class ToolExecutor:
                     tool_execution_context=tool_execution_context,
                     taint_metadata=initial_taint_metadata,
                 )
-                if confirmation_result is not None:
+                if isinstance(confirmation_result, ToolExecutionResult):
                     return confirmation_result
+                if confirmation_result is not None:
+                    precomputed_result = confirmation_result
 
-            result_or_error = await self._execute_tool_with_error_mapping(
-                function_name=function_name,
-                arguments=arguments,
-                tool_execution_context=tool_execution_context,
-                call_id=call_id,
-                span=span,
-            )
+            result_or_error: ToolResult | object | ToolExecutionResult
+            if precomputed_result is not None:
+                result_or_error = precomputed_result
+            else:
+                result_or_error = await self._execute_tool_with_error_mapping(
+                    function_name=function_name,
+                    arguments=arguments,
+                    tool_execution_context=tool_execution_context,
+                    call_id=call_id,
+                    span=span,
+                )
             if isinstance(result_or_error, ToolExecutionResult):
                 if safety_confirmation_required:
                     # The user approved the safety-gated action, so the
