@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import traceback
@@ -241,17 +240,18 @@ class ToolExecutor:
         """Merge safety_acknowledgement into a successful tool result.
 
         Modifies the result in-place to include the safety acknowledgement in
-        the JSON data that will be parsed by the LLM provider.
+        the JSON data that will be parsed by the LLM provider. The Gemini
+        protocol expects the JSON boolean ``true``.
         """
         if result.data is None:
             if result.text is not None:
                 result.data = {
                     "result": result.text,
-                    "safety_acknowledgement": "true",
+                    "safety_acknowledgement": True,
                 }
                 result.text = None
         elif isinstance(result.data, dict):
-            result.data = {**result.data, "safety_acknowledgement": "true"}
+            result.data = {**result.data, "safety_acknowledgement": True}
 
     async def _handle_safety_confirmation(
         self,
@@ -291,32 +291,20 @@ class ToolExecutor:
                 timeout_seconds=SAFETY_CONFIRMATION_TIMEOUT_SECONDS,
                 context=tool_execution_context,
             )
-        except (TimeoutError, asyncio.CancelledError) as conf_err:
+        except TimeoutError:
+            # A timed-out confirmation is an expected outcome: the action is
+            # simply not taken. Any other failure (programming errors,
+            # interface errors, cancellation) propagates per fail-fast policy.
             logger.warning(
-                "Safety confirmation for tool '%s' failed: %s",
+                "Safety confirmation for tool '%s' timed out.",
                 function_name,
-                conf_err,
             )
-            error_msg = f"Action cancelled: Safety confirmation for tool '{function_name}' timed out or was cancelled."
+            error_msg = f"Action cancelled: Safety confirmation for tool '{function_name}' timed out."
             return self._build_error_result(
                 call_id=call_id,
                 function_name=function_name,
                 error_content=error_msg,
                 error_traceback="",
-                taint_metadata=taint_metadata,
-            )
-        except Exception as conf_err:
-            logger.error(
-                "Error during safety confirmation for tool '%s': %s",
-                function_name,
-                conf_err,
-                exc_info=True,
-            )
-            return self._build_error_result(
-                call_id=call_id,
-                function_name=function_name,
-                error_content=f"Error during safety confirmation: {conf_err}",
-                error_traceback=traceback.format_exc(),
                 taint_metadata=taint_metadata,
             )
 
@@ -824,12 +812,46 @@ class ToolExecutor:
 
             # Gemini computer-use models may attach a safety_decision to the
             # call arguments; it is always popped since tool signatures don't
-            # accept it.
+            # accept it. Only an absent decision, an explicit allow, or a
+            # user-approved require_confirmation may execute; anything else
+            # (e.g. "blocked", unknown values, malformed payloads) is refused
+            # outright rather than silently executed.
             safety_decision = arguments.pop("safety_decision", None)
-            safety_confirmation_required = (
-                isinstance(safety_decision, dict)
-                and safety_decision.get("decision") == "require_confirmation"
+            decision_value = (
+                safety_decision.get("decision")
+                if isinstance(safety_decision, dict)
+                else None
             )
+            safety_confirmation_required = decision_value == "require_confirmation"
+            safety_decision_permits_execution = safety_decision is None or (
+                isinstance(safety_decision, dict)
+                and decision_value in {None, "allowed", "allow"}
+            )
+            if (
+                not safety_confirmation_required
+                and not safety_decision_permits_execution
+            ):
+                logger.warning(
+                    "Tool '%s' refused: unrecognized safety decision %r.",
+                    function_name,
+                    safety_decision,
+                )
+                explanation = (
+                    safety_decision.get("explanation", "")
+                    if isinstance(safety_decision, dict)
+                    else ""
+                )
+                return self._build_error_result(
+                    call_id=call_id,
+                    function_name=function_name,
+                    error_content=(
+                        f"Action not executed: the safety decision attached to "
+                        f"'{function_name}' was {decision_value!r}, which does not "
+                        f"permit execution. {explanation}".rstrip()
+                    ),
+                    error_traceback="",
+                    taint_metadata=initial_taint_metadata,
+                )
 
             logger.info(
                 "Executing tool '%s' with argument keys: %s",

@@ -36,8 +36,9 @@ machinery the API expects.
   multimodal tool-response path already produces.
 - **Safety decisions**: the model may add a `safety_decision` object to a function call's arguments:
   `{"decision": "require_confirmation", "explanation": "..."}`. The client must obtain user approval
-  and, when approved, include `"safety_acknowledgement": "true"` in the function response payload.
-  Prompt injection detection surfaces through the same mechanism.
+  and, when approved, include `"safety_acknowledgement": true` (JSON boolean) in the function
+  response payload. Decisions other than `require_confirmation` or an explicit allow (e.g. a blocked
+  action) must not execute. Prompt injection detection surfaces through the same mechanism.
 
 ## Decisions
 
@@ -49,9 +50,10 @@ machinery the API expects.
 2. **Explicit opt-in flag, not model-name sniffing.** Plain `gemini-3.5-flash` is also the default
    assistant model, so the computer-use tool must not be attached based on model name. A new
    `enable_computer_use: true` key on a profile's `processing_config` is plumbed through to
-   `GoogleGenAIClient`. Model names containing `computer-use` (the dedicated 2.5 preview) continue
-   to enable it implicitly. Setting the flag with a non-Google provider is a startup configuration
-   error (fail fast).
+   `GoogleGenAIClient` and is the only thing that attaches the tool (the old
+   `computer-use`-in-model-name sniffing is removed along with the retired 2.5 preview support).
+   Setting the flag with a non-Google provider or combining it with `retry_config` is a startup
+   configuration error (fail fast).
 
 3. **Prompt-injection detection is always on** whenever the computer-use tool is attached
    (`enable_prompt_injection_detection=True`). There is no waiver knob; a detection surfaces as a
@@ -69,11 +71,15 @@ machinery the API expects.
    - `decision == "require_confirmation"` triggers the existing `request_confirmation_callback`
      (same UX as policy-confirm). No callback available → the action is refused with an explanatory
      tool result, not executed.
-   - Approved → the tool runs and `"safety_acknowledgement": "true"` is merged into the `ToolResult`
+   - Approved → the tool runs and `"safety_acknowledgement": true` is merged into the `ToolResult`
      data. The Gemini client already JSON-parses tool content into `FunctionResponse.response`, so
      the acknowledgement reaches the API without provider-client changes.
    - Rejected/timed out → the action is not executed and the model receives a declined-message tool
      result so it can adapt or wrap up (we keep the loop alive rather than aborting the turn).
+     Unexpected confirmation-infrastructure failures propagate (fail fast) rather than being folded
+     into a tool result.
+   - Any other decision value (`blocked`, unknown future values, malformed payloads) refuses
+     execution outright with an explanatory tool result — safety decisions fail closed.
    - A dedicated confirmation renderer shows the action name, its arguments, and the model's
      `explanation` prominently.
 

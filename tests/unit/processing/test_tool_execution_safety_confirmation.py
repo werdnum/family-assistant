@@ -14,10 +14,12 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.tool_execution import ToolExecutor
 from family_assistant.processing.types import ToolExecutionResult
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ConfirmationOutcome, ToolResult
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
+    from family_assistant.skills.registry import NoteRegistry
     from family_assistant.tools import ToolExecutionContext
 
 
@@ -56,16 +58,16 @@ class MinimalToolsProvider:
 
 
 class MinimalToolExecutorConfig:
-    """Minimal config for ToolExecutor."""
+    """Minimal config satisfying the ToolExecutorConfig protocol."""
 
-    timezone = ZoneInfo("UTC")
-    id = "test"
-    visibility_grants = None
-    default_note_visibility_labels = None
-    required_note_visibility_labels = None
-    allowed_note_visibility_labels = None
-    allow_wake_llm = True
-    note_registry = None
+    timezone: ZoneInfo = ZoneInfo("UTC")
+    id: str = "test"
+    visibility_grants: set[str] | None = None
+    default_note_visibility_labels: list[str] | None = None
+    required_note_visibility_labels: list[str] | None = None
+    allowed_note_visibility_labels: list[str] | None = None
+    allow_wake_llm: bool = True
+    note_registry: NoteRegistry | None = None
 
 
 def make_tool_executor(
@@ -82,7 +84,7 @@ def make_tool_executor(
     )
     return ToolExecutor(
         tools_provider=provider or MinimalToolsProvider(),
-        config=MinimalToolExecutorConfig(),  # type: ignore[arg-type]
+        config=MinimalToolExecutorConfig(),
         attachment_processor=attachment_processor,
         attachment_registry=None,
         clock=SystemClock(),
@@ -143,7 +145,7 @@ async def test_safety_decision_stripped_before_execution() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=None,  # type: ignore[arg-type]
+        db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -184,7 +186,7 @@ async def test_safety_decision_require_confirmation_approved() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=None,  # type: ignore[arg-type]
+        db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -200,7 +202,7 @@ async def test_safety_decision_require_confirmation_approved() -> None:
     assert callback_args["tool_args"]["x"] == 100
 
     response_payload = json.loads(result.llm_message.content)
-    assert response_payload["safety_acknowledgement"] == "true"
+    assert response_payload["safety_acknowledgement"] is True
     assert response_payload["status"] == "done"
 
 
@@ -234,7 +236,7 @@ async def test_safety_decision_require_confirmation_rejected() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=None,  # type: ignore[arg-type]
+        db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -273,7 +275,7 @@ async def test_safety_decision_require_confirmation_timed_out() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=None,  # type: ignore[arg-type]
+        db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -310,7 +312,7 @@ async def test_safety_decision_no_callback_available() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=None,  # type: ignore[arg-type]
+        db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -348,7 +350,7 @@ async def test_safety_decision_allowed_no_confirmation() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=None,  # type: ignore[arg-type]
+        db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -387,7 +389,7 @@ async def test_safety_decision_approved_but_tool_fails() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=None,  # type: ignore[arg-type]
+        db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -395,3 +397,136 @@ async def test_safety_decision_approved_but_tool_fails() -> None:
     assert isinstance(result, ToolExecutionResult)
     assert "error" in result.llm_message.content.lower()
     assert "safety_acknowledgement" not in result.llm_message.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["blocked", "some_future_value"])
+async def test_safety_decision_blocked_or_unknown_refused(decision: str) -> None:
+    """Decisions that neither allow nor request confirmation refuse execution."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "y": 200,
+                "safety_decision": {
+                    "decision": decision,
+                    "explanation": "Prohibited by safety policy",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=None,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_tool_names) == 0
+    assert "not executed" in result.llm_message.content
+    assert "Prohibited by safety policy" in result.llm_message.content
+
+
+class RaisingConfirmationCallback:
+    """Confirmation callback that raises the configured exception."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: dict,  # noqa: A002 - Test fixture shadow builtin dict
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        raise self.error
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_timeout_error_yields_declined_result() -> None:
+    """A TimeoutError from the callback is an expected not-taken outcome."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "Testing timeout",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=RaisingConfirmationCallback(TimeoutError()),
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_tool_names) == 0
+    assert "timed out" in result.llm_message.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_unexpected_error_propagates() -> None:
+    """Unexpected callback failures propagate instead of masking the bug."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "Testing failure",
+                },
+            },
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="confirmation infrastructure broke"):
+        await executor.execute(
+            tool_call,
+            interface_type="test",
+            conversation_id="conv_123",
+            user_name="testuser",
+            turn_id="turn_1",
+            db_context=Mock(spec=DatabaseContext),
+            chat_interface=None,
+            request_confirmation_callback=RaisingConfirmationCallback(
+                RuntimeError("confirmation infrastructure broke")
+            ),
+        )
