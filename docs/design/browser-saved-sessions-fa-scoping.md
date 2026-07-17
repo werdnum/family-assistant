@@ -32,18 +32,20 @@ cross-pod, including a noVNC watchdog. The design doc's two acceptance prerequis
    captured scope is the live page's origin only and `nav_allowlist` is dropped. For an agent
    **refresh** with omitted `origins`, `resolve_refresh_scope()` preserves the existing jar's
    (possibly multi-origin) scope and stored allowlist — a refresh does *not* collapse the jar to one
-   origin; caller-supplied values can only narrow, and widening is discarded. On either path the
-   probe target is derived server-side (`origin + "/"`), and an agent-supplied `logged_in_selector`
-   is kept only if it passes a server-side logged-out discrimination check (otherwise silently
-   dropped — the jar reads `uncertain`, never fake-`fresh`). So don't build 4xx handling or tests
-   around these fields being rejected; FA simply never sends them (test-asserted omission). The
-   design doc's FA-wrapper machinery for "enumerate every captured origin, deny-by-default on
-   off-site origins" has nothing to gate on the agent path — widening inputs are inert there.
-   `save_browser_session` simplifies to `(label, logged_in_selector, jar_id=None)`: no `origins`
-   parameter at all. Multi-origin scope (SSO IdP origins, `nav_allowlist` entries) can only enter
-   via the **human** save path — but note the shipped handover form cannot express it yet either
-   (gap #13). FA keeps a plain confirm on the tool (it still persists a credential-equivalent), but
-   the elevated/deny origin-set logic is deleted from scope.
+   origin; caller-supplied `origins` can only narrow, and a widening set is **rejected**
+   (`JarValidationError` ⇒ 400), while agent-supplied `nav_allowlist` and probe overrides are
+   silently discarded rather than rejected. On either path the probe target is derived server-side
+   (`origin + "/"`), and an agent-supplied `logged_in_selector` is kept only if it passes a
+   server-side logged-out discrimination check (otherwise silently dropped — the jar reads
+   `uncertain`, never fake-`fresh`). So don't build 4xx handling or tests around these fields being
+   rejected; FA simply never sends them (test-asserted omission). The design doc's FA-wrapper
+   machinery for "enumerate every captured origin, deny-by-default on off-site origins" has nothing
+   to gate on the agent path — widening inputs are inert there. `save_browser_session` simplifies to
+   `(label, logged_in_selector, jar_id=None)`: no `origins` parameter at all. Multi-origin scope
+   (SSO IdP origins, `nav_allowlist` entries) can only enter via the **human** save path — but note
+   the shipped handover form cannot express it yet either (gap #13). FA keeps a plain confirm on the
+   tool (it still persists a credential-equivalent), but the elevated/deny origin-set logic is
+   deleted from scope.
 2. **Probe-target validation is server-side.** Sanitization (query/fragment stripping), rejection of
    action-like and token-shaped URLs, in-scope constraint, and the authenticated-only-indicator
    discrimination check all happen in browser-server (`build_probe`, `_selector_discriminates`). FA
@@ -185,8 +187,10 @@ default-off flag; nothing is reachable until an operator flips it.
   FA-side; confinement blocks it server-side anyway).
 - Registration metadata: `load_saved_session` returns live web content, so it carries the same
   taint-relevant tags as `browser_open` (`BROWSER`, `STATE_CHANGING`, `EXTERNAL_COMM`,
-  `OUTPUT_UNTRUSTED`) — without `OUTPUT_UNTRUSTED`, `derive_tool_output_taint` would treat a planted
-  page as clean. Test-asserted alongside the M2 tag assertions.
+  `OUTPUT_UNTRUSTED`). (`derive_tool_result_taint_source()` already defaults an *untagged* result to
+  `UNKNOWN_EXTERNAL` with a warning, so the tag is explicit metadata rather than the only thing
+  preventing clean-output treatment — but the explicit tag is required, not the fallback.)
+  Test-asserted alongside the M2 tag assertions.
 - Conversation-session conflict: `_remote_backends` keys one session per conversation
   (`browser_backend.py:765`); if a session already exists, error with an explicit "close it first"
   message (simplest safe behavior; close-and-recreate-on-confirm can come later). Never attach a jar
@@ -251,21 +255,29 @@ worked around in FA:
 
 1. **`refresh_jar_id` handoff hint** (gap #11): `POST /v1/sessions/{id}/handoff` accepts an optional
    `refresh_jar_id`; the handover form pre-fills the jar's label and includes the id in its save
-   POST, turning the human save into an in-place refresh (existing ownership and subset-only-refresh
-   checks apply unchanged). Restores the designed SSO re-login flow. Prerequisite for M6's re-login
-   half only.
+   POST, turning the human save into an in-place refresh. The subset-only-refresh check applies
+   unchanged, but the **ownership check needs a defined rule for ownerless jars**: agent-created
+   jars (M4, service-token session) have `owner_subject = None`, and `_authorize_jar_refresh()`
+   currently rejects every human refresh of such a jar — as shipped, the hint would restore re-login
+   only for human-created jars. Rule: a human refresh of an *ownerless* jar is allowed and **adopts
+   ownership** (sets `owner_subject` to the refreshing human) — ownerless jars were created by the
+   household's own agent, and adopting on first human touch is strictly scope-narrowing-or-equal
+   under the subset rule. Restores the designed re-login flow for both jar kinds. Prerequisite for
+   M6's re-login half only.
 2. **`expected_generation` precondition** (delta #4): optional field on `CreateSessionRequest` (jar
    loads), `DELETE /v1/jars/{id}`, and `SaveJarRequest` when `jar_id` is set (refresh saves mutate
    an approved generation just like delete removes one); mismatch ⇒ 409. Closes the confirm→execute
    races server-side instead of via FA's compare-and-close/re-GET workarounds. FA still shows
    `jar_id` + `generation` + origins at confirmation and passes the generation through. Nice-to-have
    before M3; the FA-side checks in delta #4 and M4 remain the fallback if it lags.
-3. **Scope-aware human save form** (gap #13): the handover save form displays the scope a save would
-   capture and lets the human include additional origins visited during the session (and allowlist
-   entries) — the UI half of the multi-origin consent the API already enforces server-side (origins
-   must have been visited; the form shows exactly what is captured). This is the only path that can
-   create multi-origin/SSO jars, so it gates that use case; single-origin jars work everywhere
-   without it.
+3. **Scope-aware human save form + visited-origin enforcement** (gap #13): two halves, both
+   currently missing. *Server*: track the set of origins the session has actually visited on
+   `BrowserSession` and validate human-submitted `origins`/`nav_allowlist` against it — today the
+   human save path passes `req.origins` straight through (`JarStore._save_locked()` only
+   normalizes), so a human save could name arbitrary never-visited origins. *UI*: the handover save
+   form displays exactly what a save would capture and lets the human include additional
+   visited-during-session origins and allowlist entries. This is the only path that can create
+   multi-origin/SSO jars, so it gates that use case; single-origin jars work everywhere without it.
 
 All are small and additive; none touches the human/sanitize guards or the crypto envelope.
 
