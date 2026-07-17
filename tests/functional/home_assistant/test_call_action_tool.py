@@ -68,6 +68,8 @@ def _make_exec_context(
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

@@ -554,6 +554,7 @@ class LLMStreamingLoop:
                             await self.attachment_processor.select_for_response(
                                 pending_attachment_ids=pending_attachment_ids,
                                 original_query=original_query,
+                                acting_user_id=user_id,
                             )
                         )
                     except AttachmentSelectionError as exc:
@@ -578,7 +579,7 @@ class LLMStreamingLoop:
                 if self.attachment_processor.attachment_registry:
                     for att_id in pending_attachment_ids:
                         metadata = await self.attachment_processor.attachment_registry.get_attachment(
-                            db_context, att_id
+                            db_context, att_id, acting_user_id=user_id
                         )
                         if metadata is None:
                             raise ValueError(

@@ -103,6 +103,8 @@ class TestDocumentRetrieval:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Ingest PDF document
@@ -191,6 +193,8 @@ class TestDocumentRetrieval:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Ingest image document
@@ -264,6 +268,8 @@ class TestDocumentRetrieval:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Ingest text-only document (no file)
@@ -342,6 +348,8 @@ class TestDocumentRetrieval:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Ingest PDF document
@@ -416,6 +424,8 @@ class TestDocumentRetrieval:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Create large dummy file content (over 20MB)

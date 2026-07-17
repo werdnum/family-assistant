@@ -183,6 +183,11 @@ attachment_metadata_table = Table(
     Column(
         "message_id", Integer, ForeignKey("message_history.internal_id"), nullable=True
     ),
+    # Canonical user id that owns this attachment. NULL means "ownerless":
+    # the attachment is visible/operable by any caller (uploads, legacy,
+    # non-personal tool output). An owned attachment is visible/operable only
+    # when the caller's acting user matches this value.
+    Column("owner_user_id", String(255), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("accessed_at", DateTime(timezone=True), nullable=True),
     Column("metadata", JSON, nullable=True),

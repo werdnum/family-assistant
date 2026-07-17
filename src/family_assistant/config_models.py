@@ -373,6 +373,29 @@ class ApnsConfig(BaseModel):
     use_sandbox: bool = False
 
 
+class GoogleIntegrationConfig(BaseModel):
+    """Per-user Gmail/Drive integration configuration.
+
+    Enables the user-scoped Google data feature: OAuth client credentials, the
+    Fernet key used to encrypt stored refresh tokens at rest, the operator-tunable
+    data scopes requested at consent, and whether the Gmail/Drive tools require
+    taint enforcement before they register.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    oauth_client_id: str = ""
+    oauth_client_secret: str = ""
+    credential_encryption_key: str = ""
+    scopes: list[str] = Field(
+        default_factory=lambda: [
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ]
+    )
+    require_taint_enforcement: bool = True
+
+
 class GeminiVoiceConfig(BaseModel):
     """Gemini voice settings."""
 
@@ -1327,6 +1350,9 @@ class AppConfig(BaseSettings):
     calendar_config: CalendarConfig = Field(default_factory=CalendarConfig)
     pwa_config: PWAConfig = Field(default_factory=PWAConfig)
     apns: ApnsConfig = Field(default_factory=ApnsConfig)
+    google_integration: GoogleIntegrationConfig = Field(
+        default_factory=GoogleIntegrationConfig
+    )
     gemini_live_config: GeminiLiveConfig = Field(default_factory=GeminiLiveConfig)
     mcp_config: MCPConfig = Field(default_factory=MCPConfig)
     indexing_pipeline_config: IndexingPipelineConfig = Field(

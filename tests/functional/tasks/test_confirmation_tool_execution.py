@@ -70,6 +70,7 @@ class RecordingToolsProvider:
     def __init__(self) -> None:
         # ast-grep-ignore: no-dict-any - fake tool calls preserve arbitrary tool arguments
         self.calls: list[tuple[str, dict[str, Any], str | None, str | None, str]] = []
+        self.contexts: list[ToolExecutionContext] = []
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
         return [TEST_TOOL_DEFINITION]
@@ -89,6 +90,7 @@ class RecordingToolsProvider:
             context.user_id,
             context.interface_type,
         ))
+        self.contexts.append(context)
         return f"executed:{arguments['value']}"
 
     async def close(self) -> None:
@@ -214,10 +216,11 @@ class RecordingChatInterface:
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - fake chat I/O must yield to exercise cancellation cleanup
         await asyncio.sleep(0)
-        _ = parse_mode
+        _ = (parse_mode, on_behalf_of_user_id)
         self.messages.append((conversation_id, text, reply_to_interface_id))
         self.attachment_ids.append(attachment_ids)
         return f"chat-message-{len(self.messages)}"
@@ -233,6 +236,7 @@ class FailingChatInterface(RecordingChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -240,6 +244,7 @@ class FailingChatInterface(RecordingChatInterface):
             parse_mode=parse_mode,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
+            on_behalf_of_user_id=on_behalf_of_user_id,
         )
         raise RuntimeError("chat send failed")
 
@@ -254,6 +259,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -261,6 +267,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
             parse_mode=parse_mode,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
+            on_behalf_of_user_id=on_behalf_of_user_id,
         )
         return None
 
@@ -281,12 +288,16 @@ class BlockingChatInterface(RecordingChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
-        _ = conversation_id
-        _ = text
-        _ = parse_mode
-        _ = reply_to_interface_id
-        _ = attachment_ids
+        _ = (
+            conversation_id,
+            text,
+            parse_mode,
+            reply_to_interface_id,
+            attachment_ids,
+            on_behalf_of_user_id,
+        )
         self.started.set()
         try:
             await self._release.wait()
@@ -300,6 +311,8 @@ def _processing_service(
     provider: object,
     *,
     attachment_registry: object | None = None,
+    google_credentials: object | None = None,
+    google_api_backend: object | None = None,
 ) -> ProcessingService:
     service_config = SimpleNamespace(
         id="test-profile",
@@ -318,6 +331,8 @@ def _processing_service(
         attachment_registry=attachment_registry,
         home_assistant_client=None,
         camera_backend=None,
+        google_credentials=google_credentials,
+        google_api_backend=google_api_backend,
         processing_services_registry=None,
     )
     return cast("ProcessingService", service)
@@ -504,6 +519,37 @@ async def test_approved_confirmation_task_executes_stored_tool(
         )
     ]
     assert await _task_status(db_engine, task_id) == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_approved_confirmation_preserves_google_dependencies(
+    db_engine: AsyncEngine,
+) -> None:
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+    google_credentials = object()
+    google_api_backend = object()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(
+            provider,
+            google_credentials=google_credentials,
+            google_api_backend=google_api_backend,
+        ),
+        chat_interface=RecordingChatInterface(),
+        task_id=task_id,
+    )
+
+    assert len(provider.contexts) == 1
+    executed_context = provider.contexts[0]
+    assert executed_context.google_credentials is google_credentials
+    assert executed_context.google_api_backend is google_api_backend
 
 
 @pytest.mark.asyncio
@@ -996,7 +1042,7 @@ async def test_fallback_notification_preserves_tool_result_attachments(
     assert attachment_ids is not None
     assert len(attachment_ids) == 1
     attachment = await attachment_registry.get_attachment_with_context(
-        attachment_ids[0]
+        attachment_ids[0], acting_user_id=None
     )
     assert attachment is not None
     assert attachment.mime_type == "text/plain"

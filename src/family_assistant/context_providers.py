@@ -132,8 +132,11 @@ class NotesContextProvider(ContextProvider):
 
         for attachment_id in attachment_ids:
             try:
+                # Note attachments are ownerless, and this provider runs with no
+                # acting-user context, so ``None`` (ownerless-only) is correct:
+                # owner-scoped attachments never surface in note context lines.
                 metadata = await self._attachment_registry.get_attachment(
-                    db_context, attachment_id
+                    db_context, attachment_id, acting_user_id=None
                 )
                 if metadata:
                     # Extract filename from description or use a default

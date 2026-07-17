@@ -183,6 +183,8 @@ class FakeDelegatableService:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
                 request_confirmation_callback=callback,
                 confirmation_ui_managers=kwargs["confirmation_ui_managers"],
             )
@@ -332,8 +334,15 @@ class AttachmentVisibilityChatInterface:
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
-        _ = (conversation_id, text, parse_mode, reply_to_interface_id)
+        _ = (
+            conversation_id,
+            text,
+            parse_mode,
+            reply_to_interface_id,
+            on_behalf_of_user_id,
+        )
         self.sent_text = text
         self.sent_attachment_ids = attachment_ids
         if attachment_ids:
@@ -341,6 +350,7 @@ class AttachmentVisibilityChatInterface:
                 visible = await self.attachment_registry.get_attachments(
                     db_context,
                     attachment_ids,
+                    acting_user_id=None,
                 )
             self.visible_attachment_ids = list(visible)
         return "external_message_id"
@@ -391,6 +401,8 @@ def _tool_context(
         attachment_registry=attachment_registry,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
         chat_interface=chat_interface,
         chat_interfaces={TEST_INTERFACE_TYPE: chat_interface}
         if chat_interface
@@ -1951,6 +1963,8 @@ class FakeConfirmingWakeSourceService:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
             processing_profile_id="source_profile",
             request_confirmation_callback=callback,
             confirmation_ui_managers=kwargs["confirmation_ui_managers"],

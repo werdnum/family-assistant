@@ -79,6 +79,8 @@ async def test_calendar_config_from_provider() -> None:
         chat_interface=None,
         timezone=ZoneInfo("UTC"),
         camera_backend=None,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     # Execute the tool
@@ -143,6 +145,8 @@ async def test_calendar_tool_without_config() -> None:
         chat_interface=None,
         timezone=ZoneInfo("UTC"),
         camera_backend=None,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     # Execute the tool - should return error
@@ -225,6 +229,8 @@ async def test_calendar_config_preference() -> None:
         chat_interface=None,
         timezone=ZoneInfo("UTC"),
         camera_backend=None,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     # Execute the tool

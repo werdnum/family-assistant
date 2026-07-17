@@ -53,6 +53,7 @@ class TelegramChatInterface(ChatInterface):
         parse_mode: str | None = None,
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
+        on_behalf_of_user_id: str | None = None,
     ) -> str | None:
         """
         Sends a message to the specified Telegram chat.
@@ -63,6 +64,7 @@ class TelegramChatInterface(ChatInterface):
             parse_mode: Optional string indicating the formatting mode ("MarkdownV2", "HTML").
             reply_to_interface_id: Optional Telegram message_id (as a string) to reply to.
             attachment_ids: Optional list of attachment IDs to send with the message.
+            on_behalf_of_user_id: Acting user for owner-scoped attachment reads.
 
         Returns:
             The Telegram message_id of the sent message as a string, or None if sending failed.
@@ -95,7 +97,10 @@ class TelegramChatInterface(ChatInterface):
 
             if attachment_ids:
                 await self._send_attachments(
-                    chat_id_int, attachment_ids, reply_to_msg_id_int
+                    chat_id_int,
+                    attachment_ids,
+                    reply_to_msg_id_int,
+                    on_behalf_of_user_id=on_behalf_of_user_id,
                 )
 
             sent_msg = await self.application.bot.send_message(
@@ -229,6 +234,8 @@ class TelegramChatInterface(ChatInterface):
         chat_id: int,
         attachment_ids: list[str],
         reply_to_msg_id: int | None = None,
+        *,
+        on_behalf_of_user_id: str | None = None,
     ) -> list[str]:
         """
         Send attachments to a Telegram chat.
@@ -261,14 +268,18 @@ class TelegramChatInterface(ChatInterface):
                 for attachment_id in attachment_ids:
                     try:
                         metadata = await self.attachment_registry.get_attachment(
-                            db_context, attachment_id
+                            db_context,
+                            attachment_id,
+                            acting_user_id=on_behalf_of_user_id,
                         )
                         if not metadata:
                             logger.warning(f"Attachment {attachment_id} not found")
                             continue
 
                         content = await self.attachment_registry.get_attachment_content(
-                            db_context, attachment_id
+                            db_context,
+                            attachment_id,
+                            acting_user_id=on_behalf_of_user_id,
                         )
                         if not content:
                             logger.warning(

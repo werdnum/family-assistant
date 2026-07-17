@@ -133,6 +133,8 @@ def processing_service(
         context_providers=[notes_provider],
         server_url="http://testserver",
         app_config=AppConfig(),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

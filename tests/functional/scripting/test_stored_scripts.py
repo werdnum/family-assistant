@@ -41,6 +41,8 @@ async def test_save_and_list_scripts(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Save a script
@@ -86,6 +88,8 @@ async def test_save_and_get_script(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         script_code = """
@@ -131,6 +135,8 @@ async def test_save_and_run_script(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Save a simple script
@@ -165,6 +171,8 @@ async def test_run_script_with_parameters(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Save a script that uses a parameter
@@ -210,6 +218,8 @@ async def test_run_script_not_found(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Try to run a non-existent script
@@ -237,6 +247,8 @@ async def test_delete_script(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Save a script
@@ -285,6 +297,8 @@ async def test_delete_script_not_found(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Try to delete a non-existent script
@@ -312,6 +326,8 @@ async def test_save_script_with_syntax_error(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Try to save a script with syntax error
@@ -345,6 +361,8 @@ async def test_update_existing_script(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Save a script
@@ -395,6 +413,8 @@ async def test_list_scripts_empty(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # List scripts (should be empty)
@@ -423,6 +443,8 @@ async def test_save_script_with_parameters_schema(db_engine: AsyncEngine) -> Non
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         parameters_schema = {
@@ -475,6 +497,8 @@ async def test_save_script_malformed_required_field(db_engine: AsyncEngine) -> N
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # required contains a non-string entry
@@ -517,6 +541,8 @@ async def test_save_script_malformed_required_not_list(db_engine: AsyncEngine) -
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         bad_schema = {
@@ -552,6 +578,8 @@ async def test_save_script_with_required_only_schema(db_engine: AsyncEngine) -> 
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Schema declares x as required without listing it in properties

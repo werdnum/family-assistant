@@ -253,6 +253,8 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                     embedding_generator=embedding_generator,
                     indexing_source=indexing_source,
                     timezone=ZoneInfo("UTC"),
+                    google_credentials=None,
+                    google_api_backend=None,
                 )
 
                 assert task["payload"] is not None
@@ -382,6 +384,8 @@ async def test_document_ready_not_emitted_with_pending_tasks(
             embedding_generator=embedding_generator,
             indexing_source=indexing_source,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         assert first_task["payload"] is not None
@@ -518,6 +522,8 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
                 embedding_generator=embedding_generator,
                 indexing_source=indexing_source,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Process embedding task - should emit event
@@ -634,6 +640,8 @@ async def test_document_ready_event_includes_rich_metadata(
                 embedding_generator=embedding_generator,
                 indexing_source=indexing_source,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Process task - should emit event with rich metadata
@@ -760,6 +768,8 @@ async def test_document_ready_event_handles_none_metadata(
                 embedding_generator=embedding_generator,
                 indexing_source=indexing_source,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Process task - should emit event even with None metadata

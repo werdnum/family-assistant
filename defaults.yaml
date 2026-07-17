@@ -299,6 +299,26 @@ taint_policy:
     known_contact: ["source_known_contact"]
     recognized_machine: ["source_recognized_machine"]
     unknown_external: ["source_unknown_external"]
+# --- Google Integration (per-user Gmail & Drive) ---
+# Enables the user-scoped "Connect your Google account" flow and the read-only
+# Gmail/Drive tools. Secrets default empty and are supplied via environment:
+#   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET (OAuth client)
+#   CREDENTIAL_ENCRYPTION_KEY (urlsafe-base64 Fernet key; encrypts stored refresh
+#     tokens at rest). Generate one with scripts/generate_credential_key.py.
+# The integration is disabled until the client id, secret, and encryption key are
+# all present. openid and email are always appended in code, so they are not part
+# of the operator-tunable scopes list below.
+google_integration:
+  oauth_client_id: "" # env GOOGLE_OAUTH_CLIENT_ID
+  oauth_client_secret: "" # env GOOGLE_OAUTH_CLIENT_SECRET (secret, redacted)
+  credential_encryption_key: "" # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
+  scopes: # operator-tunable DATA scopes; subset of the supported read-only allowlist
+    - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/drive.readonly"
+  # Require taint_policy.mode=enforce (plus the matrix floor) before registering
+  # the Gmail/Drive tools. Set false to accept running them under observe mode;
+  # the waiver is logged and shown on the integration status endpoint.
+  require_taint_enforcement: true
 # --- Skills Configuration ---
 # Directories for file-based skills (loaded at startup, shown in skill catalog).
 # builtin_dir defaults to the package's skills/builtin/ directory when not set.
@@ -478,6 +498,11 @@ default_profile_settings:
             - "ucp_add_to_cart"
             - "ucp_get_cart"
             - "ucp_transfer_checkout_to_human"
+            - "gmail_search"
+            - "gmail_get_message"
+            - "gmail_get_attachment"
+            - "drive_search"
+            - "drive_get_file"
         decision: "allow"
         priority: 10
       - match:
@@ -1503,6 +1528,11 @@ service_profiles:
               - "ucp_add_to_cart"
               - "ucp_get_cart"
               - "ucp_transfer_checkout_to_human"
+              - "gmail_search"
+              - "gmail_get_message"
+              - "gmail_get_attachment"
+              - "drive_search"
+              - "drive_get_file"
           decision: "allow"
           priority: 10
         - match:
@@ -1815,3 +1845,4 @@ browser_handoff_config:
 # OpenAI-compatible endpoint, with embedding_base_url (EMBEDDING_BASE_URL) and
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See AGENTS.md "Embedding Providers".
+

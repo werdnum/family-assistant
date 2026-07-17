@@ -611,7 +611,9 @@ async def send_message_to_user_tool(
                         actual_attachment_id = attachment_id
 
                     attachment = await attachment_registry.get_attachment(
-                        exec_context.db_context, actual_attachment_id
+                        exec_context.db_context,
+                        actual_attachment_id,
+                        acting_user_id=exec_context.user_id,
                     )
 
                     if not attachment:
@@ -642,6 +644,7 @@ async def send_message_to_user_tool(
             conversation_id=str(target_chat_id),  # Pass as string
             text=message_content,
             attachment_ids=validated_attachment_ids,
+            on_behalf_of_user_id=exec_context.user_id,
             # parse_mode can be added if needed, default is plain text
         )
 
@@ -727,7 +730,9 @@ async def get_attachment_info_tool(
         attachment_registry = exec_context.attachment_registry
 
         # Retrieve attachment metadata
-        attachment = await attachment_registry.get_attachment(db_context, attachment_id)
+        attachment = await attachment_registry.get_attachment(
+            db_context, attachment_id, acting_user_id=exec_context.user_id
+        )
 
         if not attachment:
             logger.warning(f"Attachment {attachment_id} not found")

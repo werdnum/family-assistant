@@ -33,6 +33,7 @@ BASE_UI_ENDPOINTS = [
     ("/documents/upload", "Document Upload Page"),
     ("/chat", "Chat Interface Page"),
     ("/settings/tokens", "Manage API Tokens UI Page"),
+    ("/settings/accounts", "Connected Accounts UI Page"),
     ("/events", "Events List Page"),
     ("/events/non_existent_event", "Event Detail Page"),
     ("/event-listeners", "Event Listeners List Page"),

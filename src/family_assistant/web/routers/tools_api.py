@@ -18,6 +18,7 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.types import ToolResult
 from family_assistant.web.dependencies import (
+    get_current_user,
     get_db,
     get_tools_provider_dependency,
 )
@@ -37,6 +38,7 @@ async def execute_tool_api(
     tool_name: str,
     request: Request,  # Keep request for potential context later
     payload: ToolExecutionRequest,
+    current_user: Annotated[dict, Depends(get_current_user)],
     tools_provider: Annotated[ToolsProvider, Depends(get_tools_provider_dependency)],
     db_context: Annotated[
         DatabaseContext, Depends(get_db)
@@ -83,7 +85,8 @@ async def execute_tool_api(
     execution_context = ToolExecutionContext(
         interface_type="api",  # Identify interface
         conversation_id=str(uuid.uuid4()),
-        user_name="APIUser",  # Added
+        user_name=current_user.get("user_label") or current_user["user_identifier"],
+        user_id=current_user["user_identifier"],
         turn_id=str(uuid.uuid4()),
         db_context=db_context,
         # Infrastructure fields (required - no defaults)
@@ -128,6 +131,12 @@ async def execute_tool_api(
             processing_service.service_config.allow_wake_llm
             if processing_service
             else True
+        ),
+        google_credentials=(
+            processing_service.google_credentials if processing_service else None
+        ),
+        google_api_backend=(
+            processing_service.google_api_backend if processing_service else None
         ),
     )
 

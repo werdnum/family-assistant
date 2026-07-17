@@ -130,6 +130,8 @@ async def test_image_handling_with_real_db(
             server_url="http://localhost:8000",
             app_config=AppConfig(),
             attachment_registry=registry,  # Provide the real registry
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # 4. Simulate a user message containing an internal attachment URL

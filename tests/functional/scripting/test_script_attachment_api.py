@@ -270,7 +270,7 @@ class TestAttachmentAPI:
         # Verify we can retrieve it
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_metadata = await attachment_registry.get_attachment(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_metadata is not None
             assert retrieved_metadata.source_type == "script"
@@ -280,7 +280,7 @@ class TestAttachmentAPI:
 
             # Verify content
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_content == content.encode("utf-8")
 
@@ -311,7 +311,7 @@ class TestAttachmentAPI:
         # Verify content
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_content == content
 
@@ -340,7 +340,7 @@ class TestAttachmentAPI:
         # Verify attachment was created and content is correct
         async with DatabaseContext(engine=db_engine) as db_context:
             retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id
+                db_context, metadata.attachment_id, acting_user_id=None
             )
             assert retrieved_content is not None
             retrieved_data = json.loads(retrieved_content.decode("utf-8"))
@@ -476,6 +476,8 @@ class TestCreateAttachmentAPI:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             api = create_attachment_api(execution_context)
@@ -502,6 +504,8 @@ class TestCreateAttachmentAPI:
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             with pytest.raises(
@@ -533,6 +537,8 @@ class TestScriptIntegration:
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -574,6 +580,8 @@ print("Hello world")
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Create tools provider with attachment tools
@@ -644,6 +652,8 @@ result
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -686,6 +696,8 @@ result == None
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -728,6 +740,8 @@ attachment_list()
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -768,7 +782,7 @@ attachment_id
         # Verify the attachment exists and has correct metadata
         async with DatabaseContext(engine=db_engine) as verify_context:
             metadata = await attachment_registry.get_attachment(
-                verify_context, attachment_id
+                verify_context, attachment_id, acting_user_id=None
             )
             assert metadata is not None
             assert metadata.source_type == "script"
@@ -778,7 +792,7 @@ attachment_id
 
             # Verify content
             content = await attachment_registry.get_attachment_content(
-                verify_context, attachment_id
+                verify_context, attachment_id, acting_user_id=None
             )
             assert content == b"Hello from script!"
 
@@ -802,6 +816,8 @@ attachment_id
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -851,7 +867,7 @@ attachment_id
         # Verify the attachment content is valid JSON
         async with DatabaseContext(engine=db_engine) as verify_context:
             content = await attachment_registry.get_attachment_content(
-                verify_context, attachment_id
+                verify_context, attachment_id, acting_user_id=None
             )
             assert content is not None
             data = json.loads(content.decode("utf-8"))
@@ -879,6 +895,8 @@ attachment_id
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -940,6 +958,8 @@ metadata = attachment_get(attachment_id)
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -994,6 +1014,8 @@ raw
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -1034,6 +1056,8 @@ raw
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)

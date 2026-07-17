@@ -320,6 +320,86 @@ The following environment variable can be used instead of hardcoding the value i
   - Found in the Mailgun dashboard under Sending → Webhooks
   - Example: `export MAILGUN_WEBHOOK_SIGNING_KEY=your-signing-key-here`
 
+### Environment Variables for Google Integration (Gmail & Drive)
+
+Per-user Gmail and Drive access is enabled by configuring an OAuth client in Google Cloud Console
+and a Fernet encryption key for storing refresh tokens at rest. All three secrets below must be
+present; if any is missing the integration is disabled at startup with a clear error naming the
+unmet condition. See also `docs/design/user-scoped-google-data-access.md` and the
+[Connect your Google account](docs/user/USER_GUIDE.md#connect-your-google-account) section of the
+user guide.
+
+- **`GOOGLE_OAUTH_CLIENT_ID`** - OAuth 2.0 client ID from Google Cloud Console.
+
+  - Maps to `google_integration.oauth_client_id` in config.
+  - Example: `export GOOGLE_OAUTH_CLIENT_ID=1234567890-abc.apps.googleusercontent.com`
+
+- **`GOOGLE_OAUTH_CLIENT_SECRET`** - OAuth 2.0 client secret. Treated as a secret and redacted from
+  logged config and diagnostics export.
+
+  - Maps to `google_integration.oauth_client_secret` in config.
+  - Example: `export GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-...`
+
+- **`CREDENTIAL_ENCRYPTION_KEY`** - URL-safe base64-encoded Fernet key used to encrypt stored OAuth
+  refresh tokens at rest. Treated as a secret and redacted from logged config. Generate one with:
+
+  ```bash
+  python -c "from family_assistant.services.credential_encryption import generate_key; print(generate_key())"
+  ```
+
+  Keep this key stable across deployments. A decryption failure (wrong or changed key) is treated as
+  a configuration error: the stored connection row is left untouched, so restoring the correct key
+  restores access without any user re-authorization.
+
+  - Maps to `google_integration.credential_encryption_key` in config.
+
+**`google_integration` config section:**
+
+```yaml
+google_integration:
+  oauth_client_id: ""        # env GOOGLE_OAUTH_CLIENT_ID
+  oauth_client_secret: ""    # env GOOGLE_OAUTH_CLIENT_SECRET (secret, redacted)
+  credential_encryption_key: ""  # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
+
+  # Operator-tunable DATA scopes. This list narrows the grant — you can remove
+  # drive.readonly to get Gmail-only, for example. You cannot add write-capable
+  # scopes (gmail.send, drive, etc.); unlisted write scopes cause a startup error.
+  # The identity scopes openid and email are always appended in code and are not
+  # configurable here.
+  scopes:
+    - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/drive.readonly"
+
+  # Require taint_policy.mode=enforce plus the matrix floor before registering
+  # the Gmail/Drive tools. Set false to accept running them under observe mode;
+  # the waiver is logged at startup and shown on the integration status endpoint.
+  require_taint_enforcement: true
+```
+
+**Scopes allowlist semantics.** The `scopes` list exists to *narrow* the grant, not to broaden it.
+Adding a write-capable scope (`gmail.send`, `gmail.modify`, `drive`, etc.) disables the integration
+with a clear startup error. Tool registration follows the configured scopes: `gmail_*` tools
+register only when `gmail.readonly` is present; `drive_search` registers with either
+`drive.readonly` or `drive.metadata.readonly`; `drive_get_file` requires `drive.readonly`.
+
+**Enablement conditions.** All of the following must hold for the integration to enable (validated
+at startup):
+
+- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `CREDENTIAL_ENCRYPTION_KEY` are all
+  set.
+- The `scopes` list passes allowlist validation.
+- Real web authentication is active (OIDC configured, `users` block resolution in effect). The
+  development `test_user` mode shares one identity across all callers and therefore refuses to
+  enable this feature.
+
+**`require_taint_enforcement`.** Defaults to `true`. With the default, the tools only register when
+`taint_policy.mode` is `enforce` and the effective policy matrix floors the key exfiltration sinks
+(`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`,
+`sensitive_read_broadening`) at `confirm` for untrusted content. If the check fails, the tools are
+not registered and the integration status endpoint reports the unmet condition. Setting
+`require_taint_enforcement: false` waives the check (logged at startup and surfaced on the status
+endpoint); the tools then register regardless of taint mode.
+
 ### Environment Variable for Read-Only Diagnostics Access
 
 - **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret that grants read-only access to the

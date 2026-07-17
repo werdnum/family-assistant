@@ -78,6 +78,8 @@ async def test_delegate_to_service_blocks_disallowed_source_profile() -> None:
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     result = await delegate_to_service_tool(
@@ -125,6 +127,8 @@ async def test_delegate_to_service_refuses_over_length_request_when_confirming()
         attachment_registry=None,
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     over_limit = "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
@@ -183,6 +187,8 @@ async def test_synchronous_delegate_to_service_passes_parent_taint_sources() -> 
         camera_backend=None,
         timezone=ZoneInfo("UTC"),
         taint_tracker=tracker,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
     result = await delegate_to_service_tool(
@@ -235,6 +241,8 @@ async def test_async_delegate_to_service_persists_parent_taint_state(
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
             taint_tracker=tracker,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await delegate_to_service_tool(

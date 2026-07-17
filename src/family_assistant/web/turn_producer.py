@@ -244,6 +244,7 @@ async def run_turn_producer(
                     final_reply_parts=final_reply_parts,
                     db_context=stream_db_context,
                     attachment_registry=attachment_registry,
+                    acting_user_id=user_id,
                 )
                 if reasoning_info is not None:
                     last_reasoning_info = reasoning_info
@@ -444,6 +445,7 @@ async def _publish_llm_event(
     final_reply_parts: list[str],
     db_context: DatabaseContext,
     attachment_registry: "AttachmentRegistry | None",
+    acting_user_id: str | None,
     # ast-grep-ignore: no-dict-any - returns the provider's reasoning_info blob (token counts, model id, optional vendor fields) verbatim for the turn_ended payload
 ) -> dict[str, Any] | None:
     """Translate a single LLMStreamEvent into hub publishes.
@@ -519,7 +521,7 @@ async def _publish_llm_event(
             for attachment_id in event.metadata["attachment_ids"]:
                 try:
                     attachment_info = await attachment_registry.get_attachment(
-                        db_context, attachment_id
+                        db_context, attachment_id, acting_user_id=acting_user_id
                     )
                 except Exception:
                     logger.exception(

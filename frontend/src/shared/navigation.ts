@@ -75,6 +75,18 @@ export const getNavigationItems = (currentPage?: string): NavigationItem[] => [
     title: 'Error Logs',
     icon: AlertTriangle,
   },
+  {
+    type: 'link',
+    to: '/settings/accounts',
+    title: 'Connected Accounts',
+    icon: Settings,
+  },
+  {
+    type: 'link',
+    to: '/settings/tokens',
+    title: 'API Tokens',
+    icon: Settings,
+  },
   { type: 'section', title: 'Help' },
   { type: 'external', href: '/docs/', title: 'Help', icon: HelpCircle },
   {

@@ -55,6 +55,8 @@ if TYPE_CHECKING:
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.security.taint import TaintMetadata, TaintSource
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.google_api import GoogleApiBackend
+    from family_assistant.services.google_credentials import GoogleCredentialResolver
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import OnDemandToolsView, ToolsProvider
@@ -97,6 +99,8 @@ class ProcessingService:
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
         on_demand_view: OnDemandToolsView | None = None,
+        google_credentials: GoogleCredentialResolver | None = None,
+        google_api_backend: GoogleApiBackend | None = None,
     ) -> None:
         self._llm_client = llm_client
         self.tools_provider = tools_provider
@@ -111,6 +115,8 @@ class ProcessingService:
         self.home_assistant_client = home_assistant_client
         self.camera_backend = camera_backend
         self.event_sources = event_sources
+        self.google_credentials = google_credentials
+        self.google_api_backend = google_api_backend
 
         # Compose helpers
         self.attachment_processor = AttachmentProcessor(
@@ -125,6 +131,8 @@ class ProcessingService:
             self.attachment_processor,
             attachment_registry,
             self.clock,
+            google_credentials=google_credentials,
+            google_api_backend=google_api_backend,
         )
         self.llm_loop = LLMStreamingLoop(
             llm_client,
@@ -214,6 +222,8 @@ class ProcessingService:
         replied_to_interface_id: str | None,
         thread_root_id_for_turn: int | None,
         subconversation_id: str | None,
+        *,
+        acting_user_id: str | None,
     ) -> tuple[list[LLMMessage], str]:
         """Load history and optional full-thread context for LLM processing."""
         history_limit, history_max_age = self.context_preparer.get_history_limits(
@@ -263,6 +273,7 @@ class ProcessingService:
                     conversation_id,
                     self.service_config.history_max_age_hours,
                     self.service_config.prompts,
+                    acting_user_id=acting_user_id,
                 )
             )
             if thread_attachments_context:
@@ -689,6 +700,7 @@ class ProcessingService:
             replied_to_interface_id=replied_to_interface_id,
             thread_root_id_for_turn=thread_root_id_for_turn,
             subconversation_id=subconversation_id,
+            acting_user_id=user_id,
         )
         if trigger_role == "system" and self._is_delegation_wake_trigger_content(
             user_content_for_history
@@ -733,6 +745,7 @@ class ProcessingService:
                 db_context,
                 conversation_id,
                 trigger_content_parts,
+                acting_user_id=user_id,
             )
         )
         messages_for_llm.extend(attachment_injection_messages)
@@ -741,7 +754,7 @@ class ProcessingService:
             trigger_attachments=trigger_attachments,
         )
         typed_messages_for_llm = await self.attachment_processor.convert_message_urls(
-            messages_for_llm
+            db_context, messages_for_llm, acting_user_id=user_id
         )
         return thread_root_id_for_turn, typed_messages_for_llm, context_taint_sources
 

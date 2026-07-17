@@ -320,6 +320,8 @@ result
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("America/New_York"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             engine = MontyEngine(default_timezone=ZoneInfo("Australia/Sydney"))

@@ -111,12 +111,14 @@ class TestAttachToResponseTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Create ScriptAttachment object for the tool
             # Get the attachment metadata from registry
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, mock_attachment_metadata.id
+                db_context, mock_attachment_metadata.id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -171,6 +173,8 @@ class TestAttachToResponseTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Create a mock ScriptAttachment that will fail validation
@@ -207,6 +211,8 @@ class TestAttachToResponseTool:
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Create a mock ScriptAttachment for this test
@@ -264,6 +270,7 @@ class TestSendMessageToUserWithAttachments:
                 interface_type="telegram",
                 turn_id="turn_123",
                 user_name="test_user",
+                user_id="test_user",
                 db_context=db_context,
                 processing_service=None,
                 clock=None,
@@ -273,6 +280,8 @@ class TestSendMessageToUserWithAttachments:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             result = await send_message_to_user_tool(
@@ -282,11 +291,13 @@ class TestSendMessageToUserWithAttachments:
                 attachment_ids=[mock_attachment_metadata.id],
             )
 
-            # Verify message was sent with attachments
+            # Verify message was sent with attachments, delivered on behalf of
+            # the acting user so owner-scoped attachments survive delivery.
             mock_chat_interface.send_message.assert_called_once_with(
                 conversation_id="456789",
                 text="Here's your document",
                 attachment_ids=[mock_attachment_metadata.id],
+                on_behalf_of_user_id="test_user",
             )
 
             assert "Message sent successfully" in result
@@ -318,6 +329,8 @@ class TestSendMessageToUserWithAttachments:
                 attachment_registry=None,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             result = await send_message_to_user_tool(
@@ -331,6 +344,7 @@ class TestSendMessageToUserWithAttachments:
                 conversation_id="456789",
                 text="Just a message",
                 attachment_ids=None,
+                on_behalf_of_user_id=None,
             )
 
             assert "Message sent successfully" in result
@@ -459,11 +473,13 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Get attachment metadata
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, image_id
+                db_context, image_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -567,10 +583,12 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, file_id
+                db_context, file_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -648,10 +666,12 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, image_id
+                db_context, image_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 
@@ -735,10 +755,12 @@ class TestHighlightImageTool:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             attachment_metadata = await attachment_registry.get_attachment(
-                db_context, image_id
+                db_context, image_id, acting_user_id=None
             )
             assert attachment_metadata is not None
 

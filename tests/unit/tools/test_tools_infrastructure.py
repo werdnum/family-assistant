@@ -72,6 +72,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_dict", {}, context)
@@ -127,6 +129,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_list", {}, context)
@@ -190,6 +194,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_complex", {}, context)
@@ -251,6 +257,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_none", {}, context)
@@ -296,6 +304,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_string", {}, context)
@@ -339,6 +349,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool("tool_returns_number", {}, context)
@@ -396,6 +408,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,  # No attachment registry
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Test with a valid UUID format but non-existent attachment
@@ -457,6 +471,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool(
@@ -514,6 +530,8 @@ class TestLocalToolsProvider:
             event_sources=None,
             attachment_registry=None,
             camera_backend=None,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await provider.execute_tool(
@@ -587,6 +605,8 @@ class TestLocalToolsProvider:
                 event_sources=None,
                 attachment_registry=None,
                 camera_backend=None,
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             result = await provider.execute_tool(
@@ -701,6 +721,8 @@ class TestPolicyConfirmationFlow:
             attachment_registry=None,
             camera_backend=None,
             request_confirmation_callback=confirmation_callback,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         tool_args = {"title": "Hello"}
@@ -765,6 +787,8 @@ class TestPolicyEnforcingToolsProvider:
             attachment_registry=None,
             camera_backend=None,
             request_confirmation_callback=request_confirmation_callback,
+            google_credentials=None,
+            google_api_backend=None,
         )
 
     @pytest.mark.asyncio

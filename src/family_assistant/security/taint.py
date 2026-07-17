@@ -614,6 +614,12 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         return SinkClass.SANDBOX_NETWORK
     if "browser" in tag_values:
         return SinkClass.ATTACKER_ADDRESSABLE_EGRESS
+    if "user_facing_media" in tag_values:
+        # Attaching media to the current turn's own reply is a local, same-user
+        # sink — it cannot address any external recipient. Placed below the
+        # high-risk read/code/browser rules so a tool that also carried one of
+        # those tags is never downgraded to user_local by this rule.
+        return SinkClass.USER_LOCAL
     if "external_comm" in tag_values:
         return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     if "delegation" in tag_values:

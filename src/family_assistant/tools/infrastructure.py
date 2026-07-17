@@ -1207,6 +1207,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         metadata_by_id = await context.attachment_registry.get_attachments(
             context.db_context,
             sorted(attachment_ids),
+            acting_user_id=context.user_id,
         )
         for attachment_id, metadata in metadata_by_id.items():
             merge_artifact_taint_into_context(

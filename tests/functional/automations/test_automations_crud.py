@@ -41,6 +41,8 @@ async def test_create_event_automation_basic(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Act
@@ -82,6 +84,8 @@ async def test_create_schedule_automation_basic(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Act - create daily 7am reminder
@@ -125,6 +129,8 @@ def _exec_context_with_profile(
         timezone=ZoneInfo("UTC"),
         processing_profile_id=processing_profile_id,
         user_id=user_id,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 
@@ -318,6 +324,8 @@ async def test_create_automation_cross_type_name_uniqueness(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create event automation
@@ -348,6 +356,8 @@ async def test_create_automation_cross_type_name_uniqueness(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -381,6 +391,8 @@ async def test_create_automation_with_script_action(db_engine: AsyncEngine) -> N
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         script_code = """
@@ -431,6 +443,8 @@ async def test_create_automation_with_stored_script_name(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -465,6 +479,8 @@ async def test_create_automation_invalid_type(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -497,6 +513,8 @@ async def test_create_automation_missing_trigger_config(db_engine: AsyncEngine) 
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Event automation missing event_source
@@ -532,6 +550,8 @@ async def test_create_automation_missing_recurrence_rule(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -564,6 +584,8 @@ async def test_list_automations_empty(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await list_automations_tool(exec_context=exec_context)
@@ -588,6 +610,8 @@ async def test_list_automations_with_both_types(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create event automation
@@ -642,6 +666,8 @@ async def test_list_automations_filter_by_type(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create multiple automations
@@ -703,6 +729,8 @@ async def test_list_automations_filter_enabled_only(db_engine: AsyncEngine) -> N
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create automations
@@ -766,6 +794,8 @@ async def test_get_automation_event_type(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create automation
@@ -822,6 +852,8 @@ async def test_get_automation_schedule_type(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -870,6 +902,8 @@ async def test_get_automation_not_found(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await get_automation_tool(
@@ -899,6 +933,8 @@ async def test_update_automation_action_config(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create automation
@@ -957,6 +993,8 @@ async def test_update_automation_description(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -1015,6 +1053,8 @@ async def test_update_automation_trigger_config_schedule(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -1070,6 +1110,8 @@ async def test_update_automation_not_found(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await update_automation_tool(
@@ -1100,6 +1142,8 @@ async def test_enable_disable_automation(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -1180,6 +1224,8 @@ async def test_delete_automation(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -1237,6 +1283,8 @@ async def test_delete_automation_not_found(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await delete_automation_tool(
@@ -1268,6 +1316,8 @@ async def test_create_event_automation_with_condition_script(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         result = await create_automation_tool(
@@ -1322,6 +1372,8 @@ async def test_update_event_automation_condition_script(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create without condition_script
@@ -1391,6 +1443,8 @@ async def test_update_event_automation_preserves_condition_script(
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
+            google_credentials=None,
+            google_api_backend=None,
         )
 
         # Create with condition_script

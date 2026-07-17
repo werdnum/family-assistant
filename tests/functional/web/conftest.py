@@ -1204,6 +1204,8 @@ def api_test_processing_service(
         server_url="http://testserver",
         app_config=AppConfig(),  # Minimal app_config for this test
         attachment_registry=attachment_registry_fixture,
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

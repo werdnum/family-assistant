@@ -104,6 +104,8 @@ class TestAttachmentWorkflows:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Step 1: Get camera snapshot (using mock camera tool)
@@ -223,6 +225,7 @@ class TestAttachmentWorkflows:
             all_attachments = await attachment_registry.list_attachments(
                 db_context=db_context,
                 conversation_id="test_conversation",
+                acting_user_id=None,
             )
 
             assert len(all_attachments) == 2
@@ -268,6 +271,8 @@ class TestAttachmentWorkflows:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             # Step 1: Simulate user uploading an image
@@ -357,6 +362,8 @@ class TestAttachmentWorkflows:
                 camera_backend=None,
                 chat_interface=mock_chat_interface,
                 timezone=ZoneInfo("UTC"),
+                google_credentials=None,
+                google_api_backend=None,
             )
 
             send_result = await attachment_tools_provider.execute_tool(
@@ -387,6 +394,7 @@ class TestAttachmentWorkflows:
                 conversation_id=str(target_chat_id),
                 text="Here's your enhanced photo!",
                 attachment_ids=[processed_attachment_id],
+                on_behalf_of_user_id=None,
             )
 
             # Verify the workflow created the expected attachments
@@ -394,6 +402,7 @@ class TestAttachmentWorkflows:
             all_attachments = await attachment_registry.list_attachments(
                 db_context=db_context,
                 conversation_id="test_conversation",
+                acting_user_id=None,
             )
 
             assert len(all_attachments) == 2  # User + processed attachment

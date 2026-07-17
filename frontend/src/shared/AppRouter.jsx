@@ -15,6 +15,7 @@ const EventsApp = lazy(() => import('../pages/Events/EventsApp'));
 const HistoryApp = lazy(() => import('../pages/History/HistoryApp'));
 const DocumentationApp = lazy(() => import('../pages/Documentation/DocumentationApp'));
 const TokenManagement = lazy(() => import('../pages/Settings/TokenManagement'));
+const ConnectedAccounts = lazy(() => import('../pages/Settings/ConnectedAccounts'));
 const DocumentsPage = lazy(() => import('../pages/Documents/DocumentsPage'));
 const VectorSearchPage = lazy(() => import('../pages/VectorSearch/VectorSearchPage'));
 const VoicePage = lazy(() => import('../voice/VoicePage'));
@@ -103,6 +104,7 @@ const AppRouter = () => {
 
         {/* Settings routes */}
         <Route path="/settings/tokens" element={withLayout(<TokenManagement />)} />
+        <Route path="/settings/accounts" element={withLayout(<ConnectedAccounts />)} />
 
         {/* Documents routes */}
         <Route path="/documents/*" element={withLayout(<DocumentsPage />)} />

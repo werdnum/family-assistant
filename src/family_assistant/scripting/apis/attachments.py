@@ -70,6 +70,7 @@ class ScriptAttachment:
         metadata: AttachmentMetadata,
         registry: AttachmentRegistry,
         db_context_getter: Callable,
+        user_id: str | None = None,
     ) -> None:
         """
         Initialize a ScriptAttachment.
@@ -78,10 +79,12 @@ class ScriptAttachment:
             metadata: The attachment metadata
             registry: The attachment registry for content access
             db_context_getter: Function that returns a DatabaseContext
+            user_id: User ID for authorization checks
         """
         self._metadata = metadata
         self._registry = registry
         self._db_context_getter = db_context_getter
+        self._acting_user_id = user_id
         self._content_cache: bytes | None = None
 
     def get_id(self) -> str:
@@ -129,7 +132,9 @@ class ScriptAttachment:
                 async def _get_content() -> bytes:
                     async with self._db_context_getter() as db_context:
                         content = await self._registry.get_attachment_content(
-                            db_context, self._metadata.attachment_id
+                            db_context,
+                            self._metadata.attachment_id,
+                            acting_user_id=self._acting_user_id,
                         )
                         if content is None:
                             raise RuntimeError(
@@ -179,7 +184,9 @@ class ScriptAttachment:
                     f"Retrieving content for attachment {self._metadata.attachment_id} using registry"
                 )
                 content = await self._registry.get_attachment_content(
-                    db_context, self._metadata.attachment_id
+                    db_context,
+                    self._metadata.attachment_id,
+                    acting_user_id=self._acting_user_id,
                 )
                 if content is None:
                     logger.error(
@@ -257,6 +264,7 @@ class AttachmentAPI:
         conversation_id: str | None = None,
         db_engine: AsyncEngine | None = None,
         db_context: DatabaseContext | None = None,
+        user_id: str | None = None,
     ) -> None:
         """
         Initialize the attachment API.
@@ -267,11 +275,13 @@ class AttachmentAPI:
             db_engine: Database engine for DatabaseContext (used as fallback)
             db_context: Existing database context to reuse (preferred over engine)
                        This allows reading attachments created in the same transaction.
+            user_id: User ID for authorization checks
         """
         self.attachment_registry = attachment_registry
         self.conversation_id = conversation_id
         self.db_engine = db_engine
         self.db_context = db_context
+        self._acting_user_id = user_id
 
     def _require_db_engine(self) -> AsyncEngine:
         """Return the configured engine or raise if this API cannot create DB contexts."""
@@ -286,7 +296,7 @@ class AttachmentAPI:
 
         async def _do_read(db_ctx: DatabaseContext) -> str | None:
             content = await self.attachment_registry.get_attachment_content(
-                db_ctx, attachment_id
+                db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
 
             if content is None:
@@ -311,7 +321,7 @@ class AttachmentAPI:
 
         async def _do_read(db_ctx: DatabaseContext) -> bytes | None:
             return await self.attachment_registry.get_attachment_content(
-                db_ctx, attachment_id
+                db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
 
         # Use existing db_context if available (allows reading uncommitted attachments)
@@ -327,7 +337,7 @@ class AttachmentAPI:
 
         async def _do_get(db_ctx: DatabaseContext) -> AttachmentInfoDict | None:
             attachment = await self.attachment_registry.get_attachment(
-                db_ctx, attachment_id
+                db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
 
             if not attachment:
@@ -366,6 +376,7 @@ class AttachmentAPI:
         ) -> builtins.list[AttachmentInfoDict]:
             attachments = await self.attachment_registry.list_attachments(
                 db_ctx,
+                acting_user_id=self._acting_user_id,
                 conversation_id=self.conversation_id,
                 source_type=source_type,
                 limit=limit,
@@ -401,7 +412,7 @@ class AttachmentAPI:
         async with DatabaseContext(engine=self._require_db_engine()) as db_context:
             # Verify attachment exists and is accessible
             attachment = await self.attachment_registry.get_attachment(
-                db_context, attachment_id
+                db_context, attachment_id, acting_user_id=self._acting_user_id
             )
 
             if not attachment:
@@ -485,4 +496,5 @@ def create_attachment_api(
         db_engine=execution_context.db_context.engine,
         # Pass db_context to allow reading attachments created in the same transaction
         db_context=execution_context.db_context,
+        user_id=execution_context.user_id,
     )

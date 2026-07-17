@@ -42,6 +42,8 @@ def make_exec_context(
         note_registry=note_registry,
         visibility_grants=visibility_grants,
         timezone=ZoneInfo("UTC"),
+        google_credentials=None,
+        google_api_backend=None,
     )
 
 

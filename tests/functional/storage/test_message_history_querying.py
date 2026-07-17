@@ -1099,4 +1099,6 @@ def _build_exec_context(
         processing_profile_id="default",
         embedding_generator=embedding_generator,
         taint_tracker=taint_tracker,
+        google_credentials=None,
+        google_api_backend=None,
     )
