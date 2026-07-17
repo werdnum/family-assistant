@@ -532,55 +532,72 @@ def confirmation_payload_block_reason(
     could not show the approver the full payload they would be approving,
     instead of rendering a truncated or misleading prompt. Only invoked once a
     call is known to be confirm-gated, so it never constrains unconfirmed
-    calls. Currently ``delegate_to_service`` requests and the computer-use
-    ``type`` text are bounded.
+    calls. Currently ``delegate_to_service`` requests and every executable
+    computer-use argument are bounded.
     """
     if tool_name == "delegate_to_service":
         return over_length_delegation_block_reason(
             str(arguments.get("user_request", ""))
         )
-    if tool_name == "type":
-        text = str(arguments.get("text", ""))
-        if len(text) > CONFIRMATION_VALUE_MAX_CHARS:
-            return (
-                f"Error: the text to type is {len(text)} characters, which exceeds the "
-                f"{CONFIRMATION_VALUE_MAX_CHARS}-character limit that keeps it fully reviewable "
-                "in a confirmation prompt. Type the content in smaller pieces."
-            )
+    if tool_name in COMPUTER_USE_FUNCTION_NAMES:
+        # Every executable argument must be fully reviewable: a truncated
+        # navigate URL or typed text would let the user approve payload they
+        # never saw. safety_decision is display-only metadata, not executed.
+        for key, value in sorted(arguments.items()):
+            if key == "safety_decision":
+                continue
+            rendered = str(value)
+            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
+                return (
+                    f"Error: the '{key}' argument is {len(rendered)} characters, which "
+                    f"exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character limit that keeps "
+                    "it fully reviewable in a confirmation prompt. Shorten it (for typed "
+                    "text, type the content in smaller pieces)."
+                )
     return None
 
 
-async def render_computer_use_safety_confirmation(
-    args: ToolArgumentsView,
-    context: ToolExecutionContext,
-) -> str:
-    """Render a confirmation prompt for Gemini computer-use safety decisions.
+def make_computer_use_safety_confirmation_renderer(
+    action_name: str,
+) -> ConfirmationRenderer:
+    """Build the safety-confirmation renderer for one computer-use action.
 
-    Shows the action name, the model's safety explanation, and remaining arguments.
+    The renderer protocol doesn't receive the tool name, and coordinate-only
+    actions (``click``, ``right_click``, ``move``, …) are indistinguishable
+    from their arguments alone — so each action gets a renderer with its name
+    baked in, ensuring the user always sees exactly which action they approve.
     """
-    _ = context
-    safety_decision = args.get("safety_decision")
 
-    explanation = "No explanation provided"
-    if isinstance(safety_decision, dict):
-        explanation = str(safety_decision.get("explanation", explanation))
+    async def render_computer_use_safety_confirmation(
+        args: ToolArgumentsView,
+        context: ToolExecutionContext,
+    ) -> str:
+        _ = context
+        safety_decision = args.get("safety_decision")
 
-    fields = [
-        "Computer-use safety check (model-detected risk):",
-        _confirmation_field("Explanation", explanation),
-    ]
+        explanation = "No explanation provided"
+        if isinstance(safety_decision, dict):
+            explanation = str(safety_decision.get("explanation", explanation))
 
-    if args.get("intent"):
-        fields.append(_confirmation_field("Intent", args.get("intent")))
+        fields = [
+            _confirmation_field("Action", action_name),
+            _confirmation_field("Explanation", explanation),
+        ]
 
-    for key, value in sorted(args.items()):
-        if key not in {"safety_decision", "intent"}:
-            fields.append(_confirmation_field(key, value))
+        if args.get("intent"):
+            fields.append(_confirmation_field("Intent", args.get("intent")))
 
-    return (
-        "The model has flagged a potential safety concern for this action. "
-        "Please review and approve if you want to proceed:\n" + "\n".join(fields)
-    )
+        for key, value in sorted(args.items()):
+            if key not in {"safety_decision", "intent"}:
+                fields.append(_confirmation_field(key, value))
+
+        return (
+            "Computer-use safety check: the model has flagged a potential safety "
+            "concern for this browser action. Please review and approve if you "
+            "want to proceed:\n" + "\n".join(fields)
+        )
+
+    return render_computer_use_safety_confirmation
 
 
 # Mapping of tool names to their confirmation renderers
@@ -600,7 +617,7 @@ _base_renderers: dict[str, ConfirmationRenderer] = {
 TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
     **_base_renderers,
     **{
-        name: render_computer_use_safety_confirmation
+        name: make_computer_use_safety_confirmation_renderer(name)
         for name in COMPUTER_USE_FUNCTION_NAMES
     },
 }
