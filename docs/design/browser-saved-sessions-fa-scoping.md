@@ -12,12 +12,13 @@ is called out explicitly.
 
 ## What shipped (browser-server), in one paragraph
 
-Jars are AEAD-encrypted at rest (`BROWSER_JAR_KEY`, fail-closed 503 without it), save/load/probe/
-invalidate/delete are audited, no cookie material or probe internals appear in any API response or
-log, load happens only at session creation, `exec` is default-deny in jar-loaded sessions, and
-exact-origin navigation confinement (documents/forms in all frames, redirects aborted pre-request,
-off-scope popups closed, service workers blocked) is implemented and on-by-default for jar-loaded
-agent sessions. Delete and invalidate terminate live sessions seeded from (or producing) the jar,
+Jars are AEAD-encrypted at rest (`BROWSER_JAR_KEY`, fail-closed 503 without it); save/refresh, load,
+invalidate, and delete are durably audited (`jar-audit.jsonl` — probes are *not*: they only stamp
+freshness metadata); no cookie material or probe internals appear in any API response or log; load
+happens only at session creation, `exec` is default-deny in jar-loaded sessions, and exact-origin
+navigation confinement (documents/forms in all frames, redirects aborted pre-request, off-scope
+popups closed, service workers blocked) is implemented and on-by-default for jar-loaded agent
+sessions. Delete and invalidate terminate live sessions seeded from (or producing) the jar,
 cross-pod, including a noVNC watchdog. The design doc's two acceptance prerequisites for enabling
 `load_saved_session` — origin confinement and `exec` default-deny — **are both in place**.
 
@@ -196,9 +197,13 @@ default-off flag; nothing is reachable until an operator flips it.
   `nav_allowlist`) → creates the jar-loaded session → post-create rebinding check (delta #4) →
   navigates to an in-scope start page and returns its snapshot. The create response alone is a blank
   page (`about:blank` — `CreateSessionRequest` takes no landing URL), so the tool must explicitly
-  `goto` before snapshotting: default to the jar's sole origin's root, and accept an optional
-  in-scope `start_url` argument for multi-origin jars (validated against `origins` ∪ `nav_allowlist`
-  FA-side; confinement blocks it server-side anyway).
+  `goto` before snapshotting. Start page rule, deterministic in all cases: an optional in-scope
+  `start_url` argument (validated against `origins` ∪ `nav_allowlist` FA-side; confinement blocks it
+  server-side anyway) wins when supplied; when omitted, the root of the **first entry of the jar's
+  stored `origins` list** (single-origin jars: the only origin; multi-origin jars: a deterministic
+  if arbitrary pick — stored order is caller order for new saves but re-sorted by a narrowing
+  refresh, so companion #3's form should put the capture origin first, and the snapshot makes
+  wherever we landed obvious).
 - Registration metadata: `load_saved_session` returns live web content, so it carries the same
   taint-relevant tags as `browser_open` (`BROWSER`, `STATE_CHANGING`, `EXTERNAL_COMM`,
   `OUTPUT_UNTRUSTED`). (`derive_tool_result_taint_source()` already defaults an *untagged* result to
