@@ -369,7 +369,7 @@ def evaluate_oauth_integration_state(
     if unsupported:
         return disabled(
             f"{spec.display_name} integration is disabled: unsupported scope(s) "
-            f"{sorted(unsupported)!r} configured. Only the read-only scopes "
+            f"{sorted(unsupported)!r} configured. Only the supported scopes "
             f"{sorted(spec.supported_scopes)!r} are allowed; remove the extra "
             f"scope(s) from {spec.config_attr}.scopes."
         )

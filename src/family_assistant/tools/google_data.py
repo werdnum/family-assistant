@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from markdownify import markdownify
 
+from family_assistant.services.api_backend import ApiBackendError
 from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
 from family_assistant.services.oauth_credentials import (
     OAuthCredentialError,
@@ -31,7 +32,7 @@ from family_assistant.tools.types import ToolAttachment, ToolResult
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
-    from family_assistant.services.api_backend import ApiResponse
+    from family_assistant.services.api_backend import ApiBackend, ApiResponse
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -284,15 +285,15 @@ async def _google_request(
         )
 
     access_token = await resolver.access_token_for(exec_context, scope)
-    response = await backend.request(
-        method=method, url=url, access_token=access_token, params=params
+    response = await _backend_request(
+        backend, method=method, url=url, access_token=access_token, params=params
     )
     if response.status_code == 401:
         if exec_context.user_id is not None:
             resolver.evict_cached_token(exec_context.user_id)
         access_token = await resolver.access_token_for(exec_context, scope)
-        response = await backend.request(
-            method=method, url=url, access_token=access_token, params=params
+        response = await _backend_request(
+            backend, method=method, url=url, access_token=access_token, params=params
         )
 
     if 200 <= response.status_code < 300:
@@ -302,6 +303,29 @@ async def _google_request(
             )
         return response
     raise _GoogleToolError(_format_api_error(response))
+
+
+async def _backend_request(
+    backend: ApiBackend,
+    *,
+    method: str,
+    url: str,
+    access_token: str,
+    params: Mapping[str, str] | None,
+) -> ApiResponse:
+    """Call the shared backend, naming the provider in transport errors.
+
+    The backend is provider-neutral and shared, so its transport/oversize
+    messages carry no provider name; these errors deliberately propagate past
+    the tool boundary to the generic tool-error renderer, where the user must
+    still see which provider failed ("Google API request to ... failed").
+    """
+    try:
+        return await backend.request(
+            method=method, url=url, access_token=access_token, params=params
+        )
+    except ApiBackendError as exc:
+        raise ApiBackendError(f"{GOOGLE_PROVIDER.display_name} {exc}") from exc
 
 
 def _format_api_error(response: ApiResponse) -> str:

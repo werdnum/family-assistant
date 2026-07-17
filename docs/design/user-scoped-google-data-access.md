@@ -83,6 +83,19 @@ explicitly, rather than growing machinery. Accepted simplifications are collecte
 
 ## Design Overview
 
+> **Naming note (post-MVP refactor).** After the MVP landed, the implementation was generalized into
+> a provider-agnostic OAuth layer (`OAuthProviderSpec` in `services/oauth_provider.py`, with
+> `GOOGLE_PROVIDER` in `services/google_provider.py` as its first instance) so future providers plug
+> in without re-threading. Names used in this document map to the code as follows:
+> `GoogleCredentialResolver` → `OAuthCredentialResolver` (`services/oauth_credentials.py`),
+> `GoogleApiBackend` → `ApiBackend` (`services/api_backend.py`), `GoogleIntegrationState` →
+> `OAuthIntegrationState` (`services/oauth_integration_state.py`), tables
+> `user_google_connections`/`pending_google_oauth_flows` → `user_oauth_connections`/
+> `pending_oauth_flows` (repository `db.oauth_connections`), execution-context fields
+> `google_credentials`/`google_api_backend` → `credential_resolvers` (a per-provider mapping)/
+> `api_backend`, and tool tag `google_personal_data` → `connected_account_data`. The design itself
+> is unchanged.
+
 Three layers, each independently testable:
 
 1. **Connections** — OAuth flow + encrypted storage (`user_google_connections` table,

@@ -23,7 +23,7 @@ from family_assistant.security.taint import (
     derive_tool_result_taint_source,
     resolve_tool_sink_class,
 )
-from family_assistant.services.api_backend import ApiResponse
+from family_assistant.services.api_backend import ApiBackendError, ApiResponse
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.google_provider import GoogleScope
 from family_assistant.services.oauth_credentials import (
@@ -77,6 +77,7 @@ class FakeApiBackend:
     routes: dict[str, dict[tuple[str, str], object]] = field(default_factory=dict)
     scripted: list[tuple[int, bytes]] = field(default_factory=list)
     requests: list[tuple[str, str, str]] = field(default_factory=list)
+    transport_error: Exception | None = None
 
     async def request(
         self,
@@ -87,6 +88,8 @@ class FakeApiBackend:
         params: Mapping[str, str] | None = None,
     ) -> ApiResponse:
         self.requests.append((method, url, access_token))
+        if self.transport_error is not None:
+            raise self.transport_error
         if self.scripted:
             status, body = self.scripted.pop(0)
             return ApiResponse(status_code=status, content=body)
@@ -211,6 +214,29 @@ async def test_no_acting_user_fails_closed(db_engine: AsyncEngine) -> None:
         context = _make_context(db, user_id=None, resolver=resolver, backend=backend)
         result = await gmail_search_tool(context, query="hello")
     assert "acting user" in result.get_text().lower()
+
+
+@pytest.mark.asyncio
+async def test_transport_error_names_the_provider(db_engine: AsyncEngine) -> None:
+    """Backend transport errors propagate with the provider named.
+
+    The shared backend's message is provider-neutral; the tool layer must
+    re-raise it prefixed with the provider so the generic tool-error renderer
+    still tells the user which integration failed.
+    """
+    resolver = FakeCredentialResolver(tokens={"user-a": "tok-a"})
+    backend = FakeApiBackend(
+        transport_error=ApiBackendError(
+            "API request to https://gmail.googleapis.com/gmail/v1/users/me/messages "
+            "failed"
+        )
+    )
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        with pytest.raises(ApiBackendError, match=r"^Google API request to "):
+            await gmail_search_tool(context, query="hello")
 
 
 # --------------------------------------------------------------------------- #
