@@ -813,6 +813,13 @@ various tasks with dark mode support and mobile optimization.
   it okay to use the web browser for this?"). This is normal and helps it use the most appropriate
   tools.
 
+- **Visual Browsing Safety Confirmations:** During visual web browsing (`/browse_visual`), Gemini's
+  built-in safety checks pause consequential actions — confirming a payment, sending a message,
+  accepting terms — and ask you to approve before the click happens. The same pause fires if the
+  page appears to contain hidden instructions trying to hijack the assistant (prompt injection).
+  You'll see the action plus the model's explanation; declining stops that action but not the
+  session. See the [Browser Automation Guide](browser_automation.md) for details.
+
 - **Event Automations:** If an event automation isn't triggering as expected: \*Use "Show me recent
   events from [source]" to see what events are being captured \*Use the test tool to check if your
   conditions would match recent events \*Make sure you're using the exact field names from the event

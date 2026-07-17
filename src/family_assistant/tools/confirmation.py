@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol, cast
 
 from family_assistant import calendar_integration
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -540,8 +541,41 @@ def confirmation_payload_block_reason(
     return None
 
 
+async def render_computer_use_safety_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for Gemini computer-use safety decisions.
+
+    Shows the action name, the model's safety explanation, and remaining arguments.
+    """
+    _ = context
+    safety_decision = args.get("safety_decision")
+
+    explanation = "No explanation provided"
+    if isinstance(safety_decision, dict):
+        explanation = str(safety_decision.get("explanation", explanation))
+
+    fields = [
+        "Computer-use safety check (model-detected risk):",
+        _confirmation_field("Explanation", explanation),
+    ]
+
+    if args.get("intent"):
+        fields.append(_confirmation_field("Intent", args.get("intent")))
+
+    for key, value in sorted(args.items()):
+        if key not in {"safety_decision", "intent"}:
+            fields.append(_confirmation_field(key, value))
+
+    return (
+        "The model has flagged a potential safety concern for this action. "
+        "Please review and approve if you want to proceed:\n" + "\n".join(fields)
+    )
+
+
 # Mapping of tool names to their confirmation renderers
-TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
+_base_renderers: dict[str, ConfirmationRenderer] = {
     "add_calendar_event": render_add_calendar_event_confirmation,
     "delete_calendar_event": render_delete_calendar_event_confirmation,
     "modify_calendar_event": render_modify_calendar_event_confirmation,
@@ -552,4 +586,12 @@ TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
     "send_message_to_user": render_send_message_to_user_confirmation,
     "ingest_document_from_url": render_ingest_document_from_url_confirmation,
     "delegate_to_service": render_delegate_to_service_confirmation,
+}
+
+TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
+    **_base_renderers,
+    **{
+        name: render_computer_use_safety_confirmation
+        for name in COMPUTER_USE_FUNCTION_NAMES
+    },
 }

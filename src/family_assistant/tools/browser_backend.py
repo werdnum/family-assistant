@@ -271,7 +271,9 @@ class BrowserBackend(Protocol):
     # ast-grep-ignore: no-dict-any - JS return values are genuinely arbitrary JSON
     async def evaluate(self, code: str) -> Any: ...  # noqa: ANN401
 
-    async def mouse_click(self, x: float, y: float) -> None: ...
+    async def mouse_click(
+        self, x: float, y: float, *, button: str = "left", click_count: int = 1
+    ) -> None: ...
 
     async def mouse_move(self, x: float, y: float) -> None: ...
 
@@ -284,6 +286,10 @@ class BrowserBackend(Protocol):
     async def keyboard_type(self, text: str) -> None: ...
 
     async def keyboard_press(self, keys: str) -> None: ...
+
+    async def keyboard_down(self, key: str) -> None: ...
+
+    async def keyboard_up(self, key: str) -> None: ...
 
     async def go_back(self) -> None: ...
 
@@ -390,9 +396,19 @@ class LocalPlaywrightBackend:
         except PlaywrightError as exc:
             raise BrowserBackendError(str(exc)) from exc
 
-    async def mouse_click(self, x: float, y: float) -> None:
+    async def mouse_click(
+        self, x: float, y: float, *, button: str = "left", click_count: int = 1
+    ) -> None:
         page = await self._page()
-        await page.mouse.click(x, y)
+        # Validate button parameter for typing purposes
+        if button not in {"left", "middle", "right"}:
+            raise BrowserBackendError(f"Invalid mouse button: {button!r}")
+        await page.mouse.click(
+            x,
+            y,
+            button=cast("Literal['left', 'middle', 'right']", button),
+            click_count=click_count,
+        )
         with contextlib.suppress(PlaywrightError):
             await page.wait_for_load_state("domcontentloaded", timeout=2000)
 
@@ -421,6 +437,14 @@ class LocalPlaywrightBackend:
         await page.keyboard.press(keys)
         with contextlib.suppress(PlaywrightError):
             await page.wait_for_load_state("domcontentloaded", timeout=2000)
+
+    async def keyboard_down(self, key: str) -> None:
+        page = await self._page()
+        await page.keyboard.down(key)
+
+    async def keyboard_up(self, key: str) -> None:
+        page = await self._page()
+        await page.keyboard.up(key)
 
     async def go_back(self) -> None:
         page = await self._page()
@@ -683,7 +707,17 @@ class RemoteBrowserBackend:
     def screen_height(self) -> int:
         return _REMOTE_VIEWPORT_HEIGHT
 
-    async def mouse_click(self, x: float, y: float) -> None:
+    async def mouse_click(
+        self, x: float, y: float, *, button: str = "left", click_count: int = 1
+    ) -> None:
+        if button != "left":
+            raise BrowserBackendError(
+                f"browser-server only supports left mouse clicks, not {button!r}"
+            )
+        if click_count != 1:
+            raise BrowserBackendError(
+                f"browser-server only supports single clicks, not click_count={click_count}"
+            )
         await self._command("mouse_click", {"x": x, "y": y})
 
     async def mouse_move(self, x: float, y: float) -> None:
@@ -703,6 +737,12 @@ class RemoteBrowserBackend:
 
     async def keyboard_press(self, keys: str) -> None:
         await self._command("keyboard_press", {"keys": keys})
+
+    async def keyboard_down(self, key: str) -> None:
+        raise BrowserBackendError("browser-server does not support keyboard_down")
+
+    async def keyboard_up(self, key: str) -> None:
+        raise BrowserBackendError("browser-server does not support keyboard_up")
 
     async def go_back(self) -> None:
         await self._command("navigate_back", {})

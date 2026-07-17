@@ -1,0 +1,397 @@
+"""Tests for Gemini computer-use safety confirmation handling in ToolExecutor."""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+from unittest.mock import Mock
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from family_assistant.config_models import AppConfig
+from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.processing.attachments import AttachmentProcessor
+from family_assistant.processing.tool_execution import ToolExecutor
+from family_assistant.processing.types import ToolExecutionResult
+from family_assistant.tools.types import ConfirmationOutcome, ToolResult
+from family_assistant.utils.clock import SystemClock
+
+if TYPE_CHECKING:
+    from family_assistant.tools import ToolExecutionContext
+
+
+class MinimalToolsProvider:
+    """Minimal fake tools provider for testing."""
+
+    def __init__(
+        self,
+        result: str | ToolResult = "OK",
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.executed_tool_names: list[str] = []
+        self.executed_arguments: list[dict] = []  # noqa: A003 - Test fixture shadow builtin dict
+
+    async def get_tool_definitions(self) -> list:  # noqa: A002 - Test fixture shadow builtin list
+        return []
+
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: dict,  # noqa: A002 - Test fixture shadow builtin dict
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        if self.error is not None:
+            raise self.error
+        self.executed_tool_names.append(name)
+        assert "safety_decision" not in arguments
+        self.executed_arguments.append(dict(arguments))
+        return self.result
+
+    async def close(self) -> None:
+        pass
+
+
+class MinimalToolExecutorConfig:
+    """Minimal config for ToolExecutor."""
+
+    timezone = ZoneInfo("UTC")
+    id = "test"
+    visibility_grants = None
+    default_note_visibility_labels = None
+    required_note_visibility_labels = None
+    allowed_note_visibility_labels = None
+    allow_wake_llm = True
+    note_registry = None
+
+
+def make_tool_executor(
+    provider: MinimalToolsProvider | None = None,
+) -> ToolExecutor:
+    """Create a ToolExecutor for testing."""
+    # Real AttachmentProcessor with no registry: results in these tests stay
+    # far below the large-result threshold, so it is a pass-through.
+    attachment_processor = AttachmentProcessor(
+        attachment_registry=None,
+        llm_client=Mock(),
+        app_config=AppConfig(),
+        clock=SystemClock(),
+    )
+    return ToolExecutor(
+        tools_provider=provider or MinimalToolsProvider(),
+        config=MinimalToolExecutorConfig(),  # type: ignore[arg-type]
+        attachment_processor=attachment_processor,
+        attachment_registry=None,
+        clock=SystemClock(),
+        google_credentials=None,
+        google_api_backend=None,
+    )
+
+
+class StubConfirmationCallback:
+    """Stub async confirmation callback for testing."""
+
+    def __init__(self, outcome: ConfirmationOutcome) -> None:
+        self.outcome = outcome
+        self.calls: list[dict] = []  # noqa: A003 - Test fixture shadow builtin dict
+
+    async def __call__(
+        self,
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: dict,  # noqa: A002 - Test fixture shadow builtin dict
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        self.calls.append({
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "tool_args": tool_args,
+            "interface_type": interface_type,
+            "conversation_id": conversation_id,
+        })
+        return self.outcome
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_stripped_before_execution() -> None:
+    """Test that safety_decision is always popped from arguments."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="test_tool",
+            arguments={
+                "param1": "value1",
+                "safety_decision": {"decision": "allowed", "explanation": "none"},
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=None,  # type: ignore[arg-type]
+        chat_interface=None,
+        request_confirmation_callback=None,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_arguments) == 1
+    assert provider.executed_arguments[0] == {"param1": "value1"}
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_require_confirmation_approved() -> None:
+    """Test tool execution when safety confirmation is approved."""
+    provider = MinimalToolsProvider(result=ToolResult(data={"status": "done"}))
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="approved"))
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "y": 200,
+                "intent": "click button",
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "Clicking confirm payment button",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=None,  # type: ignore[arg-type]
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_tool_names) == 1
+    assert provider.executed_tool_names[0] == "click"
+
+    assert len(callback.calls) == 1
+    callback_args = callback.calls[0]
+    assert callback_args["tool_name"] == "click"
+    assert "safety_decision" in callback_args["tool_args"]
+    assert callback_args["tool_args"]["x"] == 100
+
+    response_payload = json.loads(result.llm_message.content)
+    assert response_payload["safety_acknowledgement"] == "true"
+    assert response_payload["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_require_confirmation_rejected() -> None:
+    """Test tool NOT executed when safety confirmation is rejected."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="rejected"))
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "y": 200,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "Suspicious click",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=None,  # type: ignore[arg-type]
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_tool_names) == 0
+    assert "cancelled" in result.llm_message.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_require_confirmation_timed_out() -> None:
+    """Test tool NOT executed when confirmation times out."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="timed_out"))
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "Testing timeout",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=None,  # type: ignore[arg-type]
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_tool_names) == 0
+    assert "timed out" in result.llm_message.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_no_callback_available() -> None:
+    """Test error when safety confirmation needed but no callback."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "No callback scenario",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=None,  # type: ignore[arg-type]
+        chat_interface=None,
+        request_confirmation_callback=None,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_tool_names) == 0
+    assert "does not support confirmations" in result.llm_message.content
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_allowed_no_confirmation() -> None:
+    """Test tool execution when safety_decision is 'allowed' (no confirmation needed)."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="click",
+            arguments={
+                "x": 100,
+                "y": 200,
+                "safety_decision": {
+                    "decision": "allowed",
+                    "explanation": "Safe action",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=None,  # type: ignore[arg-type]
+        chat_interface=None,
+        request_confirmation_callback=None,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert len(provider.executed_tool_names) == 1
+    assert provider.executed_tool_names[0] == "click"
+
+
+@pytest.mark.asyncio
+async def test_safety_decision_approved_but_tool_fails() -> None:
+    """Test that no acknowledgement is added when tool execution fails."""
+    provider = MinimalToolsProvider(error=RuntimeError("Tool failed"))
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="approved"))
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="test_tool",
+            arguments={
+                "param": "value",
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "Test failure",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=None,  # type: ignore[arg-type]
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert "error" in result.llm_message.content.lower()
+    assert "safety_acknowledgement" not in result.llm_message.content

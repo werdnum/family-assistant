@@ -164,7 +164,7 @@ def translate_attachment_schemas_for_llm(
 ConfirmationCallbackProtocol = RequestConfirmationCallback
 
 
-def _confirmation_outcome_to_tool_result(
+def confirmation_outcome_to_tool_result(
     *,
     name: str,
     outcome: ConfirmationOutcome,
@@ -950,7 +950,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                 )
 
                 if confirmation_result.kind != "approved":
-                    return _confirmation_outcome_to_tool_result(
+                    return confirmation_outcome_to_tool_result(
                         name=name,
                         outcome=confirmation_result,
                     )
@@ -1301,7 +1301,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             return None
         if outcome.kind == "completed":
             return outcome.result or ToolResult(text="", attachments=None)
-        return _confirmation_outcome_to_tool_result(name=name, outcome=outcome)
+        return confirmation_outcome_to_tool_result(name=name, outcome=outcome)
 
     async def _record_policy_evaluation_audit(
         self,

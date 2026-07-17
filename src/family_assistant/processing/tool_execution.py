@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import traceback
@@ -23,7 +24,10 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.tools.attachment_utils import is_attachment_id
-from family_assistant.tools.infrastructure import ToolDescriptorProvider
+from family_assistant.tools.infrastructure import (
+    ToolDescriptorProvider,
+    confirmation_outcome_to_tool_result,
+)
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 from .types import (
@@ -59,6 +63,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+SAFETY_CONFIRMATION_TIMEOUT_SECONDS = 3600.0
 
 
 def _argument_attachment_ids(value: object) -> set[str]:
@@ -229,6 +235,123 @@ class ToolExecutor:
             taint_tracker=taint_tracker,
             taint_policy_snapshot=taint_policy_snapshot,
         )
+
+    @staticmethod
+    def _merge_safety_acknowledgement(result: ToolResult) -> None:
+        """Merge safety_acknowledgement into a successful tool result.
+
+        Modifies the result in-place to include the safety acknowledgement in
+        the JSON data that will be parsed by the LLM provider.
+        """
+        if result.data is None:
+            if result.text is not None:
+                result.data = {
+                    "result": result.text,
+                    "safety_acknowledgement": "true",
+                }
+                result.text = None
+        elif isinstance(result.data, dict):
+            result.data = {**result.data, "safety_acknowledgement": "true"}
+
+    async def _handle_safety_confirmation(
+        self,
+        *,
+        call_id: str,
+        function_name: str,
+        safety_decision: dict[str, object],
+        arguments: dict[str, object],
+        request_confirmation_callback: RequestConfirmationCallback,
+        tool_execution_context: ToolExecutionContext,
+        taint_metadata: TaintMetadata,
+    ) -> ToolExecutionResult | None:
+        """Handle safety confirmation for a tool call.
+
+        Returns None if confirmation was approved, else a ToolExecutionResult
+        indicating the rejection/failure.
+        """
+        logger.info(
+            "Tool '%s' requires safety confirmation: %s",
+            function_name,
+            safety_decision.get("explanation"),
+        )
+
+        tool_args_with_safety = {
+            **arguments,
+            "safety_decision": safety_decision,
+        }
+
+        try:
+            confirmation_result = await request_confirmation_callback(
+                interface_type=tool_execution_context.interface_type,
+                conversation_id=tool_execution_context.conversation_id,
+                turn_id=tool_execution_context.turn_id,
+                tool_name=function_name,
+                call_id=call_id,
+                tool_args=tool_args_with_safety,
+                timeout_seconds=SAFETY_CONFIRMATION_TIMEOUT_SECONDS,
+                context=tool_execution_context,
+            )
+        except (TimeoutError, asyncio.CancelledError) as conf_err:
+            logger.warning(
+                "Safety confirmation for tool '%s' failed: %s",
+                function_name,
+                conf_err,
+            )
+            error_msg = f"Action cancelled: Safety confirmation for tool '{function_name}' timed out or was cancelled."
+            return self._build_error_result(
+                call_id=call_id,
+                function_name=function_name,
+                error_content=error_msg,
+                error_traceback="",
+                taint_metadata=taint_metadata,
+            )
+        except Exception as conf_err:
+            logger.error(
+                "Error during safety confirmation for tool '%s': %s",
+                function_name,
+                conf_err,
+                exc_info=True,
+            )
+            return self._build_error_result(
+                call_id=call_id,
+                function_name=function_name,
+                error_content=f"Error during safety confirmation: {conf_err}",
+                error_traceback=traceback.format_exc(),
+                taint_metadata=taint_metadata,
+            )
+
+        if confirmation_result.kind != "approved":
+            logger.info(
+                "Safety confirmation for tool '%s' was not approved: %s",
+                function_name,
+                confirmation_result.kind,
+            )
+            outcome_result = confirmation_outcome_to_tool_result(
+                name=function_name,
+                outcome=confirmation_result,
+            )
+            result_content = (
+                outcome_result
+                if isinstance(outcome_result, str)
+                else outcome_result.get_text()
+            )
+            return ToolExecutionResult(
+                stream_event=LLMStreamEvent(
+                    type="tool_result",
+                    tool_call_id=call_id,
+                    tool_result=result_content,
+                ),
+                llm_message=ToolMessage(
+                    tool_call_id=call_id,
+                    content=result_content,
+                    name=function_name,
+                    taint_metadata=taint_metadata,
+                ),
+                auto_attachment_ids=None,
+                explicit_attachment_ids=None,
+            )
+
+        return None
 
     @staticmethod
     def _build_error_result(
@@ -699,7 +822,15 @@ class ToolExecutor:
                     taint_metadata=initial_taint_metadata,
                 )
 
-            # Execute tool
+            # Gemini computer-use models may attach a safety_decision to the
+            # call arguments; it is always popped since tool signatures don't
+            # accept it.
+            safety_decision = arguments.pop("safety_decision", None)
+            safety_confirmation_required = (
+                isinstance(safety_decision, dict)
+                and safety_decision.get("decision") == "require_confirmation"
+            )
+
             logger.info(
                 "Executing tool '%s' with argument keys: %s",
                 function_name,
@@ -726,6 +857,37 @@ class ToolExecutor:
                 taint_policy_snapshot=taint_policy_snapshot,
             )
 
+            if safety_confirmation_required and isinstance(safety_decision, dict):
+                if not request_confirmation_callback:
+                    logger.warning(
+                        "Tool '%s' requires safety confirmation but no callback available.",
+                        function_name,
+                    )
+                    error_content = (
+                        f"Action cannot be executed: Tool '{function_name}' requires safety confirmation, "
+                        "but this interface does not support confirmations. "
+                        f"Explanation: {safety_decision.get('explanation', 'No explanation provided')}"
+                    )
+                    return self._build_error_result(
+                        call_id=call_id,
+                        function_name=function_name,
+                        error_content=error_content,
+                        error_traceback="",
+                        taint_metadata=initial_taint_metadata,
+                    )
+
+                confirmation_result = await self._handle_safety_confirmation(
+                    call_id=call_id,
+                    function_name=function_name,
+                    safety_decision=safety_decision,
+                    arguments=arguments,
+                    request_confirmation_callback=request_confirmation_callback,
+                    tool_execution_context=tool_execution_context,
+                    taint_metadata=initial_taint_metadata,
+                )
+                if confirmation_result is not None:
+                    return confirmation_result
+
             result_or_error = await self._execute_tool_with_error_mapping(
                 function_name=function_name,
                 arguments=arguments,
@@ -741,7 +903,14 @@ class ToolExecutor:
             result = result_or_error
             explicit_attachment_ids: list[str] | None = None
 
+            if safety_confirmation_required and not isinstance(result, ToolResult):
+                # String results have no data dict to carry the acknowledgement;
+                # wrap them so the approved action is acknowledged to the API.
+                result = ToolResult(data={"result": str(result)})
+
             if isinstance(result, ToolResult):
+                if safety_confirmation_required:
+                    self._merge_safety_acknowledgement(result)
                 result_taint_metadata = (
                     tool_execution_context.tool_result_taint_metadata.get(call_id)
                 )

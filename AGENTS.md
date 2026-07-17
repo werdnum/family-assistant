@@ -429,6 +429,27 @@ surface in the error-log and diagnostics endpoints above), and to make `read_tex
 `jq_query` available in every profile so the assistant can always read back tool results that
 exceeded the large-result threshold and were auto-converted to attachments.
 
+### Gemini Computer Use (visual browser profile)
+
+The `browser_visual_profile` drives a browser via Gemini's native computer-use capability. It is
+enabled per profile with `enable_computer_use: true` on `processing_config` (Google provider only;
+combining it with a non-Google provider or `retry_config` is a startup error). When enabled:
+
+- The `types.Tool(computer_use=...)` tool is attached to every request with **prompt-injection
+  detection always on** (no waiver knob; detections surface as safety confirmations).
+- The model's predefined action space (`click`, `type`, `scroll`, `drag_and_drop`, …) executes
+  through the shared `BrowserBackend` (local Playwright or remote browser-server). Actions the
+  browser-server REST API cannot faithfully execute (non-left buttons, multi-clicks, key down/up)
+  fail with an explicit error rather than degrading silently; `computer_use_excluded_functions` on
+  `processing_config` can exclude them from the action space.
+- When the model attaches a `safety_decision` requiring confirmation to an action (payments,
+  messaging, terms-of-service, suspected prompt injection), the action pauses for user confirmation
+  through the standard tool-confirmation flow and, once approved, the acknowledgement is returned to
+  the API. Declines are reported back to the model without ending the turn.
+
+See [docs/design/gemini-computer-use-native.md](docs/design/gemini-computer-use-native.md) for the
+full design.
+
 ### Embedding Providers
 
 The embedding generator is selected from `embedding_model`/`embedding_provider`. By default the

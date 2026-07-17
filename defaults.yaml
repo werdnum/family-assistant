@@ -708,32 +708,43 @@ service_profiles:
     slash_commands:
       - "/browse"
   - id: "browser_visual_profile"
-    description: "Visual browser automation profile driven by Google's Computer Use model. Uses coordinate-based click/type/scroll against screenshots. Used when a task can only be solved visually (canvas, image maps, drag-and-drop on non-DOM elements). Typically invoked by delegation from browser_profile, which shares the same browser tab."
+    description: "Visual browser automation profile driven by Gemini's native computer-use capability. Uses coordinate-based click/type/scroll against screenshots. Used when a task can only be solved visually (canvas, image maps, drag-and-drop on non-DOM elements). Typically invoked by delegation from browser_profile, which shares the same browser tab."
     processing_config:
       # Using simple format (no retry/fallback for browser tasks)
       provider: "google"
       llm_model: "gemini-3.5-flash"
+      # Attach the native Gemini computer-use tool (prompt-injection detection
+      # over screenshots is always enabled with it). Actions the model flags
+      # with a safety decision require user confirmation before they run.
+      enable_computer_use: true
       max_iterations: 100
       prompts: # MERGES with default_profile_settings.processing_config.prompts
-        system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. Every browser action you take (navigate, click, scroll, etc.) automatically captures a screenshot which you will see. By default, ALL screenshots from your actions are sent to the user. For multi-step workflows where you only want to show specific screenshots (e.g., just the final result), use attach_to_response to select which ones to send. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
+        system_prompt: "You are an assistant with web browsing capabilities interacting with {user_name}. Every browser action you take (navigate, click, scroll, etc.) automatically captures a screenshot which you will see. By default, ALL screenshots from your actions are sent to the user. For multi-step workflows where you only want to show specific screenshots (e.g., just the final result), use attach_to_response to select which ones to send. Some sensitive actions (payments, sending messages, agreeing to terms) are paused for {user_name} to approve before they run; continue once approved, and respect a decline. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users. Current time is {current_time}."
     tools_policy: # REPLACES default_profile_settings.tools_policy entirely for this profile
       default_decision: "deny"
       rules:
         - match:
             names:
-              - "click_at"
-              - "type_text_at"
-              - "scroll_at"
-              - "open_web_browser"
+              - "click"
+              - "double_click"
+              - "triple_click"
+              - "middle_click"
+              - "right_click"
+              - "mouse_down"
+              - "mouse_up"
+              - "move"
+              - "type"
+              - "press_key"
+              - "key_down"
+              - "key_up"
+              - "hotkey"
+              - "scroll"
+              - "drag_and_drop"
               - "navigate"
-              - "search"
               - "go_back"
               - "go_forward"
-              - "key_combination"
-              - "wait_5_seconds"
-              - "hover_at"
-              - "drag_and_drop"
-              - "scroll_document"
+              - "take_screenshot"
+              - "wait"
               - "attach_to_response"
           decision: "allow"
           priority: 10

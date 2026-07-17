@@ -77,9 +77,17 @@ targets — use `/browse_visual`:
 
 - Every action returns a screenshot; the model visually locates elements and commands clicks by
   coordinates.
-- Uses Google's Gemini Computer Use model, so it's somewhat slower and more expensive per turn.
-- Available actions: click at a coordinate, type text at a location, scroll, drag-and-drop, hover,
-  keyboard shortcuts, navigate, back/forward, wait, search.
+- Uses Gemini's native computer-use capability (on Gemini 3.5 Flash), so it's somewhat slower and
+  more expensive per turn than `/browse`.
+- Available actions: single/double/triple/middle/right click, move/hover, type text, individual key
+  presses and hotkey combinations, scroll, drag-and-drop, navigate, back/forward, screenshot, wait.
+- **Prompt-injection detection** is always on: the model scans page screenshots for hidden
+  adversarial instructions (e.g., invisible "ignore your instructions" text) and pauses for your
+  confirmation instead of following them.
+- **Safety confirmations**: when the model is about to do something consequential — confirm a
+  payment, send a message, accept terms, modify account data — it pauses and asks you to approve
+  first. You'll see the action and the model's explanation; approve to continue or decline to stop
+  that action. Declining doesn't kill the session; the assistant is told and can adapt or wrap up.
 
 ## Delegation between profiles
 
