@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import time as time_module
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -123,7 +122,7 @@ class FakeBrowserBackend:
     async def extract_html(self, selector: str | None) -> str:
         return "<html></html>"
 
-    async def evaluate(self, code: str) -> Any:  # noqa: ANN401
+    async def evaluate(self, code: str) -> Any:  # noqa: ANN401 - JS evaluation returns arbitrary JSON, mirrors BrowserBackend protocol
         return None
 
     async def request_handoff(
@@ -498,21 +497,21 @@ class TestWait:
 
     @pytest.mark.asyncio
     async def test_wait_default(self, exec_context: ToolExecutionContext) -> None:
-        start = time_module.time()
-        await computer_use_wait(exec_context)
-        elapsed = time_module.time() - start
-        assert elapsed >= 0.9
+        with patch.object(cu_module.asyncio, "sleep", new=AsyncMock()) as sleep_mock:
+            await computer_use_wait(exec_context)
+        sleep_mock.assert_awaited_once_with(1)
 
     @pytest.mark.asyncio
     async def test_wait_clamped_zero(self, exec_context: ToolExecutionContext) -> None:
-        await computer_use_wait(exec_context, -10)
+        with patch.object(cu_module.asyncio, "sleep", new=AsyncMock()) as sleep_mock:
+            await computer_use_wait(exec_context, -10)
+        sleep_mock.assert_awaited_once_with(0)
 
     @pytest.mark.asyncio
     async def test_wait_clamped_max(self, exec_context: ToolExecutionContext) -> None:
-        start = time_module.time()
-        await computer_use_wait(exec_context, 100)
-        elapsed = time_module.time() - start
-        assert elapsed <= 31
+        with patch.object(cu_module.asyncio, "sleep", new=AsyncMock()) as sleep_mock:
+            await computer_use_wait(exec_context, 100)
+        sleep_mock.assert_awaited_once_with(30)
 
 
 class TestToolDefinitions:

@@ -395,8 +395,11 @@ async def test_safety_decision_approved_but_tool_fails() -> None:
     )
 
     assert isinstance(result, ToolExecutionResult)
-    assert "error" in result.llm_message.content.lower()
-    assert "safety_acknowledgement" not in result.llm_message.content
+    # The user approved the gated action, so even a failed attempt carries the
+    # acknowledgement — the model needs it to process the error and move on.
+    payload = json.loads(result.llm_message.content)
+    assert payload["safety_acknowledgement"] is True
+    assert "Tool failed" in payload["error"]
 
 
 @pytest.mark.asyncio

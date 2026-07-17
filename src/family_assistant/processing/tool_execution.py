@@ -918,6 +918,20 @@ class ToolExecutor:
                 span=span,
             )
             if isinstance(result_or_error, ToolExecutionResult):
+                if safety_confirmation_required:
+                    # The user approved the safety-gated action, so the
+                    # acknowledgement must reach the API even when the attempt
+                    # then failed — otherwise the model cannot process the
+                    # error and move past the safety gate.
+                    error_payload = json.dumps({
+                        "error": result_or_error.llm_message.content,
+                        "safety_acknowledgement": True,
+                    })
+                    result_or_error.llm_message = (
+                        result_or_error.llm_message.model_copy(
+                            update={"content": error_payload}
+                        )
+                    )
                 return result_or_error
 
             # Post-execution processing failures (attachment IO/enrichment/metadata
