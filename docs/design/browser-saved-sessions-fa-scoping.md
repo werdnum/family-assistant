@@ -12,15 +12,17 @@ is called out explicitly.
 
 ## What shipped (browser-server), in one paragraph
 
-Jars are AEAD-encrypted at rest (`BROWSER_JAR_KEY`, fail-closed 503 without it); save/refresh, load,
-invalidate, and delete are durably audited (`jar-audit.jsonl` — probes are *not*: they only stamp
-freshness metadata); no cookie material or probe internals appear in any API response or log; load
-happens only at session creation, `exec` is default-deny in jar-loaded sessions, and exact-origin
-navigation confinement (documents/forms in all frames, redirects aborted pre-request, off-scope
-popups closed, service workers blocked) is implemented and on-by-default for jar-loaded agent
-sessions. Delete and invalidate terminate live sessions seeded from (or producing) the jar,
-cross-pod, including a noVNC watchdog. The design doc's two acceptance prerequisites for enabling
-`load_saved_session` — origin confinement and `exec` default-deny — **are both in place**.
+Jars are AEAD-encrypted at rest (`BROWSER_JAR_KEY`, fail-closed 503 without it); jar operations are
+audited to `jar-audit.jsonl` — strictly (fail-closed) for save/refresh, best-effort for load and for
+delete/invalidate (which commit the kill-switch first and only log an audit-write failure); probes
+are not audited at all, they only stamp freshness metadata. No cookie material or probe internals
+appear in any API response or log; load happens only at session creation, `exec` is default-deny in
+jar-loaded sessions, and exact-origin navigation confinement (documents/forms in all frames,
+redirects aborted pre-request, off-scope popups closed, service workers blocked) is implemented and
+on-by-default for jar-loaded agent sessions. Delete and invalidate terminate live sessions seeded
+from (or producing) the jar, cross-pod, including a noVNC watchdog. The design doc's two acceptance
+prerequisites for enabling `load_saved_session` — origin confinement and `exec` default-deny — **are
+both in place**.
 
 ## Reconciliation: shipped API vs. design-doc assumptions
 
@@ -174,7 +176,8 @@ default-off flag; nothing is reachable until an operator flips it.
   renders from — and durable confirmations persist — the *canonicalized* args, and execution
   receives exactly them, so approval and execution name the same jar by construction. Generic
   pipeline machinery (any resolve-then-confirm tool can use it), used here by forget (M2), load
-  (M3), and refresh-save (M4).
+  (M3), and both save paths (M4) — for a **new** save the canonicalized/confirmed value is the
+  session's current *origin* rather than a jar id (see M4).
 - Registration in `tools/__init__.py` with metadata: `list_saved_sessions` tagged
   `READ_ONLY + SENSITIVE_DATA + OUTPUT_UNTRUSTED` (the tag triple that both raises turn taint on
   planted labels via `derive_tool_result_taint_source()` and classifies as the
@@ -238,6 +241,16 @@ default-off flag; nothing is reachable until an operator flips it.
   and binds to its `generation` like load/forget: re-`GET /v1/jars/{id}` immediately before the save
   and abort on generation mismatch (`SaveJarRequest` has no precondition either — the companion
   `expected_generation` change below covers refresh saves too).
+- **New-save approval binds to the captured origin.** browser-server resolves the captured origin
+  from the live page only when `save-jar` executes, and the confirmation fires before that — so if
+  the page navigates or redirects while approval is pending, the user would approve saving a login
+  for one origin and persist a credential-equivalent for another. The M2 canonicalization hook
+  therefore snapshots the session's current origin into the canonical args (`expected_origin`), the
+  confirmation displays it, and the tool re-reads the live origin immediately before POSTing and
+  **aborts on mismatch** ("the page moved — take another look and save again"). The residual
+  read→POST race is closed properly by the companion `expected_origin` precondition below; the
+  FA-side recheck is the fallback. Tested: a navigation between approval and execution aborts
+  without a jar being created.
 - **Agent refresh is only authorized from the session loaded from that same jar**: browser-server's
   `_authorize_jar_refresh()` rejects agent refreshes from jarless sessions (including the session
   that just *created* the jar) and from sessions loaded from a different jar. The tool validates
@@ -292,12 +305,15 @@ worked around in FA:
    household's own agent, and adopting on first human touch is strictly scope-narrowing-or-equal
    under the subset rule. Restores the designed re-login flow for both jar kinds. Prerequisite for
    M6's re-login half only.
-2. **`expected_generation` precondition** (delta #4): optional field on `CreateSessionRequest` (jar
-   loads), `DELETE /v1/jars/{id}`, and `SaveJarRequest` when `jar_id` is set (refresh saves mutate
-   an approved generation just like delete removes one); mismatch ⇒ 409. Closes the confirm→execute
-   races server-side instead of via FA's compare-and-close/re-GET workarounds. FA still shows
-   `jar_id` + `generation` + origins at confirmation and passes the generation through. Nice-to-have
-   before M3; the FA-side checks in delta #4 and M4 remain the fallback if it lags.
+2. **`expected_generation` / `expected_origin` preconditions** (delta #4, M4): optional
+   `expected_generation` on `CreateSessionRequest` (jar loads), `DELETE /v1/jars/{id}`, and
+   `SaveJarRequest` when `jar_id` is set (refresh saves mutate an approved generation just like
+   delete removes one); and optional `expected_origin` on `SaveJarRequest` for **new** saves (the
+   server compares it against the live page origin it is about to capture). Mismatch ⇒ 409 in all
+   cases. Closes the confirm→execute races server-side instead of via FA's
+   compare-and-close/re-GET/re-read workarounds. FA still shows the jar identity (or, for a new
+   save, the origin) at confirmation and passes the precondition through. Nice-to-have before M3;
+   the FA-side checks in delta #4 and M4 remain the fallback if it lags.
 3. **Scope-aware human save form + visited-origin enforcement** (gap #13): two halves, both
    currently missing. *Server*: track the set of origins the session has actually visited on
    `BrowserSession` and validate human-submitted `origins`/`nav_allowlist` against it — today the
