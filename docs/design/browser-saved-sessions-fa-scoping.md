@@ -162,6 +162,18 @@ default-off flag; nothing is reachable until an operator flips it.
 - **Jar reference resolution helper** (shared by forget/load, M3): exact-match against id and label
   across both namespaces; >1 match ⇒ ambiguous ⇒ generic error with no candidate inventory (design
   doc: no disclosure side channel).
+- **Pre-confirmation argument canonicalization** (new FA machinery, the real substance of this
+  milestone): the current tool-policy flow requests confirmation *before* the tool implementation
+  runs and persists the model-supplied `tool_args_json` verbatim, so an in-tool resolver cannot bind
+  the approval to a resolved jar — execution would re-resolve the label later, possibly to a
+  different jar. Add an optional per-tool **canonicalization hook** to the confirmation pipeline: a
+  trusted, read-only step that runs before the confirmation is requested, resolves `jar_label_or_id`
+  → `jar_id` + current `generation` (via the resolution helper), and rewrites the invocation to
+  canonical args (`jar_id`, `expected_generation`; raw label dropped). The confirmation prompt
+  renders from — and durable confirmations persist — the *canonicalized* args, and execution
+  receives exactly them, so approval and execution name the same jar by construction. Generic
+  pipeline machinery (any resolve-then-confirm tool can use it), used here by forget (M2), load
+  (M3), and refresh-save (M4).
 - Registration in `tools/__init__.py` with metadata: `list_saved_sessions` tagged
   `READ_ONLY + SENSITIVE_DATA + OUTPUT_UNTRUSTED` (the tag triple that both raises turn taint on
   planted labels via `derive_tool_result_taint_source()` and classifies as the
@@ -170,11 +182,13 @@ default-off flag; nothing is reachable until an operator flips it.
   (same gate as `browser_request_handoff`), never in untrusted-input profiles. `list_saved_sessions`
   keeps its **interim static confirm** until the deployment's taint policy is verified enforcing for
   this sink (M6).
-- `forget_saved_session` confirmation binds to the resolved `jar_id` + `generation` and names the
-  jar's origins; re-GET before DELETE per delta #4.
+- `forget_saved_session` confirmation binds to the resolved `jar_id` + `generation` via the
+  canonicalization hook and names the jar's origins; re-GET before DELETE per delta #4.
 - Functional tests: fake browser-server; assert confirmation fires, ambiguous label errors
   generically, no cookie-material-shaped fields ever reach the transcript, tags present on the
-  definitions.
+  definitions, and — for the canonicalization hook — that the persisted/confirmed args carry
+  `jar_id` + `expected_generation` (not the raw label) and execution aborts when the jar's
+  generation moved after approval.
 
 ### M3 — The chokepoint: `load_saved_session`
 
