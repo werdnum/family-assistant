@@ -104,6 +104,9 @@ machinery the API expects.
   model can fall back to `click` or DOM delegation.
 - If the model emits a safety decision on a *policy-confirmed* tool, the user may be asked twice
   (safety ack + policy confirm). Rare and harmless.
+- A safety confirmation approved through the *durable* (task-worker) confirmation path executes with
+  `safety_decision` stripped but without merging `safety_acknowledgement` — that flow already
+  resumes in a later turn where the original function-call/response pairing no longer exists.
 
 ## Milestones
 

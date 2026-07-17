@@ -4469,9 +4469,14 @@ async def handle_confirmation_tool_execution(
             request_id,
             request["tool_name"],
         )
+        # Persisted args may carry a Gemini computer-use safety_decision that
+        # was included for the confirmation prompt; tool signatures don't
+        # accept it, so strip it before execution (mirrors ToolExecutor).
+        executable_args = dict(request["tool_args_json"])
+        executable_args.pop("safety_decision", None)
         result = await tools_provider.execute_tool(
             request["tool_name"],
-            request["tool_args_json"],
+            executable_args,
             execution_context,
             call_id,
         )

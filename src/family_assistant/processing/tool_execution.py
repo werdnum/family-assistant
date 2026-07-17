@@ -812,10 +812,10 @@ class ToolExecutor:
 
             # Gemini computer-use models may attach a safety_decision to the
             # call arguments; it is always popped since tool signatures don't
-            # accept it. Only an absent decision, an explicit allow, or a
-            # user-approved require_confirmation may execute; anything else
-            # (e.g. "blocked", unknown values, malformed payloads) is refused
-            # outright rather than silently executed.
+            # accept it. Only an absent safety_decision, an explicit allow, or
+            # a user-approved require_confirmation may execute; anything else
+            # ("blocked", unknown values, malformed payloads, a dict missing
+            # its decision) is refused outright — safety decisions fail closed.
             safety_decision = arguments.pop("safety_decision", None)
             decision_value = (
                 safety_decision.get("decision")
@@ -825,7 +825,7 @@ class ToolExecutor:
             safety_confirmation_required = decision_value == "require_confirmation"
             safety_decision_permits_execution = safety_decision is None or (
                 isinstance(safety_decision, dict)
-                and decision_value in {None, "allowed", "allow"}
+                and decision_value in {"allowed", "allow"}
             )
             if (
                 not safety_confirmation_required

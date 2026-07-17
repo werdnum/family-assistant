@@ -316,24 +316,28 @@ class TestKeyboardActions:
     """Test keyboard input actions."""
 
     @pytest.mark.asyncio
-    async def test_type(
+    async def test_type_clears_field_then_types(
         self, exec_context: ToolExecutionContext, fake_backend: FakeBrowserBackend
     ) -> None:
         await computer_use_type(exec_context, "hello")
-        type_calls = [c for c in fake_backend.calls if c[0] == "keyboard_type"]
-        assert len(type_calls) == 1
-        assert type_calls[0][1]["text"] == "hello"
+        actions = [
+            (name, args)
+            for name, args in fake_backend.calls
+            if name in {"keyboard_type", "keyboard_press"}
+        ]
+        assert actions == [
+            ("keyboard_press", {"keys": "Control+A"}),
+            ("keyboard_press", {"keys": "Backspace"}),
+            ("keyboard_type", {"text": "hello"}),
+        ]
 
     @pytest.mark.asyncio
     async def test_type_with_enter(
         self, exec_context: ToolExecutionContext, fake_backend: FakeBrowserBackend
     ) -> None:
         await computer_use_type(exec_context, "hello", press_enter=True)
-        type_calls = [c for c in fake_backend.calls if c[0] == "keyboard_type"]
         press_calls = [c for c in fake_backend.calls if c[0] == "keyboard_press"]
-        assert len(type_calls) == 1
-        assert len(press_calls) == 1
-        assert press_calls[0][1]["keys"] == "Enter"
+        assert press_calls[-1][1]["keys"] == "Enter"
 
     @pytest.mark.asyncio
     async def test_press_key(

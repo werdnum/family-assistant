@@ -400,9 +400,15 @@ async def test_safety_decision_approved_but_tool_fails() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("decision", ["blocked", "some_future_value"])
-async def test_safety_decision_blocked_or_unknown_refused(decision: str) -> None:
-    """Decisions that neither allow nor request confirmation refuse execution."""
+@pytest.mark.parametrize("decision", ["blocked", "some_future_value", None])
+async def test_safety_decision_blocked_or_unknown_refused(
+    decision: str | None,
+) -> None:
+    """Decisions that neither allow nor request confirmation refuse execution.
+
+    A ``None`` decision models a malformed safety_decision dict that omits
+    its decision value entirely — it must also fail closed.
+    """
     provider = MinimalToolsProvider()
     executor = make_tool_executor(provider)
 
