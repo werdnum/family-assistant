@@ -26,13 +26,17 @@ cross-pod, including a noVNC watchdog. The design doc's two acceptance prerequis
 ### Deltas that shrink FA scope
 
 1. **Agent saves cannot widen scope — the elevated off-site-origin confirmation is moot for the tool
-   path.** A service-token (agent) save may not supply `origins`, `nav_allowlist`, a probe `url`, or
-   `logged_out_url_prefix`: the server captures the live page's origin only, derives the probe
-   target itself (`origin + "/"`), and keeps an agent-supplied `logged_in_selector` only if it
-   passes a server-side logged-out discrimination check (otherwise silently dropped — the jar reads
-   `uncertain`, never fake-`fresh`). The design doc's FA-wrapper machinery for "enumerate every
-   captured origin, deny-by-default on off-site origins" therefore has nothing to gate on the agent
-   path — the server already rejects the inputs. `save_browser_session` simplifies to
+   path.** This is an *effective-scope guarantee*, not input rejection: `SaveJarRequest` accepts
+   `origins`, `nav_allowlist`, probe `url`, and `logged_out_url_prefix` from any caller, but for a
+   service-token (agent) save the registry overrides or discards them — the captured scope is the
+   live page's origin only (agent-supplied `origins` can at most *narrow* an existing jar on
+   refresh, per the subset-only refresh rule), `nav_allowlist` is dropped, the probe target is
+   derived server-side (`origin + "/"`), and an agent-supplied `logged_in_selector` is kept only if
+   it passes a server-side logged-out discrimination check (otherwise silently dropped — the jar
+   reads `uncertain`, never fake-`fresh`). So don't build 4xx handling or tests around these fields
+   being rejected; FA simply never sends them (test-asserted omission). The design doc's FA-wrapper
+   machinery for "enumerate every captured origin, deny-by-default on off-site origins" has nothing
+   to gate on the agent path — widening inputs are inert there. `save_browser_session` simplifies to
    `(label, logged_in_selector, jar_id=None)`: no `origins` parameter at all. Multi-origin scope
    (SSO IdP origins, `nav_allowlist` entries) can only enter via the **human** save path, where
    browser-server's own UI shows the human what is captured. FA keeps a plain confirm on the tool
@@ -163,7 +167,15 @@ default-off flag; nothing is reachable until an operator flips it.
 
 - Resolves label/id → confirms with label + `jar_id` + the full reachable set (`origins` ∪
   `nav_allowlist`) → creates the jar-loaded session → post-create rebinding check (delta #4) →
-  returns the initial snapshot like `browser_open`.
+  navigates to an in-scope start page and returns its snapshot. The create response alone is a blank
+  page (`about:blank` — `CreateSessionRequest` takes no landing URL), so the tool must explicitly
+  `goto` before snapshotting: default to the jar's sole origin's root, and accept an optional
+  in-scope `start_url` argument for multi-origin jars (validated against `origins` ∪ `nav_allowlist`
+  FA-side; confinement blocks it server-side anyway).
+- Registration metadata: `load_saved_session` returns live web content, so it carries the same
+  taint-relevant tags as `browser_open` (`BROWSER`, `STATE_CHANGING`, `EXTERNAL_COMM`,
+  `OUTPUT_UNTRUSTED`) — without `OUTPUT_UNTRUSTED`, `derive_tool_output_taint` would treat a planted
+  page as clean. Test-asserted alongside the M2 tag assertions.
 - Conversation-session conflict: `_remote_backends` keys one session per conversation
   (`browser_backend.py:765`); if a session already exists, error with an explicit "close it first"
   message (simplest safe behavior; close-and-recreate-on-confirm can come later). Never attach a jar
@@ -183,7 +195,10 @@ default-off flag; nothing is reachable until an operator flips it.
 
 - `(label, logged_in_selector, jar_id=None)` against the conversation's active session; plain
   confirm naming the label, the session's current origin, and create-vs-refresh. No `origins`
-  parameter (delta #1). Refresh (`jar_id` set) confirmation names the existing jar's id + origins.
+  parameter (delta #1). Refresh (`jar_id` set) confirmation names the existing jar's id + origins
+  and binds to its `generation` like load/forget: re-`GET /v1/jars/{id}` immediately before the save
+  and abort on generation mismatch (`SaveJarRequest` has no precondition either — the companion
+  `expected_generation` change below covers refresh saves too).
 - Post-save probe + result surfaced in the tool output (delta #8): "Saved, probe: fresh" vs "Saved,
   but freshness is unverified/stale — the capture may be logged out."
 - Tests: create + refresh paths, selector-dropped path (server returns jar with `has_probe` but
@@ -223,10 +238,11 @@ than worked around in FA:
    checks apply unchanged). Restores the designed SSO re-login flow. Prerequisite for M6's re-login
    half only.
 2. **`expected_generation` precondition** (delta #4): optional field on `CreateSessionRequest` (jar
-   loads) and `DELETE /v1/jars/{id}`; mismatch ⇒ 409. Closes the confirm→execute races server-side
-   instead of via FA's compare-and-close/re-GET workarounds. FA still shows `jar_id` + `generation`
-   \+ origins at confirmation and passes the generation through. Nice-to-have before M3; the FA-side
-   checks in delta #4 remain the fallback if it lags.
+   loads), `DELETE /v1/jars/{id}`, and `SaveJarRequest` when `jar_id` is set (refresh saves mutate
+   an approved generation just like delete removes one); mismatch ⇒ 409. Closes the confirm→execute
+   races server-side instead of via FA's compare-and-close/re-GET workarounds. FA still shows
+   `jar_id` + `generation` + origins at confirmation and passes the generation through. Nice-to-have
+   before M3; the FA-side checks in delta #4 and M4 remain the fallback if it lags.
 
 Both are small and additive; neither touches the human/sanitize guards or the crypto envelope.
 
