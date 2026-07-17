@@ -339,7 +339,7 @@ wheels = [
 
 [[package]]
 name = "aiohttp-client-cache"
-version = "0.13.0"
+version = "0.14.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", version = "3.11.16", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
@@ -350,9 +350,9 @@ dependencies = [
     { name = "itsdangerous" },
     { name = "url-normalize" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/6b/2c09e4a0dd7d8f1b23ad0afac1ebdb200ed59445057f6caca3f653e7510a/aiohttp_client_cache-0.13.0.tar.gz", hash = "sha256:dc5cd62340adbee18e0fedc7b0c37542692df08f8ed9945d751b7292a0433853", size = 61883, upload-time = "2025-04-09T17:23:05.62Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/21/070849a673103328285964419caa12de583229bbcd3552e73799b4ca86d0/aiohttp_client_cache-0.14.3.tar.gz", hash = "sha256:329f4038c6a8ed0b410023980b6d1a2c484af33e667a89ce245c899d62c1fba1", size = 63188, upload-time = "2026-01-07T20:43:32.962Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/b5/f0a011dd20fad83c9aa1c75b3a640e2e4f05dbc9ee13e723c34fe25802f0/aiohttp_client_cache-0.13.0-py3-none-any.whl", hash = "sha256:89211544e9f290de42ef85f545cdae8eb34d1af6e51dcc8b2cf956dd539d2f39", size = 32932, upload-time = "2025-04-09T17:23:03.937Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/c8/c647b16eaa97f6e668a9311e21392e58a954ec373f8fa6d1855304715a14/aiohttp_client_cache-0.14.3-py3-none-any.whl", hash = "sha256:1154497739dcf9c7f6f6f1f27dc3985d8a7f5f8f31fb76710c06044ffac6f983", size = 33553, upload-time = "2026-01-07T20:43:31.585Z" },
 ]
 
 [[package]]
@@ -1209,16 +1209,16 @@ wheels = [
 
 [[package]]
 name = "cattrs"
-version = "25.1.1"
+version = "25.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs", version = "25.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
     { name = "attrs", version = "25.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/2b/561d78f488dcc303da4639e02021311728fb7fda8006dd2835550cddd9ed/cattrs-25.1.1.tar.gz", hash = "sha256:c914b734e0f2d59e5b720d145ee010f1fd9a13ee93900922a2f3f9d593b8382c", size = 435016, upload-time = "2025-06-04T20:27:15.44Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/42/988b3a667967e9d2d32346e7ed7edee540ef1cee829b53ef80aa8d4a0222/cattrs-25.2.0.tar.gz", hash = "sha256:f46c918e955db0177be6aa559068390f71988e877c603ae2e56c71827165cc06", size = 506531, upload-time = "2025-08-31T20:41:59.301Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/b0/215274ef0d835bbc1056392a367646648b6084e39d489099959aefcca2af/cattrs-25.1.1-py3-none-any.whl", hash = "sha256:1b40b2d3402af7be79a7e7e097a9b4cd16d4c06e6d526644b0b26a063a1cc064", size = 69386, upload-time = "2025-06-04T20:27:13.969Z" },
+    { url = "https://files.pythonhosted.org/packages/20/a5/b3771ac30b590026b9d721187110194ade05bfbea3d98b423a9cafd80959/cattrs-25.2.0-py3-none-any.whl", hash = "sha256:539d7eedee7d2f0706e4e109182ad096d608ba84633c32c75ef3458f1d11e8f1", size = 70040, upload-time = "2025-08-31T20:41:57.543Z" },
 ]
 
 [[package]]
@@ -1892,7 +1892,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=2.10.0" },
     { name = "h2", specifier = ">=4.3.0" },
     { name = "homeassistant", marker = "extra == 'dev'", specifier = ">=2025.4.4" },
-    { name = "homeassistant-api", specifier = ">=5.0.0" },
+    { name = "homeassistant-api", specifier = ">=5.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "hupper", marker = "extra == 'dev'", specifier = ">=1.12.1" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.152.9" },
@@ -2740,7 +2740,7 @@ wheels = [
 
 [[package]]
 name = "homeassistant-api"
-version = "5.0.2.post1"
+version = "5.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp", version = "3.11.16", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
@@ -2755,9 +2755,9 @@ dependencies = [
     { name = "simplejson" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/20/21/2209980f55d6e64941c9f9a70e4ec0b68a6f7560b65b9c38968ea6433bec/homeassistant_api-5.0.2.post1.tar.gz", hash = "sha256:4cc2862da35e3da0850a7ad8754977ec6c3679dc177154d19b660b67cfaf4457", size = 35190, upload-time = "2025-11-11T06:06:01.751Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/da/037a3d2a88d51370bc9a14a5c394bed06128420de267d0ff5fb9aa8f43c6/homeassistant_api-5.0.3.tar.gz", hash = "sha256:47f4ba45a997cd52e43b38c56191504ea79b8456b4f2177a15190ab1eead3214", size = 35175, upload-time = "2026-03-01T06:52:07.403Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/48/0ccac8089808fd35560b2ec82600e5cf8b1692ff554dc3d4a5150087a72c/homeassistant_api-5.0.2.post1-py3-none-any.whl", hash = "sha256:5b6f592aea986e6522ab958e19bb9a591fac1516c069c96e3460ae1f0b83afe9", size = 45532, upload-time = "2025-11-11T06:05:59.586Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/41/62732cdbba46abb81e61374481cc11ee72ad03f07d3c261fd95e610d8caf/homeassistant_api-5.0.3-py3-none-any.whl", hash = "sha256:b8c76accd0c149992dfff5b86d91900daeae73f9e7ea51ad1ebabdcb6385f7ff", size = 45479, upload-time = "2026-03-01T06:52:05.972Z" },
 ]
 
 [[package]]
@@ -5797,7 +5797,7 @@ wheels = [
 
 [[package]]
 name = "requests-cache"
-version = "1.2.1"
+version = "1.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs", version = "25.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
@@ -5811,9 +5811,9 @@ dependencies = [
     { name = "urllib3", version = "1.26.20", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2' or platform_python_implementation == 'PyPy'" },
     { name = "urllib3", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1a/be/7b2a95a9e7a7c3e774e43d067c51244e61dea8b120ae2deff7089a93fb2b/requests_cache-1.2.1.tar.gz", hash = "sha256:68abc986fdc5b8d0911318fbb5f7c80eebcd4d01bfacc6685ecf8876052511d1", size = 3018209, upload-time = "2024-06-18T17:18:03.774Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/ab/a340c7f529646f16e5656a8ba1424ed0de406203e4554868491786628730/requests_cache-1.3.3.tar.gz", hash = "sha256:79b72d5ac5143992d1836ad78f4d8e65666061dd44e220548caab3723089826b", size = 101179, upload-time = "2026-07-03T19:48:57.963Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/2e/8f4051119f460cfc786aa91f212165bb6e643283b533db572d7b33952bd2/requests_cache-1.2.1-py3-none-any.whl", hash = "sha256:1285151cddf5331067baa82598afe2d47c7495a1334bfe7a7d329b43e9fd3603", size = 61425, upload-time = "2024-06-18T17:17:45Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/bf/c1775e49b350225bd851576ba75263bc728d8f05c0e31439a45f3429cc7b/requests_cache-1.3.3-py3-none-any.whl", hash = "sha256:c8df20ff874ebfc026959e3874e6c12bd6724934cdb10925915908453d4b17e4", size = 70788, upload-time = "2026-07-03T19:48:56.693Z" },
 ]
 
 [[package]]
@@ -6826,14 +6826,14 @@ wheels = [
 
 [[package]]
 name = "url-normalize"
-version = "2.2.1"
+version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/80/31/febb777441e5fcdaacb4522316bf2a527c44551430a4873b052d545e3279/url_normalize-2.2.1.tar.gz", hash = "sha256:74a540a3b6eba1d95bdc610c24f2c0141639f3ba903501e61a52a8730247ff37", size = 18846, upload-time = "2025-04-26T20:37:58.553Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/cd/846d87d6d49d963b04ef4429b73d71d3c17468059956bab360866a9b0aec/url_normalize-3.0.0.tar.gz", hash = "sha256:0552cbf2831a32a28994a13d29bca58a60e10ff6c0380e343ec6d1c2a0d232d8", size = 21777, upload-time = "2026-04-25T00:31:59.514Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/d9/5ec15501b675f7bc07c5d16aa70d8d778b12375686b6efd47656efdc67cd/url_normalize-2.2.1-py3-none-any.whl", hash = "sha256:3deb687587dc91f7b25c9ae5162ffc0f057ae85d22b1e15cf5698311247f567b", size = 14728, upload-time = "2025-04-26T20:37:57.217Z" },
+    { url = "https://files.pythonhosted.org/packages/13/8a/f72344eab18674fd7b174f35abbce41ed88fea72927f111726732d0ca779/url_normalize-3.0.0-py3-none-any.whl", hash = "sha256:95234bd359f86831c1fd87c248877f2a6887db2f3b5087120083f2fffcba4889", size = 16854, upload-time = "2026-04-25T00:31:58.271Z" },
 ]
 
 [[package]]
