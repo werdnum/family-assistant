@@ -151,12 +151,16 @@ async def _resolve_resume_subconversation(
 
     Returns ``(subconversation_id, None)`` when the prior run can be resumed, or
     ``(None, error_result)`` describing why it cannot. A resumable run must belong
-    to the current conversation, target the same profile (delegated history is
-    scoped by both subconversation and profile), and have reached a terminal
-    state — an in-flight run cannot be appended to.
+    to the current conversation, have been created by the same user (in a shared
+    conversation, resuming another participant's delegation would replay their
+    private, account-scoped history under a different caller), target the same
+    profile (delegated history is scoped by both subconversation and profile), and
+    have reached a terminal state — an in-flight run cannot be appended to.
 
     The lookup uses the live database context (as ``get_delegation_status`` does)
-    so a prior run committed by an earlier turn is visible.
+    so a prior run committed by an earlier turn is visible. A run owned by another
+    user is reported as not found rather than as a permission error, so its
+    existence is not disclosed to a different participant.
     """
     prior_run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         resume_delegation_id
@@ -164,6 +168,7 @@ async def _resolve_resume_subconversation(
     if prior_run is None or (
         prior_run["conversation_id"] != exec_context.conversation_id
         or prior_run["interface_type"] != exec_context.interface_type
+        or prior_run["user_id"] != exec_context.user_id
     ):
         return None, ToolResult(
             text=(
