@@ -9,7 +9,7 @@ delegated history. Terminal statuses (completed/failed) are excluded so a
 finished run can be resumed.
 
 Revision ID: delegation_active_subconv_unique
-Revises: attachment_owner_user_id
+Revises: rename_oauth_connections
 Create Date: 2026-07-18 01:40:00.000000+00:00
 
 """
@@ -22,7 +22,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "delegation_active_subconv_unique"
-down_revision: str | None = "attachment_owner_user_id"
+down_revision: str | None = "rename_oauth_connections"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -3000,10 +3000,15 @@ async def test_resume_delegation_reuses_prior_subconversation(
 
 
 @pytest.mark.asyncio
-async def test_resume_delegation_synchronous_path_reuses_subconversation(
+async def test_resume_delegation_rejected_on_synchronous_path(
     db_engine: AsyncEngine,
 ) -> None:
-    """The synchronous (in-script) path also continues a prior subconversation."""
+    """Resume is refused on the synchronous (in-script) path.
+
+    The synchronous path creates no durable run row, so it cannot claim the
+    resumed subconversation against concurrent runs via the unique index; resuming
+    is therefore only supported for asynchronous delegations.
+    """
     target_service = FakeDelegatableService()
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
@@ -3026,8 +3031,8 @@ async def test_resume_delegation_synchronous_path_reuses_subconversation(
         )
 
     assert result.text is not None
-    assert len(target_service.calls) == 1
-    assert target_service.calls[0]["subconversation_id"] == "sub_delegation_prior_sync"
+    assert "only supported for asynchronous delegations" in result.text
+    assert target_service.calls == []
 
 
 @pytest.mark.asyncio
@@ -3302,6 +3307,58 @@ async def test_resume_delegation_rejects_other_source_profile(
             target_service_id="target_profile",
             user_request="continue from a different profile",
             resume_delegation_id="delegation_from_engineer",
+        )
+
+    assert result.text is not None
+    assert "no such delegation reference" in result.text.lower()
+    assert target_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_resume_delegation_rejects_other_source_subconversation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A delegation seeded by a different parent subconversation cannot be resumed.
+
+    One source profile can hold several isolated delegated histories; resume is
+    tied to the parent subconversation that created the delegation so a sibling
+    task cannot pull in another task's history.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.delegation_runs.create_run({
+            "delegation_id": "delegation_from_sibling_task",
+            "task_id": "task_from_sibling_task",
+            "source_profile_id": "source_profile",
+            "target_service_id": "target_profile",
+            "interface_type": TEST_INTERFACE_TYPE,
+            "conversation_id": TEST_CONVERSATION_ID,
+            "user_id": "async-delegation-user",
+            "user_name": TEST_USER_NAME,
+            "source_turn_id": "turn_sibling",
+            "subconversation_id": "sub_delegation_from_sibling_task",
+            # Seeded from a different parent subconversation than the caller's.
+            "source_subconversation_id": "parent_subconversation_A",
+            "request_text": "sibling task request",
+            "content_parts_json": [],
+        })
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_from_sibling_task",
+            result_text="sibling result",
+            result_attachment_ids=[],
+            completed_at=SystemClock().now(),
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        # The default tool context has no subconversation_id (a different parent).
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="continue a sibling task's delegation",
+            resume_delegation_id="delegation_from_sibling_task",
         )
 
     assert result.text is not None

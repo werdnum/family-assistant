@@ -165,21 +165,29 @@ async def _resolve_resume_subconversation(
     """Resolve a resume reference to the subconversation history to continue.
 
     Returns ``(subconversation_id, None)`` when the prior run can be resumed, or
-    ``(None, error_result)`` describing why it cannot. A resumable run must belong
-    to the current conversation, have been created by the same user (in a shared
-    conversation, resuming another participant's delegation would replay their
-    private, account-scoped history under a different caller), have been created
-    by the same source profile (a different, possibly more privileged, profile —
-    e.g. the confirm-gated engineer — may have seeded the delegation with context
-    the current profile cannot read), target the same profile (delegated history
-    is scoped by both subconversation and profile), and have reached a terminal
-    state — an in-flight run cannot be appended to.
+    ``(None, error_result)`` describing why it cannot. A resumable run must have
+    been created by this exact caller — same conversation, interface, user, source
+    profile, and source subconversation — and target the same profile, and have
+    reached a terminal state. Rationale for each dimension:
+
+    - user: in a shared conversation, resuming another participant's delegation
+      would replay their private, account-scoped history under a different caller.
+    - source profile: a different, possibly more privileged, profile (e.g. the
+      confirm-gated engineer) may have seeded the delegation with context the
+      current profile cannot read.
+    - source subconversation: one profile can hold several isolated delegated
+      histories; matching the caller's ``subconversation_id`` keeps a resume tied
+      to the same parent task, so an unrelated sibling task cannot pull in its
+      history.
+    - target profile: delegated history is scoped by both subconversation and
+      profile, so a cross-profile resume would silently load nothing.
+    - terminal: an in-flight run cannot be appended to.
 
     The lookup uses the live database context (as ``get_delegation_status`` does)
-    so a prior run committed by an earlier turn is visible. A run owned by another
-    user or seeded by another source profile is reported as not found rather than
-    as a permission error, so its existence is not disclosed to a caller that may
-    not be entitled to know about it.
+    so a prior run committed by an earlier turn is visible. A run that is not the
+    caller's own is reported as not found rather than as a permission error, so its
+    existence is not disclosed to a caller that may not be entitled to know about
+    it.
     """
     prior_run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         resume_delegation_id
@@ -189,6 +197,7 @@ async def _resolve_resume_subconversation(
         or prior_run["interface_type"] != exec_context.interface_type
         or prior_run["user_id"] != exec_context.user_id
         or prior_run["source_profile_id"] != source_service_id
+        or prior_run["source_subconversation_id"] != exec_context.subconversation_id
     ):
         return None, ToolResult(
             text=(
@@ -336,7 +345,6 @@ async def _synchronous_delegation_result(
     target_service: Any,  # noqa: ANN401 - target is a registry-resolved processing service
     target_service_id: str,
     content_parts: list[ContentPartDict],
-    subconversation_id: str | None = None,
 ) -> ToolResult:
     """Run a delegated request inline and return its result as a tool result.
 
@@ -345,10 +353,12 @@ async def _synchronous_delegation_result(
     at runtime: the target profile runs in-process within this tool call, with no
     durable delegation run, worker handoff, or completion notification.
 
-    ``subconversation_id`` continues a prior delegation's isolated history when a
-    resume reference resolved to one; ``None`` mints a fresh subconversation.
+    This path always mints a fresh subconversation. Resuming a prior delegation is
+    rejected before reaching here (see ``delegate_to_service_tool``) because,
+    without a durable run row, it cannot atomically claim the resumed history
+    against concurrent runs via the active-subconversation unique index.
     """
-    subconversation_id = subconversation_id or str(uuid.uuid4())
+    subconversation_id = str(uuid.uuid4())
     logger.info(
         "Delegating request to service profile '%s' synchronously with %d content "
         "parts (subconversation_id=%s)",
@@ -867,12 +877,26 @@ async def delegate_to_service_tool(
         exec_context.in_script
         or not _tools_config(exec_context).async_delegation_enabled
     ):
+        if resumed_subconversation_id is not None:
+            # The synchronous path creates no durable run row, so it cannot claim
+            # the resumed subconversation against concurrent runs via the unique
+            # active-subconversation index. Refuse rather than run an unserialized
+            # resume that could interleave with another in the same history.
+            return ToolResult(
+                text=(
+                    f"Error: Cannot resume delegation '{resume_delegation_id}' here: "
+                    "resuming is only supported for asynchronous delegations. This "
+                    "call runs synchronously (inside a script, or async delegation is "
+                    "disabled). Start a fresh delegation instead (omit "
+                    "resume_delegation_id)."
+                ),
+                attachments=None,
+            )
         return await _synchronous_delegation_result(
             exec_context,
             target_service=target_service,
             target_service_id=target_service_id,
             content_parts=content_parts,
-            subconversation_id=resumed_subconversation_id,
         )
 
     if delivery_hint not in {"auto", "background"}:

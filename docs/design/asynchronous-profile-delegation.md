@@ -306,11 +306,13 @@ caller's `source_subconversation_id`, so its completion wakes the caller as any 
 Validation rejects a resume when the referenced run:
 
 - is not the caller's own prior delegation. The referenced run must match the current
-  `conversation_id`, `interface_type`, `user_id`, and `source_profile_id`. A run owned by another
-  user, or one seeded by a different (possibly more privileged) source profile — e.g. a
-  confirm-gated `engineer` handoff that carried source/DB context into a `complex_tasks`
-  subconversation — is reported as "no such delegation reference" rather than a permission error, so
-  its existence is not disclosed to a caller that is not entitled to reuse its history;
+  `conversation_id`, `interface_type`, `user_id`, `source_profile_id`, and
+  `source_subconversation_id` (the parent (sub)conversation that created it). A run owned by another
+  user, seeded by a different (possibly more privileged) source profile — e.g. a confirm-gated
+  `engineer` handoff that carried source/DB context into a `complex_tasks` subconversation — or
+  seeded by a different parent task of the same profile is reported as "no such delegation
+  reference" rather than a permission error, so its existence is not disclosed to a caller that is
+  not entitled to reuse its history;
 - targets a different profile than the requested `target_service_id` (delegated history is scoped by
   both subconversation and profile, so a cross-profile resume would silently load nothing);
 - is not yet terminal (an in-flight run cannot be appended to);
@@ -328,9 +330,12 @@ confirmation prompt while another starts) hits an `IntegrityError` on `create_ru
 translated back into the "a resume is already in progress" error. Because the index excludes
 terminal rows, a completed run can still be resumed.
 
-Resumption is supported on both the async and synchronous delegation paths (the synchronous path
-reuses the resolved key inline). In pure synchronous mode no durable run records exist, so a resume
-reference simply resolves to "no such delegation" — a correct error rather than a special case.
+Resumption is supported only on the asynchronous path. The synchronous path (used inside scripts, or
+when async delegation is disabled) creates no durable `delegation_runs` row, so it cannot
+participate in the unique-index claim and a concurrent resume there could not be serialized; a
+resume on that path is therefore rejected with a clear error directing the caller to start a fresh
+delegation. In pure synchronous mode no durable run records exist anyway, so a resume reference
+would resolve to "no such delegation" regardless.
 
 ### Confirmations
 
