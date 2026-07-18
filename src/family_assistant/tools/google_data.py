@@ -869,6 +869,16 @@ def _attachment_filename(metadata: AttachmentMetadata, attachment_id: str) -> st
     return filename
 
 
+def _encode_gmail_draft_payload(message: EmailMessage) -> bytes:
+    """Serialize and encode a Gmail draft outside the async event loop."""
+    raw_message = message.as_bytes()
+    if len(raw_message) > _GMAIL_DRAFT_RAW_MESSAGE_LIMIT:
+        raise _GoogleToolError("The encoded Gmail draft is too large to upload.")
+    return json.dumps({
+        "message": {"raw": base64.urlsafe_b64encode(raw_message).decode("ascii")}
+    }).encode("utf-8")
+
+
 async def _load_owned_attachment(
     exec_context: ToolExecutionContext,
     attachment_id: str,
@@ -989,12 +999,7 @@ async def gmail_create_draft_tool(
             )
             attached_names.append(filename)
 
-        raw_message = message.as_bytes()
-        if len(raw_message) > _GMAIL_DRAFT_RAW_MESSAGE_LIMIT:
-            raise _GoogleToolError("The encoded Gmail draft is too large to upload.")
-        payload = json.dumps({
-            "message": {"raw": base64.urlsafe_b64encode(raw_message).decode("ascii")}
-        }).encode("utf-8")
+        payload = await asyncio.to_thread(_encode_gmail_draft_payload, message)
         draft = (
             await _google_request(
                 exec_context,
