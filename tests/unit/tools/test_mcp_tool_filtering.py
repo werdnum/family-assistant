@@ -399,7 +399,9 @@ async def test_mcp_reconnect_preserves_existing_duplicate_tool_mapping() -> None
 
 
 @pytest.mark.asyncio
-async def test_reconnect_bumps_descriptors_version_and_restores_tools() -> None:
+async def test_reconnect_bumps_descriptors_version_and_restores_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Reconnecting a server that was down at startup must signal a change.
 
     Regression test: a server that failed to connect at startup exposes no
@@ -420,7 +422,7 @@ async def test_reconnect_bumps_descriptors_version_and_restores_tools() -> None:
     async def fake_connect_and_discover_mcp(
         server_id: str,
         server_conf: MCPServerConfig,
-    ) -> tuple[object, list[ToolDefinition], list, dict[str, str]]:
+    ) -> tuple[object, list[ToolDefinition], list[ToolDescriptor], dict[str, str]]:
         del server_conf
         return (
             object(),
@@ -436,11 +438,10 @@ async def test_reconnect_bumps_descriptors_version_and_restores_tools() -> None:
             {"execute_python": server_id},
         )
 
-    # Assigning a plain async function over the bound method is how this file
-    # drives the reconnect path without a live MCP server; basedpyright flags
-    # the method reassignment, which is exactly what we intend here.
-    provider._connect_and_discover_mcp = fake_connect_and_discover_mcp  # type: ignore[method-assign]
-    provider._close_server_connections = AsyncMock()
+    monkeypatch.setattr(
+        provider, "_connect_and_discover_mcp", fake_connect_and_discover_mcp
+    )
+    monkeypatch.setattr(provider, "_close_server_connections", AsyncMock())
 
     reconnected = await provider._reconnect_server("code-execution")
 
