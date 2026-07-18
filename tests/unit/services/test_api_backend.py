@@ -1,14 +1,14 @@
-"""Unit tests for :class:`HttpGoogleApiBackend`."""
+"""Unit tests for :class:`HttpApiBackend`."""
 
 from __future__ import annotations
 
 import httpx
 import pytest
 
-from family_assistant.services.google_api import (
-    GoogleApiBackend,
-    GoogleApiError,
-    HttpGoogleApiBackend,
+from family_assistant.services.api_backend import (
+    ApiBackend,
+    ApiBackendError,
+    HttpApiBackend,
 )
 
 
@@ -23,7 +23,7 @@ async def test_sets_bearer_header_and_returns_status_and_content() -> None:
         return httpx.Response(200, content=b"payload-bytes")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    backend = HttpGoogleApiBackend(client)
+    backend = HttpApiBackend(client)
 
     response = await backend.request(
         method="GET",
@@ -37,7 +37,7 @@ async def test_sets_bearer_header_and_returns_status_and_content() -> None:
     assert captured["authorization"] == "Bearer tok-123"
     assert captured["method"] == "GET"
     assert "q=from%3Aschool" in str(captured["url"])
-    assert isinstance(backend, GoogleApiBackend)
+    assert isinstance(backend, ApiBackend)
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,7 @@ async def test_json_helper_decodes_body() -> None:
         return httpx.Response(200, json={"messages": [{"id": "1"}]})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    backend = HttpGoogleApiBackend(client)
+    backend = HttpApiBackend(client)
 
     response = await backend.request(
         method="GET",
@@ -63,7 +63,7 @@ async def test_error_status_is_returned_not_raised() -> None:
         return httpx.Response(401, json={"error": "unauthorized"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    backend = HttpGoogleApiBackend(client)
+    backend = HttpApiBackend(client)
 
     response = await backend.request(
         method="GET",
@@ -82,9 +82,9 @@ async def test_response_body_over_cap_raises_google_api_error() -> None:
         return httpx.Response(200, content=body)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    backend = HttpGoogleApiBackend(client, max_response_bytes=1024)
+    backend = HttpApiBackend(client, max_response_bytes=1024)
 
-    with pytest.raises(GoogleApiError, match="response limit"):
+    with pytest.raises(ApiBackendError, match="response limit"):
         await backend.request(
             method="GET",
             url="https://www.googleapis.com/drive/v3/files/huge?alt=media",
@@ -100,7 +100,7 @@ async def test_response_body_within_cap_is_returned() -> None:
         return httpx.Response(200, content=body)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    backend = HttpGoogleApiBackend(client, max_response_bytes=1024)
+    backend = HttpApiBackend(client, max_response_bytes=1024)
 
     response = await backend.request(
         method="GET",
@@ -118,9 +118,9 @@ async def test_transport_failure_raises_google_api_error() -> None:
         raise httpx.ConnectError("connection refused")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
-    backend = HttpGoogleApiBackend(client)
+    backend = HttpApiBackend(client)
 
-    with pytest.raises(GoogleApiError):
+    with pytest.raises(ApiBackendError):
         await backend.request(
             method="GET",
             url="https://gmail.googleapis.com/gmail/v1/users/me/profile",

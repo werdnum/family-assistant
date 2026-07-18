@@ -1378,31 +1378,31 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     # read-only + sensitive tags make a second read after untrusted content a
     # gated sensitive_read_broadening sink.
     "gmail_search": _metadata(
-        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "gmail_get_message": _metadata(
-        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "gmail_get_attachment": _metadata(
-        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "drive_search": _metadata(
-        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     ),
     "drive_get_file": _metadata(
-        ToolTag.GOOGLE_PERSONAL_DATA,
+        ToolTag.CONNECTED_ACCOUNT_DATA,
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,

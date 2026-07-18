@@ -54,9 +54,9 @@ if TYPE_CHECKING:
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.security.taint import TaintMetadata, TaintSource
+    from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
-    from family_assistant.services.google_api import GoogleApiBackend
-    from family_assistant.services.google_credentials import GoogleCredentialResolver
+    from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import OnDemandToolsView, ToolsProvider
@@ -99,8 +99,8 @@ class ProcessingService:
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
         on_demand_view: OnDemandToolsView | None = None,
-        google_credentials: GoogleCredentialResolver | None = None,
-        google_api_backend: GoogleApiBackend | None = None,
+        credential_resolvers: Mapping[str, OAuthCredentialResolver] | None = None,
+        api_backend: ApiBackend | None = None,
     ) -> None:
         self._llm_client = llm_client
         self.tools_provider = tools_provider
@@ -115,8 +115,8 @@ class ProcessingService:
         self.home_assistant_client = home_assistant_client
         self.camera_backend = camera_backend
         self.event_sources = event_sources
-        self.google_credentials = google_credentials
-        self.google_api_backend = google_api_backend
+        self.credential_resolvers = credential_resolvers
+        self.api_backend = api_backend
 
         # Compose helpers
         self.attachment_processor = AttachmentProcessor(
@@ -131,8 +131,8 @@ class ProcessingService:
             self.attachment_processor,
             attachment_registry,
             self.clock,
-            google_credentials=google_credentials,
-            google_api_backend=google_api_backend,
+            credential_resolvers=credential_resolvers,
+            api_backend=api_backend,
         )
         self.llm_loop = LLMStreamingLoop(
             llm_client,

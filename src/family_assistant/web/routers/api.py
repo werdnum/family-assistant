@@ -2,6 +2,8 @@ import logging
 
 from fastapi import APIRouter
 
+from family_assistant.services.google_provider import GOOGLE_PROVIDER
+
 from .a2a_api import a2a_router
 from .app_auth import api_auth_router
 from .attachments_api import attachments_api_router
@@ -13,9 +15,9 @@ from .diagnostics_api import diagnostics_api_router
 from .documents_api import documents_api_router
 from .errors_api import errors_api_router
 from .events_api import events_api_router
-from .google_integration import google_integration_router
 from .me_api import me_router
 from .notes_api import notes_api_router
+from .oauth_integration import create_oauth_integration_router
 from .tasks_api import tasks_api_router
 from .tools_api import tools_api_router
 from .vector_search_api import vector_search_api_router
@@ -52,8 +54,8 @@ api_router.include_router(
 )
 api_router.include_router(version_router, tags=["Version"])
 api_router.include_router(
-    google_integration_router,
-    prefix="/integrations/google",
+    create_oauth_integration_router(GOOGLE_PROVIDER),
+    prefix=f"/integrations/{GOOGLE_PROVIDER.name}",
     tags=["Google Integration"],
 )
 api_router.include_router(me_router, tags=["Identity"])

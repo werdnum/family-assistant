@@ -40,10 +40,10 @@ if TYPE_CHECKING:
         EmailRepository,
         ErrorLogsRepository,
         EventsRepository,
-        GoogleConnectionsRepository,
         IosPushTokenRepository,
         MessageHistoryRepository,
         NotesRepository,
+        OAuthConnectionsRepository,
         PushSubscriptionRepository,
         ScheduleAutomationsRepository,
         ScriptsRepository,
@@ -184,7 +184,7 @@ class DatabaseContext:
         self._a2a_tasks = None
         self._scripts = None
         self._taint_audit_events = None
-        self._google_connections = None
+        self._oauth_connections = None
 
     async def __aenter__(self) -> DatabaseContext:
         """Enter the async context manager, starting a transaction."""
@@ -412,15 +412,15 @@ class DatabaseContext:
         return self._notes
 
     @property
-    def google_connections(self) -> GoogleConnectionsRepository:
-        """Get the Google connections repository instance."""
-        if self._google_connections is None:
+    def oauth_connections(self) -> OAuthConnectionsRepository:
+        """Get the OAuth connections repository instance."""
+        if self._oauth_connections is None:
             from family_assistant.storage.repositories import (  # noqa: PLC0415
-                GoogleConnectionsRepository,
+                OAuthConnectionsRepository,
             )
 
-            self._google_connections = GoogleConnectionsRepository(self)
-        return self._google_connections
+            self._oauth_connections = OAuthConnectionsRepository(self)
+        return self._oauth_connections
 
     @property
     def tasks(self) -> TasksRepository:

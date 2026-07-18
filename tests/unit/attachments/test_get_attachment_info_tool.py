@@ -56,8 +56,8 @@ class TestGetAttachmentInfoTool:
                     attachment_registry=attachment_registry,
                     camera_backend=None,
                     timezone=ZoneInfo("UTC"),
-                    google_credentials=None,
-                    google_api_backend=None,
+                    credential_resolvers=None,
+                    api_backend=None,
                 )
 
                 # Execute the tool
@@ -105,8 +105,8 @@ class TestGetAttachmentInfoTool:
                     attachment_registry=attachment_registry,
                     camera_backend=None,
                     timezone=ZoneInfo("UTC"),
-                    google_credentials=None,
-                    google_api_backend=None,
+                    credential_resolvers=None,
+                    api_backend=None,
                 )
 
                 # Try to get info for non-existent attachment
@@ -158,8 +158,8 @@ class TestGetAttachmentInfoTool:
                     attachment_registry=attachment_registry,
                     camera_backend=None,
                     timezone=ZoneInfo("UTC"),
-                    google_credentials=None,
-                    google_api_backend=None,
+                    credential_resolvers=None,
+                    api_backend=None,
                 )
 
                 result = await get_attachment_info_tool(
@@ -191,8 +191,8 @@ class TestGetAttachmentInfoTool:
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             result = await get_attachment_info_tool(
@@ -242,8 +242,8 @@ class TestGetAttachmentInfoTool:
                     attachment_registry=attachment_registry,
                     camera_backend=None,
                     timezone=ZoneInfo("UTC"),
-                    google_credentials=None,
-                    google_api_backend=None,
+                    credential_resolvers=None,
+                    api_backend=None,
                 )
 
                 result = await get_attachment_info_tool(

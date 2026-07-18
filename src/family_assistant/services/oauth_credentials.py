@@ -1,9 +1,9 @@
-"""Per-user Google access-token resolution — the cross-user scoping chokepoint.
+"""Per-user OAuth access-token resolution — the cross-user scoping chokepoint.
 
-The resolver turns the turn's *execution context* into a valid Google access
-token for the acting user, refreshing the stored refresh token when needed. It
-takes the execution context rather than a user id so no code path from tool
-arguments can address another user's data (see
+The resolver turns the turn's *execution context* into a valid access token for
+the acting user at one OAuth provider, refreshing the stored refresh token when
+needed. It takes the execution context rather than a user id so no code path
+from tool arguments can address another user's data (see
 ``docs/design/user-scoped-google-data-access.md`` §2).
 
 Key semantics:
@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import httpx
@@ -33,17 +32,16 @@ import httpx
 from family_assistant.utils.clock import Clock, SystemClock
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import GoogleIntegrationConfig
+    from family_assistant.config_models import OAuthIntegrationConfig
     from family_assistant.services.credential_encryption import CredentialEncryption
     from family_assistant.services.notifier import Notifier
-    from family_assistant.storage.repositories.google_connections import (
-        GoogleConnectionModel,
+    from family_assistant.services.oauth_provider import OAuthProviderSpec
+    from family_assistant.storage.repositories.oauth_connections import (
+        OAuthConnectionModel,
     )
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
-
-GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
 # Refresh the access token when this little of its lifetime remains, so an
 # in-flight request never races the expiry.
@@ -52,22 +50,7 @@ _REFRESH_MARGIN_SECONDS = 60
 _DEFAULT_TOKEN_LIFETIME_SECONDS = 3600
 
 
-class GoogleScope(StrEnum):
-    """OAuth scopes the shipped Google tools can exercise (read-only)."""
-
-    GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
-    DRIVE_READONLY = "https://www.googleapis.com/auth/drive.readonly"
-    DRIVE_METADATA_READONLY = "https://www.googleapis.com/auth/drive.metadata.readonly"
-
-
-# Startup allowlist: scopes an operator may configure in v1. Narrowing the grant
-# is allowed; broadening beyond these read-only scopes is not.
-SUPPORTED_GOOGLE_SCOPES: frozenset[str] = frozenset(
-    scope.value for scope in GoogleScope
-)
-
-
-class GoogleCredentialError(Exception):
+class OAuthCredentialError(Exception):
     """Base class for credential-resolution failures.
 
     Every subclass carries an actionable, user-renderable message so tools can
@@ -75,65 +58,57 @@ class GoogleCredentialError(Exception):
     """
 
 
-class GoogleNoActingUserError(GoogleCredentialError):
+class OAuthNoActingUserError(OAuthCredentialError):
     """Raised when the turn has no acting user (system/ambient context)."""
 
-    def __init__(
-        self,
-        message: str = (
-            "Google access is only available when acting on behalf of a specific "
-            "user; this context has no acting user."
-        ),
-    ) -> None:
-        super().__init__(message)
-
-
-class GoogleNotConnectedError(GoogleCredentialError):
-    """Raised when the acting user has no Google connection."""
-
-    def __init__(
-        self,
-        message: str = "no Google account connected — connect from Settings",
-    ) -> None:
-        super().__init__(message)
-
-
-class GoogleReauthRequiredError(GoogleCredentialError):
-    """Raised when the connection needs re-consent (needs_reauth / invalid_grant)."""
-
-    def __init__(
-        self,
-        message: str = (
-            "your Google connection needs to be re-authorized — reconnect from Settings"
-        ),
-    ) -> None:
-        super().__init__(message)
-
-
-class GoogleScopeNotGrantedError(GoogleCredentialError):
-    """Raised when the required scope was not granted for this user's connection."""
-
-    def __init__(self, scope: GoogleScope) -> None:
-        self.scope = scope
+    def __init__(self, provider_display_name: str) -> None:
         super().__init__(
-            f"your Google connection doesn't include {scope.value} access — "
-            "reconnect from Settings and approve it"
+            f"{provider_display_name} access is only available when acting on "
+            "behalf of a specific user; this context has no acting user."
         )
 
 
-class GoogleRefreshFailedError(GoogleCredentialError):
+class OAuthNotConnectedError(OAuthCredentialError):
+    """Raised when the acting user has no connection at this provider."""
+
+    def __init__(self, provider_display_name: str) -> None:
+        super().__init__(
+            f"no {provider_display_name} account connected — connect from Settings"
+        )
+
+
+class OAuthReauthRequiredError(OAuthCredentialError):
+    """Raised when the connection needs re-consent (needs_reauth / invalid_grant)."""
+
+    def __init__(self, provider_display_name: str) -> None:
+        super().__init__(
+            f"your {provider_display_name} connection needs to be re-authorized — "
+            "reconnect from Settings"
+        )
+
+
+class OAuthScopeNotGrantedError(OAuthCredentialError):
+    """Raised when the required scope was not granted for this user's connection."""
+
+    def __init__(self, provider_display_name: str, scope: str) -> None:
+        self.scope = str(scope)
+        super().__init__(
+            f"your {provider_display_name} connection doesn't include "
+            f"{self.scope} access — reconnect from Settings and approve it"
+        )
+
+
+class OAuthRefreshFailedError(OAuthCredentialError):
     """Raised on a transient refresh failure (network/5xx/unexpected response).
 
     The connection row is left untouched, so a later retry can succeed.
     """
 
-    def __init__(
-        self,
-        message: str = (
-            "couldn't refresh your Google access token right now — please try again"
-        ),
-    ) -> None:
-        super().__init__(message)
+    def __init__(self, provider_display_name: str) -> None:
+        super().__init__(
+            f"couldn't refresh your {provider_display_name} access token right "
+            "now — please try again"
+        )
 
 
 @dataclass(frozen=True)
@@ -144,8 +119,8 @@ class _CachedToken:
     expires_at: float
 
 
-class GoogleCredentialResolver:
-    """Resolves per-user Google access tokens from the turn's execution context.
+class OAuthCredentialResolver:
+    """Resolves per-user access tokens for one OAuth provider.
 
     Constructed once at app wiring. Not safe to share a single instance across
     event loops, but all use is within one app loop.
@@ -153,54 +128,59 @@ class GoogleCredentialResolver:
 
     def __init__(
         self,
-        config: GoogleIntegrationConfig,
+        provider: OAuthProviderSpec,
+        config: OAuthIntegrationConfig,
         encryption: CredentialEncryption,
         http_client: httpx.AsyncClient,
         notifier: Notifier | None,
         *,
-        token_endpoint: str = GOOGLE_TOKEN_ENDPOINT,
+        token_endpoint: str | None = None,
         clock: Clock | None = None,
     ) -> None:
         """Initialize the resolver.
 
         Args:
-            config: Google integration config (OAuth client id/secret).
+            provider: The OAuth provider this resolver serves.
+            config: The provider's integration config (OAuth client id/secret).
             encryption: Decrypts the stored refresh token.
             http_client: Async HTTP client used to POST the token endpoint.
             notifier: Optional user-notification channel for needs_reauth alerts.
-            token_endpoint: Google's OAuth token endpoint (override for tests).
+            token_endpoint: OAuth token endpoint (defaults to the provider's;
+                override for tests).
             clock: Clock for token-expiry math (defaults to the system clock).
         """
+        self._provider = provider
         self._config = config
         self._encryption = encryption
         self._http_client = http_client
         self._notifier = notifier
-        self._token_endpoint = token_endpoint
+        self._token_endpoint = token_endpoint or provider.token_url
         self._clock = clock or SystemClock()
         self._cache: dict[tuple[str, str], _CachedToken] = {}
         self._user_locks: dict[str, asyncio.Lock] = {}
 
     async def access_token_for(
-        self, exec_context: ToolExecutionContext, scope: GoogleScope
+        self, exec_context: ToolExecutionContext, scope: str
     ) -> str:
         """Return a valid access token for the turn's acting user.
 
-        Raises one of the ``GoogleCredentialError`` subclasses — all rendered as
+        Raises one of the ``OAuthCredentialError`` subclasses — all rendered as
         actionable tool errors — when a token cannot be produced.
         """
+        display_name = self._provider.display_name
         user_id = exec_context.user_id
         if not user_id:
-            raise GoogleNoActingUserError()
+            raise OAuthNoActingUserError(display_name)
 
-        connection = await exec_context.db_context.google_connections.get_connection(
-            user_id
+        connection = await exec_context.db_context.oauth_connections.get_connection(
+            user_id, self._provider.name
         )
         if connection is None:
-            raise GoogleNotConnectedError()
+            raise OAuthNotConnectedError(display_name)
         if connection.status == "needs_reauth":
-            raise GoogleReauthRequiredError()
-        if scope.value not in connection.scopes:
-            raise GoogleScopeNotGrantedError(scope)
+            raise OAuthReauthRequiredError(display_name)
+        if scope not in connection.scopes:
+            raise OAuthScopeNotGrantedError(display_name, scope)
 
         generation = connection.credential_generation
         cached = self._get_cached(user_id, generation)
@@ -218,7 +198,7 @@ class GoogleCredentialResolver:
     def evict_cached_token(self, user_id: str) -> None:
         """Drop the user's cached access token(s).
 
-        Called by tools after a 401 from a Google data API so the next
+        Called by tools after a 401 from a provider data API so the next
         ``access_token_for`` forces a refresh (and, if that fails with
         ``invalid_grant``, fires the needs_reauth path immediately).
         """
@@ -240,9 +220,10 @@ class GoogleCredentialResolver:
         self,
         exec_context: ToolExecutionContext,
         user_id: str,
-        connection: GoogleConnectionModel,
+        connection: OAuthConnectionModel,
     ) -> str:
         """Refresh and cache the access token while holding the user's lock."""
+        display_name = self._provider.display_name
         generation = connection.credential_generation
         refresh_token = self._encryption.decrypt(connection.refresh_token_encrypted)
 
@@ -257,8 +238,8 @@ class GoogleCredentialResolver:
                 },
             )
         except httpx.HTTPError as exc:
-            logger.warning("Google token refresh network error: %s", exc)
-            raise GoogleRefreshFailedError() from exc
+            logger.warning("%s token refresh network error: %s", display_name, exc)
+            raise OAuthRefreshFailedError(display_name) from exc
 
         if response.status_code == httpx.codes.OK:
             token, expiry = self._parse_token_response(response)
@@ -269,12 +250,14 @@ class GoogleCredentialResolver:
             await self._handle_invalid_grant(
                 exec_context, user_id, connection.provider, generation
             )
-            raise GoogleReauthRequiredError()
+            raise OAuthReauthRequiredError(display_name)
 
         logger.warning(
-            "Google token refresh failed with status %s", response.status_code
+            "%s token refresh failed with status %s",
+            display_name,
+            response.status_code,
         )
-        raise GoogleRefreshFailedError()
+        raise OAuthRefreshFailedError(display_name)
 
     def _store_token(
         self, user_id: str, generation: str, token: str, expires_at: float
@@ -294,8 +277,11 @@ class GoogleCredentialResolver:
         payload = response.json()
         token = payload.get("access_token")
         if not isinstance(token, str) or not token:
-            logger.warning("Google token response missing access_token")
-            raise GoogleRefreshFailedError()
+            logger.warning(
+                "%s token response missing access_token",
+                self._provider.display_name,
+            )
+            raise OAuthRefreshFailedError(self._provider.display_name)
         expires_in = payload.get("expires_in")
         lifetime = (
             float(expires_in)
@@ -307,7 +293,7 @@ class GoogleCredentialResolver:
 
     @staticmethod
     def _is_invalid_grant(response: httpx.Response) -> bool:
-        """Whether a non-200 response is Google's revoked/expired signal."""
+        """Whether a non-200 response is the provider's revoked/expired signal."""
         if response.status_code != httpx.codes.BAD_REQUEST:
             return False
         try:
@@ -329,7 +315,7 @@ class GoogleCredentialResolver:
         so a refresh cannot invalidate a *replacement* connection created by a
         concurrent reconnect. Notify only when we actually flipped the row.
         """
-        flipped = await exec_context.db_context.google_connections.mark_needs_reauth(
+        flipped = await exec_context.db_context.oauth_connections.mark_needs_reauth(
             user_id, provider, expected_generation=generation
         )
         if not flipped:
@@ -349,12 +335,13 @@ class GoogleCredentialResolver:
         if self._notifier is None:
             logger.info("No notifier configured; skipping needs_reauth alert")
             return
+        display_name = self._provider.display_name
         try:
             await self._notifier.send_notification(
                 user_id,
-                "Google connection needs attention",
-                "Your Google connection needs re-authorization — reconnect from "
-                "Settings.",
+                f"{display_name} connection needs attention",
+                f"Your {display_name} connection needs re-authorization — "
+                "reconnect from Settings.",
                 exec_context.db_context,
             )
         except Exception:

@@ -476,8 +476,8 @@ class TestCreateAttachmentAPI:
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             api = create_attachment_api(execution_context)
@@ -504,8 +504,8 @@ class TestCreateAttachmentAPI:
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             with pytest.raises(
@@ -537,8 +537,8 @@ class TestScriptIntegration:
                 attachment_registry=None,  # No attachment registry
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -580,8 +580,8 @@ print("Hello world")
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             # Create tools provider with attachment tools
@@ -652,8 +652,8 @@ result
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -696,8 +696,8 @@ result == None
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -740,8 +740,8 @@ attachment_list()
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -816,8 +816,8 @@ attachment_id
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -895,8 +895,8 @@ attachment_id
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -958,8 +958,8 @@ metadata = attachment_get(attachment_id)
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -1014,8 +1014,8 @@ raw
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)
@@ -1056,8 +1056,8 @@ raw
                 attachment_registry=attachment_registry,
                 camera_backend=None,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             config = ScriptConfig(enable_print=True)

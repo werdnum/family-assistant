@@ -1,4 +1,4 @@
-"""Unit tests for GoogleConnectionsRepository (SQLite + PostgreSQL)."""
+"""Unit tests for OAuthConnectionsRepository (SQLite + PostgreSQL)."""
 
 import asyncio
 from collections.abc import AsyncGenerator
@@ -29,7 +29,7 @@ class TestGoogleConnections:
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/drive.readonly",
         ]
-        created = await db_context.google_connections.upsert_connection(
+        created = await db_context.oauth_connections.upsert_connection(
             user_id="user-a",
             provider="google",
             provider_account_email="a@example.com",
@@ -42,7 +42,7 @@ class TestGoogleConnections:
         assert created.credential_generation
         assert created.scopes == scopes
 
-        fetched = await db_context.google_connections.get_connection("user-a")
+        fetched = await db_context.oauth_connections.get_connection("user-a", "google")
         assert fetched is not None
         assert fetched.provider_account_email == "a@example.com"
         assert fetched.scopes == scopes
@@ -53,20 +53,23 @@ class TestGoogleConnections:
     async def test_get_connection_missing_returns_none(
         self, db_context: DatabaseContext
     ) -> None:
-        assert await db_context.google_connections.get_connection("nobody") is None
+        assert (
+            await db_context.oauth_connections.get_connection("nobody", "google")
+            is None
+        )
 
     @pytest.mark.asyncio
     async def test_upsert_rotates_credential_generation(
         self, db_context: DatabaseContext
     ) -> None:
-        first = await db_context.google_connections.upsert_connection(
+        first = await db_context.oauth_connections.upsert_connection(
             user_id="user-a",
             provider="google",
             provider_account_email="a@example.com",
             scopes=["s1"],
             refresh_token_encrypted="cipher-1",
         )
-        second = await db_context.google_connections.upsert_connection(
+        second = await db_context.oauth_connections.upsert_connection(
             user_id="user-a",
             provider="google",
             provider_account_email="a2@example.com",
@@ -86,14 +89,14 @@ class TestGoogleConnections:
         self, db_context: DatabaseContext
     ) -> None:
         """The atomic upsert keeps ``created_at`` while bumping ``updated_at``."""
-        first = await db_context.google_connections.upsert_connection(
+        first = await db_context.oauth_connections.upsert_connection(
             user_id="user-a",
             provider="google",
             provider_account_email="a@example.com",
             scopes=["s1"],
             refresh_token_encrypted="cipher-1",
         )
-        second = await db_context.google_connections.upsert_connection(
+        second = await db_context.oauth_connections.upsert_connection(
             user_id="user-a",
             provider="google",
             provider_account_email="a2@example.com",
@@ -119,7 +122,7 @@ class TestGoogleConnections:
 
         async def _upsert(email: str, cipher: str) -> None:
             async with DatabaseContext(engine=db_engine) as ctx:
-                await ctx.google_connections.upsert_connection(
+                await ctx.oauth_connections.upsert_connection(
                     user_id="user-a",
                     provider="google",
                     provider_account_email=email,
@@ -133,7 +136,7 @@ class TestGoogleConnections:
         )
 
         async with DatabaseContext(engine=db_engine) as ctx:
-            connections = await ctx.google_connections.list_connections()
+            connections = await ctx.oauth_connections.list_connections()
         user_a = [c for c in connections if c.user_id == "user-a"]
         assert len(user_a) == 1
         assert user_a[0].status == "active"
@@ -143,18 +146,18 @@ class TestGoogleConnections:
     async def test_upsert_reactivates_needs_reauth_connection(
         self, db_context: DatabaseContext
     ) -> None:
-        conn = await db_context.google_connections.upsert_connection(
+        conn = await db_context.oauth_connections.upsert_connection(
             user_id="user-a",
             provider="google",
             provider_account_email="a@example.com",
             scopes=["s1"],
             refresh_token_encrypted="cipher-1",
         )
-        await db_context.google_connections.mark_needs_reauth(
+        await db_context.oauth_connections.mark_needs_reauth(
             "user-a", "google", conn.credential_generation
         )
 
-        reconnected = await db_context.google_connections.upsert_connection(
+        reconnected = await db_context.oauth_connections.upsert_connection(
             user_id="user-a",
             provider="google",
             provider_account_email="a@example.com",
@@ -165,28 +168,28 @@ class TestGoogleConnections:
 
     @pytest.mark.asyncio
     async def test_list_connections(self, db_context: DatabaseContext) -> None:
-        await db_context.google_connections.upsert_connection(
+        await db_context.oauth_connections.upsert_connection(
             "user-a", "google", "a@example.com", ["s1"], "cipher-a"
         )
-        await db_context.google_connections.upsert_connection(
+        await db_context.oauth_connections.upsert_connection(
             "user-b", "google", "b@example.com", ["s1"], "cipher-b"
         )
-        connections = await db_context.google_connections.list_connections()
+        connections = await db_context.oauth_connections.list_connections()
         assert {c.user_id for c in connections} == {"user-a", "user-b"}
 
     @pytest.mark.asyncio
     async def test_mark_needs_reauth_matching_generation(
         self, db_context: DatabaseContext
     ) -> None:
-        conn = await db_context.google_connections.upsert_connection(
+        conn = await db_context.oauth_connections.upsert_connection(
             "user-a", "google", "a@example.com", ["s1"], "cipher-a"
         )
-        updated = await db_context.google_connections.mark_needs_reauth(
+        updated = await db_context.oauth_connections.mark_needs_reauth(
             "user-a", "google", conn.credential_generation
         )
         assert updated is True
 
-        after = await db_context.google_connections.get_connection("user-a")
+        after = await db_context.oauth_connections.get_connection("user-a", "google")
         assert after is not None
         assert after.status == "needs_reauth"
         # generation rotates on the flip
@@ -197,50 +200,58 @@ class TestGoogleConnections:
         self, db_context: DatabaseContext
     ) -> None:
         """A stale generation must not touch a replacement connection."""
-        original = await db_context.google_connections.upsert_connection(
+        original = await db_context.oauth_connections.upsert_connection(
             "user-a", "google", "a@example.com", ["s1"], "cipher-1"
         )
         stale_generation = original.credential_generation
 
         # A reconnect rotates the generation (simulating a replacement connection).
-        replacement = await db_context.google_connections.upsert_connection(
+        replacement = await db_context.oauth_connections.upsert_connection(
             "user-a", "google", "a@example.com", ["s1"], "cipher-2"
         )
         assert replacement.credential_generation != stale_generation
 
-        updated = await db_context.google_connections.mark_needs_reauth(
+        updated = await db_context.oauth_connections.mark_needs_reauth(
             "user-a", "google", stale_generation
         )
         assert updated is False
 
-        after = await db_context.google_connections.get_connection("user-a")
+        after = await db_context.oauth_connections.get_connection("user-a", "google")
         assert after is not None
         assert after.status == "active"
         assert after.credential_generation == replacement.credential_generation
 
     @pytest.mark.asyncio
     async def test_update_last_used(self, db_context: DatabaseContext) -> None:
-        conn = await db_context.google_connections.upsert_connection(
+        conn = await db_context.oauth_connections.upsert_connection(
             "user-a", "google", "a@example.com", ["s1"], "cipher-a"
         )
         assert conn.last_used_at is None
 
-        await db_context.google_connections.update_last_used("user-a", "google")
-        after = await db_context.google_connections.get_connection("user-a")
+        await db_context.oauth_connections.update_last_used("user-a", "google")
+        after = await db_context.oauth_connections.get_connection("user-a", "google")
         assert after is not None
         assert after.last_used_at is not None
 
     @pytest.mark.asyncio
     async def test_delete_connection(self, db_context: DatabaseContext) -> None:
-        await db_context.google_connections.upsert_connection(
+        await db_context.oauth_connections.upsert_connection(
             "user-a", "google", "a@example.com", ["s1"], "cipher-a"
         )
-        deleted = await db_context.google_connections.delete_connection("user-a")
+        deleted = await db_context.oauth_connections.delete_connection(
+            "user-a", "google"
+        )
         assert deleted is True
-        assert await db_context.google_connections.get_connection("user-a") is None
+        assert (
+            await db_context.oauth_connections.get_connection("user-a", "google")
+            is None
+        )
 
         # Deleting again reports no row removed.
-        assert await db_context.google_connections.delete_connection("user-a") is False
+        assert (
+            await db_context.oauth_connections.delete_connection("user-a", "google")
+            is False
+        )
 
 
 class TestPendingOAuthFlows:
@@ -250,11 +261,11 @@ class TestPendingOAuthFlows:
     async def test_claim_pending_flow_success_then_second_claim_none(
         self, db_context: DatabaseContext
     ) -> None:
-        await db_context.google_connections.create_pending_flow(
+        await db_context.oauth_connections.create_pending_flow(
             state_hash="hash-1", code_verifier="verifier-1", user_id="user-a"
         )
 
-        claimed = await db_context.google_connections.claim_pending_flow(
+        claimed = await db_context.oauth_connections.claim_pending_flow(
             "hash-1", max_age_seconds=600
         )
         assert claimed is not None
@@ -262,7 +273,7 @@ class TestPendingOAuthFlows:
         assert claimed.user_id == "user-a"
 
         # Single-use: a second claim of the same state returns None.
-        second = await db_context.google_connections.claim_pending_flow(
+        second = await db_context.oauth_connections.claim_pending_flow(
             "hash-1", max_age_seconds=600
         )
         assert second is None
@@ -272,7 +283,7 @@ class TestPendingOAuthFlows:
         self, db_context: DatabaseContext
     ) -> None:
         assert (
-            await db_context.google_connections.claim_pending_flow(
+            await db_context.oauth_connections.claim_pending_flow(
                 "missing", max_age_seconds=600
             )
             is None
@@ -282,42 +293,38 @@ class TestPendingOAuthFlows:
     async def test_claim_expired_flow_returns_none(
         self, db_context: DatabaseContext
     ) -> None:
-        await db_context.google_connections.create_pending_flow(
+        await db_context.oauth_connections.create_pending_flow(
             state_hash="hash-old", code_verifier="verifier", user_id="user-a"
         )
         # Claim with an injected "now" far in the future so the flow is expired.
         future = datetime.now(UTC) + timedelta(seconds=1200)
-        claimed = await db_context.google_connections.claim_pending_flow(
+        claimed = await db_context.oauth_connections.claim_pending_flow(
             "hash-old", max_age_seconds=600, now=future
         )
         assert claimed is None
 
         # The expired row is consumed by the claim (single-use, even on expiry).
-        again = await db_context.google_connections.claim_pending_flow(
+        again = await db_context.oauth_connections.claim_pending_flow(
             "hash-old", max_age_seconds=600
         )
         assert again is None
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_flows(self, db_context: DatabaseContext) -> None:
-        await db_context.google_connections.create_pending_flow(
-            "hash-1", "v1", "user-a"
-        )
-        await db_context.google_connections.create_pending_flow(
-            "hash-2", "v2", "user-b"
-        )
+        await db_context.oauth_connections.create_pending_flow("hash-1", "v1", "user-a")
+        await db_context.oauth_connections.create_pending_flow("hash-2", "v2", "user-b")
 
         # Nothing expired yet at the natural "now".
-        assert await db_context.google_connections.cleanup_expired_flows(600) == 0
+        assert await db_context.oauth_connections.cleanup_expired_flows(600) == 0
 
         # With an injected future now, both flows are past the TTL.
         future = datetime.now(UTC) + timedelta(seconds=1200)
-        removed = await db_context.google_connections.cleanup_expired_flows(
+        removed = await db_context.oauth_connections.cleanup_expired_flows(
             600, now=future
         )
         assert removed == 2
         assert (
-            await db_context.google_connections.claim_pending_flow(
+            await db_context.oauth_connections.claim_pending_flow(
                 "hash-1", max_age_seconds=600
             )
             is None

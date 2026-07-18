@@ -203,8 +203,8 @@ async def test_direct_tool_callable(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create engine
@@ -260,8 +260,8 @@ async def test_tool_prefix_fallback(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create engine
@@ -316,8 +316,8 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create engine with only echo allowed
@@ -402,8 +402,8 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create engine
@@ -451,8 +451,8 @@ async def test_tools_api_still_works(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create engine
@@ -514,8 +514,8 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create engine with all tools denied
@@ -627,8 +627,8 @@ async def test_engine_marks_context_in_script(db_engine: AsyncEngine) -> None:
             attachment_registry=None,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
         assert context.in_script is False
 

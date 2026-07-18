@@ -1,4 +1,4 @@
-"""The Google data-API seam used by the Gmail/Drive tools (later wave).
+"""Provider-neutral bearer-token REST seam used by connected-account tools.
 
 Mirrors the injectable-backend pattern of ``tools/video_backends.py``: a single
 generic ``request`` method rather than per-endpoint methods keeps the protocol
@@ -19,28 +19,28 @@ import httpx
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-# Default per-request timeout for Google REST calls (seconds).
+# Default per-request timeout for REST calls (seconds).
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 
-# Hard ceiling on a response body read from a Google REST endpoint (bytes). The
+# Hard ceiling on a response body read from a REST endpoint (bytes). The
 # body is streamed and aborted once this budget is exceeded, so a multi-gigabyte
 # Drive download (``alt=media``) or a hostile export can never be materialized in
 # memory. 25 MiB matches the Drive download pre-check in ``tools/google_data.py``.
 _DEFAULT_MAX_RESPONSE_BYTES = 25 * 1024 * 1024
 
 
-class GoogleApiError(Exception):
-    """Raised on a transport-level failure talking to a Google REST endpoint.
+class ApiBackendError(Exception):
+    """Raised on a transport-level failure talking to a REST endpoint.
 
     HTTP error *statuses* are returned to the caller in
-    :class:`GoogleApiResponse` (the tools interpret them); this is reserved for
+    :class:`ApiResponse` (the tools interpret them); this is reserved for
     failures where no response was received (network error, timeout).
     """
 
 
 @dataclass(frozen=True)
-class GoogleApiResponse:
-    """A minimal Google REST response: status code and raw body bytes."""
+class ApiResponse:
+    """A minimal REST response: status code and raw body bytes."""
 
     status_code: int
     content: bytes
@@ -51,11 +51,11 @@ class GoogleApiResponse:
 
 
 @runtime_checkable
-class GoogleApiBackend(Protocol):
-    """Protocol for the Google REST backend used by the Gmail/Drive tools.
+class ApiBackend(Protocol):
+    """Protocol for the REST backend used by connected-account data tools.
 
     Implementations MUST enforce a hard response-body cap while reading, raising
-    :class:`GoogleApiError` when a body exceeds it, so an unbounded download
+    :class:`ApiBackendError` when a body exceeds it, so an unbounded download
     (e.g. Drive ``alt=media`` on a huge file) can never exhaust server memory.
     """
 
@@ -66,13 +66,13 @@ class GoogleApiBackend(Protocol):
         url: str,
         access_token: str,
         params: Mapping[str, str] | None = None,
-    ) -> GoogleApiResponse:
-        """Issue an authenticated request to a full Google REST URL."""
+    ) -> ApiResponse:
+        """Issue an authenticated request to a full REST URL."""
         ...
 
 
-class HttpGoogleApiBackend:
-    """A :class:`GoogleApiBackend` over an injected ``httpx.AsyncClient``."""
+class HttpApiBackend:
+    """A :class:`ApiBackend` over an injected ``httpx.AsyncClient``."""
 
     def __init__(
         self,
@@ -93,14 +93,14 @@ class HttpGoogleApiBackend:
         url: str,
         access_token: str,
         params: Mapping[str, str] | None = None,
-    ) -> GoogleApiResponse:
+    ) -> ApiResponse:
         """Issue an authenticated request, returning status and raw bytes.
 
         The access token is sent as a Bearer ``Authorization`` header and is
         never logged. The response body is streamed and read against a hard
         ``max_response_bytes`` budget so an unbounded download can never be
-        materialized in memory; exceeding it raises :class:`GoogleApiError`.
-        Transport-level failures also raise :class:`GoogleApiError`; HTTP error
+        materialized in memory; exceeding it raises :class:`ApiBackendError`.
+        Transport-level failures also raise :class:`ApiBackendError`; HTTP error
         statuses are returned for the caller to interpret.
         """
         try:
@@ -108,7 +108,7 @@ class HttpGoogleApiBackend:
                 method=method, url=url, access_token=access_token, params=params
             )
         except httpx.HTTPError as exc:
-            raise GoogleApiError(f"Google API request to {url} failed") from exc
+            raise ApiBackendError(f"API request to {url} failed") from exc
 
     async def _stream_request(
         self,
@@ -117,7 +117,7 @@ class HttpGoogleApiBackend:
         url: str,
         access_token: str,
         params: Mapping[str, str] | None,
-    ) -> GoogleApiResponse:
+    ) -> ApiResponse:
         """Stream the response body under the ``max_response_bytes`` budget."""
         async with self._http_client.stream(
             method,
@@ -131,11 +131,11 @@ class HttpGoogleApiBackend:
             async for chunk in response.aiter_bytes():
                 total += len(chunk)
                 if total > self._max_response_bytes:
-                    raise GoogleApiError(
-                        f"Google API response from {url} exceeded the "
+                    raise ApiBackendError(
+                        f"API response from {url} exceeded the "
                         f"{self._max_response_bytes}-byte response limit."
                     )
                 chunks.append(chunk)
-            return GoogleApiResponse(
+            return ApiResponse(
                 status_code=response.status_code, content=b"".join(chunks)
             )

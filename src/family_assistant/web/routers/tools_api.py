@@ -132,12 +132,10 @@ async def execute_tool_api(
             if processing_service
             else True
         ),
-        google_credentials=(
-            processing_service.google_credentials if processing_service else None
+        credential_resolvers=(
+            processing_service.credential_resolvers if processing_service else None
         ),
-        google_api_backend=(
-            processing_service.google_api_backend if processing_service else None
-        ),
+        api_backend=(processing_service.api_backend if processing_service else None),
     )
 
     try:

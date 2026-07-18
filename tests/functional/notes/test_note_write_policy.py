@@ -65,8 +65,8 @@ def _make_tool_context(
         required_note_visibility_labels=required_labels,
         allowed_note_visibility_labels=allowed_labels,
         timezone=ZoneInfo("UTC"),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 

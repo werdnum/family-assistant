@@ -1,6 +1,6 @@
-"""Unit tests for :class:`GoogleCredentialResolver`.
+"""Unit tests for :class:`OAuthCredentialResolver`.
 
-Uses the real ``GoogleConnectionsRepository`` against the ``db_engine`` fixture
+Uses the real ``OAuthConnectionsRepository`` against the ``db_engine`` fixture
 and a custom ``httpx.AsyncBaseTransport`` for the token endpoint (no mocking of
 internals, no ``asyncio.sleep``; concurrency is gated with ``asyncio.Event``).
 """
@@ -21,14 +21,14 @@ from family_assistant.services.credential_encryption import (
     CredentialEncryption,
     generate_key,
 )
-from family_assistant.services.google_credentials import (
-    GoogleCredentialResolver,
-    GoogleNoActingUserError,
-    GoogleNotConnectedError,
-    GoogleReauthRequiredError,
-    GoogleRefreshFailedError,
-    GoogleScope,
-    GoogleScopeNotGrantedError,
+from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
+from family_assistant.services.oauth_credentials import (
+    OAuthCredentialResolver,
+    OAuthNoActingUserError,
+    OAuthNotConnectedError,
+    OAuthReauthRequiredError,
+    OAuthRefreshFailedError,
+    OAuthScopeNotGrantedError,
 )
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.types import ToolExecutionContext
@@ -139,8 +139,8 @@ def _exec_context(
         camera_backend=None,
         timezone=__import__("zoneinfo").ZoneInfo("UTC"),
         user_id=user_id,
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 
@@ -148,19 +148,19 @@ def _resolver(
     encryption: CredentialEncryption,
     transport: _ScriptedTransport | None = None,
     notifier: _RecordingNotifier | None = None,
-) -> GoogleCredentialResolver:
+) -> OAuthCredentialResolver:
     """Build a resolver over a scripted transport (default: one OK token)."""
     transport = transport or _ScriptedTransport([_ok_token("access-1")])
     client = httpx.AsyncClient(transport=transport)
     config = GoogleIntegrationConfig(
         oauth_client_id="client-id", oauth_client_secret="client-secret"
     )
-    return GoogleCredentialResolver(
+    return OAuthCredentialResolver(
+        provider=GOOGLE_PROVIDER,
         config=config,
         encryption=encryption,
         http_client=client,
         notifier=notifier,
-        token_endpoint="https://oauth2.googleapis.com/token",
     )
 
 
@@ -173,7 +173,7 @@ async def _seed_connection(
     refresh_token: str = "refresh-token-1",
 ) -> str:
     """Seed a connection row and return its credential_generation."""
-    connection = await db_context.google_connections.upsert_connection(
+    connection = await db_context.oauth_connections.upsert_connection(
         user_id=user_id,
         provider=PROVIDER,
         provider_account_email="user@example.com",
@@ -193,7 +193,7 @@ async def test_no_acting_user_fails_closed(db_context: DatabaseContext) -> None:
     resolver = _resolver(CredentialEncryption(generate_key()))
     exec_context = _exec_context(db_context, user_id=None)
 
-    with pytest.raises(GoogleNoActingUserError):
+    with pytest.raises(OAuthNoActingUserError):
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
 
 
@@ -202,7 +202,7 @@ async def test_no_connection_fails_closed(db_context: DatabaseContext) -> None:
     resolver = _resolver(CredentialEncryption(generate_key()))
     exec_context = _exec_context(db_context, user_id=USER_ID)
 
-    with pytest.raises(GoogleNotConnectedError) as exc_info:
+    with pytest.raises(OAuthNotConnectedError) as exc_info:
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
 
     assert "connect from Settings" in str(exc_info.value)
@@ -212,13 +212,13 @@ async def test_no_connection_fails_closed(db_context: DatabaseContext) -> None:
 async def test_needs_reauth_status_fails_closed(db_context: DatabaseContext) -> None:
     encryption = CredentialEncryption(generate_key())
     generation = await _seed_connection(db_context, encryption)
-    await db_context.google_connections.mark_needs_reauth(
+    await db_context.oauth_connections.mark_needs_reauth(
         USER_ID, PROVIDER, expected_generation=generation
     )
     resolver = _resolver(encryption)
     exec_context = _exec_context(db_context, user_id=USER_ID)
 
-    with pytest.raises(GoogleReauthRequiredError) as exc_info:
+    with pytest.raises(OAuthReauthRequiredError) as exc_info:
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
 
     assert "re-authorized" in str(exc_info.value)
@@ -231,7 +231,7 @@ async def test_scope_not_granted_fails_closed(db_context: DatabaseContext) -> No
     resolver = _resolver(encryption)
     exec_context = _exec_context(db_context, user_id=USER_ID)
 
-    with pytest.raises(GoogleScopeNotGrantedError) as exc_info:
+    with pytest.raises(OAuthScopeNotGrantedError) as exc_info:
         await resolver.access_token_for(exec_context, GoogleScope.DRIVE_READONLY)
 
     assert DRIVE in str(exc_info.value)
@@ -260,7 +260,7 @@ async def test_happy_path_refresh_caches_token(
     assert second == "access-xyz"
     assert transport.calls == 1  # cache hit, no second POST
 
-    connection = await db_context.google_connections.get_connection(USER_ID)
+    connection = await db_context.oauth_connections.get_connection(USER_ID, PROVIDER)
     assert connection is not None
     # last_used_at reflects successful API use, not token refreshes; the
     # tools' request helper records it after a 2xx data response.
@@ -286,7 +286,8 @@ async def test_refresh_uses_decrypted_refresh_token(
     config = GoogleIntegrationConfig(
         oauth_client_id="cid", oauth_client_secret="csecret"
     )
-    resolver = GoogleCredentialResolver(
+    resolver = OAuthCredentialResolver(
+        provider=GOOGLE_PROVIDER,
         config=config,
         encryption=encryption,
         http_client=client,
@@ -345,10 +346,10 @@ async def test_invalid_grant_marks_needs_reauth_and_notifies(
     resolver = _resolver(encryption, transport=transport, notifier=notifier)
     exec_context = _exec_context(db_context, user_id=USER_ID)
 
-    with pytest.raises(GoogleReauthRequiredError):
+    with pytest.raises(OAuthReauthRequiredError):
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
 
-    connection = await db_context.google_connections.get_connection(USER_ID)
+    connection = await db_context.oauth_connections.get_connection(USER_ID, PROVIDER)
     assert connection is not None
     assert connection.status == "needs_reauth"
     assert connection.credential_generation != generation  # rotated
@@ -356,7 +357,7 @@ async def test_invalid_grant_marks_needs_reauth_and_notifies(
     assert notifier.sent[0][0] == USER_ID
 
     # A subsequent call fails on the needs_reauth status without another POST.
-    with pytest.raises(GoogleReauthRequiredError):
+    with pytest.raises(OAuthReauthRequiredError):
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
     assert transport.calls == 1
 
@@ -389,10 +390,10 @@ async def test_stale_generation_does_not_flip_replacement(
     assert new_generation != old_generation
     gate.set()
 
-    with pytest.raises(GoogleReauthRequiredError):
+    with pytest.raises(OAuthReauthRequiredError):
         await task
 
-    connection = await db_context.google_connections.get_connection(USER_ID)
+    connection = await db_context.oauth_connections.get_connection(USER_ID, PROVIDER)
     assert connection is not None
     assert connection.status == "active"  # replacement survives
     assert connection.credential_generation == new_generation
@@ -462,10 +463,10 @@ async def test_transient_refresh_failure_does_not_mutate_row(
     resolver = _resolver(encryption, transport=transport, notifier=notifier)
     exec_context = _exec_context(db_context, user_id=USER_ID)
 
-    with pytest.raises(GoogleRefreshFailedError):
+    with pytest.raises(OAuthRefreshFailedError):
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
 
-    connection = await db_context.google_connections.get_connection(USER_ID)
+    connection = await db_context.oauth_connections.get_connection(USER_ID, PROVIDER)
     assert connection is not None
     assert connection.status == "active"
     assert connection.credential_generation == generation
@@ -492,7 +493,7 @@ async def test_decryption_failure_propagates_without_mutation(
     with pytest.raises(CredentialDecryptionError):
         await resolver.access_token_for(exec_context, GoogleScope.GMAIL_READONLY)
 
-    connection = await db_context.google_connections.get_connection(USER_ID)
+    connection = await db_context.oauth_connections.get_connection(USER_ID, PROVIDER)
     assert connection is not None
     assert connection.status == "active"
     assert connection.credential_generation == generation

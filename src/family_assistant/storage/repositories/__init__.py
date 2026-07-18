@@ -8,10 +8,10 @@ from .delegation_runs import DelegationRunsRepository
 from .email import EmailRepository
 from .error_logs import ErrorLogsRepository
 from .events import EventsRepository
-from .google_connections import GoogleConnectionsRepository
 from .ios_push_token import IosPushTokenRepository
 from .message_history import MessageHistoryRepository
 from .notes import NotesRepository
+from .oauth_connections import OAuthConnectionsRepository
 from .push_subscription import PushSubscriptionRepository
 from .schedule_automations import ScheduleAutomationsRepository
 from .scripts import ScriptsRepository
@@ -29,7 +29,7 @@ __all__ = [
     "EmailRepository",
     "ErrorLogsRepository",
     "EventsRepository",
-    "GoogleConnectionsRepository",
+    "OAuthConnectionsRepository",
     "IosPushTokenRepository",
     "MessageHistoryRepository",
     "NotesRepository",

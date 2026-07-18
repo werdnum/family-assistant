@@ -3,7 +3,7 @@
 Every tool resolves a per-user Google access token from the execution context
 (never from tool arguments), so the LLM cannot address another user's mailbox or
 Drive — see ``docs/design/user-scoped-google-data-access.md`` §3. The tools call
-Google's REST APIs through an injectable :class:`GoogleApiBackend` seam and taint
+Google's REST APIs through an injectable :class:`ApiBackend` seam and taint
 their results as ``unknown_external`` via tool metadata tags. Attachments they
 register are owned by the acting user so the registry enforces cross-user
 isolation on every later access.
@@ -21,17 +21,18 @@ from typing import TYPE_CHECKING, Any
 
 from markdownify import markdownify
 
-from family_assistant.services.google_credentials import (
-    GoogleCredentialError,
-    GoogleScope,
-    GoogleScopeNotGrantedError,
+from family_assistant.services.api_backend import ApiBackendError
+from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
+from family_assistant.services.oauth_credentials import (
+    OAuthCredentialError,
+    OAuthScopeNotGrantedError,
 )
 from family_assistant.tools.types import ToolAttachment, ToolResult
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
-    from family_assistant.services.google_api import GoogleApiResponse
+    from family_assistant.services.api_backend import ApiBackend, ApiResponse
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ _DRIVE_INLINE_TEXT_LIMIT = 200 * 1024
 # Hard ceiling on a Drive download. When the metadata already reports a larger
 # ``size`` we refuse without issuing the ``alt=media`` request, so a multi-gigabyte
 # file can never be materialized in memory. This mirrors the backend's own
-# response-body cap (``HttpGoogleApiBackend.max_response_bytes``), which is the
+# response-body cap (``HttpApiBackend.max_response_bytes``), which is the
 # defense for Google-native exports that report no size.
 _DRIVE_DOWNLOAD_LIMIT = 25 * 1024 * 1024
 
@@ -254,7 +255,7 @@ async def _guard(
     """
     try:
         return await impl()
-    except (GoogleCredentialError, _GoogleToolError) as exc:
+    except (OAuthCredentialError, _GoogleToolError) as exc:
         return ToolResult(text=f"Error: {exc}")
 
 
@@ -265,45 +266,69 @@ async def _google_request(
     method: str = "GET",
     url: str,
     params: Mapping[str, str] | None = None,
-) -> GoogleApiResponse:
+) -> ApiResponse:
     """Issue an authenticated Google REST request for the acting user.
 
     Resolves the access token from the execution context, calls the injected
     backend, and transparently retries once on a ``401`` after a forced token
     refresh (a revoked-before-expiry token). A second ``401`` propagates as a
     :class:`_GoogleToolError`; if the forced refresh itself fails with
-    ``invalid_grant`` the resolver raises ``GoogleReauthRequiredError``, which the
+    ``invalid_grant`` the resolver raises ``OAuthReauthRequiredError``, which the
     tool boundary renders directly.
     """
-    resolver = exec_context.google_credentials
-    backend = exec_context.google_api_backend
+    resolvers = exec_context.credential_resolvers or {}
+    resolver = resolvers.get(GOOGLE_PROVIDER.name)
+    backend = exec_context.api_backend
     if resolver is None or backend is None:
         raise _GoogleToolError(
             "Google integration is not configured or enabled for this deployment."
         )
 
     access_token = await resolver.access_token_for(exec_context, scope)
-    response = await backend.request(
-        method=method, url=url, access_token=access_token, params=params
+    response = await _backend_request(
+        backend, method=method, url=url, access_token=access_token, params=params
     )
     if response.status_code == 401:
         if exec_context.user_id is not None:
             resolver.evict_cached_token(exec_context.user_id)
         access_token = await resolver.access_token_for(exec_context, scope)
-        response = await backend.request(
-            method=method, url=url, access_token=access_token, params=params
+        response = await _backend_request(
+            backend, method=method, url=url, access_token=access_token, params=params
         )
 
     if 200 <= response.status_code < 300:
         if exec_context.user_id is not None:
-            await exec_context.db_context.google_connections.update_last_used(
-                exec_context.user_id, "google"
+            await exec_context.db_context.oauth_connections.update_last_used(
+                exec_context.user_id, GOOGLE_PROVIDER.name
             )
         return response
     raise _GoogleToolError(_format_api_error(response))
 
 
-def _format_api_error(response: GoogleApiResponse) -> str:
+async def _backend_request(
+    backend: ApiBackend,
+    *,
+    method: str,
+    url: str,
+    access_token: str,
+    params: Mapping[str, str] | None,
+) -> ApiResponse:
+    """Call the shared backend, naming the provider in transport errors.
+
+    The backend is provider-neutral and shared, so its transport/oversize
+    messages carry no provider name; these errors deliberately propagate past
+    the tool boundary to the generic tool-error renderer, where the user must
+    still see which provider failed ("Google API request to ... failed").
+    """
+    try:
+        return await backend.request(
+            method=method, url=url, access_token=access_token, params=params
+        )
+    except ApiBackendError as exc:
+        raise ApiBackendError(f"{GOOGLE_PROVIDER.display_name} {exc}") from exc
+
+
+def _format_api_error(response: ApiResponse) -> str:
     """Build a concise, token-free error message from a non-2xx response."""
     detail = ""
     try:
@@ -760,7 +785,7 @@ async def drive_search_tool(
 async def _drive_search_request(
     exec_context: ToolExecutionContext,
     params: Mapping[str, str],
-) -> GoogleApiResponse:
+) -> ApiResponse:
     """Run a Drive search, retrying with metadata scope if full scope is ungranted."""
     try:
         return await _google_request(
@@ -769,7 +794,7 @@ async def _drive_search_request(
             url=f"{_DRIVE_API_BASE}/files",
             params=params,
         )
-    except GoogleScopeNotGrantedError:
+    except OAuthScopeNotGrantedError:
         return await _google_request(
             exec_context,
             GoogleScope.DRIVE_METADATA_READONLY,

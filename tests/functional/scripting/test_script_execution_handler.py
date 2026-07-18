@@ -184,8 +184,8 @@ async def test_script_execution_by_stored_name(
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
             tools_provider=save_tools_provider,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
         save_result = await save_script_tool(
             tool_context,

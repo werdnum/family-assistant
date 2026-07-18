@@ -355,8 +355,8 @@ async def test_modify_event(
                 timezone=ZoneInfo(TEST_TIMEZONE_STR),
                 request_confirmation_callback=None,
                 camera_backend=None,
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             ),
             calendar_config=test_calendar_config_for_add,
             search_text=original_summary,
@@ -1586,8 +1586,8 @@ async def test_similarity_based_search_finds_similar_events(
             timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         search_result = await search_calendar_events_tool(
@@ -1690,8 +1690,8 @@ async def test_similarity_search_threshold_filtering(
             timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create high similarity event
@@ -1806,8 +1806,8 @@ async def test_similarity_search_score_sorting(
             timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create events (in random order)
@@ -1921,8 +1921,8 @@ async def test_duplicate_detection_error_shown(
             attachment_registry=None,
             timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create first event
@@ -2058,8 +2058,8 @@ async def test_duplicate_detection_no_error_different_time(
             attachment_registry=None,
             timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create first event
@@ -2154,8 +2154,8 @@ async def test_duplicate_detection_disabled(
             attachment_registry=None,
             timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create first event
@@ -2246,8 +2246,8 @@ async def test_duplicate_detection_all_day_events(
             attachment_registry=None,
             timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create first all-day event
@@ -2357,8 +2357,8 @@ async def test_duplicate_detection_exact_same_title(
             attachment_registry=None,
             timezone=ZoneInfo("America/New_York"),
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Create first event

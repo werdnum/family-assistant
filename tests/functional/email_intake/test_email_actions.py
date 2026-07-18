@@ -372,8 +372,8 @@ def _execution_context(
         confirmation_ui_managers=confirmation_ui_managers,
         processing_profile_id="email_intake",
         visibility_grants={"default"},
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 
@@ -614,8 +614,8 @@ async def test_email_action_without_target_user_fails(
             timezone=ZoneInfo("UTC"),
             chat_interface=email_interface,
             chat_interfaces={"email": email_interface},
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         with pytest.raises(ValueError, match="without target_user_id"):

@@ -1,6 +1,6 @@
 """Functional web tests for the per-user Google OAuth connect flow.
 
-Exercises ``src/family_assistant/web/routers/google_integration.py`` end to end
+Exercises ``src/family_assistant/web/routers/oauth_integration.py`` end to end
 against a stubbed Google token/userinfo/revoke server (``httpx.MockTransport``),
 covering the happy path, state single-use, replay/unknown/expired state, user
 mismatch, partial grants, missing refresh token, disconnect, the disabled-
@@ -22,17 +22,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, GoogleIntegrationConfig
 from family_assistant.services.credential_encryption import CredentialEncryption
-from family_assistant.services.google_integration_state import (
-    GoogleIntegrationState,
-    evaluate_google_integration_state,
+from family_assistant.services.google_provider import GOOGLE_PROVIDER
+from family_assistant.services.oauth_integration_state import (
+    OAuthIntegrationState,
+    evaluate_oauth_integration_state,
 )
 from family_assistant.storage import init_db
 from family_assistant.storage.context import DatabaseContext, get_db_context
-from family_assistant.storage.repositories.google_connections import (
-    GoogleConnectionModel,
+from family_assistant.storage.repositories.oauth_connections import (
+    OAuthConnectionModel,
 )
+from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.web.dependencies import get_current_session_user
-from family_assistant.web.routers.google_integration import google_integration_router
+from family_assistant.web.routers.oauth_integration import (
+    create_oauth_integration_router,
+)
 
 PLAINTEXT_REFRESH_TOKEN = "1//refresh-token-plaintext-value"
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
@@ -167,16 +171,20 @@ def _app_config(integration: GoogleIntegrationConfig, database_url: str) -> AppC
 def _install_integration_state(app: FastAPI) -> None:
     """Recompute and install the startup Google integration state on the app.
 
-    The router is the sole authority on ``app.state.google_integration_state``
+    The router is the sole authority on ``app.state.oauth_integration_states``
     (it fails closed when absent), so tests that build or mutate config must
     install a real state the way startup does.
     """
     config = app.state.config
     auth_service = getattr(app.state, "auth_service", None)
     auth_enabled = bool(getattr(auth_service, "auth_enabled", False))
-    app.state.google_integration_state = evaluate_google_integration_state(
-        config, auth_enabled=auth_enabled
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=auth_enabled,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
     )
+    app.state.oauth_integration_states = {"google": state}
 
 
 @dataclass
@@ -206,19 +214,24 @@ async def google_app(
     dispatcher = _RecordingNotificationDispatcher()
 
     app = FastAPI()
-    app.include_router(google_integration_router, prefix="/api/integrations/google")
+    app.include_router(
+        create_oauth_integration_router(GOOGLE_PROVIDER),
+        prefix="/api/integrations/google",
+    )
     app.state.database_engine = db_engine
     app.state.config = _app_config(integration, str(db_engine.url))
     app.state.auth_service = _FakeAuthService(auth_enabled=True)
     _install_integration_state(app)
     app.state.notification_dispatcher = dispatcher
     google_client = google_server.client()
-    app.state.google_oauth_http_client = google_client
-    app.state.google_oauth_urls = {
-        "authorize": "https://accounts.google.test/o/oauth2/v2/auth",
-        "token": "https://oauth2.googleapis.test/token",
-        "revoke": "https://oauth2.googleapis.test/revoke",
-        "userinfo": "https://www.googleapis.test/oauth2/v3/userinfo",
+    app.state.oauth_http_client = google_client
+    app.state.oauth_url_overrides = {
+        "google": {
+            "authorize": "https://accounts.google.test/o/oauth2/v2/auth",
+            "token": "https://oauth2.googleapis.test/token",
+            "revoke": "https://oauth2.googleapis.test/revoke",
+            "userinfo": "https://www.googleapis.test/oauth2/v3/userinfo",
+        }
     }
     app.dependency_overrides[get_current_session_user] = lambda: {
         "user_identifier": "alice"
@@ -259,9 +272,9 @@ async def _authorize_and_extract_state(
 
 async def _fetch_connection(
     db_engine: AsyncEngine, user_id: str
-) -> GoogleConnectionModel | None:
+) -> OAuthConnectionModel | None:
     async with get_db_context(engine=db_engine) as db:
-        return await db.google_connections.get_connection(user_id)
+        return await db.oauth_connections.get_connection(user_id, "google")
 
 
 @pytest.mark.asyncio
@@ -576,12 +589,16 @@ async def test_status_reads_shared_state_when_installed(
     # enabled/reason/waived rather than re-deriving from config+auth. Here the
     # shared state disables the integration for a floor reason even though the
     # config is fully valid — proving the router defers to the shared state.
-    google_app.app.state.google_integration_state = GoogleIntegrationState(
-        enabled=False,
-        reason="Google integration is disabled: taint floor not met.",
-        taint_enforcement_waived=True,
-        enabled_tool_names=frozenset(),
-    )
+    google_app.app.state.oauth_integration_states = {
+        "google": OAuthIntegrationState(
+            provider="google",
+            enabled=False,
+            reason="Google integration is disabled: taint floor not met.",
+            taint_enforcement_waived=True,
+            enabled_tool_names=frozenset(),
+            governed_tool_names=frozenset(GOOGLE_TOOL_REQUIRED_SCOPES),
+        )
+    }
 
     body = (await google_client.get("/api/integrations/google")).json()
     assert body["enabled"] is False
@@ -599,12 +616,16 @@ async def test_enabled_shared_state_allows_authorize(
     google_client: AsyncClient,
     google_app: _GoogleTestApp,
 ) -> None:
-    google_app.app.state.google_integration_state = GoogleIntegrationState(
-        enabled=True,
-        reason=None,
-        taint_enforcement_waived=False,
-        enabled_tool_names=frozenset({"gmail_search"}),
-    )
+    google_app.app.state.oauth_integration_states = {
+        "google": OAuthIntegrationState(
+            provider="google",
+            enabled=True,
+            reason=None,
+            taint_enforcement_waived=False,
+            enabled_tool_names=frozenset({"gmail_search"}),
+            governed_tool_names=frozenset(GOOGLE_TOOL_REQUIRED_SCOPES),
+        )
+    }
 
     body = (await google_client.get("/api/integrations/google")).json()
     assert body["enabled"] is True
@@ -623,7 +644,7 @@ async def test_missing_shared_state_fails_closed(
 ) -> None:
     # With no startup-computed state installed the router must fail closed rather
     # than re-deriving a reduced local enablement check.
-    del google_app.app.state.google_integration_state
+    del google_app.app.state.oauth_integration_states
 
     status_response = await google_client.get("/api/integrations/google")
     assert status_response.status_code == 200
@@ -653,7 +674,10 @@ async def test_api_token_auth_refused_for_session_only_routes(
 
     integration = _google_integration_config()
     app = FastAPI()
-    app.include_router(google_integration_router, prefix="/api/integrations/google")
+    app.include_router(
+        create_oauth_integration_router(GOOGLE_PROVIDER),
+        prefix="/api/integrations/google",
+    )
     app.state.database_engine = db_engine
     app.state.config = _app_config(integration, str(db_engine.url))
 
@@ -726,7 +750,10 @@ async def test_uses_get_current_user_not_diagnostics_reader(
     monkeypatch.setenv("DIAGNOSTICS_READONLY_TOKEN", "diag-secret-token")
 
     app = FastAPI()
-    app.include_router(google_integration_router, prefix="/api/integrations/google")
+    app.include_router(
+        create_oauth_integration_router(GOOGLE_PROVIDER),
+        prefix="/api/integrations/google",
+    )
     app.state.database_engine = db_engine
     app.state.config = AppConfig(
         database_url=str(db_engine.url),

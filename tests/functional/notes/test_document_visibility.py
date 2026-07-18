@@ -313,8 +313,8 @@ async def test_get_full_document_content_respects_visibility(
             camera_backend=None,
             visibility_grants={"default"},
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
         result = await get_full_document_content_tool(ctx, doc_id)
         assert isinstance(result, str)
@@ -336,8 +336,8 @@ async def test_get_full_document_content_respects_visibility(
             camera_backend=None,
             visibility_grants={"top-secret"},
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
         result = await get_full_document_content_tool(ctx, doc_id)
         assert isinstance(result, str)
@@ -375,8 +375,8 @@ async def test_get_full_document_content_no_grants_allows_all(
             camera_backend=None,
             visibility_grants=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
         result = await get_full_document_content_tool(ctx, doc_id)
         assert isinstance(result, str)

@@ -1,27 +1,27 @@
-"""Single source of truth for whether the Google (Gmail/Drive) integration is on.
+"""Single source of truth for whether an OAuth data integration is on.
 
-Startup evaluates one :class:`GoogleIntegrationState` from the deployment config
-and stores it on the assistant and ``fastapi_app.state``. Everything else — the
-tool-gating chokepoint at app wiring, the status endpoint, and the connect-flow
-409s — reads that single object rather than re-deriving enablement, so the
-enablement contract lives in exactly one place.
+Startup evaluates one :class:`OAuthIntegrationState` per provider from the
+deployment config and stores it on the assistant and ``fastapi_app.state``.
+Everything else — the tool-gating chokepoint at app wiring, the status endpoint,
+and the connect-flow 409s — reads that single object rather than re-deriving
+enablement, so the enablement contract lives in exactly one place.
 
 The evaluation walks the design's conditions IN ORDER (first failure wins,
 ``docs/design/user-scoped-google-data-access.md`` §"Configuration"):
 
 1. OAuth client id/secret and the credential encryption key are all present.
 2. The encryption key is a well-formed Fernet key.
-3. Every configured scope is in the read-only allowlist the shipped tools can
-   serve (an unlisted or write scope *disables* the integration — coherence
-   validation, not a policy knob).
+3. Every configured scope is in the allowlist the shipped tools can serve (an
+   unlisted or write scope *disables* the integration — coherence validation,
+   not a policy knob).
 4. Real web authentication is enabled (the dev ``test_user`` mode, which serves
-   one shared synthetic identity, must refuse so a Google account is never
+   one shared synthetic identity, must refuse so a provider account is never
    attached to that shared identity) AND the ``users`` block is populated so
    OIDC identities resolve to canonical user ids (with an empty ``users`` list,
    connections would be keyed by raw OIDC identifiers).
 5. The **taint floor** — only when ``require_taint_enforcement`` is ``True``:
    ``taint_policy.mode`` is ``enforce`` AND, for every profile in which any
-   Google tool is policy-allowed, the *fully merged effective* taint policy —
+   governed tool is policy-allowed, the *fully merged effective* taint policy —
    queried through the same :class:`TaintPolicyEvaluator` the runtime uses —
    yields at least ``confirm`` at the ``unknown_external`` tier for each of the
    floor sink classes. Validating the real evaluator (not a re-derived
@@ -30,8 +30,8 @@ The evaluation walks the design's conditions IN ORDER (first failure wins,
    (``require_taint_enforcement: false``) the floor is skipped entirely and the
    waiver is surfaced as a visible, deliberate risk acceptance.
 
-When enabled, :attr:`GoogleIntegrationState.enabled_tool_names` is the
-scope-conditional subset of the five Google tools whose required-scope set
+When enabled, :attr:`OAuthIntegrationState.enabled_tool_names` is the
+scope-conditional subset of the governed tools whose required-scope set
 intersects the configured scopes, so the LLM is never advertised a tool its
 credentials cannot serve.
 """
@@ -41,6 +41,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from family_assistant.config_models import OAuthIntegrationConfig
 from family_assistant.security.taint import (
     SinkClass,
     SourceTrustTier,
@@ -56,24 +57,20 @@ from family_assistant.services.credential_encryption import (
     CredentialEncryption,
     CredentialEncryptionError,
 )
-from family_assistant.services.google_credentials import SUPPORTED_GOOGLE_SCOPES
 from family_assistant.tools import (
     LOCAL_TOOL_DESCRIPTORS,
     PolicyEngine,
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from family_assistant.config_models import AppConfig, ServiceProfile
+    from family_assistant.services.oauth_provider import OAuthProviderSpec
     from family_assistant.tools.metadata import ToolDescriptor, ToolRegistration
 
-
-# The five Google tools whose registration this feature governs.
-GOOGLE_TOOL_NAMES: frozenset[str] = frozenset(GOOGLE_TOOL_REQUIRED_SCOPES)
 
 # Sink classes the taint floor requires to sit at >= confirm at unknown_external.
 # The design deliberately omits home_local (allow) and artifact_write (audit):
@@ -94,18 +91,31 @@ _FLOOR_SATISFYING_OUTCOMES: frozenset[TaintPolicyOutcome] = frozenset({
 
 
 @dataclass(frozen=True)
-class GoogleIntegrationState:
-    """Resolved enablement of the Google integration for this deployment."""
+class OAuthIntegrationState:
+    """Resolved enablement of one OAuth integration for this deployment."""
 
+    provider: str
     enabled: bool
     reason: str | None
     taint_enforcement_waived: bool
     enabled_tool_names: frozenset[str]
+    governed_tool_names: frozenset[str]
 
 
-def _any_config_field_set(config: AppConfig) -> bool:
-    """Return True if the operator set any Google config field (tried to enable)."""
-    integration = config.google_integration
+def _integration_config(
+    spec: OAuthProviderSpec, config: AppConfig
+) -> OAuthIntegrationConfig:
+    """Resolve the provider's integration config section from the app config."""
+    integration = getattr(config, spec.config_attr)
+    if not isinstance(integration, OAuthIntegrationConfig):
+        raise TypeError(
+            f"AppConfig.{spec.config_attr} is not an OAuthIntegrationConfig"
+        )
+    return integration
+
+
+def _any_config_field_set(integration: OAuthIntegrationConfig) -> bool:
+    """Return True if the operator set any provider config field (tried to enable)."""
     return bool(
         integration.oauth_client_id
         or integration.oauth_client_secret
@@ -113,36 +123,45 @@ def _any_config_field_set(config: AppConfig) -> bool:
     )
 
 
-def _missing_credentials_reason(config: AppConfig) -> str | None:
+def _missing_credentials_reason(
+    spec: OAuthProviderSpec, integration: OAuthIntegrationConfig
+) -> str | None:
     """Return a reason for missing OAuth credentials, or None when all present."""
-    integration = config.google_integration
-    has_any = _any_config_field_set(config)
-    if not has_any:
-        return "Google integration is not configured."
+    if not _any_config_field_set(integration):
+        return f"{spec.display_name} integration is not configured."
     if not integration.oauth_client_id:
-        return "Google integration is disabled: GOOGLE_OAUTH_CLIENT_ID is not set."
+        return (
+            f"{spec.display_name} integration is disabled: "
+            f"{spec.name.upper()}_OAUTH_CLIENT_ID is not set."
+        )
     if not integration.oauth_client_secret:
-        return "Google integration is disabled: GOOGLE_OAUTH_CLIENT_SECRET is not set."
+        return (
+            f"{spec.display_name} integration is disabled: "
+            f"{spec.name.upper()}_OAUTH_CLIENT_SECRET is not set."
+        )
     if not integration.credential_encryption_key:
-        return "Google integration is disabled: CREDENTIAL_ENCRYPTION_KEY is not set."
+        return (
+            f"{spec.display_name} integration is disabled: "
+            "CREDENTIAL_ENCRYPTION_KEY is not set."
+        )
     return None
 
 
-def _google_descriptor_by_name() -> dict[str, ToolDescriptor]:
-    """Map each Google tool name to its shipped descriptor (for policy queries)."""
-    return {
-        descriptor.name: descriptor
+def _governed_descriptors(governed_tool_names: frozenset[str]) -> list[ToolDescriptor]:
+    """Return the shipped descriptors of the governed tools (for policy queries)."""
+    return [
+        descriptor
         for descriptor in LOCAL_TOOL_DESCRIPTORS
-        if descriptor.name in GOOGLE_TOOL_NAMES
-    }
+        if descriptor.name in governed_tool_names
+    ]
 
 
-def _profile_allows_any_google_tool(
+def _profile_allows_any_governed_tool(
     profile: ServiceProfile,
     global_tools_policy: ToolPolicyConfig | None,
-    google_descriptors: Iterable[ToolDescriptor],
+    governed_descriptors: Iterable[ToolDescriptor],
 ) -> bool:
-    """Return True if the profile's policy allows/confirms any Google tool.
+    """Return True if the profile's policy allows/confirms any governed tool.
 
     Uses the same layered :class:`PolicyEngine` the runtime builds for the
     profile so this reflects real registration, not a tool-name heuristic. A
@@ -162,14 +181,14 @@ def _profile_allows_any_google_tool(
         profile=synthetic_policy,
         operator=profile.operator_tools_policy,
     )
-    for descriptor in google_descriptors:
+    for descriptor in governed_descriptors:
         decision = engine.evaluate(descriptor).decision
         if decision is not ToolPolicyDecision.DENY:
             return True
     return False
 
 
-def _floor_state() -> TurnTaintState:
+def _floor_state(spec: OAuthProviderSpec) -> TurnTaintState:
     """Build a turn state carrying a single unknown_external source."""
     return TurnTaintState.empty().add_source(
         TaintSource(
@@ -177,12 +196,13 @@ def _floor_state() -> TurnTaintState:
             source_id=None,
             tier=SourceTrustTier.UNKNOWN_EXTERNAL,
             labels=frozenset(),
-            reason="Google integration taint-floor startup validation.",
+            reason=f"{spec.display_name} integration taint-floor startup validation.",
         )
     )
 
 
 def _profile_floor_reason(
+    spec: OAuthProviderSpec,
     profile_id: str,
     merged_policy_evaluator: TaintPolicyEvaluator,
     state: TurnTaintState,
@@ -198,38 +218,43 @@ def _profile_floor_reason(
         ).requested_outcome
         if outcome not in _FLOOR_SATISFYING_OUTCOMES:
             return (
-                "Google integration is disabled: taint floor not met for profile "
-                f"'{profile_id}' — sink '{sink_class.value}' resolves to "
+                f"{spec.display_name} integration is disabled: taint floor not met "
+                f"for profile '{profile_id}' — sink '{sink_class.value}' resolves to "
                 f"'{outcome.value}' (below 'confirm') at the unknown_external tier. "
                 "Raise it to confirm via taint_policy.matrix_overrides / "
                 "operator_minimum, or set "
-                "google_integration.require_taint_enforcement: false to accept the "
+                f"{spec.config_attr}.require_taint_enforcement: false to accept the "
                 "risk."
             )
     return None
 
 
-def _taint_floor_reason(config: AppConfig) -> str | None:
+def _taint_floor_reason(
+    spec: OAuthProviderSpec,
+    config: AppConfig,
+    integration: OAuthIntegrationConfig,
+    governed_tool_names: frozenset[str],
+) -> str | None:
     """Return a taint-floor violation reason, or None when the floor holds.
 
     Skips the check entirely when ``require_taint_enforcement`` is False.
     """
-    if not config.google_integration.require_taint_enforcement:
+    if not integration.require_taint_enforcement:
         return None
 
     if config.taint_policy.mode is not TaintPolicyMode.ENFORCE:
         return (
-            "Google integration is disabled: taint_policy.mode is "
+            f"{spec.display_name} integration is disabled: taint_policy.mode is "
             f"'{config.taint_policy.mode.value}', but 'enforce' is required. Set "
             "taint_policy.mode: enforce, or set "
-            "google_integration.require_taint_enforcement: false to accept the risk."
+            f"{spec.config_attr}.require_taint_enforcement: false to accept the risk."
         )
 
-    google_descriptors = list(_google_descriptor_by_name().values())
-    state = _floor_state()
+    governed_descriptors = _governed_descriptors(governed_tool_names)
+    state = _floor_state(spec)
     for profile in config.service_profiles:
-        if not _profile_allows_any_google_tool(
-            profile, config.global_tools_policy, google_descriptors
+        if not _profile_allows_any_governed_tool(
+            profile, config.global_tools_policy, governed_descriptors
         ):
             continue
         try:
@@ -238,112 +263,123 @@ def _taint_floor_reason(config: AppConfig) -> str | None:
             )
         except ValueError as exc:
             # The profile's taint_policy tries to relax the base policy (the merge
-            # guard rejects it). A Google-enabled profile that weakens the floor is
+            # guard rejects it). An enabled profile that weakens the floor is
             # disqualifying — surface it as a floor failure rather than crashing.
             return (
-                "Google integration is disabled: profile "
+                f"{spec.display_name} integration is disabled: profile "
                 f"'{profile.id}' taint_policy relaxes the deployment policy "
                 f"({exc}). Tighten it or set "
-                "google_integration.require_taint_enforcement: false to accept the "
+                f"{spec.config_attr}.require_taint_enforcement: false to accept the "
                 "risk."
             )
         evaluator = TaintPolicyEvaluator(merged)
-        reason = _profile_floor_reason(profile.id, evaluator, state)
+        reason = _profile_floor_reason(spec, profile.id, evaluator, state)
         if reason is not None:
             return reason
     return None
 
 
-def _enabled_tool_names(config: AppConfig) -> frozenset[str]:
-    """Return the scope-conditional subset of Google tools that can be served."""
-    configured = set(config.google_integration.scopes)
+def _enabled_tool_names(
+    integration: OAuthIntegrationConfig,
+    tool_required_scopes: Mapping[str, frozenset[str]],
+) -> frozenset[str]:
+    """Return the scope-conditional subset of governed tools that can be served."""
+    configured = set(integration.scopes)
     return frozenset(
-        name
-        for name, required in GOOGLE_TOOL_REQUIRED_SCOPES.items()
-        if required & configured
+        name for name, required in tool_required_scopes.items() if required & configured
     )
 
 
-def filter_google_tool_registrations(
+def filter_oauth_tool_registrations(
     registrations: list[ToolRegistration],
-    state: GoogleIntegrationState,
+    state: OAuthIntegrationState,
 ) -> list[ToolRegistration]:
-    """Drop Google tool registrations the integration cannot serve.
+    """Drop governed tool registrations the integration cannot serve.
 
-    Removes any of the five Google tools not in ``state.enabled_tool_names`` (all
-    of them when the integration is disabled). Filtering the shared root
-    registrations is the single chokepoint: every profile's provider and the
-    UI/API listing wrap the root provider, so a filtered-out tool is advertised
-    nowhere. Filtering registrations (rather than the raw definitions) keeps the
+    Removes any governed tool not in ``state.enabled_tool_names`` (all of them
+    when the integration is disabled). Filtering the shared root registrations
+    is the single chokepoint: every profile's provider and the UI/API listing
+    wrap the root provider, so a filtered-out tool is advertised nowhere.
+    Filtering registrations (rather than the raw definitions) keeps the
     definition/implementation/metadata sets consistent, which
     ``build_local_tool_registrations`` requires.
     """
     allowed = state.enabled_tool_names
+    governed = state.governed_tool_names
     return [
         registration
         for registration in registrations
-        if registration.name not in GOOGLE_TOOL_NAMES or registration.name in allowed
+        if registration.name not in governed or registration.name in allowed
     ]
 
 
-def evaluate_google_integration_state(
+def evaluate_oauth_integration_state(
+    spec: OAuthProviderSpec,
     config: AppConfig,
     *,
     auth_enabled: bool,
-) -> GoogleIntegrationState:
-    """Evaluate whether the Google integration is enabled for this deployment.
+    tool_required_scopes: Mapping[str, frozenset[str]],
+) -> OAuthIntegrationState:
+    """Evaluate whether the provider's integration is enabled for this deployment.
 
     Args:
-        config: The full application config (Google section + taint policy +
+        spec: The OAuth provider being evaluated.
+        config: The full application config (provider section + taint policy +
             profiles + global tool policy).
         auth_enabled: Whether real web authentication is active (from
             ``auth_service.auth_enabled``). The dev ``test_user`` mode is False.
+        tool_required_scopes: Map of governed tool name to the scopes that must
+            be configured for it to register (supplied by the caller so this
+            module carries no per-provider tool knowledge).
 
     Returns:
-        A :class:`GoogleIntegrationState` with the first unmet condition's reason
-        when disabled, the waiver flag, and the scope-conditional tool subset.
+        An :class:`OAuthIntegrationState` with the first unmet condition's
+        reason when disabled, the waiver flag, and the scope-conditional tool
+        subset.
     """
-    waived = not config.google_integration.require_taint_enforcement
+    integration = _integration_config(spec, config)
+    governed_tool_names = frozenset(tool_required_scopes)
+    waived = not integration.require_taint_enforcement
 
-    def disabled(reason: str) -> GoogleIntegrationState:
-        return GoogleIntegrationState(
+    def disabled(reason: str) -> OAuthIntegrationState:
+        return OAuthIntegrationState(
+            provider=spec.name,
             enabled=False,
             reason=reason,
             taint_enforcement_waived=waived,
             enabled_tool_names=frozenset(),
+            governed_tool_names=governed_tool_names,
         )
 
     # 1. Credentials present.
-    credentials_reason = _missing_credentials_reason(config)
+    credentials_reason = _missing_credentials_reason(spec, integration)
     if credentials_reason is not None:
         return disabled(credentials_reason)
 
     # 2. Encryption key well-formed.
     try:
-        CredentialEncryption(config.google_integration.credential_encryption_key)
+        CredentialEncryption(integration.credential_encryption_key)
     except CredentialEncryptionError as exc:
-        return disabled(f"Google integration is disabled: {exc}")
+        return disabled(f"{spec.display_name} integration is disabled: {exc}")
 
-    # 3. Configured scopes are all in the read-only allowlist.
+    # 3. Configured scopes are all in the provider's allowlist.
     unsupported = [
-        scope
-        for scope in config.google_integration.scopes
-        if scope not in SUPPORTED_GOOGLE_SCOPES
+        scope for scope in integration.scopes if scope not in spec.supported_scopes
     ]
     if unsupported:
         return disabled(
-            "Google integration is disabled: unsupported scope(s) "
-            f"{sorted(unsupported)!r} configured. Only the read-only scopes "
-            f"{sorted(SUPPORTED_GOOGLE_SCOPES)!r} are allowed; remove the extra "
-            "scope(s) from google_integration.scopes."
+            f"{spec.display_name} integration is disabled: unsupported scope(s) "
+            f"{sorted(unsupported)!r} configured. Only the supported scopes "
+            f"{sorted(spec.supported_scopes)!r} are allowed; remove the extra "
+            f"scope(s) from {spec.config_attr}.scopes."
         )
 
     # 4. Real web authentication enabled.
     if not auth_enabled:
         return disabled(
-            "Google integration is disabled: real web authentication must be "
-            "enabled so each user has a distinct identity (the dev test_user mode "
-            "shares one identity and is refused)."
+            f"{spec.display_name} integration is disabled: real web authentication "
+            "must be enabled so each user has a distinct identity (the dev "
+            "test_user mode shares one identity and is refused)."
         )
 
     # 4b. Canonical identities resolve: with OIDC on but an empty ``users`` block,
@@ -352,19 +388,21 @@ def evaluate_google_integration_state(
     # ``UserIdentityResolver.users_configured`` derives from ``config.users``).
     if not config.users:
         return disabled(
-            "Google integration is disabled: configure the users block so OIDC "
-            "identities resolve to canonical user ids "
-            "(google_integration keys connections by canonical user id)."
+            f"{spec.display_name} integration is disabled: configure the users "
+            "block so OIDC identities resolve to canonical user ids "
+            f"({spec.config_attr} keys connections by canonical user id)."
         )
 
     # 5. Taint floor (unless waived).
-    floor_reason = _taint_floor_reason(config)
+    floor_reason = _taint_floor_reason(spec, config, integration, governed_tool_names)
     if floor_reason is not None:
         return disabled(floor_reason)
 
-    return GoogleIntegrationState(
+    return OAuthIntegrationState(
+        provider=spec.name,
         enabled=True,
         reason=None,
         taint_enforcement_waived=waived,
-        enabled_tool_names=_enabled_tool_names(config),
+        enabled_tool_names=_enabled_tool_names(integration, tool_required_scopes),
+        governed_tool_names=governed_tool_names,
     )

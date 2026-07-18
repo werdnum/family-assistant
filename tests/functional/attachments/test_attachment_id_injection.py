@@ -104,8 +104,8 @@ async def create_processing_service_with_image_tools(
         service_config=service_config,
         server_url=None,
         app_config=AppConfig(),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 

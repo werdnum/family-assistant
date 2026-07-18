@@ -74,8 +74,8 @@ def create_test_execution_context(
         chat_interface=None,
         request_confirmation_callback=None,
         camera_backend=None,
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 
@@ -120,8 +120,8 @@ async def create_test_event_in_radicale(
             timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=None,
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         result = await add_calendar_event_tool(
@@ -440,8 +440,8 @@ async def test_confirming_tools_provider_with_calendar_events(
             timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=capture_confirmation_callback,
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Execute modify with confirmation
@@ -579,8 +579,8 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
             timezone=ZoneInfo(TEST_TIMEZONE_STR),
             request_confirmation_callback=rendering_confirmation_callback,
             camera_backend=None,
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
             # tools_provider intentionally left as None to mimic production
         )
 

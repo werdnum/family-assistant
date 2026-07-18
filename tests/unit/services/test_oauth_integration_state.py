@@ -17,11 +17,12 @@ from family_assistant.config_models import (
     TaintPolicyConfig,
 )
 from family_assistant.services.credential_encryption import CredentialEncryption
-from family_assistant.services.google_credentials import GoogleScope
-from family_assistant.services.google_integration_state import (
-    evaluate_google_integration_state,
+from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
+from family_assistant.services.oauth_integration_state import (
+    evaluate_oauth_integration_state,
 )
 from family_assistant.tools import ToolPolicyConfig
+from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 
 GMAIL_SCOPE = GoogleScope.GMAIL_READONLY.value
 DRIVE_SCOPE = GoogleScope.DRIVE_READONLY.value
@@ -122,7 +123,12 @@ def test_not_configured_when_all_fields_empty() -> None:
             credential_encryption_key="",
         )
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert state.reason == "Google integration is not configured."
     assert state.enabled_tool_names == frozenset()
@@ -130,28 +136,48 @@ def test_not_configured_when_all_fields_empty() -> None:
 
 def test_missing_client_id_names_the_field() -> None:
     config = _app_config(_google_config(oauth_client_id=""))
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "GOOGLE_OAUTH_CLIENT_ID" in (state.reason or "")
 
 
 def test_missing_client_secret_names_the_field() -> None:
     config = _app_config(_google_config(oauth_client_secret=""))
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "GOOGLE_OAUTH_CLIENT_SECRET" in (state.reason or "")
 
 
 def test_missing_encryption_key_names_the_field() -> None:
     config = _app_config(_google_config(credential_encryption_key=""))
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "CREDENTIAL_ENCRYPTION_KEY" in (state.reason or "")
 
 
 def test_malformed_encryption_key_disables() -> None:
     config = _app_config(_google_config(credential_encryption_key="not-a-fernet-key"))
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "Fernet" in (state.reason or "")
 
@@ -162,7 +188,12 @@ def test_unsupported_scope_disables_with_clear_error() -> None:
             scopes=[GMAIL_SCOPE, "https://www.googleapis.com/auth/gmail.send"]
         )
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "gmail.send" in (state.reason or "")
 
@@ -171,7 +202,12 @@ def test_auth_disabled_refuses_even_when_fully_configured() -> None:
     config = _app_config(
         _google_config(require_taint_enforcement=False),
     )
-    state = evaluate_google_integration_state(config, auth_enabled=False)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=False,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "web authentication" in (state.reason or "")
 
@@ -183,7 +219,12 @@ def test_empty_users_block_refuses_even_with_auth_enabled() -> None:
         _google_config(require_taint_enforcement=False),
         users=[],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "users block" in (state.reason or "")
 
@@ -197,7 +238,12 @@ def test_floor_passes_with_enforce_and_default_matrix() -> None:
         taint_policy=_enforce_taint(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is True
     assert state.reason is None
     assert state.taint_enforcement_waived is False
@@ -209,7 +255,12 @@ def test_floor_fails_when_mode_is_observe() -> None:
         taint_policy=TaintPolicyConfig.model_validate({"mode": "observe"}),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "taint_policy.mode" in (state.reason or "")
     assert "observe" in (state.reason or "")
@@ -246,7 +297,12 @@ def test_floor_fails_on_full_matrix_replacement_dropping_read_broadening() -> No
         }),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "sensitive_read_broadening" in (state.reason or "")
     assert "default_assistant" in (state.reason or "")
@@ -258,7 +314,12 @@ def test_floor_skipped_and_waived_when_requirement_false_even_in_observe() -> No
         taint_policy=TaintPolicyConfig.model_validate({"mode": "observe"}),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is True
     assert state.taint_enforcement_waived is True
     assert state.reason is None
@@ -285,7 +346,12 @@ def test_floor_ignores_profiles_that_do_not_allow_google_tools() -> None:
             ),
         ],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is True
 
 
@@ -309,7 +375,12 @@ def test_floor_rejects_profile_taint_policy_that_relaxes_a_floor_sink() -> None:
             )
         ],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is False
     assert "default_assistant" in (state.reason or "")
     assert "relaxes" in (state.reason or "")
@@ -324,7 +395,12 @@ def test_enabled_tool_names_gmail_only() -> None:
         taint_policy=_enforce_taint(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is True
     assert state.enabled_tool_names == frozenset({
         "gmail_search",
@@ -339,7 +415,12 @@ def test_enabled_tool_names_drive_metadata_only_has_search_not_get_file() -> Non
         taint_policy=_enforce_taint(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled is True
     assert "drive_search" in state.enabled_tool_names
     assert "drive_get_file" not in state.enabled_tool_names
@@ -351,7 +432,12 @@ def test_enabled_tool_names_full_scopes() -> None:
         taint_policy=_enforce_taint(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
-    state = evaluate_google_integration_state(config, auth_enabled=True)
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
     assert state.enabled_tool_names == frozenset({
         "gmail_search",
         "gmail_get_message",

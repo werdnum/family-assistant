@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.config_loader import load_config
-from family_assistant.services.google_credentials import GoogleScope
-from family_assistant.services.google_integration_state import (
-    GoogleIntegrationState,
-    filter_google_tool_registrations,
+from family_assistant.services.google_provider import GoogleScope
+from family_assistant.services.oauth_integration_state import (
+    OAuthIntegrationState,
+    filter_oauth_tool_registrations,
 )
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -76,26 +76,30 @@ def _descriptor_by_name() -> dict[str, ToolDescriptor]:
     return {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
 
 
-def _enabled_state(tool_names: frozenset[str]) -> GoogleIntegrationState:
-    return GoogleIntegrationState(
+def _enabled_state(tool_names: frozenset[str]) -> OAuthIntegrationState:
+    return OAuthIntegrationState(
+        provider="google",
         enabled=True,
         reason=None,
         taint_enforcement_waived=False,
         enabled_tool_names=tool_names,
+        governed_tool_names=frozenset(GOOGLE_TOOL_REQUIRED_SCOPES),
     )
 
 
-def _disabled_state() -> GoogleIntegrationState:
-    return GoogleIntegrationState(
+def _disabled_state() -> OAuthIntegrationState:
+    return OAuthIntegrationState(
+        provider="google",
         enabled=False,
         reason="Google integration is not configured.",
         taint_enforcement_waived=False,
         enabled_tool_names=frozenset(),
+        governed_tool_names=frozenset(GOOGLE_TOOL_REQUIRED_SCOPES),
     )
 
 
 async def _advertised_names(
-    state: GoogleIntegrationState,
+    state: OAuthIntegrationState,
     engine: PolicyEngine,
 ) -> set[str]:
     """Return the tool names a profile advertises under the startup gate.
@@ -108,7 +112,7 @@ async def _advertised_names(
         implementations=local_tool_implementations,
         metadata_by_name=local_tool_metadata_by_name,
     )
-    registrations = filter_google_tool_registrations(registrations, state)
+    registrations = filter_oauth_tool_registrations(registrations, state)
     root = LocalToolsProvider(registrations=registrations, embedding_generator=None)
     provider = PolicyEnforcingToolsProvider(wrapped_provider=root, policy_engine=engine)
     definitions_out = await provider.get_tool_definitions()

@@ -51,7 +51,7 @@ class ToolTag(StrEnum):
     WORKER = "worker"
     DATA = "data"
     SHOPPING = "shopping"
-    GOOGLE_PERSONAL_DATA = "google_personal_data"
+    CONNECTED_ACCOUNT_DATA = "connected_account_data"
     USER_FACING_MEDIA = "user_facing_media"
 
 

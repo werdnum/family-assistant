@@ -106,8 +106,8 @@ def _build_exec_context(
         chat_interface=typed_chat_interface,
         chat_interfaces=chat_interfaces,
         subconversation_id=subconversation_id,
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 

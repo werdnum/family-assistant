@@ -213,8 +213,8 @@ async def test_read_text_attachment_tool(
             attachment_registry=attachment_registry,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Test grep
@@ -270,8 +270,8 @@ async def test_script_attachment_read(db_engine: AsyncEngine, tmp_path: Path) ->
             attachment_registry=attachment_registry,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         script = f"""
@@ -341,8 +341,8 @@ async def test_script_attachment_read_same_transaction(
             attachment_registry=attachment_registry,
             camera_backend=None,
             timezone=ZoneInfo("UTC"),
-            google_credentials=None,
-            google_api_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
         )
 
         # Try to read the attachment from a script

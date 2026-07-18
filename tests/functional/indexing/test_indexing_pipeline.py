@@ -255,8 +255,8 @@ async def test_indexing_pipeline_e2e(
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             # Create and store the document
@@ -481,8 +481,8 @@ async def test_indexing_pipeline_pdf_processing(
                 chat_interface=MagicMock(),  # Provide a mock ChatInterface
                 embedding_generator=mock_pipeline_embedding_generator,
                 timezone=ZoneInfo("UTC"),
-                google_credentials=None,
-                google_api_backend=None,
+                credential_resolvers=None,
+                api_backend=None,
             )
 
             test_document_protocol = MockDocumentImpl(
