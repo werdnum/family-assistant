@@ -144,6 +144,7 @@ async def test_callback_with_owner_can_request_durable_confirmation(
     assert processing_service.captured_user_id == "callback-owner"
     assert processing_service.confirmation_outcome is not None
     assert processing_service.confirmation_outcome.kind == "completed"
+    assert processing_service.confirmation_outcome.action_attempted is False
     assert isinstance(processing_service.confirmation_outcome.result, str)
     assert "hasn't run yet" in processing_service.confirmation_outcome.result
 

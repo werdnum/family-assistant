@@ -110,6 +110,7 @@ from family_assistant.storage.tasks import (
     unregister_worker_wake_event,
 )
 from family_assistant.tools import ToolExecutionContext
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
@@ -4395,6 +4396,18 @@ async def handle_confirmation_tool_execution(
         )
         return
 
+    # Persisted args for computer-use actions may carry a Gemini
+    # safety_decision that was included for the confirmation prompt; those
+    # tool signatures don't accept it, so normalize the request to the
+    # executable form up front. This keeps execution and the nested
+    # confirmation callback's argument comparison (both read
+    # request["tool_args_json"]) consistent. Scoped the same way as
+    # ToolExecutor so other tools keep a legitimately-named parameter.
+    if request["tool_name"] in COMPUTER_USE_FUNCTION_NAMES:
+        executable_args = dict(request["tool_args_json"])
+        executable_args.pop("safety_decision", None)
+        request["tool_args_json"] = executable_args
+
     source_row = None
     source_message_internal_id = request["source_message_internal_id"]
     if source_message_internal_id is not None:
@@ -4469,9 +4482,17 @@ async def handle_confirmation_tool_execution(
             request_id,
             request["tool_name"],
         )
+        # Persisted args for computer-use actions may carry a Gemini
+        # safety_decision that was included for the confirmation prompt; those
+        # tool signatures don't accept it, so strip it before execution
+        # (mirrors ToolExecutor, and is scoped the same way so other tools
+        # keep a legitimately-named parameter).
+        executable_args = dict(request["tool_args_json"])
+        if request["tool_name"] in COMPUTER_USE_FUNCTION_NAMES:
+            executable_args.pop("safety_decision", None)
         result = await tools_provider.execute_tool(
             request["tool_name"],
-            request["tool_args_json"],
+            executable_args,
             execution_context,
             call_id,
         )

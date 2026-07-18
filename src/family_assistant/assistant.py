@@ -926,6 +926,25 @@ class Assistant:
                     f"Profile '{profile_id}' using overridden LLM client: {type(llm_client_for_profile).__name__}"
                 )
             else:
+                if profile_proc_conf.enable_computer_use:
+                    # Computer use rides on the Google client's request/response
+                    # conversion, so a retrying client (whose fallback may be a
+                    # different provider) and non-Google providers cannot carry it.
+                    if profile_proc_conf.retry_config is not None:
+                        raise ValueError(
+                            f"Profile '{profile_id}' has enable_computer_use=True "
+                            "with retry_config, which is unsupported (computer use "
+                            "requires the single Google GenAI client)"
+                        )
+                    resolved_provider = profile_proc_conf.provider or (
+                        "google" if profile_llm_model.startswith("gemini-") else None
+                    )
+                    if resolved_provider != "google":
+                        raise ValueError(
+                            f"Profile '{profile_id}' has enable_computer_use=True "
+                            f"but provider is '{resolved_provider}' (must be 'google')"
+                        )
+
                 # Check if using retry_config format
                 if profile_proc_conf.retry_config is not None:
                     # Direct retry_config format - convert to dict for LLMClientFactory
@@ -971,6 +990,12 @@ class Assistant:
                     }
                     if profile_proc_conf.provider:
                         client_config["provider"] = profile_proc_conf.provider
+                    if profile_proc_conf.enable_computer_use:
+                        client_config["enable_computer_use"] = True
+                    if profile_proc_conf.computer_use_excluded_functions:
+                        client_config["computer_use_excluded_functions"] = (
+                            profile_proc_conf.computer_use_excluded_functions
+                        )
 
                     logger.info(
                         "Creating LLM client for profile '%s' with model='%s'%s",

@@ -764,6 +764,8 @@ def resolve_service_profile(
             "required_note_visibility_labels",
             "allowed_note_visibility_labels",
             "allow_wake_llm",
+            "enable_computer_use",
+            "computer_use_excluded_functions",
         ]
         for key in scalar_keys:
             if (
@@ -773,6 +775,23 @@ def resolve_service_profile(
                 resolved["processing_config"][key] = profile_def["processing_config"][
                     key
                 ]
+
+        # A profile that explicitly declares its own model (provider and/or
+        # llm_model) without declaring its own retry_config means "run on this
+        # model": drop the retry chain inherited from default_profile_settings,
+        # which would otherwise take precedence in assistant.py and silently
+        # ignore the declared model. Profiles that want retry/fallback alongside
+        # an explicit model declare their own retry_config (e.g. complex_tasks).
+        profile_declares_model = any(
+            key in profile_def["processing_config"]
+            and profile_def["processing_config"][key] is not None
+            for key in ("provider", "llm_model")
+        )
+        if (
+            profile_declares_model
+            and "retry_config" not in profile_def["processing_config"]
+        ):
+            resolved["processing_config"]["retry_config"] = None
 
         # Handle include_system_docs
         if "include_system_docs" in profile_def["processing_config"]:

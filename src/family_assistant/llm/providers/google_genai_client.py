@@ -54,6 +54,7 @@ from family_assistant.llm.messages import (
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
+from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.types import ToolDefinition
 
 from ..base import (
@@ -195,6 +196,8 @@ class GoogleGenAIClient(BaseLLMClient):
         api_base: str | None = None,
         enable_url_context: bool = False,
         enable_google_search: bool = False,
+        enable_computer_use: bool = False,
+        computer_use_excluded_functions: list[str] | None = None,
         debug_messages: bool | None = None,
         debug_config: dict[str, str | None] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
@@ -209,6 +212,8 @@ class GoogleGenAIClient(BaseLLMClient):
             api_base: Optional API base URL for custom endpoints.
             enable_url_context: Enable URL understanding (supports up to 20 URLs per request)
             enable_google_search: Enable Google Search grounding for real-time information
+            enable_computer_use: Enable native Gemini computer use tools (explicit opt-in)
+            computer_use_excluded_functions: List of computer use function names to exclude
             debug_messages: Enable detailed message logging. If None, reads from DEBUG_LLM_MESSAGES env var.
             debug_config: SDK DebugConfig dict for record/replay in tests (client_mode, replay_id, replays_directory)
             **kwargs: Default parameters for generation
@@ -236,6 +241,8 @@ class GoogleGenAIClient(BaseLLMClient):
         # New configuration options
         self.enable_url_context = enable_url_context
         self.enable_google_search = enable_google_search
+        self.enable_computer_use = enable_computer_use
+        self.computer_use_excluded_functions = computer_use_excluded_functions
 
         # Debug configuration - read from env var if not explicitly set
         if debug_messages is None:
@@ -251,6 +258,8 @@ class GoogleGenAIClient(BaseLLMClient):
             f"GoogleGenAIClient initialized for model: {model} with default kwargs: {kwargs}, "
             f"model-specific parameters: {model_parameters}, "
             f"URL context: {enable_url_context}, Google Search: {enable_google_search}, "
+            f"computer use: {enable_computer_use}, "
+            f"computer use excluded: {computer_use_excluded_functions}, "
             f"debug_messages: {self._debug_messages}"
         )
 
@@ -466,7 +475,7 @@ class GoogleGenAIClient(BaseLLMClient):
         screenshots in function responses.
         """
         model_lower = self.model_name.lower()
-        return "gemini-3" in model_lower or self._is_computer_use_model(self.model_name)
+        return "gemini-3" in model_lower or self.enable_computer_use
 
     def _process_tool_messages(
         self,
@@ -859,29 +868,14 @@ class GoogleGenAIClient(BaseLLMClient):
 
     def _convert_tools_to_genai_format(self, tools: list[ToolDefinition]) -> list[Any]:
         """Convert OpenAI-style tools to Gemini format."""
-        # If using Computer Use, filter out the manually defined computer use tools
+        # If Computer Use is enabled, filter out manually-defined computer use tools
         # because we use types.Tool(computer_use=...) instead
-        if self._is_computer_use_model(self.model_name):
-            computer_use_function_names = {
-                "click_at",
-                "type_text_at",
-                "scroll_at",
-                "open_web_browser",
-                "navigate",
-                "search",
-                "go_back",
-                "go_forward",
-                "key_combination",
-                "wait_5_seconds",
-                "hover_at",
-                "drag_and_drop",
-                "scroll_document",
-            }
+        if self.enable_computer_use:
             filtered_tools = [
                 tool
                 for tool in tools
                 if tool.get("function", {}).get("name")
-                not in computer_use_function_names
+                not in COMPUTER_USE_FUNCTION_NAMES
             ]
             return convert_tools_to_genai_format(filtered_tools)
 
@@ -924,11 +918,17 @@ class GoogleGenAIClient(BaseLLMClient):
 
         all_tools: list[Any] = []
 
-        # Add Computer Use tool for computer use models
-        if self._is_computer_use_model(self.model_name):
+        # Add Computer Use tool if enabled
+        if self.enable_computer_use:
             computer_use_tool = types.Tool(
                 computer_use=types.ComputerUse(
-                    environment=types.Environment.ENVIRONMENT_BROWSER
+                    environment=types.Environment.ENVIRONMENT_BROWSER,
+                    enable_prompt_injection_detection=True,
+                    excluded_predefined_functions=(
+                        list(self.computer_use_excluded_functions)
+                        if self.computer_use_excluded_functions
+                        else None
+                    ),
                 )
             )
             all_tools.append(computer_use_tool)
@@ -948,10 +948,6 @@ class GoogleGenAIClient(BaseLLMClient):
     def _is_deep_research_model(self, model: str) -> bool:
         """Check if model identifier corresponds to deep research agent."""
         return "deep-research" in model
-
-    def _is_computer_use_model(self, model: str) -> bool:
-        """Check if model identifier corresponds to computer use model."""
-        return "computer-use" in model
 
     async def generate_response(
         self,

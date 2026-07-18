@@ -854,6 +854,71 @@ class TestResolveServiceProfile:
         # Timezone should still be from defaults
         assert result["processing_config"]["timezone"] == "UTC"
 
+    def test_declared_model_drops_inherited_retry_config(self) -> None:
+        """A profile declaring its own model must not inherit the default retry chain."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "retry_config": {
+                    "primary": {"provider": "google", "model": "gemini-3.5-flash"},
+                    "fallback": {"provider": "openai", "model": "gpt-5.5"},
+                },
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"provider": "google", "llm_model": "custom-model"},
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["processing_config"]["retry_config"] is None
+        assert result["processing_config"]["llm_model"] == "custom-model"
+
+    def test_declared_retry_config_is_kept_alongside_model(self) -> None:
+        """A profile declaring its own retry_config keeps it (complex_tasks pattern)."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "retry_config": {
+                    "primary": {"provider": "google", "model": "gemini-3.5-flash"},
+                },
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        own_retry = {"primary": {"provider": "openai", "model": "gpt-5.6-sol"}}
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {
+                "provider": "openai",
+                "llm_model": "gpt-5.6-sol",
+                "retry_config": own_retry,
+            },
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["processing_config"]["retry_config"] == own_retry
+
+    def test_profile_without_model_inherits_retry_config(self) -> None:
+        """A profile declaring no model keeps the inherited default retry chain."""
+        default_retry = {
+            "primary": {"provider": "google", "model": "gemini-3.5-flash"},
+        }
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "retry_config": default_retry},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"max_iterations": 50},
+        }
+        result = resolve_service_profile(profile_def, default_settings, {})
+        assert result["processing_config"]["retry_config"] == default_retry
+
     def test_profile_taint_policy_overrides_are_preserved(self) -> None:
         """Profile-level runtime taint policy must survive profile resolution."""
         default_settings: dict[str, Any] = {

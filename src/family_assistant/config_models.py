@@ -140,6 +140,8 @@ class ProcessingConfig(BaseModel):
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    enable_computer_use: bool = False
+    computer_use_excluded_functions: list[str] = Field(default_factory=list)
 
 
 class ToolsConfig(BaseModel):

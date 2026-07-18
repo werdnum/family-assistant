@@ -32,15 +32,18 @@ rather than pixel screenshots, so interactions are cheaper and faster.
 
 ## `/browse_visual` — fallback, coordinate-based
 
-Uses Google Gemini's Computer Use model to click at pixel coordinates based on screenshots. Reserved
-for tasks that genuinely can't be done from the DOM.
+Uses Gemini's native computer-use capability to click at pixel coordinates based on screenshots.
+Reserved for tasks that genuinely can't be done from the DOM.
 
 - **Activation**: prefix your request with `/browse_visual`.
-- **Tools**: `click_at`, `type_text_at`, `scroll_at`, `drag_and_drop`, `hover_at`,
-  `key_combination`, `navigate`, `go_back`, `go_forward`, `scroll_document`, `wait_5_seconds`,
-  `open_web_browser`, `search`.
+- **Tools**: `click`, `double_click`, `triple_click`, `middle_click`, `right_click`, `move`,
+  `mouse_down`, `mouse_up`, `type`, `press_key`, `key_down`, `key_up`, `hotkey`, `scroll`,
+  `drag_and_drop`, `navigate`, `go_back`, `go_forward`, `take_screenshot`, `wait`.
 - **How it works**: every action returns a screenshot; the model visually locates elements and
   commands clicks by coordinates.
+- **Safety**: prompt-injection detection over screenshots is always on, and actions the model flags
+  with a safety decision (payments, sending messages, accepting terms, …) pause for the user to
+  confirm before they execute.
 
 ### When to use `/browse_visual`
 

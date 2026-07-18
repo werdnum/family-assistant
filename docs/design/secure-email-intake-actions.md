@@ -67,7 +67,7 @@ Important current tool classifications:
 | Reminders/tasks                | `schedule_reminder`, `schedule_future_callback`, callback modifiers                 | `STATE_CHANGING`, `SCHEDULING`; cancellation is `DESTRUCTIVE`               | Confirm writes; deny cancellation       |
 | Script/code                    | `execute_script`, `save_script`, `test_script_with_simulated_tools`, `spawn_worker` | `CODE_EXECUTION` and related tags                                           | Deny                                    |
 | Automation                     | `create_automation`, `schedule_action`, automation CRUD                             | `AUTOMATION`, often `STATE_CHANGING`                                        | Deny                                    |
-| Browser/computer use           | `navigate`, `click_at`, `search`, etc.                                              | `BROWSER`, `STATE_CHANGING`, `EXTERNAL_COMM`                                | Deny                                    |
+| Browser/computer use           | `navigate`, `click`, `browser_open`, etc.                                           | `BROWSER`, `STATE_CHANGING`, `EXTERNAL_COMM`                                | Deny                                    |
 | Workspace/database/engineering | workspace and engineering tools                                                     | `FILE_SYSTEM`, `SENSITIVE_DATA`, `DATA`, etc.                               | Deny                                    |
 | MQTT                           | `mqtt_publish`                                                                      | `EXTERNAL_COMM`, `HOME_AUTOMATION`                                          | Deny                                    |
 

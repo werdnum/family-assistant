@@ -19,7 +19,7 @@ from family_assistant.storage.context import get_db_context
 from family_assistant.tools.computer_use import (
     BrowserSession,
     close_browser_session,
-    computer_use_click_at,
+    computer_use_click,
     computer_use_navigate,
     get_browser_session,
 )
@@ -51,12 +51,13 @@ _skip_no_internet = pytest.mark.skipif(
 async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
     """Create a GoogleGenAIClient instance for testing."""
     api_key = os.getenv("GEMINI_API_KEY", "dummy_key")
-    # Use the computer use model to trigger the specific logic
+    # Use gemini-3.5-flash with explicit enable_computer_use flag
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-2.5-computer-use-preview-10-2025",
+        model="gemini-3.5-flash",
         enable_url_context=False,
         enable_google_search=False,
+        enable_computer_use=True,
     )
     yield client
     await client.close()
@@ -81,13 +82,10 @@ async def browser_session(
 @pytest.mark.llm_integration
 @pytest.mark.asyncio
 async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> None:
-    """Test that the Computer Use tool is automatically injected for the correct model."""
+    """Test that the Computer Use tool is injected when enable_computer_use is True."""
 
-    # Verify the model detection logic
-    assert gemini_client._is_computer_use_model(
-        "gemini-2.5-computer-use-preview-10-2025"
-    )
-    assert not gemini_client._is_computer_use_model("gemini-1.5-pro")
+    # Verify the enable_computer_use flag is set
+    assert gemini_client.enable_computer_use
 
     # Mock the underlying SDK client generate_content method
     # We want to verify that `tools` in the config contains the ComputerUse tool
@@ -112,8 +110,8 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
             {
                 "type": "function",
                 "function": {
-                    "name": "click_at",  # Should be filtered out
-                    "description": "Manual click_at",
+                    "name": "click",  # Should be filtered out
+                    "description": "Manual click",
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
@@ -152,28 +150,27 @@ async def test_computer_use_tool_injection(gemini_client: GoogleGenAIClient) -> 
                     tool.computer_use.environment
                     == types.Environment.ENVIRONMENT_BROWSER
                 )
+                assert tool.computer_use.enable_prompt_injection_detection is True
                 break
 
         assert has_computer_use, (
             f"Computer Use tool was not injected. Tools: {tools_passed}"
         )
 
-        # Verify manual 'click_at' was filtered out, but 'other_tool' remains
-        has_click_at = False
+        # Verify manual 'click' was filtered out, but 'other_tool' remains
+        has_click = False
         has_other_tool = False
 
         for tool in tools_passed:
             # Use isinstance for proper type narrowing
             if isinstance(tool, types.Tool) and tool.function_declarations:
                 for func in tool.function_declarations:
-                    if func.name == "click_at":
-                        has_click_at = True
+                    if func.name == "click":
+                        has_click = True
                     if func.name == "other_tool":
                         has_other_tool = True
 
-        assert not has_click_at, (
-            "Manual 'click_at' tool definition should be filtered out"
-        )
+        assert not has_click, "Manual 'click' tool definition should be filtered out"
         assert has_other_tool, "'other_tool' should be preserved"
 
 
@@ -184,7 +181,7 @@ async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) ->
     # This test verifies that the client correctly processes a Computer Use function call
     # and prepares the next request.
 
-    # 1. Mock the model returning a 'click_at' call
+    # 1. Mock the model returning a 'click' call
     with patch.object(
         gemini_client.client.aio.models, "generate_content"
     ) as mock_generate:
@@ -195,7 +192,7 @@ async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) ->
         function_call_part = MagicMock()
         function_call_part.text = None
         function_call_part.function_call = MagicMock()
-        function_call_part.function_call.name = "click_at"
+        function_call_part.function_call.name = "click"
         function_call_part.function_call.args = {"x": 500, "y": 300}
         function_call_part.function_call.id = "call_123"
         function_call_part.thought_signature = None  # Optional thought signature
@@ -216,7 +213,7 @@ async def test_computer_use_end_to_end_flow(gemini_client: GoogleGenAIClient) ->
         assert response.tool_calls is not None
         assert len(response.tool_calls) == 1
         tool_call = response.tool_calls[0]
-        assert tool_call.function.name == "click_at"
+        assert tool_call.function.name == "click"
         assert tool_call.function.arguments == {"x": 500, "y": 300}
 
 
@@ -235,7 +232,8 @@ async def test_real_gemini_computer_use_protocol() -> None:
     api_key = os.environ["GEMINI_API_KEY"]
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-2.5-computer-use-preview-10-2025",
+        model="gemini-3.5-flash",
+        enable_computer_use=True,
     )
 
     try:
@@ -340,7 +338,7 @@ class TestComputerUseTools:
 
     @_skip_no_internet
     @pytest.mark.asyncio
-    async def test_click_at_tool(
+    async def test_click_tool(
         self, mock_exec_context: ToolExecutionContext, browser_session: BrowserSession
     ) -> None:
         """Test clicking at coordinates using the actual tool function."""
@@ -348,7 +346,7 @@ class TestComputerUseTools:
         await computer_use_navigate(mock_exec_context, "https://example.com")
 
         # Click at the center of the screen (normalized coordinates)
-        result = await computer_use_click_at(mock_exec_context, x=500, y=500)
+        result = await computer_use_click(mock_exec_context, x=500, y=500)
 
         # Verify we got a ToolResult with URL and screenshot
         assert result is not None
@@ -397,7 +395,8 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
                 "description": "Browser test profile with computer use",
                 "processing_config": {
                     "provider": "google",
-                    "llm_model": "gemini-2.5-computer-use-preview-10-2025",
+                    "llm_model": "gemini-3.5-flash",
+                    "enable_computer_use": True,
                     "max_iterations": 15,
                     "prompts": {
                         "system_prompt": (
@@ -417,19 +416,26 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
                         {
                             "match": {
                                 "names": [
-                                    "click_at",
-                                    "type_text_at",
-                                    "scroll_at",
-                                    "open_web_browser",
+                                    "click",
+                                    "double_click",
+                                    "triple_click",
+                                    "middle_click",
+                                    "right_click",
+                                    "mouse_down",
+                                    "mouse_up",
+                                    "move",
+                                    "type",
+                                    "press_key",
+                                    "key_down",
+                                    "key_up",
+                                    "hotkey",
+                                    "scroll",
+                                    "drag_and_drop",
                                     "navigate",
-                                    "search",
                                     "go_back",
                                     "go_forward",
-                                    "key_combination",
-                                    "wait_5_seconds",
-                                    "hover_at",
-                                    "drag_and_drop",
-                                    "scroll_document",
+                                    "take_screenshot",
+                                    "wait",
                                 ]
                             },
                             "decision": "allow",
@@ -445,7 +451,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
         "telegram_token": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "gemini-2.5-computer-use-preview-10-2025",
+        "model": "gemini-3.5-flash",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
         "server_url": "http://localhost:8000",
@@ -554,7 +560,8 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
                 "description": "Screenshot test profile with computer use",
                 "processing_config": {
                     "provider": "google",
-                    "llm_model": "gemini-2.5-computer-use-preview-10-2025",
+                    "llm_model": "gemini-3.5-flash",
+                    "enable_computer_use": True,
                     "max_iterations": 10,
                     "prompts": {
                         "system_prompt": (
@@ -574,19 +581,26 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
                         {
                             "match": {
                                 "names": [
-                                    "click_at",
-                                    "type_text_at",
-                                    "scroll_at",
-                                    "open_web_browser",
+                                    "click",
+                                    "double_click",
+                                    "triple_click",
+                                    "middle_click",
+                                    "right_click",
+                                    "mouse_down",
+                                    "mouse_up",
+                                    "move",
+                                    "type",
+                                    "press_key",
+                                    "key_down",
+                                    "key_up",
+                                    "hotkey",
+                                    "scroll",
+                                    "drag_and_drop",
                                     "navigate",
-                                    "search",
                                     "go_back",
                                     "go_forward",
-                                    "key_combination",
-                                    "wait_5_seconds",
-                                    "hover_at",
-                                    "drag_and_drop",
-                                    "scroll_document",
+                                    "take_screenshot",
+                                    "wait",
                                 ]
                             },
                             "decision": "allow",
@@ -601,7 +615,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
         "telegram_token": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "gemini-2.5-computer-use-preview-10-2025",
+        "model": "gemini-3.5-flash",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
         "server_url": "http://localhost:8000",
