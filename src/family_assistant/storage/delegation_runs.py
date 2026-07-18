@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from sqlalchemy import JSON, Column, DateTime, Index, Integer, String, Table, Text
+from sqlalchemy import JSON, Column, DateTime, Index, Integer, String, Table, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import functions as func
 
@@ -75,5 +75,19 @@ delegation_runs_table = Table(
         "ix_delegation_runs_status_created",
         "status",
         "created_at",
+    ),
+    # At most one non-terminal (queued/running/awaiting_remote) run may target a
+    # given subconversation. A fresh delegation always mints a unique
+    # subconversation_id, so this never constrains the normal path; it atomically
+    # serializes resumes, which reuse a prior run's subconversation_id, so two
+    # concurrent resumes cannot both create active runs that interleave in one
+    # delegated history. Terminal statuses are excluded so a completed run can be
+    # resumed. Keep the predicate in sync with TERMINAL_DELEGATION_STATUSES.
+    Index(
+        "uq_delegation_runs_active_subconversation",
+        "subconversation_id",
+        unique=True,
+        sqlite_where=text("status NOT IN ('completed', 'failed')"),
+        postgresql_where=text("status NOT IN ('completed', 'failed')"),
     ),
 )

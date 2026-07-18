@@ -12,6 +12,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from sqlalchemy.exc import IntegrityError
+
 from family_assistant.llm.content_parts import attachment_content, text_content
 from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
@@ -141,10 +143,23 @@ async def _load_delegation_run(
         return await isolated_db.delegation_runs.get_by_delegation_id(delegation_id)
 
 
+def _resume_already_in_progress_result(resume_delegation_id: str) -> ToolResult:
+    """Error returned when another resume of the same delegation is still running."""
+    return ToolResult(
+        text=(
+            f"Error: Cannot resume delegation '{resume_delegation_id}': a resume of "
+            "it is already in progress. Wait for that to finish (you will be "
+            "notified) before resuming it again."
+        ),
+        attachments=None,
+    )
+
+
 async def _resolve_resume_subconversation(
     exec_context: ToolExecutionContext,
     *,
     resume_delegation_id: str,
+    source_service_id: str,
     target_service_id: str,
 ) -> tuple[str | None, ToolResult | None]:
     """Resolve a resume reference to the subconversation history to continue.
@@ -153,14 +168,18 @@ async def _resolve_resume_subconversation(
     ``(None, error_result)`` describing why it cannot. A resumable run must belong
     to the current conversation, have been created by the same user (in a shared
     conversation, resuming another participant's delegation would replay their
-    private, account-scoped history under a different caller), target the same
-    profile (delegated history is scoped by both subconversation and profile), and
-    have reached a terminal state — an in-flight run cannot be appended to.
+    private, account-scoped history under a different caller), have been created
+    by the same source profile (a different, possibly more privileged, profile —
+    e.g. the confirm-gated engineer — may have seeded the delegation with context
+    the current profile cannot read), target the same profile (delegated history
+    is scoped by both subconversation and profile), and have reached a terminal
+    state — an in-flight run cannot be appended to.
 
     The lookup uses the live database context (as ``get_delegation_status`` does)
     so a prior run committed by an earlier turn is visible. A run owned by another
-    user is reported as not found rather than as a permission error, so its
-    existence is not disclosed to a different participant.
+    user or seeded by another source profile is reported as not found rather than
+    as a permission error, so its existence is not disclosed to a caller that may
+    not be entitled to know about it.
     """
     prior_run = await exec_context.db_context.delegation_runs.get_by_delegation_id(
         resume_delegation_id
@@ -169,6 +188,7 @@ async def _resolve_resume_subconversation(
         prior_run["conversation_id"] != exec_context.conversation_id
         or prior_run["interface_type"] != exec_context.interface_type
         or prior_run["user_id"] != exec_context.user_id
+        or prior_run["source_profile_id"] != source_service_id
     ):
         return None, ToolResult(
             text=(
@@ -198,20 +218,15 @@ async def _resolve_resume_subconversation(
         )
     resumed_subconversation_id = prior_run["subconversation_id"]
     # Serialize resumes: two runs sharing a subconversation would interleave
-    # messages and tool side effects in the same delegated history. Reject a new
-    # resume while an earlier one (this or another follow-up) is still in flight.
+    # messages and tool side effects in the same delegated history. This preflight
+    # gives a clean early error for the common sequential case; the unique
+    # active-subconversation index is the atomic backstop that closes the
+    # check-then-insert race (see the run-creation handling below).
     if await exec_context.db_context.delegation_runs.has_active_run_for_subconversation(
         conversation_id=exec_context.conversation_id,
         subconversation_id=resumed_subconversation_id,
     ):
-        return None, ToolResult(
-            text=(
-                f"Error: Cannot resume delegation '{resume_delegation_id}': a resume "
-                "of it is already in progress. Wait for that to finish (you will be "
-                "notified) before resuming it again."
-            ),
-            attachments=None,
-        )
+        return None, _resume_already_in_progress_result(resume_delegation_id)
     return resumed_subconversation_id, None
 
 
@@ -729,6 +744,7 @@ async def delegate_to_service_tool(
         ) = await _resolve_resume_subconversation(
             exec_context,
             resume_delegation_id=resume_delegation_id,
+            source_service_id=source_service_id,
             target_service_id=target_service_id,
         )
         if resume_error is not None:
@@ -913,6 +929,28 @@ async def delegate_to_service_tool(
                 },
                 max_retries_override=1,
             )
+    except IntegrityError:
+        if resumed_subconversation_id is not None:
+            # The unique active-subconversation index rejected this insert: a
+            # concurrent resume of the same delegation won the atomic claim while
+            # this one was between its preflight check and its insert (e.g. one
+            # resume waited on confirmation). Serialize by refusing this one.
+            logger.info(
+                "Concurrent resume of delegation %s rejected by the unique "
+                "active-subconversation constraint (subconversation=%s).",
+                resume_delegation_id,
+                subconversation_id,
+            )
+            return _resume_already_in_progress_result(cast("str", resume_delegation_id))
+        logger.error(
+            "Failed to delegate request to service '%s' due to a constraint violation.",
+            target_service_id,
+            exc_info=True,
+        )
+        return ToolResult(
+            text=f"Error: Failed to delegate task to service '{target_service_id}'.",
+            attachments=None,
+        )
     except Exception as e:
         logger.error(
             f"Failed to delegate request to service '{target_service_id}': {e}",

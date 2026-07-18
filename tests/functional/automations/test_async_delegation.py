@@ -3256,3 +3256,54 @@ async def test_delegate_treats_blank_resume_id_as_fresh_delegation(
     assert "cannot resume" not in result.text.lower()
     assert isinstance(result.data, dict)
     assert str(result.data["delegation_id"]).startswith("delegation_")
+
+
+@pytest.mark.asyncio
+async def test_resume_delegation_rejects_other_source_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    """A profile cannot resume a delegation seeded by a different source profile.
+
+    A more privileged profile (e.g. the confirm-gated engineer) may have seeded
+    the target subconversation with context the current profile cannot read, so
+    resume is restricted to the profile that created the delegation.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.delegation_runs.create_run({
+            "delegation_id": "delegation_from_engineer",
+            "task_id": "task_from_engineer",
+            "source_profile_id": "engineer",
+            "target_service_id": "target_profile",
+            "interface_type": TEST_INTERFACE_TYPE,
+            "conversation_id": TEST_CONVERSATION_ID,
+            "user_id": "async-delegation-user",
+            "user_name": TEST_USER_NAME,
+            "source_turn_id": "turn_engineer",
+            "subconversation_id": "sub_delegation_from_engineer",
+            "source_subconversation_id": None,
+            "request_text": "engineer-seeded request",
+            "content_parts_json": [],
+        })
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_from_engineer",
+            result_text="engineer result",
+            result_attachment_ids=[],
+            completed_at=SystemClock().now(),
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        # The default tool context runs as source profile "source_profile".
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="continue from a different profile",
+            resume_delegation_id="delegation_from_engineer",
+        )
+
+    assert result.text is not None
+    assert "no such delegation reference" in result.text.lower()
+    assert target_service.calls == []

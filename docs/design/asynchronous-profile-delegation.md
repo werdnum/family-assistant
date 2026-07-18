@@ -305,11 +305,28 @@ caller's `source_subconversation_id`, so its completion wakes the caller as any 
 
 Validation rejects a resume when the referenced run:
 
-- is not found in the current conversation (matched on `conversation_id` + `interface_type`, the
-  same ownership boundary `get_delegation_status` enforces);
+- is not the caller's own prior delegation. The referenced run must match the current
+  `conversation_id`, `interface_type`, `user_id`, and `source_profile_id`. A run owned by another
+  user, or one seeded by a different (possibly more privileged) source profile — e.g. a
+  confirm-gated `engineer` handoff that carried source/DB context into a `complex_tasks`
+  subconversation — is reported as "no such delegation reference" rather than a permission error, so
+  its existence is not disclosed to a caller that is not entitled to reuse its history;
 - targets a different profile than the requested `target_service_id` (delegated history is scoped by
   both subconversation and profile, so a cross-profile resume would silently load nothing);
-- is not yet terminal (an in-flight run cannot be appended to).
+- is not yet terminal (an in-flight run cannot be appended to);
+- already has another non-terminal run against the same subconversation (a resume is already in
+  flight — see serialization below).
+
+**Serializing concurrent resumes.** A fresh delegation always mints a unique `subconversation_id`,
+but a resume reuses a prior run's key, so two resumes of the same finished delegation could each
+create an active run that then interleaves messages and tool side effects in one delegated history.
+A preflight check gives a clean early error in the common sequential case, but the atomic guarantee
+is a **partial unique index** on `delegation_runs(subconversation_id)` restricted to non-terminal
+statuses (`uq_delegation_runs_active_subconversation`): at most one active run may target a given
+subconversation. The losing side of a check-then-insert race (for example, one resume waiting on a
+confirmation prompt while another starts) hits an `IntegrityError` on `create_run`, which is
+translated back into the "a resume is already in progress" error. Because the index excludes
+terminal rows, a completed run can still be resumed.
 
 Resumption is supported on both the async and synchronous delegation paths (the synchronous path
 reuses the resolved key inline). In pure synchronous mode no durable run records exist, so a resume

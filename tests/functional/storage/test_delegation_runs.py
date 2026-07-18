@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.context import DatabaseContext
@@ -18,6 +19,8 @@ async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
 
 
 def _make_run(delegation_id: str, task_id: str) -> DelegationRunCreate:
+    # Each run gets its own subconversation, as a fresh delegation would: the
+    # partial unique index forbids two non-terminal runs sharing a subconversation.
     return DelegationRunCreate(
         delegation_id=delegation_id,
         task_id=task_id,
@@ -25,7 +28,7 @@ def _make_run(delegation_id: str, task_id: str) -> DelegationRunCreate:
         target_service_id="remote_profile",
         interface_type="web",
         conversation_id="conv-1",
-        subconversation_id="sub-1",
+        subconversation_id=f"sub-{delegation_id}",
         request_text="do something",
         content_parts_json=[],
     )
@@ -137,3 +140,40 @@ class TestDelegationRunsAsyncRemote:
         awaiting = await db_context.delegation_runs.list_awaiting_remote()
         ids = {run["delegation_id"] for run in awaiting}
         assert ids == {"d1"}
+
+    @pytest.mark.asyncio
+    async def test_active_subconversation_index_rejects_second_active_run(
+        self, db_engine: AsyncEngine
+    ) -> None:
+        # The partial unique index atomically serializes resumes: at most one
+        # non-terminal run may target a given subconversation, so two concurrent
+        # resumes cannot both create active runs that interleave in one history.
+        async with DatabaseContext(engine=db_engine) as db_ctx:
+            await db_ctx.delegation_runs.create_run(_make_run("d1", "t1"))
+
+        conflicting = _make_run("d2", "t2")
+        conflicting["subconversation_id"] = "sub-d1"
+        with pytest.raises(IntegrityError):
+            async with DatabaseContext(engine=db_engine) as db_ctx:
+                await db_ctx.delegation_runs.create_run(conflicting)
+
+    @pytest.mark.asyncio
+    async def test_active_subconversation_index_allows_run_after_terminal(
+        self, db_engine: AsyncEngine
+    ) -> None:
+        # Once the prior run is terminal it leaves the partial index, so a resume
+        # reusing its subconversation is permitted.
+        async with DatabaseContext(engine=db_engine) as db_ctx:
+            await db_ctx.delegation_runs.create_run(_make_run("d1", "t1"))
+            await db_ctx.delegation_runs.mark_completed(
+                delegation_id="d1",
+                result_text="done",
+                result_attachment_ids=[],
+                completed_at=datetime.now(UTC),
+            )
+
+        async with DatabaseContext(engine=db_engine) as db_ctx:
+            resume = _make_run("d2", "t2")
+            resume["subconversation_id"] = "sub-d1"
+            created = await db_ctx.delegation_runs.create_run(resume)
+            assert created["subconversation_id"] == "sub-d1"
