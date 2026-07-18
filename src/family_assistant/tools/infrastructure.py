@@ -847,9 +847,17 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         if can_confirm in self._tool_definitions_by_confirmation:
             return self._tool_definitions_by_confirmation[can_confirm]
 
+        # Execution resolves a name to the *first* descriptor with that name
+        # (composite order, local-before-MCP), so advertisement must evaluate
+        # policy against that same descriptor. Treating a name as allowed when
+        # *any* same-named descriptor passes would advertise a tool whose
+        # execution is denied (and hide the allowed one behind it).
+        first_descriptor_by_name: dict[str, ToolDescriptor] = {}
+        for descriptor in await self._descriptor_provider.get_tool_descriptors():
+            first_descriptor_by_name.setdefault(descriptor.name, descriptor)
         allowed_names = {
-            descriptor.name
-            for descriptor in await self._descriptor_provider.get_tool_descriptors()
+            name
+            for name, descriptor in first_descriptor_by_name.items()
             if self._policy_engine.evaluate_for_advertisement(
                 descriptor,
                 can_confirm=can_confirm,
