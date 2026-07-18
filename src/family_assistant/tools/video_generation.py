@@ -74,7 +74,7 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "model": {
                         "type": "string",
-                        "description": "Optional model override. Defaults to the configured backend's model (Veo for cinematic clips, or gemini-omni-flash-preview for fast conversational video). A `veo-*` id selects Veo; otherwise Gemini Omni Flash is used.",
+                        "description": "Optional model override. Defaults to Gemini Omni Flash (gemini-omni-flash-preview) for fast conversational video. A `veo-*` id selects Veo for cinematic, higher-quality clips instead.",
                     },
                 },
                 "required": ["prompt"],
@@ -166,21 +166,23 @@ def _create_video_backend(
         )
         return GeminiOmniVideoBackend(api_key, model=omni_model)
 
-    # No explicit backend — infer from the requested model, defaulting to Veo.
+    # No explicit backend — infer from the requested model, defaulting to
+    # Gemini Omni Flash.
     if not api_key:
         logger.info(
             "No video_generation_backend or GEMINI_API_KEY configured, using mock"
         )
         return MockVideoBackend()
 
-    if model_override and not _is_veo_model(model_override):
-        logger.info("Inferring Gemini Omni Flash backend from model %s", model_override)
-        return GeminiOmniVideoBackend(api_key, model=model_override)
+    if model_override and _is_veo_model(model_override):
+        logger.info("Inferring Veo backend from model %s", model_override)
+        return VeoVideoBackend(api_key, model=model_override)
 
-    logger.info("Auto-selecting Veo video backend")
-    return VeoVideoBackend(
+    logger.info("Auto-selecting Gemini Omni Flash video backend")
+    return GeminiOmniVideoBackend(
         api_key,
-        model=model_override or (app_config.veo_video.model if app_config else None),
+        model=model_override
+        or (app_config.gemini_omni_video.model if app_config else None),
     )
 
 

@@ -66,11 +66,11 @@ def test_explicit_backend_requires_api_key() -> None:
         _create_video_backend(_ctx_with_config(config), model_override=None)
 
 
-def test_auto_select_defaults_to_veo() -> None:
+def test_auto_select_defaults_to_gemini_omni() -> None:
     config = AppConfig(gemini_api_key="key")
     backend = _create_video_backend(_ctx_with_config(config), model_override=None)
-    assert isinstance(backend, VeoVideoBackend)
-    assert backend.model == "veo-3.1-generate-preview"
+    assert isinstance(backend, GeminiOmniVideoBackend)
+    assert backend.model == "gemini-omni-flash-preview"
 
 
 def test_auto_select_infers_omni_from_model() -> None:

@@ -280,9 +280,9 @@ You can ask the assistant a wide variety of things:
   - "Create a video of a puppy playing in the grass, 16:9 aspect ratio."
   - "Make a 4-second video of ocean waves crashing on rocks." *The assistant will generate the video
     and provide a link to view it.*
-  - *By default the assistant uses Google's Veo models for cinematic, high-quality clips. Ask for a
-    "quick" or "fast" video and it can switch to Gemini Omni Flash, which trades some polish for
-    much faster, lower-cost generation.*
+  - *By default the assistant uses Gemini Omni Flash for fast, low-cost video generation. Ask for a
+    "cinematic" or "high-quality" video and it can switch to Google's Veo models, which trade some
+    speed for more polished, film-like output.*
 
 - **Search Your Gmail and Drive:** If you have connected a Google account (see
   [Connect your Google account](#connect-your-google-account) below), the assistant can search and
