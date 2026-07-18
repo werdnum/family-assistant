@@ -464,12 +464,14 @@ async def render_drive_write_file_confirmation(
     _ = context
     fields = [
         _confirmation_field("Name", args.get("name") or "Use the attachment filename"),
-        _confirmation_field("File type", args.get("file_type", "google_doc")),
         _confirmation_field("Overwrite existing app file", bool(args.get("overwrite"))),
     ]
     if args.get("attachment_id"):
         fields.append(_confirmation_field("Attachment", args.get("attachment_id")))
     else:
+        fields.append(
+            _confirmation_field("File type", args.get("file_type", "google_doc"))
+        )
         fields.append(_confirmation_field("Content", args.get("content")))
     return (
         "Please confirm you want to write this file inside the app's dedicated "
@@ -574,14 +576,32 @@ def confirmation_payload_block_reason(
     Lets the policy and safety layers refuse a call whose confirmation prompt
     could not show the approver the full payload they would be approving,
     instead of rendering a truncated or misleading prompt. Only invoked once a
-    call is known to be confirm-gated, so it never constrains unconfirmed
-    calls. Currently ``delegate_to_service`` requests and every executable
-    computer-use argument are bounded.
+    call is known to be confirm-gated, so it never constrains unconfirmed calls.
+    Delegations, authored Google writes, and every executable computer-use
+    argument must remain fully reviewable.
     """
     if tool_name == "delegate_to_service":
         return over_length_delegation_block_reason(
             str(arguments.get("user_request", ""))
         )
+    if tool_name == "gmail_create_draft":
+        for field in ("to", "cc", "bcc", "subject", "body", "attachment_ids"):
+            rendered = str(arguments.get(field, ""))
+            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
+                return (
+                    f"Error: the Gmail draft '{field}' field is {len(rendered)} "
+                    f"characters, which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character "
+                    "confirmation limit. Shorten it or move bulk content into an attachment."
+                )
+    if tool_name == "drive_write_file" and not arguments.get("attachment_id"):
+        for field in ("name", "content"):
+            rendered = str(arguments.get(field, ""))
+            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
+                return (
+                    f"Error: the Drive write '{field}' field is {len(rendered)} characters, "
+                    f"which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character confirmation "
+                    "limit. Shorten it or upload the content as an attachment."
+                )
     if tool_name in COMPUTER_USE_FUNCTION_NAMES:
         # Every executable argument must be fully reviewable: a truncated
         # navigate URL or typed text would let the user approve payload they
