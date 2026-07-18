@@ -348,10 +348,12 @@ async def computer_use_type(
 ) -> ToolResult:
     """Type text at the current focus without clicking.
 
-    Types at the current cursor position without clearing, matching the
-    reference computer-use loop's ``type_text`` (only the retired coordinate
-    ``type_text_at`` action had clear-before-typing semantics) — the model
-    may be appending to or editing a focused value.
+    The focused field is cleared (select-all + delete) before typing, matching
+    the official computer-use docs' handler for the native ``type`` action
+    (select-all, backspace, then type) so retried/corrected values replace the
+    field contents instead of concatenating. Note: the reference repo's
+    ``type_text`` types without clearing — the docs' handler is treated as
+    normative here since it matches how the model expects ``type`` to behave.
 
     Args:
         exec_context: The tool execution context.
@@ -364,6 +366,8 @@ async def computer_use_type(
     """
     backend = await get_browser_backend(exec_context)
     logger.info(f"Typing '{text}'")
+    await backend.keyboard_press("Control+A")
+    await backend.keyboard_press("Backspace")
     await backend.keyboard_type(text)
     if press_enter:
         await backend.keyboard_press("Enter")
