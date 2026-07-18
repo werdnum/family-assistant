@@ -336,8 +336,9 @@ async def test_safety_decision_no_callback_available() -> None:
 
 
 @pytest.mark.asyncio
-async def test_safety_decision_allowed_no_confirmation() -> None:
-    """Test tool execution when safety_decision is 'allowed' (no confirmation needed)."""
+@pytest.mark.parametrize("decision", ["allowed", "allow", "regular"])
+async def test_safety_decision_allowed_no_confirmation(decision: str) -> None:
+    """Test tool execution for safety decisions that permit execution."""
     provider = MinimalToolsProvider()
     executor = make_tool_executor(provider)
 
@@ -350,7 +351,7 @@ async def test_safety_decision_allowed_no_confirmation() -> None:
                 "x": 100,
                 "y": 200,
                 "safety_decision": {
-                    "decision": "allowed",
+                    "decision": decision,
                     "explanation": "Safe action",
                 },
             },
@@ -737,7 +738,11 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
         "(request abc123). It hasn't run yet."
     )
     callback = StubConfirmationCallback(
-        outcome=ConfirmationOutcome(kind="completed", result=pending_message)
+        outcome=ConfirmationOutcome(
+            kind="completed",
+            result=pending_message,
+            action_attempted=False,
+        )
     )
 
     tool_call = ToolCallItem(
@@ -771,6 +776,53 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
     assert provider.executed_tool_names == []
     assert "hasn't run yet" in result.llm_message.content
     assert "safety_acknowledgement" not in result.llm_message.content
+
+
+@pytest.mark.asyncio
+async def test_safety_confirmation_completed_string_result_acknowledged() -> None:
+    """A completed durable string result represents an attempted action."""
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(
+        outcome=ConfirmationOutcome(
+            kind="completed",
+            result="Error executing approved tool 'right_click': unsupported backend",
+        )
+    )
+
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(
+            name="right_click",
+            arguments={
+                "x": 1,
+                "y": 2,
+                "safety_decision": {
+                    "decision": "require_confirmation",
+                    "explanation": "check",
+                },
+            },
+        ),
+    )
+
+    result = await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert isinstance(result, ToolExecutionResult)
+    assert provider.executed_tool_names == []
+    payload = json.loads(result.llm_message.content)
+    assert payload["safety_acknowledgement"] is True
+    assert "unsupported backend" in payload["result"]
 
 
 @pytest.mark.asyncio

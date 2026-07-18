@@ -4,6 +4,7 @@ import json
 import logging
 import traceback
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from opentelemetry import trace
@@ -64,6 +65,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+@dataclass(frozen=True)
+class _PrecomputedToolResult:
+    """Result returned by a confirmation path that may have run the tool."""
+
+    result: ToolResult | str
+    action_attempted: bool
 
 
 def _argument_attachment_ids(value: object) -> set[str]:
@@ -263,16 +272,15 @@ class ToolExecutor:
         request_confirmation_callback: RequestConfirmationCallback,
         tool_execution_context: ToolExecutionContext,
         taint_metadata: TaintMetadata,
-    ) -> ToolExecutionResult | ToolResult | str | None:
+    ) -> ToolExecutionResult | _PrecomputedToolResult | None:
         """Handle safety confirmation for a tool call.
 
         Returns:
             ``None`` when approval was granted and the caller should execute
-            the tool; a ``ToolResult``/``str`` when a durable confirmation
-            already executed the tool elsewhere (kind ``completed``) and its
-            result should flow through normal result processing (including the
-            safety acknowledgement); a ``ToolExecutionResult`` for declined /
-            timed-out / failed confirmations where the action never ran.
+            the tool; a ``_PrecomputedToolResult`` when a durable confirmation
+            returned a result, carrying whether the action was actually
+            attempted; a ``ToolExecutionResult`` for declined / timed-out /
+            failed confirmations where the action never ran.
         """
         logger.info(
             "Tool '%s' requires safety confirmation: %s",
@@ -317,12 +325,15 @@ class ToolExecutor:
             return None
 
         if confirmation_result.kind == "completed":
-            # A durable confirmation with a live waiter already executed the
-            # tool in the task worker; its result (screenshots included) must
-            # flow through normal result processing with the acknowledgement.
-            return confirmation_outcome_to_tool_result(
-                name=function_name,
-                outcome=confirmation_result,
+            # A durable confirmation normally completed after the task worker
+            # attempted the tool. A deferred callback can also return a queued
+            # placeholder explicitly marked action_attempted=False.
+            return _PrecomputedToolResult(
+                result=confirmation_outcome_to_tool_result(
+                    name=function_name,
+                    outcome=confirmation_result,
+                ),
+                action_attempted=confirmation_result.action_attempted,
             )
 
         logger.info(
@@ -862,7 +873,7 @@ class ToolExecutor:
             safety_confirmation_required = decision_value == "require_confirmation"
             safety_decision_permits_execution = safety_decision is None or (
                 isinstance(safety_decision, dict)
-                and decision_value in {"allowed", "allow"}
+                and decision_value in {"allowed", "allow", "regular"}
             )
             if (
                 not safety_confirmation_required
@@ -918,7 +929,7 @@ class ToolExecutor:
 
             # Result of a durable "completed" confirmation that already
             # executed the tool elsewhere; substitutes for local execution.
-            precomputed_result: ToolResult | str | None = None
+            precomputed_result: _PrecomputedToolResult | None = None
             if safety_confirmation_required and isinstance(safety_decision, dict):
                 if not request_confirmation_callback:
                     logger.warning(
@@ -973,15 +984,14 @@ class ToolExecutor:
 
             # The acknowledgement asserts to Gemini that the user consented AND
             # the action ran (or was attempted). That holds for local execution
-            # after a live approval, and for a durable confirmation that came
-            # back with an executed ToolResult. A "completed" outcome carrying
-            # only a string is the deferred-pending placeholder ("waiting for
-            # approval, hasn't run") and must NOT claim consent.
+            # after a live approval, and for a durable confirmation explicitly
+            # marked as attempted. Deferred-pending placeholders are marked
+            # action_attempted=False and must NOT claim consent.
             acknowledge_safety = False
             result_or_error: ToolResult | object | ToolExecutionResult
             if precomputed_result is not None:
-                result_or_error = precomputed_result
-                acknowledge_safety = isinstance(precomputed_result, ToolResult)
+                result_or_error = precomputed_result.result
+                acknowledge_safety = precomputed_result.action_attempted
             else:
                 if safety_confirmation_required:
                     acknowledge_safety = True

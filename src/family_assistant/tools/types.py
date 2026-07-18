@@ -228,7 +228,12 @@ type ToolArgumentsView = Mapping[str, ToolArgumentValue]
 
 @dataclass(frozen=True)
 class ConfirmationOutcome:
-    """Terminal result of a user confirmation request."""
+    """Terminal result of a user confirmation request.
+
+    ``action_attempted`` is meaningful for ``completed`` outcomes. Completion
+    conventionally means execution finished, while durable callbacks that only
+    queued a request set it to ``False``.
+    """
 
     kind: Literal[
         "approved",
@@ -239,6 +244,7 @@ class ConfirmationOutcome:
         "failed",
     ]
     result: str | ToolResult | None = None
+    action_attempted: bool = True
 
 
 class RequestConfirmationCallback(Protocol):

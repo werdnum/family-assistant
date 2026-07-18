@@ -210,7 +210,11 @@ async def create_deferred_tool_confirmation(
     )
     if notification_warning is not None:
         result = f"{result}\n\nWarning: {notification_warning}"
-    return ConfirmationOutcome(kind="completed", result=result)
+    return ConfirmationOutcome(
+        kind="completed",
+        result=result,
+        action_attempted=False,
+    )
 
 
 def build_deferred_confirmation_callback(
