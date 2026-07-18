@@ -128,6 +128,7 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
     logger.info("Executing tool before restart...")
     result1 = await mcp_provider.execute_tool("convert_time", args, context)
     assert "Error" not in result1
+    version_before_restart = mcp_provider.descriptors_version
 
     # 3. Restart Server
     logger.info("Restarting MCP Proxy Server...")
@@ -139,5 +140,9 @@ async def test_mcp_sse_restart(mcp_proxy_controller: MCPProxyController) -> None
 
     # 5. Verify success
     assert "Error" not in result2
+
+    # 6. Reconnecting must advance the descriptors version so downstream caches
+    #    (policy/on-demand) rebuild instead of serving a stale tool list.
+    assert mcp_provider.descriptors_version > version_before_restart
 
     await mcp_provider.close()

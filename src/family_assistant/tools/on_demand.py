@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     ToolsProvider,
+    resolve_descriptors_version,
 )
 from family_assistant.tools.metadata import ToolDescriptor, extract_tool_summary
 
@@ -166,6 +167,7 @@ class OnDemandToolsView:
         self._on_demand_tool_names = on_demand_tool_names
         self._on_demand_mcp_server_ids = on_demand_mcp_server_ids or set()
         self._all_descriptors: list[ToolDescriptor] | None = None
+        self._descriptors_version: int | None = None
         # Cache whether the wrapped provider's get_tool_definitions accepts
         # ``can_confirm``. The wrapped provider does not change for the lifetime
         # of this object, so doing the inspect.signature reflection once in
@@ -196,8 +198,17 @@ class OnDemandToolsView:
         meta-tool. If the wrapped provider already exposes a real tool with
         that name it would be silently shadowed, so refuse to wrap such a
         provider and fail loudly instead.
+
+        The cache is rebuilt when the wrapped descriptor set changes (an MCP
+        server connecting, reconnecting, or disconnecting), so on-demand
+        activation of a server that was down at startup works once the
+        health-check loop reconnects it.
         """
-        if self._all_descriptors is None:
+        current_version = resolve_descriptors_version(self._descriptor_provider)
+        if (
+            self._all_descriptors is None
+            or current_version != self._descriptors_version
+        ):
             descriptors = await self._descriptor_provider.get_tool_descriptors()
             collisions = [d for d in descriptors if d.name == "activate_tools"]
             if collisions:
@@ -208,6 +219,7 @@ class OnDemandToolsView:
                 )
                 raise ValueError(msg)
             self._all_descriptors = descriptors
+            self._descriptors_version = current_version
         return self._all_descriptors
 
     async def _fetch_wrapped_definitions(

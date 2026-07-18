@@ -377,6 +377,30 @@ async def get_tool_definitions_for_advertisement(
     return await method()
 
 
+def resolve_descriptors_version(provider: ToolsProvider) -> int:
+    """Return a monotonic version of the descriptor set ``provider`` exposes.
+
+    Providers whose descriptor set can change at runtime (currently
+    ``MCPToolsProvider``, whose servers connect/reconnect/disconnect) expose a
+    ``descriptors_version`` that increments on every change. Wrappers forward
+    their inner provider's version; composites combine their children's.
+    Providers without the attribute are treated as static (version 0).
+
+    Consumers that cache policy-filtered tool listings for the process lifetime
+    compare this against the version their cache was built at, so a server that
+    was down at startup and later reconnects invalidates the stale cache instead
+    of staying permanently unadvertisable.
+    """
+    version = getattr(provider, "descriptors_version", None)
+    if isinstance(version, int):
+        return version
+    if isinstance(provider, ToolProviderWrapper):
+        return resolve_descriptors_version(provider.wrapped_provider)
+    if isinstance(provider, ToolProviderComposite):
+        return sum(resolve_descriptors_version(sub) for sub in provider.get_providers())
+    return 0
+
+
 class LocalToolsProvider:
     """Provides and executes locally defined Python functions as tools."""
 
@@ -804,6 +828,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         self._policy_engine = policy_engine
         self.confirmation_timeout = confirmation_timeout
         self._tool_definitions_by_confirmation: dict[bool, list[ToolDefinition]] = {}
+        self._cached_descriptors_version: int | None = None
 
     async def get_tool_definitions(
         self,
@@ -811,6 +836,14 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         can_confirm: bool = True,
     ) -> list[ToolDefinition]:
         """Return tool definitions that are advertisable in this interaction."""
+        current_version = resolve_descriptors_version(self._descriptor_provider)
+        if current_version != self._cached_descriptors_version:
+            # An MCP server connected, reconnected, or disconnected since this
+            # cache was built. Drop it so the newly available (or removed) tools
+            # are re-evaluated instead of serving a stale advertised set.
+            self._tool_definitions_by_confirmation.clear()
+            self._cached_descriptors_version = current_version
+
         if can_confirm in self._tool_definitions_by_confirmation:
             return self._tool_definitions_by_confirmation[can_confirm]
 
@@ -824,11 +857,20 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             is not ToolPolicyDecision.DENY
         }
 
-        self._tool_definitions_by_confirmation[can_confirm] = [
-            definition
-            for definition in await self.wrapped_provider.get_tool_definitions()
-            if definition.get("function", {}).get("name") in allowed_names
-        ]
+        # Dedupe by function name (first occurrence wins, matching the
+        # first-registered precedence the root composite and MCP _tool_map use).
+        # A server that was down at startup can reconnect with a name that
+        # collides with a local/root tool; advertising both would send duplicate
+        # function declarations, which some LLM APIs reject.
+        advertised: list[ToolDefinition] = []
+        seen_names: set[str] = set()
+        for definition in await self.wrapped_provider.get_tool_definitions():
+            name = definition.get("function", {}).get("name")
+            if name not in allowed_names or name in seen_names:
+                continue
+            seen_names.add(name)
+            advertised.append(definition)
+        self._tool_definitions_by_confirmation[can_confirm] = advertised
         return self._tool_definitions_by_confirmation[can_confirm]
 
     async def get_tool_descriptors(self) -> list[ToolDescriptor]:
