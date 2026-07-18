@@ -289,6 +289,54 @@ Cancellation can be a later milestone:
 - Running local profiles need cooperative cancellation support in `TaskWorker`.
 - Remote A2A targets can map cancellation to `tasks/cancel` when available.
 
+### Resuming a Prior Delegation
+
+By default each `delegate_to_service` call mints a fresh `subconversation_id`, so successive
+delegations to the same target profile are fully isolated from one another. Because delegated
+history is loaded by `subconversation_id`, resuming a prior delegation only requires reusing that
+key rather than minting a new one.
+
+`delegate_to_service` accepts an optional `resume_delegation_id`. When set, the caller looks up the
+referenced run and, after validation, reuses its `subconversation_id` for the new run instead of
+generating one. The new run is still an independent `delegation_runs` row (its own `delegation_id`,
+`task_id`, and freshly-derived taint from the caller's current context) — resumption is history
+continuity, not run reuse. The parent-wake path is unchanged: the new run captures the current
+caller's `source_subconversation_id`, so its completion wakes the caller as any delegation would.
+
+Validation rejects a resume when the referenced run:
+
+- is not the caller's own prior delegation. The referenced run must match the current
+  `conversation_id`, `interface_type`, `user_id`, `source_profile_id`, and
+  `source_subconversation_id` (the parent (sub)conversation that created it). A run owned by another
+  user, seeded by a different (possibly more privileged) source profile — e.g. a confirm-gated
+  `engineer` handoff that carried source/DB context into a `complex_tasks` subconversation — or
+  seeded by a different parent task of the same profile is reported as "no such delegation
+  reference" rather than a permission error, so its existence is not disclosed to a caller that is
+  not entitled to reuse its history;
+- targets a different profile than the requested `target_service_id` (delegated history is scoped by
+  both subconversation and profile, so a cross-profile resume would silently load nothing);
+- is not yet terminal (an in-flight run cannot be appended to);
+- already has another non-terminal run against the same subconversation (a resume is already in
+  flight — see serialization below).
+
+**Serializing concurrent resumes.** A fresh delegation always mints a unique `subconversation_id`,
+but a resume reuses a prior run's key, so two resumes of the same finished delegation could each
+create an active run that then interleaves messages and tool side effects in one delegated history.
+A preflight check gives a clean early error in the common sequential case, but the atomic guarantee
+is a **partial unique index** on `delegation_runs(subconversation_id)` restricted to non-terminal
+statuses (`uq_delegation_runs_active_subconversation`): at most one active run may target a given
+subconversation. The losing side of a check-then-insert race (for example, one resume waiting on a
+confirmation prompt while another starts) hits an `IntegrityError` on `create_run`, which is
+translated back into the "a resume is already in progress" error. Because the index excludes
+terminal rows, a completed run can still be resumed.
+
+Resumption is supported only on the asynchronous path. The synchronous path (used inside scripts, or
+when async delegation is disabled) creates no durable `delegation_runs` row, so it cannot
+participate in the unique-index claim and a concurrent resume there could not be serialized; a
+resume on that path is therefore rejected with a clear error directing the caller to start a fresh
+delegation. In pure synchronous mode no durable run records exist anyway, so a resume reference
+would resolve to "no such delegation" regardless.
+
 ### Confirmations
 
 Phase one should fail fast if an async background delegated profile reaches a tool that requires

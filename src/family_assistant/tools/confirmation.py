@@ -489,6 +489,16 @@ async def render_delegate_to_service_confirmation(
     ]
     if attachment_ids:
         fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))
+    resume_delegation_id = str(args.get("resume_delegation_id", "")).strip()
+    if resume_delegation_id:
+        fields.append(
+            _confirmation_field(
+                "Resuming delegation",
+                f"{resume_delegation_id} — the target profile continues this earlier "
+                "delegation's conversation and keeps its prior context, rather than "
+                "starting a fresh handoff.",
+            )
+        )
     return "Do you want to delegate this task to another profile?\n" + "\n".join(fields)
 
 

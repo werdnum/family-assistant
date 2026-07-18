@@ -49,6 +49,36 @@ async def test_delegate_confirmation_shows_target_request_and_attachments() -> N
 
 
 @pytest.mark.asyncio
+async def test_delegate_confirmation_shows_resume_reference_and_context_note() -> None:
+    # When resuming a prior delegation, the approver must be able to tell they are
+    # authorizing reuse of an earlier delegation's history, not a fresh handoff.
+    prompt = await render_delegate_to_service_confirmation(
+        {
+            "target_service_id": "complex_tasks",
+            "user_request": "Continue where we left off",
+            "resume_delegation_id": "delegation_abc123",
+        },
+        _no_context(),
+    )
+
+    assert "delegation_abc123" in prompt
+    assert "context" in prompt.lower()
+
+
+@pytest.mark.asyncio
+async def test_delegate_confirmation_omits_resume_note_for_fresh_handoff() -> None:
+    prompt = await render_delegate_to_service_confirmation(
+        {
+            "target_service_id": "complex_tasks",
+            "user_request": "Start a new task",
+        },
+        _no_context(),
+    )
+
+    assert "Resuming delegation" not in prompt
+
+
+@pytest.mark.asyncio
 async def test_delegate_confirmation_shows_request_in_full_above_generic_bound() -> (
     None
 ):
