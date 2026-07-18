@@ -905,9 +905,11 @@ async def test_gmail_create_draft_uses_only_drafts_create_and_owned_attachment(
     ]
 
 
+@pytest.mark.parametrize("invalid_address", ["not-an-address", "a@b@c"])
 @pytest.mark.asyncio
 async def test_gmail_create_draft_rejects_invalid_address_before_google_request(
     db_engine: AsyncEngine,
+    invalid_address: str,
 ) -> None:
     backend = FakeApiBackend()
     resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
@@ -918,7 +920,7 @@ async def test_gmail_create_draft_rejects_invalid_address_before_google_request(
         )
         result = await gmail_create_draft_tool(
             context,
-            to=["not-an-address"],
+            to=[invalid_address],
             subject="Nope",
             body="Nope",
         )

@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+from email.errors import HeaderParseError
 from email.headerregistry import Address
 from email.message import EmailMessage
 from pathlib import PurePosixPath
@@ -835,7 +836,7 @@ def _validated_addresses(addresses: list[str], field_name: str) -> list[str]:
         candidate = raw_address.strip()
         try:
             address = Address(addr_spec=candidate)
-        except (TypeError, ValueError) as exc:
+        except (HeaderParseError, TypeError, ValueError) as exc:
             raise _GoogleToolError(
                 f"Invalid {field_name} email address: {raw_address!r}."
             ) from exc
