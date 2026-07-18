@@ -434,6 +434,49 @@ async def render_send_message_to_user_confirmation(
     return "Please confirm you want to *send* this message:\n" + "\n".join(fields)
 
 
+async def render_gmail_create_draft_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render the recipients and content of an unsent Gmail draft."""
+    _ = context
+    fields = [
+        _confirmation_field("To", args.get("to")),
+        _confirmation_field("Subject", args.get("subject")),
+        _confirmation_field("Body", args.get("body")),
+    ]
+    if args.get("cc"):
+        fields.append(_confirmation_field("CC", args.get("cc")))
+    if args.get("bcc"):
+        fields.append(_confirmation_field("BCC", args.get("bcc")))
+    if args.get("attachment_ids"):
+        fields.append(_confirmation_field("Attachments", args.get("attachment_ids")))
+    return "Please confirm you want to create this *unsent Gmail draft*:\n" + "\n".join(
+        fields
+    )
+
+
+async def render_drive_write_file_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render the destination name and content source of an app-folder write."""
+    _ = context
+    fields = [
+        _confirmation_field("Name", args.get("name") or "Use the attachment filename"),
+        _confirmation_field("File type", args.get("file_type", "google_doc")),
+        _confirmation_field("Overwrite existing app file", bool(args.get("overwrite"))),
+    ]
+    if args.get("attachment_id"):
+        fields.append(_confirmation_field("Attachment", args.get("attachment_id")))
+    else:
+        fields.append(_confirmation_field("Content", args.get("content")))
+    return (
+        "Please confirm you want to write this file inside the app's dedicated "
+        "Google Drive folder:\n" + "\n".join(fields)
+    )
+
+
 async def render_ingest_document_from_url_confirmation(
     args: ToolArgumentsView,
     context: ToolExecutionContext,
@@ -610,6 +653,8 @@ _base_renderers: dict[str, ConfirmationRenderer] = {
     "schedule_future_callback": render_schedule_future_callback_confirmation,
     "modify_pending_callback": render_modify_pending_callback_confirmation,
     "send_message_to_user": render_send_message_to_user_confirmation,
+    "gmail_create_draft": render_gmail_create_draft_confirmation,
+    "drive_write_file": render_drive_write_file_confirmation,
     "ingest_document_from_url": render_ingest_document_from_url_confirmation,
     "delegate_to_service": render_delegate_to_service_confirmation,
 }
