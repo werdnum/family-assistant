@@ -35,6 +35,7 @@ from family_assistant.services.oauth_credentials import (
 )
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.attachment_utils import fetch_attachment_object
 from family_assistant.tools.google_data import (
     GOOGLE_TOOL_REQUIRED_SCOPES,
     drive_get_file_tool,
@@ -870,13 +871,17 @@ async def test_gmail_create_draft_uses_only_drafts_create_and_owned_attachment(
             backend=backend,
             attachment_registry=registry,
         )
+        attachment_object = await fetch_attachment_object(
+            attachment.attachment_id, context
+        )
+        assert attachment_object is not None
         result = await gmail_create_draft_tool(
             context,
             to=["recipient@example.com"],
             cc=["copy@example.com"],
             subject="Draft subject",
             body="Draft body",
-            attachment_ids=[attachment.attachment_id],
+            attachment_ids=[attachment_object],
         )
 
     data = result.get_data()
@@ -1080,9 +1085,11 @@ async def test_drive_write_uploads_owned_attachment_and_preserves_filename(
             backend=backend,
             attachment_registry=registry,
         )
-        result = await drive_write_file_tool(
-            context, attachment_id=attachment.attachment_id
+        attachment_object = await fetch_attachment_object(
+            attachment.attachment_id, context
         )
+        assert attachment_object is not None
+        result = await drive_write_file_tool(context, attachment_id=attachment_object)
 
     data = result.get_data()
     assert isinstance(data, dict)

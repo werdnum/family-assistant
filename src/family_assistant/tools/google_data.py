@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from markdownify import markdownify
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.services.api_backend import ApiBackendError
 from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
 from family_assistant.services.oauth_credentials import (
@@ -882,22 +883,27 @@ def _encode_gmail_draft_payload(message: EmailMessage) -> bytes:
 
 async def _load_owned_attachment(
     exec_context: ToolExecutionContext,
-    attachment_id: str,
+    attachment_id: ScriptAttachment | str,
     *,
     max_bytes: int,
 ) -> tuple[bytes, str, str]:
     """Load one attachment through the registry's acting-user boundary."""
+    attachment_id_str = (
+        attachment_id.get_id()
+        if isinstance(attachment_id, ScriptAttachment)
+        else attachment_id
+    )
     registry = exec_context.attachment_registry
     if registry is None:
         raise _GoogleToolError("Attachment registry is not available.")
     metadata = await registry.get_attachment(
         exec_context.db_context,
-        attachment_id,
+        attachment_id_str,
         acting_user_id=exec_context.user_id,
     )
     if metadata is None:
         raise _GoogleToolError(
-            f"Attachment {attachment_id} was not found for the requesting user."
+            f"Attachment {attachment_id_str} was not found for the requesting user."
         )
     legacy_user_owned = (
         metadata.owner_user_id is None
@@ -915,24 +921,30 @@ async def _load_owned_attachment(
         and not same_conversation_ownerless
     ):
         raise _GoogleToolError(
-            f"Attachment {attachment_id} is not owned by the requesting user."
+            f"Attachment {attachment_id_str} is not owned by the requesting user."
         )
     if metadata.size > max_bytes:
         raise _GoogleToolError(
-            f"Attachment {attachment_id} exceeds the {max_bytes}-byte upload limit."
+            f"Attachment {attachment_id_str} exceeds the {max_bytes}-byte upload limit."
         )
     content = await registry.get_attachment_content(
         exec_context.db_context,
-        attachment_id,
+        attachment_id_str,
         acting_user_id=exec_context.user_id,
     )
     if content is None:
-        raise _GoogleToolError(f"Attachment {attachment_id} has no readable content.")
+        raise _GoogleToolError(
+            f"Attachment {attachment_id_str} has no readable content."
+        )
     if len(content) > max_bytes:
         raise _GoogleToolError(
-            f"Attachment {attachment_id} exceeds the {max_bytes}-byte upload limit."
+            f"Attachment {attachment_id_str} exceeds the {max_bytes}-byte upload limit."
         )
-    return content, _attachment_filename(metadata, attachment_id), metadata.mime_type
+    return (
+        content,
+        _attachment_filename(metadata, attachment_id_str),
+        metadata.mime_type,
+    )
 
 
 async def gmail_create_draft_tool(
@@ -942,7 +954,7 @@ async def gmail_create_draft_tool(
     body: str,
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
-    attachment_ids: list[str] | None = None,
+    attachment_ids: list[ScriptAttachment | str] | None = None,
 ) -> ToolResult:
     """Create an unsent Gmail draft for the acting user."""
 
@@ -1491,7 +1503,7 @@ async def drive_write_file_tool(
     name: str | None = None,
     content: str | None = None,
     file_type: str = "google_doc",
-    attachment_id: str | None = None,
+    attachment_id: ScriptAttachment | str | None = None,
     overwrite: bool = False,
 ) -> ToolResult:
     """Write authored content or an owned attachment inside the app Drive folder."""
