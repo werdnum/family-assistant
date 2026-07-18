@@ -191,7 +191,23 @@ async def _resolve_resume_subconversation(
             ),
             attachments=None,
         )
-    return prior_run["subconversation_id"], None
+    resumed_subconversation_id = prior_run["subconversation_id"]
+    # Serialize resumes: two runs sharing a subconversation would interleave
+    # messages and tool side effects in the same delegated history. Reject a new
+    # resume while an earlier one (this or another follow-up) is still in flight.
+    if await exec_context.db_context.delegation_runs.has_active_run_for_subconversation(
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=resumed_subconversation_id,
+    ):
+        return None, ToolResult(
+            text=(
+                f"Error: Cannot resume delegation '{resume_delegation_id}': a resume "
+                "of it is already in progress. Wait for that to finish (you will be "
+                "notified) before resuming it again."
+            ),
+            attachments=None,
+        )
+    return resumed_subconversation_id, None
 
 
 async def _wait_for_delegation_run(

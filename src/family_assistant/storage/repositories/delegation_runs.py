@@ -155,6 +155,32 @@ class DelegationRunsRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._row_to_dict(row) for row in rows]
 
+    async def has_active_run_for_subconversation(
+        self,
+        *,
+        conversation_id: str,
+        subconversation_id: str,
+    ) -> bool:
+        """Return whether a non-terminal run already targets this subconversation.
+
+        Used to reject a resume when another run is already executing (or queued)
+        against the same delegated history, so two resumed runs cannot interleave
+        messages and tool side effects in one subconversation.
+        """
+        stmt = (
+            select(delegation_runs_table.c.id)
+            .where(delegation_runs_table.c.conversation_id == conversation_id)
+            .where(delegation_runs_table.c.subconversation_id == subconversation_id)
+            .where(
+                delegation_runs_table.c.status.notin_(
+                    list(TERMINAL_DELEGATION_STATUSES)
+                )
+            )
+            .limit(1)
+        )
+        row = await self._db.fetch_one(stmt)
+        return row is not None
+
     async def mark_running(
         self, delegation_id: str, started_at: datetime
     ) -> DelegationRunDict | None:
