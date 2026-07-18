@@ -857,11 +857,20 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             is not ToolPolicyDecision.DENY
         }
 
-        self._tool_definitions_by_confirmation[can_confirm] = [
-            definition
-            for definition in await self.wrapped_provider.get_tool_definitions()
-            if definition.get("function", {}).get("name") in allowed_names
-        ]
+        # Dedupe by function name (first occurrence wins, matching the
+        # first-registered precedence the root composite and MCP _tool_map use).
+        # A server that was down at startup can reconnect with a name that
+        # collides with a local/root tool; advertising both would send duplicate
+        # function declarations, which some LLM APIs reject.
+        advertised: list[ToolDefinition] = []
+        seen_names: set[str] = set()
+        for definition in await self.wrapped_provider.get_tool_definitions():
+            name = definition.get("function", {}).get("name")
+            if name not in allowed_names or name in seen_names:
+                continue
+            seen_names.add(name)
+            advertised.append(definition)
+        self._tool_definitions_by_confirmation[can_confirm] = advertised
         return self._tool_definitions_by_confirmation[can_confirm]
 
     async def get_tool_descriptors(self) -> list[ToolDescriptor]:

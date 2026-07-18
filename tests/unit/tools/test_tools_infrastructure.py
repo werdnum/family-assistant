@@ -1294,3 +1294,55 @@ class TestPolicyEnforcingCacheInvalidation:
 
         # Same cached list object is returned when nothing changed.
         assert first is second
+
+    @pytest.mark.asyncio
+    async def test_colliding_names_are_deduped_in_advertised_list(self) -> None:
+        """A reconnected tool colliding with a local name is not advertised twice.
+
+        A server down at startup can reconnect exposing a tool whose name
+        matches a local/root tool. The rebuilt advertised list must not contain
+        duplicate function declarations (some LLM APIs reject them).
+        """
+
+        collide_def: ToolDefinition = {
+            "type": "function",
+            "function": {
+                "name": "execute_python",
+                "description": "execute_python description",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+        class _CollidingProvider:
+            async def get_tool_definitions(self) -> list[ToolDefinition]:
+                # Same name from two providers (e.g. local + reconnected MCP).
+                return [collide_def, collide_def]
+
+            async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+                return [_make_mcp_descriptor("execute_python", "code-execution")]
+
+            async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+                if name == "execute_python":
+                    return _make_mcp_descriptor("execute_python", "code-execution")
+                return None
+
+            async def execute_tool(
+                self,
+                name: str,
+                arguments: dict[str, object],
+                context: ToolExecutionContext,
+                call_id: str | None = None,
+            ) -> str:
+                del arguments, context, call_id
+                return f"executed:{name}"
+
+            async def close(self) -> None:
+                return None
+
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=_CollidingProvider(),
+            policy_engine=self._allow_all_engine(),
+        )
+
+        names = [d["function"]["name"] for d in await provider.get_tool_definitions()]
+        assert names == ["execute_python"]

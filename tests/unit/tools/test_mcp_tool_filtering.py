@@ -436,6 +436,9 @@ async def test_reconnect_bumps_descriptors_version_and_restores_tools() -> None:
             {"execute_python": server_id},
         )
 
+    # Assigning a plain async function over the bound method is how this file
+    # drives the reconnect path without a live MCP server; basedpyright flags
+    # the method reassignment, which is exactly what we intend here.
     provider._connect_and_discover_mcp = fake_connect_and_discover_mcp  # type: ignore[method-assign]
     provider._close_server_connections = AsyncMock()
 
