@@ -300,7 +300,7 @@ taint_policy:
     recognized_machine: ["source_recognized_machine"]
     unknown_external: ["source_unknown_external"]
 # --- Google Integration (per-user Gmail & Drive) ---
-# Enables the user-scoped "Connect your Google account" flow and the read-only
+# Enables the user-scoped "Connect your Google account" flow and scoped
 # Gmail/Drive tools. Secrets default empty and are supplied via environment:
 #   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET (OAuth client)
 #   CREDENTIAL_ENCRYPTION_KEY (urlsafe-base64 Fernet key; encrypts stored refresh
@@ -312,9 +312,11 @@ google_integration:
   oauth_client_id: "" # env GOOGLE_OAUTH_CLIENT_ID
   oauth_client_secret: "" # env GOOGLE_OAUTH_CLIENT_SECRET (secret, redacted)
   credential_encryption_key: "" # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
-  scopes: # operator-tunable DATA scopes; subset of the supported read-only allowlist
+  scopes: # operator-tunable DATA scopes; subset of the supported least-privilege allowlist
     - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/gmail.compose"
     - "https://www.googleapis.com/auth/drive.readonly"
+    - "https://www.googleapis.com/auth/drive.file"
   # Require taint_policy.mode=enforce (plus the matrix floor) before registering
   # the Gmail/Drive tools. Set false to accept running them under observe mode;
   # the waiver is logged and shown on the integration status endpoint.
@@ -501,8 +503,10 @@ default_profile_settings:
             - "gmail_search"
             - "gmail_get_message"
             - "gmail_get_attachment"
+            - "gmail_create_draft"
             - "drive_search"
             - "drive_get_file"
+            - "drive_write_file"
         decision: "allow"
         priority: 10
       - match:
@@ -1541,8 +1545,10 @@ service_profiles:
               - "gmail_search"
               - "gmail_get_message"
               - "gmail_get_attachment"
+              - "gmail_create_draft"
               - "drive_search"
               - "drive_get_file"
+              - "drive_write_file"
           decision: "allow"
           priority: 10
         - match:

@@ -1,6 +1,6 @@
 """Unit tests for the Google integration startup-enablement evaluator.
 
-Covers the ordered enablement conditions and their reasons, the read-only scope
+Covers the ordered enablement conditions and their reasons, the supported scope
 allowlist rejection, and the taint-floor semantics — including the design's
 motivating case where a full ``matrix:`` replacement silently drops a floor sink
 below confirm, and the explicit waiver path. All taint config is built through
@@ -25,8 +25,10 @@ from family_assistant.tools import ToolPolicyConfig
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 
 GMAIL_SCOPE = GoogleScope.GMAIL_READONLY.value
+GMAIL_COMPOSE_SCOPE = GoogleScope.GMAIL_COMPOSE.value
 DRIVE_SCOPE = GoogleScope.DRIVE_READONLY.value
 DRIVE_METADATA_SCOPE = GoogleScope.DRIVE_METADATA_READONLY.value
+DRIVE_FILE_SCOPE = GoogleScope.DRIVE_FILE.value
 
 
 def _valid_key() -> str:
@@ -424,6 +426,24 @@ def test_enabled_tool_names_drive_metadata_only_has_search_not_get_file() -> Non
     assert state.enabled is True
     assert "drive_search" in state.enabled_tool_names
     assert "drive_get_file" not in state.enabled_tool_names
+
+
+def test_enabled_tool_names_write_scopes_only() -> None:
+    config = _app_config(
+        _google_config(scopes=[GMAIL_COMPOSE_SCOPE, DRIVE_FILE_SCOPE]),
+        taint_policy=_enforce_taint(),
+        profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
+    )
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
+    assert state.enabled_tool_names == frozenset({
+        "gmail_create_draft",
+        "drive_write_file",
+    })
 
 
 def test_enabled_tool_names_full_scopes() -> None:

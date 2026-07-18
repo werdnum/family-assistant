@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for approval before implementation.
+Implemented, with the scoped write extension approved in July 2026.
 
 ## Problem
 
@@ -41,8 +41,8 @@ explicitly, rather than growing machinery. Accepted simplifications are collecte
 - Per-user "Connect Google account" / disconnect flow in the web UI, bound to the authenticated
   canonical user.
 - Durable, encrypted-at-rest storage of per-user OAuth refresh tokens.
-- Read-only Gmail tools (search, read message, fetch attachment) and Drive tools (search, fetch
-  file) that operate strictly as the acting user of the current turn.
+- Gmail read tools plus draft-only creation, and Drive read tools plus writes constrained to an
+  app-created folder, all operating strictly as the acting user of the current turn.
 - Fail-closed behavior everywhere: no connection → actionable error; no acting user → tools
   unavailable; no encryption key → feature disabled.
 - Taint-correct results: Gmail/Drive content enters the turn as untrusted input via the runtime
@@ -50,9 +50,9 @@ explicitly, rather than growing machinery. Accepted simplifications are collecte
 
 ## Non-Goals
 
-- **Write actions** (send email, create/modify Drive files, delete anything). Future work, gated
-  behind confirmation and taint sink policy. v1 requests only read-only OAuth scopes, which also
-  caps the blast radius of a leaked token.
+- **Externally communicating or destructive write actions** (send email, delete Gmail/Drive data,
+  label or move arbitrary existing items). Draft-only creation and writes confined to the
+  app-created Drive folder are the scoped exceptions described below.
 - **Ambient mailbox sync / background indexing** of email or Drive into the vector store. The
   runtime taint design explicitly calls this out as a separate connector design. v1 is
   interactive-only: the user asks, the assistant searches.
@@ -102,8 +102,9 @@ Three layers, each independently testable:
    `GoogleConnectionsRepository`, web endpoints, settings UI).
 2. **Credential resolution** — `GoogleCredentialResolver` service, injected into the tool execution
    context by the tool executor; strictly keyed by the turn's acting user.
-3. **Tools** — read-only Gmail/Drive local tools calling Google REST APIs via an injectable async
-   backend, tainting the turn through existing tool metadata.
+3. **Tools** — scoped Gmail/Drive local tools calling Google REST APIs via an injectable async
+   backend. Read results taint the turn through existing tool metadata; deterministic draft and
+   app-folder writes resolve as artifact writes.
 
 ### 1. Connections
 
@@ -171,11 +172,11 @@ web auth; explicitly **not** covered by `DIAGNOSTICS_READONLY_TOKEN`):
   `pending_google_oauth_flows` table: hashed nonce, `code_verifier`, initiating canonical `user_id`,
   `created_at`), then redirects to Google's consent screen with `state=nonce`, the S256
   `code_challenge`, `access_type=offline`, `prompt=consent`, and the requested scopes: the
-  configured data scopes (v1 default: `gmail.readonly`, `drive.readonly`) plus `openid` and `email`,
-  which are always appended in code — not operator-configurable — so the callback can identify the
-  connected account. A database store is required, not a convenience: the app's `SessionMiddleware`
-  keeps the whole session in a **signed client-side cookie**, so a cookie-stored nonce cannot be
-  single-use.
+  configured data scopes (default: `gmail.readonly`, `gmail.compose`, `drive.readonly`, and
+  `drive.file`) plus `openid` and `email`, which are always appended in code — not
+  operator-configurable — so the callback can identify the connected account. A database store is
+  required, not a convenience: the app's `SessionMiddleware` keeps the whole session in a **signed
+  client-side cookie**, so a cookie-stored nonce cannot be single-use.
 - `GET /api/integrations/google/callback` — **atomically consumes** the pending flow before
   exchanging the code: a single conditional `DELETE` on the hashed state value claims the flow row,
   exactly one callback can win it, and every subsequent callback presenting the same state is
@@ -370,7 +371,7 @@ safe by default and overridable explicitly:
   registered, a startup error-log entry states why, and the integration status endpoint reports the
   unmet condition.
 - An operator who accepts the tradeoff (e.g. single-user deployment, taint rollout still in observe
-  mode, willing to rely on read-only scopes + profile policy + confirmations) sets
+  mode, willing to rely on least-privilege scopes + profile policy + confirmations) sets
   `require_taint_enforcement: false`. The tools then register regardless of taint mode; the choice
   is logged at startup and shown on the integration status endpoint so it is a visible, deliberate
   risk acceptance rather than a silent default.
@@ -498,8 +499,10 @@ google_integration:
   oauth_client_secret: ""    # env GOOGLE_OAUTH_CLIENT_SECRET (secret, redacted)
   credential_encryption_key: ""  # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
   scopes:                    # operator-tunable DATA scopes; subset of the supported
-    - "https://www.googleapis.com/auth/gmail.readonly"   # read-only allowlist below
+    - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/gmail.compose"
     - "https://www.googleapis.com/auth/drive.readonly"
+    - "https://www.googleapis.com/auth/drive.file"
   # Require taint_policy.mode=enforce (plus the matrix floor) before registering
   # the Gmail/Drive tools. Set false to accept running them under observe mode;
   # the waiver is logged and shown on the integration status endpoint.
@@ -511,19 +514,46 @@ authorize endpoint always appends them in code, so the callback reliably receive
 identifying the connected account regardless of operator configuration.
 
 `scopes` is validated at startup against the allowlist of scopes the shipped tools can actually use
-— in v1: `gmail.readonly`, `drive.readonly`, and `drive.metadata.readonly`. The field exists to
-*narrow* the grant (e.g. Gmail-only, no Drive), not to broaden it: a write-capable scope such as
-`gmail.send`, `gmail.modify`, or full `drive` would add power to the stored refresh token that no v1
-tool can exercise — pure credential-theft blast radius for zero functionality — so an unlisted scope
-disables the integration with a clear startup error. This is coherence validation, not a policy
-knob; when write actions land (future work), the allowlist grows with them.
+— `gmail.readonly`, `gmail.compose`, `drive.readonly`, `drive.metadata.readonly`, and `drive.file`.
+The field exists to *narrow* the grant (e.g. Gmail-only, no Drive), not to broaden it: a
+write-capable scope such as `gmail.send`, `gmail.modify`, or full `drive` would add power no shipped
+tool needs, so an unlisted scope disables the integration with a clear startup error.
+`gmail.compose` is the narrowest Gmail scope that can create drafts, but Google also authorizes
+sending under that scope. The deterministic tool implementation is therefore the draft-only
+enforcement boundary: it contains no send operation and accepts no Gmail endpoint from model input.
 
 Tool registration follows the configured scopes, so the LLM is never advertised a tool its
-credentials cannot serve: the `gmail_*` tools register only when `gmail.readonly` is configured;
+credentials cannot serve: the Gmail read tools register only when `gmail.readonly` is configured;
 `drive_search` registers when `drive.readonly` or `drive.metadata.readonly` is configured;
 `drive_get_file` (content download/export) registers only with `drive.readonly`. A Gmail-only
 deployment therefore exposes exactly the three Gmail tools, and a metadata-only Drive scope yields
-search without fetch.
+search without fetch. `gmail_create_draft` requires `gmail.compose`; `drive_write_file` requires
+`drive.file`.
+
+## Scoped write extension
+
+The write tools deliberately behave like note creation rather than arbitrary external communication.
+Their metadata resolves to the `artifact_write` taint sink and does not carry the `external_comm`
+tag. Creating a Gmail draft does not deliver mail, and writing a Drive file stores an artifact in
+the requesting user's connected account.
+
+`gmail_create_draft` constructs an RFC-compliant MIME message from structured `to`, `cc`, `bcc`,
+`subject`, and body arguments and calls only `users.me.drafts.create`. It may attach existing Family
+Assistant attachments after attachment-registry owner checks. There is no send tool, send flag, raw
+message argument, or caller-controlled API URL.
+
+`drive_write_file` writes only beneath a lazily created top-level **Family Assistant** folder. The
+folder and every file carry private Drive `appProperties` markers. Lookup uses those markers plus
+the expected parent, rather than trusting the user-editable folder name. The tool accepts either
+UTF-8 content (native Google Doc by default, plain text, or Markdown) or one existing attachment.
+Attachments are resolved through the owner-scoped registry and uploaded as ordinary Drive files. The
+model cannot supply a parent or file ID. Overwrite lookup is limited to app-marked files in the app
+folder; create-only mode fails on an existing name rather than silently replacing it.
+
+Both tools impose a small-upload limit before materializing a request body. Users who add either
+write scope must reconnect so Google can grant it. `drive.file` is sufficient because the app only
+creates and updates its own folder and files; broad Drive write access is neither requested nor
+accepted.
 
 Integration is enabled only when all of the following hold, validated at startup with a clear error
 naming the unmet condition:
@@ -566,8 +596,8 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
 
 ## Future Work
 
-- Write actions (send/reply/label, Drive upload) behind `confirm` + taint sink classes
-  (`arbitrary_external_message`, `artifact_write`).
+- Sending/replying/label changes, if ever added, remain a separate externally communicating design
+  and must not reuse the draft-only tool boundary.
 - Graduated taint tiers for authenticated household senders: classify Gmail's
   `Authentication-Results` DMARC evidence against the email-intake allowlists, add a per-result
   provenance runtime path so a classified tier can override the static `OUTPUT_UNTRUSTED` tag, and

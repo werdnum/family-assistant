@@ -66,6 +66,8 @@ class ApiBackend(Protocol):
         url: str,
         access_token: str,
         params: Mapping[str, str] | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
     ) -> ApiResponse:
         """Issue an authenticated request to a full REST URL."""
         ...
@@ -93,6 +95,8 @@ class HttpApiBackend:
         url: str,
         access_token: str,
         params: Mapping[str, str] | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
     ) -> ApiResponse:
         """Issue an authenticated request, returning status and raw bytes.
 
@@ -105,7 +109,12 @@ class HttpApiBackend:
         """
         try:
             return await self._stream_request(
-                method=method, url=url, access_token=access_token, params=params
+                method=method,
+                url=url,
+                access_token=access_token,
+                params=params,
+                content=content,
+                content_type=content_type,
             )
         except httpx.HTTPError as exc:
             raise ApiBackendError(f"API request to {url} failed") from exc
@@ -117,13 +126,19 @@ class HttpApiBackend:
         url: str,
         access_token: str,
         params: Mapping[str, str] | None,
+        content: bytes | None,
+        content_type: str | None,
     ) -> ApiResponse:
         """Stream the response body under the ``max_response_bytes`` budget."""
+        headers = {"Authorization": f"Bearer {access_token}"}
+        if content_type is not None:
+            headers["Content-Type"] = content_type
         async with self._http_client.stream(
             method,
             url,
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers=headers,
             params=dict(params) if params is not None else None,
+            content=content,
             timeout=self._timeout,
         ) as response:
             chunks: list[bytes] = []

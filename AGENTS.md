@@ -362,13 +362,15 @@ google_integration:
   credential_encryption_key: ""  # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
 
   # Operator-tunable DATA scopes. This list narrows the grant — you can remove
-  # drive.readonly to get Gmail-only, for example. You cannot add write-capable
-  # scopes (gmail.send, drive, etc.); unlisted write scopes cause a startup error.
+  # Drive scopes to get Gmail-only, for example. Only scopes used by shipped
+  # deterministic tools are allowed; other scopes cause a startup error.
   # The identity scopes openid and email are always appended in code and are not
   # configurable here.
   scopes:
     - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/gmail.compose"
     - "https://www.googleapis.com/auth/drive.readonly"
+    - "https://www.googleapis.com/auth/drive.file"
 
   # Require taint_policy.mode=enforce plus the matrix floor before registering
   # the Gmail/Drive tools. Set false to accept running them under observe mode;
@@ -377,10 +379,14 @@ google_integration:
 ```
 
 **Scopes allowlist semantics.** The `scopes` list exists to *narrow* the grant, not to broaden it.
-Adding a write-capable scope (`gmail.send`, `gmail.modify`, `drive`, etc.) disables the integration
-with a clear startup error. Tool registration follows the configured scopes: `gmail_*` tools
-register only when `gmail.readonly` is present; `drive_search` registers with either
-`drive.readonly` or `drive.metadata.readonly`; `drive_get_file` requires `drive.readonly`.
+Adding an unsupported scope (`gmail.send`, `gmail.modify`, full `drive`, etc.) disables the
+integration with a clear startup error. Tool registration follows the configured scopes:
+`gmail_search`, `gmail_get_message`, and `gmail_get_attachment` require `gmail.readonly`;
+`gmail_create_draft` requires `gmail.compose`; `drive_search` registers with either `drive.readonly`
+or `drive.metadata.readonly`; `drive_get_file` requires `drive.readonly`; and `drive_write_file`
+requires `drive.file`. The draft tool never sends email, although Google's `gmail.compose` OAuth
+scope itself also authorizes sending. Drive writes are deterministically confined to the app-created
+Family Assistant folder and app-marked files within it.
 
 **Enablement conditions.** All of the following must hold for the integration to enable (validated
 at startup):

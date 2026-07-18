@@ -58,6 +58,31 @@ async def test_json_helper_decodes_body() -> None:
 
 
 @pytest.mark.asyncio
+async def test_forwards_request_content_and_content_type() -> None:
+    captured: dict[str, object] = {}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        captured["content_type"] = request.headers.get("content-type")
+        captured["content"] = request.content
+        return httpx.Response(200, json={"id": "draft-1"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_handler))
+    backend = HttpApiBackend(client)
+
+    response = await backend.request(
+        method="POST",
+        url="https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+        access_token="tok",
+        content=b'{"message":{"raw":"abc"}}',
+        content_type="application/json; charset=UTF-8",
+    )
+
+    assert response.json() == {"id": "draft-1"}
+    assert captured["content_type"] == "application/json; charset=UTF-8"
+    assert captured["content"] == b'{"message":{"raw":"abc"}}'
+
+
+@pytest.mark.asyncio
 async def test_error_status_is_returned_not_raised() -> None:
     def _handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "unauthorized"})

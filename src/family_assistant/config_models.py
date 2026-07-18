@@ -405,7 +405,9 @@ class GoogleIntegrationConfig(OAuthIntegrationConfig):
     scopes: list[str] = Field(
         default_factory=lambda: [
             "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.compose",
             "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/drive.file",
         ]
     )
 

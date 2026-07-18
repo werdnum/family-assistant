@@ -581,7 +581,9 @@ export const handlers = [
       granted_scopes: [],
       configured_scopes: [
         'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.compose',
         'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/drive.file',
       ],
       missing_configured_scopes: [],
       last_used_at: null,

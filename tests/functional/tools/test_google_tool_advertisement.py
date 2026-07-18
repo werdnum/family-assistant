@@ -2,7 +2,7 @@
 
 Ties together the two halves of the feature's gating:
 
-- The shipped ``defaults.yaml`` profile policy: the five Google tools are
+- The shipped ``defaults.yaml`` profile policy: the Google tools are
   policy-allowed in ``default_assistant`` and denied in the ambient
   ``email_intake`` / ``reminder`` profiles.
 - The startup registration filter (``filter_google_tool_definitions``): when the
@@ -54,8 +54,10 @@ GOOGLE_TOOL_NAMES = frozenset({
     "gmail_search",
     "gmail_get_message",
     "gmail_get_attachment",
+    "gmail_create_draft",
     "drive_search",
     "drive_get_file",
+    "drive_write_file",
 })
 
 
@@ -203,6 +205,8 @@ async def test_scope_conditional_subset_gmail_only(tmp_path: Path) -> None:
 
 
 def test_google_scope_enum_matches_tool_names() -> None:
-    # Guard: the five names this test hardcodes match the shipped scope map keys.
+    # Guard: the names this test hardcodes match the shipped scope map keys.
     assert frozenset(GOOGLE_TOOL_REQUIRED_SCOPES) == GOOGLE_TOOL_NAMES
     assert GoogleScope.GMAIL_READONLY.value
+    assert GoogleScope.GMAIL_COMPOSE.value
+    assert GoogleScope.DRIVE_FILE.value

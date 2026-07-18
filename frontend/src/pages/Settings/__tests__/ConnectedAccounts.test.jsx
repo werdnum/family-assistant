@@ -38,7 +38,9 @@ const googleNotConnectedResponse = {
   granted_scopes: [],
   configured_scopes: [
     'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.compose',
     'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/drive.file',
   ],
   missing_configured_scopes: [],
   last_used_at: null,
@@ -53,11 +55,15 @@ const googleConnectedResponse = {
   status: 'active',
   granted_scopes: [
     'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.compose',
     'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/drive.file',
   ],
   configured_scopes: [
     'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.compose',
     'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/drive.file',
   ],
   missing_configured_scopes: [],
   last_used_at: '2026-07-15T10:00:00Z',
@@ -71,7 +77,11 @@ const googleNeedsReauthResponse = {
 const googleMissingScopesResponse = {
   ...googleConnectedResponse,
   granted_scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
-  missing_configured_scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+  missing_configured_scopes: [
+    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/gmail.compose',
+    'https://www.googleapis.com/auth/drive.file',
+  ],
 };
 
 describe('ConnectedAccounts', () => {
@@ -171,6 +181,8 @@ describe('ConnectedAccounts', () => {
       expect(screen.getByText('Drive access not granted')).toBeInTheDocument();
     });
 
+    expect(screen.getByText('Gmail draft access not granted')).toBeInTheDocument();
+    expect(screen.getByText('Family Assistant Drive file access not granted')).toBeInTheDocument();
     expect(screen.getByText(/reconnect and approve all/i)).toBeInTheDocument();
   });
 
