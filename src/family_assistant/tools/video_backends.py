@@ -74,10 +74,10 @@ type _ContentBlock = _ImageBlock | _TextBlock
 
 
 class _VideoResponseFormat(TypedDict):
-    """Interactions ``response_format`` requesting inline video output."""
+    """Interactions ``response_format`` requesting URI video output."""
 
     type: Literal["video"]
-    delivery: Literal["inline"]
+    delivery: Literal["uri"]
     aspect_ratio: str
     duration: NotRequired[str]
 
@@ -342,12 +342,22 @@ class GeminiOmniVideoBackend:
         self, request: VideoGenerationRequest
     ) -> VideoGenerationResult:
         """Generate a video with Gemini Omni Flash via the Interactions API."""
+        unsupported_features: list[str] = []
+        if request.last_frame is not None:
+            unsupported_features.append("last_frame")
+        if request.negative_prompt is not None:
+            unsupported_features.append("negative_prompt")
+        if unsupported_features:
+            raise VideoGenerationError(
+                "Gemini Omni Flash does not support "
+                f"{', '.join(unsupported_features)}; use a Veo model instead."
+            )
+
         async with _create_genai_client(self.api_key).aio as client:
-            # response_format requests inline video output (the Interactions
-            # response_modalities enum only covers text/image/audio).
+            # URI delivery avoids the Interactions API's 4 MB inline limit.
             response_format: _VideoResponseFormat = {
                 "type": "video",
-                "delivery": "inline",
+                "delivery": "uri",
                 "aspect_ratio": request.aspect_ratio,
             }
             if request.duration_seconds is not None:
@@ -417,5 +427,23 @@ class GeminiOmniVideoBackend:
             uri = getattr(output_video, "uri", None)
             if uri:
                 self.logger.info("Downloading Omni Flash video from URI...")
+                file_name = f"files/{uri.rstrip('/').rsplit('/', maxsplit=1)[-1]}"
+                start_time = time.time()
+                while True:
+                    file_info = await client.files.get(name=file_name)
+                    state = getattr(file_info, "state", None)
+                    state_name = getattr(state, "name", state)
+                    if state_name == "ACTIVE":
+                        break
+                    if state_name == "FAILED":
+                        raise VideoGenerationError(
+                            "Omni Flash generated video file processing failed."
+                        )
+                    if time.time() - start_time > self._TIMEOUT_SECONDS:
+                        raise VideoGenerationError(
+                            "Omni Flash generated video file processing timed out "
+                            f"after {self._TIMEOUT_SECONDS} seconds."
+                        )
+                    await asyncio.sleep(self._POLL_INTERVAL_SECONDS)
                 return await client.files.download(file=cast("Any", uri))
         raise VideoGenerationError("No video content found in Omni Flash response.")

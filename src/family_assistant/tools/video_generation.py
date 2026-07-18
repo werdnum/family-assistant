@@ -74,7 +74,7 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "model": {
                         "type": "string",
-                        "description": "Optional model override. Defaults to Gemini Omni Flash (gemini-omni-flash-preview) for fast conversational video. A `veo-*` id selects Veo for cinematic, higher-quality clips instead.",
+                        "description": "Optional model override. Defaults to Gemini Omni Flash (gemini-omni-flash-preview) for fast conversational video. A `veo-*` id, or use of `negative_prompt` or `last_frame_image` without a model override, selects Veo for cinematic, higher-quality clips instead.",
                     },
                 },
                 "required": ["prompt"],
@@ -131,7 +131,10 @@ def _is_veo_model(model: str | None) -> bool:
 
 
 def _create_video_backend(
-    exec_context: ToolExecutionContext, model_override: str | None
+    exec_context: ToolExecutionContext,
+    model_override: str | None,
+    *,
+    requires_veo_features: bool = False,
 ) -> VideoGenerationBackend:
     """Select a video generation backend from config (or infer from the model)."""
     if hasattr(exec_context, "video_backend"):
@@ -178,6 +181,13 @@ def _create_video_backend(
         logger.info("Inferring Veo backend from model %s", model_override)
         return VeoVideoBackend(api_key, model=model_override)
 
+    if requires_veo_features and model_override is None:
+        logger.info("Auto-selecting Veo backend for Veo-only request features")
+        return VeoVideoBackend(
+            api_key,
+            model=app_config.veo_video.model if app_config else None,
+        )
+
     logger.info("Auto-selecting Gemini Omni Flash video backend")
     return GeminiOmniVideoBackend(
         api_key,
@@ -208,14 +218,20 @@ async def generate_video_tool(
         last_frame_image: Optional last frame image (Veo interpolation).
         negative_prompt: Optional negative prompt (Veo only).
         aspect_ratio: Aspect ratio ("16:9" or "9:16").
-        duration_seconds: Duration in seconds ("4", "6", or "8"; Veo only).
+        duration_seconds: Duration in seconds ("4", "6", or "8").
         model: Optional model identifier override.
 
     Returns:
         ToolResult containing the video attachment.
     """
     try:
-        backend = _create_video_backend(exec_context, model)
+        backend = _create_video_backend(
+            exec_context,
+            model,
+            requires_veo_features=(
+                last_frame_image is not None or negative_prompt is not None
+            ),
+        )
     except ValueError as e:
         # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
         return ToolResult(text=f"Error: {e}", data={"error": str(e)})
