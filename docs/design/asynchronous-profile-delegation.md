@@ -289,6 +289,32 @@ Cancellation can be a later milestone:
 - Running local profiles need cooperative cancellation support in `TaskWorker`.
 - Remote A2A targets can map cancellation to `tasks/cancel` when available.
 
+### Resuming a Prior Delegation
+
+By default each `delegate_to_service` call mints a fresh `subconversation_id`, so successive
+delegations to the same target profile are fully isolated from one another. Because delegated
+history is loaded by `subconversation_id`, resuming a prior delegation only requires reusing that
+key rather than minting a new one.
+
+`delegate_to_service` accepts an optional `resume_delegation_id`. When set, the caller looks up the
+referenced run and, after validation, reuses its `subconversation_id` for the new run instead of
+generating one. The new run is still an independent `delegation_runs` row (its own `delegation_id`,
+`task_id`, and freshly-derived taint from the caller's current context) — resumption is history
+continuity, not run reuse. The parent-wake path is unchanged: the new run captures the current
+caller's `source_subconversation_id`, so its completion wakes the caller as any delegation would.
+
+Validation rejects a resume when the referenced run:
+
+- is not found in the current conversation (matched on `conversation_id` + `interface_type`, the
+  same ownership boundary `get_delegation_status` enforces);
+- targets a different profile than the requested `target_service_id` (delegated history is scoped by
+  both subconversation and profile, so a cross-profile resume would silently load nothing);
+- is not yet terminal (an in-flight run cannot be appended to).
+
+Resumption is supported on both the async and synchronous delegation paths (the synchronous path
+reuses the resolved key inline). In pure synchronous mode no durable run records exist, so a resume
+reference simply resolves to "no such delegation" — a correct error rather than a special case.
+
 ### Confirmations
 
 Phase one should fail fast if an async background delegated profile reaches a tool that requires

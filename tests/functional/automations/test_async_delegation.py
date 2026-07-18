@@ -2939,3 +2939,179 @@ async def test_pollable_delegation_recovers_when_submit_never_landed(
         assert run["status"] == "completed"
         assert run["result_text"] == "recovered after resubmit"
     chat_interface.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resume_delegation_reuses_prior_subconversation(
+    db_engine: AsyncEngine,
+) -> None:
+    """Resuming a finished delegation continues its isolated subconversation."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        first_result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="first request",
+            delivery_hint="background",
+        )
+    assert isinstance(first_result.data, dict)
+    first_delegation_id = cast("str", first_result.data["delegation_id"])
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload(first_delegation_id),
+        )
+    assert len(target_service.calls) == 1
+    first_subconversation_id = target_service.calls[0]["subconversation_id"]
+    assert first_subconversation_id
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        resume_result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="follow-up request",
+            delivery_hint="background",
+            resume_delegation_id=first_delegation_id,
+        )
+    assert isinstance(resume_result.data, dict)
+    resume_delegation_id = cast("str", resume_result.data["delegation_id"])
+    assert resume_delegation_id != first_delegation_id
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        resumed_run = await db_context.delegation_runs.get_by_delegation_id(
+            resume_delegation_id
+        )
+        assert resumed_run is not None
+        assert resumed_run["subconversation_id"] == first_subconversation_id
+
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload(resume_delegation_id),
+        )
+
+    assert len(target_service.calls) == 2
+    assert target_service.calls[1]["subconversation_id"] == first_subconversation_id
+
+
+@pytest.mark.asyncio
+async def test_resume_delegation_synchronous_path_reuses_subconversation(
+    db_engine: AsyncEngine,
+) -> None:
+    """The synchronous (in-script) path also continues a prior subconversation."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_prior_sync")
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_prior_sync",
+            result_text="prior result",
+            result_attachment_ids=[],
+            completed_at=SystemClock().now(),
+        )
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(
+                db_context, processing_service, chat_interface, in_script=True
+            ),
+            target_service_id="target_profile",
+            user_request="sync follow-up",
+            resume_delegation_id="delegation_prior_sync",
+        )
+
+    assert result.text is not None
+    assert len(target_service.calls) == 1
+    assert target_service.calls[0]["subconversation_id"] == "sub_delegation_prior_sync"
+
+
+@pytest.mark.asyncio
+async def test_resume_delegation_unknown_reference_is_rejected(
+    db_engine: AsyncEngine,
+) -> None:
+    """An unknown resume reference errors and creates no run or delegated call."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="follow-up",
+            resume_delegation_id="delegation_does_not_exist",
+        )
+        runs = await db_context.delegation_runs.list_for_conversation(
+            conversation_id=TEST_CONVERSATION_ID
+        )
+
+    assert result.text is not None
+    assert "cannot resume" in result.text.lower()
+    assert target_service.calls == []
+    assert runs == []
+
+
+@pytest.mark.asyncio
+async def test_resume_delegation_rejects_non_terminal_run(
+    db_engine: AsyncEngine,
+) -> None:
+    """A still-running delegation cannot be resumed."""
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_still_running")
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="follow-up",
+            resume_delegation_id="delegation_still_running",
+        )
+
+    assert result.text is not None
+    assert "still queued" in result.text.lower()
+    assert target_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_resume_delegation_rejects_target_profile_mismatch(
+    db_engine: AsyncEngine,
+) -> None:
+    """Resuming into a different target profile than the prior run is rejected."""
+    target_service = FakeDelegatableService()
+    other_service = FakeDelegatableService()
+    other_service.service_config = SimpleNamespace(
+        id="other_profile",
+        allowed_delegation_sources=["source_profile"],
+    )
+    processing_service = _source_processing_service(target_service)
+    cast("Any", processing_service).processing_services_registry["other_profile"] = (
+        other_service
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(db_context, delegation_id="delegation_for_target")
+        await db_context.delegation_runs.mark_completed(
+            delegation_id="delegation_for_target",
+            result_text="prior result",
+            result_attachment_ids=[],
+            completed_at=SystemClock().now(),
+        )
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="other_profile",
+            user_request="follow-up",
+            resume_delegation_id="delegation_for_target",
+        )
+
+    assert result.text is not None
+    assert "not 'other_profile'" in result.text
+    assert target_service.calls == []
+    assert other_service.calls == []

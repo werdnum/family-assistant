@@ -711,7 +711,10 @@ various tasks with dark mode support and mobile optimization.
   This works the same way for specialized profiles that run on a separate (remote) agent — they may
   take a while, but the result is still delivered back to this conversation automatically when
   ready. This is separate from spawned worker tasks, which are isolated coding or computing jobs and
-  use worker task IDs instead.
+  use worker task IDs instead. Each delegation is normally an independent conversation with the
+  specialist, but the assistant can also continue an earlier finished delegation so the specialist
+  keeps its previous context — handy for an iterative back-and-forth (for example, a follow-up
+  question to an earlier research delegation).
 
 - **Push Notifications:** The assistant can notify you even when the app isn't open.
 
