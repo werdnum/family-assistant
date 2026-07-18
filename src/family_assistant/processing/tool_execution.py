@@ -471,7 +471,14 @@ class ToolExecutor:
         function_name: str,
         function_args: object,
     ) -> dict[str, object]:
-        """Parse tool-call arguments and enforce object shape."""
+        """Parse tool-call arguments and enforce object shape.
+
+        Always returns a fresh dict: when a provider hands arguments over as a
+        dict it is the SAME object stored on the ToolCallItem, and the caller
+        mutates the returned dict (e.g. popping computer-use safety_decision).
+        Mutating in place would silently rewrite the assistant message that is
+        replayed to the LLM on the next iteration.
+        """
         arguments: object
         if isinstance(function_args, str):
             try:
@@ -489,7 +496,7 @@ class ToolExecutor:
                 f"Expected JSON object for tool arguments to '{function_name}', got {type(arguments).__name__}"
             )
 
-        return cast("dict[str, object]", arguments)
+        return dict(cast("dict[str, object]", arguments))
 
     async def _large_result_owner(
         self,

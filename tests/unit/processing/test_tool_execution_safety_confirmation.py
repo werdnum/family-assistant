@@ -818,3 +818,51 @@ async def test_safety_confirmation_failed_durable_execution_acknowledged() -> No
     payload = json.loads(result.llm_message.content)
     assert payload["safety_acknowledgement"] is True
     assert "backend exploded" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_original_tool_call_arguments_not_mutated() -> None:
+    """Popping safety_decision must not rewrite the ToolCallItem's arguments.
+
+    The provider hands arguments over as a dict that is the same object stored
+    on the assistant message; that message is replayed to the LLM on the next
+    iteration and must still carry the safety_decision the model emitted.
+    """
+    provider = MinimalToolsProvider()
+    executor = make_tool_executor(provider)
+
+    callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="approved"))
+
+    original_arguments = {
+        "x": 100,
+        "y": 200,
+        "safety_decision": {
+            "decision": "require_confirmation",
+            "explanation": "check",
+        },
+    }
+    tool_call = ToolCallItem(
+        id="call_123",
+        type="function",
+        function=ToolCallFunction(name="click", arguments=original_arguments),
+    )
+
+    await executor.execute(
+        tool_call,
+        interface_type="test",
+        conversation_id="conv_123",
+        user_name="testuser",
+        turn_id="turn_1",
+        db_context=Mock(spec=DatabaseContext),
+        chat_interface=None,
+        request_confirmation_callback=callback,
+    )
+
+    assert tool_call.function.arguments == {
+        "x": 100,
+        "y": 200,
+        "safety_decision": {
+            "decision": "require_confirmation",
+            "explanation": "check",
+        },
+    }
