@@ -315,20 +315,18 @@ class TestKeyboardActions:
     """Test keyboard input actions."""
 
     @pytest.mark.asyncio
-    async def test_type_clears_field_then_types(
+    async def test_type_types_at_focus_without_clearing(
         self, exec_context: ToolExecutionContext, fake_backend: FakeBrowserBackend
     ) -> None:
+        # The reference loop's type_text types at the cursor without clearing;
+        # the model may be appending to or editing a focused value.
         await computer_use_type(exec_context, "hello")
         actions = [
             (name, args)
             for name, args in fake_backend.calls
             if name in {"keyboard_type", "keyboard_press"}
         ]
-        assert actions == [
-            ("keyboard_press", {"keys": "Control+A"}),
-            ("keyboard_press", {"keys": "Backspace"}),
-            ("keyboard_type", {"text": "hello"}),
-        ]
+        assert actions == [("keyboard_type", {"text": "hello"})]
 
     @pytest.mark.asyncio
     async def test_type_with_enter(
