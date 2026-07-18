@@ -849,6 +849,19 @@ def _validated_addresses(addresses: list[str], field_name: str) -> list[str]:
     return normalized
 
 
+def _google_user_operation_lock(
+    exec_context: ToolExecutionContext, operation: str
+) -> asyncio.Lock:
+    """Return a per-user lock owned by the app-wired Google credential resolver."""
+    user_id = exec_context.user_id
+    resolver = (exec_context.credential_resolvers or {}).get(GOOGLE_PROVIDER.name)
+    if user_id is None or resolver is None:
+        raise _GoogleToolError(
+            "Google integration is not configured for a specific requesting user."
+        )
+    return resolver.user_operation_lock(user_id, operation)
+
+
 def _set_draft_header(message: EmailMessage, name: str, value: str) -> None:
     """Set one MIME header and render header-injection errors safely."""
     try:
@@ -1542,18 +1555,19 @@ async def drive_write_file_tool(
                 f"Drive writes are limited to {_DRIVE_MULTIPART_CONTENT_LIMIT} bytes."
             )
 
-        folder = await _ensure_app_folder(exec_context)
-        folder_id = folder.get("id")
-        if not isinstance(folder_id, str) or not folder_id:
-            raise _GoogleToolError("Google Drive did not return an app folder ID.")
-        written, status = await _drive_write_payload(
-            exec_context,
-            folder_id=folder_id,
-            name=resolved_name,
-            content=file_content,
-            mime_type=mime_type,
-            overwrite=overwrite,
-        )
+        async with _google_user_operation_lock(exec_context, "drive_write"):
+            folder = await _ensure_app_folder(exec_context)
+            folder_id = folder.get("id")
+            if not isinstance(folder_id, str) or not folder_id:
+                raise _GoogleToolError("Google Drive did not return an app folder ID.")
+            written, status = await _drive_write_payload(
+                exec_context,
+                folder_id=folder_id,
+                name=resolved_name,
+                content=file_content,
+                mime_type=mime_type,
+                overwrite=overwrite,
+            )
         return ToolResult(
             data={
                 "status": status,

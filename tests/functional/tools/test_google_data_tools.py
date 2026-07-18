@@ -8,6 +8,7 @@ attachment references are validated end to end.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import tempfile
@@ -134,6 +135,7 @@ class FakeCredentialResolver:
     granted_scopes: dict[str, set[str]] = field(default_factory=dict)
     raise_for_user: dict[str, Exception] = field(default_factory=dict)
     evicted: list[str] = field(default_factory=list)
+    operation_locks: dict[tuple[str, str], asyncio.Lock] = field(default_factory=dict)
 
     async def access_token_for(
         self, exec_context: ToolExecutionContext, scope: GoogleScope
@@ -150,6 +152,61 @@ class FakeCredentialResolver:
 
     def evict_cached_token(self, user_id: str) -> None:
         self.evicted.append(user_id)
+
+    def user_operation_lock(self, user_id: str, operation: str) -> asyncio.Lock:
+        return self.operation_locks.setdefault((user_id, operation), asyncio.Lock())
+
+
+@dataclass
+class ConcurrentDriveApiBackend(FakeApiBackend):
+    """Pause the first folder lookup so a second Drive write overlaps it."""
+
+    first_folder_search_started: asyncio.Event = field(default_factory=asyncio.Event)
+    release_first_folder_search: asyncio.Event = field(default_factory=asyncio.Event)
+    folder_created: bool = False
+    folder_create_count: int = 0
+
+    async def request(
+        self,
+        *,
+        method: str,
+        url: str,
+        access_token: str,
+        params: Mapping[str, str] | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
+    ) -> ApiResponse:
+        query = (params or {}).get("q", "")
+        is_folder_search = method == "GET" and "google-apps.folder" in query
+        is_folder_create = (
+            method == "POST"
+            and url == "https://www.googleapis.com/drive/v3/files"
+            and content is not None
+            and b"google-apps.folder" in content
+        )
+        if is_folder_search:
+            if not self.folder_created:
+                if not self.first_folder_search_started.is_set():
+                    self.first_folder_search_started.set()
+                    await self.release_first_folder_search.wait()
+                response = b'{"files":[]}'
+            else:
+                response = b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'
+            self.scripted.insert(0, (200, response))
+        elif is_folder_create:
+            self.folder_created = True
+            self.folder_create_count += 1
+            self.scripted.insert(
+                0, (200, b'{"id":"folder-1","name":"Family Assistant"}')
+            )
+        return await super().request(
+            method=method,
+            url=url,
+            access_token=access_token,
+            params=params,
+            content=content,
+            content_type=content_type,
+        )
 
 
 def _make_context(
@@ -1051,6 +1108,53 @@ async def test_drive_write_creates_app_folder_and_native_google_doc(
     assert b'"mimeType":"application/vnd.google-apps.document"' in request_body
     assert b"Family plan" in request_body
     assert content_type is not None and content_type.startswith("multipart/related")
+
+
+@pytest.mark.asyncio
+async def test_parallel_drive_writes_create_only_one_app_folder(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = ConcurrentDriveApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/files"): {"files": []},
+                ("POST", "/files"): {
+                    "id": "file-1",
+                    "name": "Written file",
+                    "mimeType": "application/vnd.google-apps.document",
+                },
+            }
+        }
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        first_write = asyncio.create_task(
+            drive_write_file_tool(context, name="First", content="one")
+        )
+        await backend.first_folder_search_started.wait()
+        second_write = asyncio.create_task(
+            drive_write_file_tool(context, name="Second", content="two")
+        )
+        backend.release_first_folder_search.set()
+        first_result, second_result = await asyncio.gather(first_write, second_write)
+
+    assert first_result.get_data() is not None
+    assert second_result.get_data() is not None
+    assert backend.folder_create_count == 1
+    folder_create_requests = [
+        request
+        for request, (body, _) in zip(
+            backend.requests, backend.request_bodies, strict=True
+        )
+        if request[0] == "POST"
+        and request[1] == "https://www.googleapis.com/drive/v3/files"
+        and body is not None
+        and b"google-apps.folder" in body
+    ]
+    assert len(folder_create_requests) == 1
 
 
 @pytest.mark.asyncio

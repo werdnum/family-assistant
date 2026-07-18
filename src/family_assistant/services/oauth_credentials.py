@@ -158,6 +158,11 @@ class OAuthCredentialResolver:
         self._clock = clock or SystemClock()
         self._cache: dict[tuple[str, str], _CachedToken] = {}
         self._user_locks: dict[str, asyncio.Lock] = {}
+        self._operation_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def user_operation_lock(self, user_id: str, operation: str) -> asyncio.Lock:
+        """Return the app-loop lock for one user's serialized provider operation."""
+        return self._operation_locks.setdefault((user_id, operation), asyncio.Lock())
 
     async def access_token_for(
         self, exec_context: ToolExecutionContext, scope: str

@@ -509,3 +509,15 @@ def test_invalid_grant_helper_shape() -> None:
     # Guard the scripted invalid_grant response shape the resolver keys on.
     response = _invalid_grant()
     assert json.loads(response.content)["error"] == "invalid_grant"
+
+
+def test_user_operation_locks_are_stable_and_scoped() -> None:
+    resolver = _resolver(
+        CredentialEncryption(generate_key()), transport=_ScriptedTransport([])
+    )
+
+    drive_lock = resolver.user_operation_lock(USER_ID, "drive_write")
+
+    assert resolver.user_operation_lock(USER_ID, "drive_write") is drive_lock
+    assert resolver.user_operation_lock("user-b", "drive_write") is not drive_lock
+    assert resolver.user_operation_lock(USER_ID, "other-operation") is not drive_lock
