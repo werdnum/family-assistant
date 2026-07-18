@@ -859,10 +859,14 @@ def _attachment_filename(metadata: AttachmentMetadata, attachment_id: str) -> st
     """Choose a safe display filename from attachment-registry metadata."""
     original = metadata.metadata.get("original_filename")
     if isinstance(original, str) and original:
-        return PurePosixPath(original).name
-    if metadata.storage_path:
-        return PurePosixPath(metadata.storage_path).name
-    return f"attachment-{attachment_id}"
+        filename = PurePosixPath(original).name
+    elif metadata.storage_path:
+        filename = PurePosixPath(metadata.storage_path).name
+    else:
+        filename = f"attachment-{attachment_id}"
+    if "\r" in filename or "\n" in filename:
+        raise _GoogleToolError(f"Attachment {attachment_id} has an invalid filename.")
+    return filename
 
 
 async def _load_owned_attachment(

@@ -964,6 +964,42 @@ async def test_gmail_create_draft_rejects_another_users_attachment(
 
 
 @pytest.mark.asyncio
+async def test_gmail_create_draft_rejects_attachment_filename_with_newline(
+    db_engine: AsyncEngine,
+) -> None:
+    registry = _registry(db_engine)
+    backend = FakeApiBackend()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_google_connection(db)
+        attachment = await registry.store_and_register_tool_attachment(
+            file_content=b"draft attachment",
+            filename="unsafe\nname.txt",
+            content_type="text/plain",
+            tool_name="test",
+            owner_user_id="user-a",
+            db_context=db,
+        )
+        context = _make_context(
+            db,
+            user_id="user-a",
+            resolver=resolver,
+            backend=backend,
+            attachment_registry=registry,
+        )
+        result = await gmail_create_draft_tool(
+            context,
+            to=["recipient@example.com"],
+            subject="No invalid MIME headers",
+            body="No invalid MIME headers",
+            attachment_ids=[attachment.attachment_id],
+        )
+
+    assert "invalid filename" in result.get_text().lower()
+    assert backend.requests == []
+
+
+@pytest.mark.asyncio
 async def test_drive_write_creates_app_folder_and_native_google_doc(
     db_engine: AsyncEngine,
 ) -> None:
