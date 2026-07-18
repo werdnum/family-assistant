@@ -1346,3 +1346,152 @@ class TestPolicyEnforcingCacheInvalidation:
 
         names = [d["function"]["name"] for d in await provider.get_tool_definitions()]
         assert names == ["execute_python"]
+
+
+def _make_local_descriptor(name: str) -> ToolDescriptor:
+    return ToolDescriptor(
+        name=name,
+        definition={
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": f"local {name}",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        tags=frozenset(),
+        origin="local",
+    )
+
+
+class TestAdvertisementFollowsExecutionResolution:
+    """Advertisement evaluates policy on the descriptor execution resolves to.
+
+    Execution resolves a tool name to the *first* descriptor with that name,
+    so when two descriptors share a name and policy decides them differently,
+    the advertisement decision must come from the first descriptor — not from
+    "any descriptor with that name passes policy".
+    """
+
+    @pytest.mark.asyncio
+    async def test_name_not_advertised_when_first_descriptor_denied(self) -> None:
+        """An allowed tool shadowed by a denied one is not advertised.
+
+        The local descriptor comes first and is denied; the MCP descriptor
+        with the same name is allowed but unreachable (execution resolves the
+        name to the local descriptor). Advertising the name would offer the
+        LLM a tool that is always denied on execution.
+        """
+        wrapped = _VersionedDescriptorProvider([
+            _make_local_descriptor("foo"),
+            _make_mcp_descriptor("foo", "srv"),
+        ])
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=wrapped,
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(
+                    default_decision=ToolPolicyDecision.DENY,
+                    rules=[
+                        PolicyRule(
+                            match=ToolMatcher(mcp_server_ids=["srv"]),
+                            decision=ToolPolicyDecision.ALLOW,
+                            priority=10,
+                        )
+                    ],
+                )
+            ),
+        )
+
+        assert await provider.get_tool_definitions() == []
+
+    @pytest.mark.asyncio
+    async def test_name_advertised_when_first_descriptor_allowed(self) -> None:
+        """A denied later descriptor does not suppress the allowed first one.
+
+        The local descriptor comes first and is allowed; a same-named MCP
+        descriptor is denied. The name is advertised once, with the first
+        (executable) definition.
+        """
+        wrapped = _VersionedDescriptorProvider([
+            _make_local_descriptor("foo"),
+            _make_mcp_descriptor("foo", "srv"),
+        ])
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=wrapped,
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(
+                    default_decision=ToolPolicyDecision.ALLOW,
+                    rules=[
+                        PolicyRule(
+                            match=ToolMatcher(mcp_server_ids=["srv"]),
+                            decision=ToolPolicyDecision.DENY,
+                            priority=10,
+                        )
+                    ],
+                )
+            ),
+        )
+
+        definitions = await provider.get_tool_definitions()
+        assert [d["function"]["name"] for d in definitions] == ["foo"]
+        assert definitions[0]["function"]["description"] == "local foo"
+
+    @pytest.mark.asyncio
+    async def test_collision_logs_error_naming_both_origins(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A shadowed descriptor is reported loudly, not dropped silently.
+
+        Collisions are almost always misconfiguration or a misbehaving MCP
+        server; the ERROR record reaches the persistent error log surfaced by
+        the diagnostics endpoints.
+        """
+        wrapped = _VersionedDescriptorProvider([
+            _make_local_descriptor("foo"),
+            _make_mcp_descriptor("foo", "srv"),
+        ])
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=wrapped,
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+            ),
+        )
+
+        with caplog.at_level("ERROR", logger="family_assistant.tools.infrastructure"):
+            await provider.get_tool_definitions()
+
+        collision_records = [
+            record
+            for record in caplog.records
+            if "Tool name collision" in record.getMessage()
+        ]
+        assert len(collision_records) == 1
+        message = collision_records[0].getMessage()
+        assert "'foo'" in message
+        assert "MCP (server 'srv')" in message
+        assert "local" in message
+
+    @pytest.mark.asyncio
+    async def test_no_collision_logs_no_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Unique tool names never produce a collision error."""
+        wrapped = _VersionedDescriptorProvider([
+            _make_local_descriptor("foo"),
+            _make_mcp_descriptor("bar", "srv"),
+        ])
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=wrapped,
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+            ),
+        )
+
+        with caplog.at_level("ERROR", logger="family_assistant.tools.infrastructure"):
+            await provider.get_tool_definitions()
+
+        assert not [
+            record
+            for record in caplog.records
+            if "Tool name collision" in record.getMessage()
+        ]

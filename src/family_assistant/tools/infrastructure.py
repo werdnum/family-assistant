@@ -807,6 +807,13 @@ class CompositeToolsProvider(ToolsProvider):
         logger.info("CompositeToolsProvider closed.")
 
 
+def _describe_descriptor_origin(descriptor: ToolDescriptor) -> str:
+    """Return a log-friendly description of where a descriptor comes from."""
+    if descriptor.origin == "mcp":
+        return f"MCP (server {descriptor.mcp_server_id!r})"
+    return descriptor.origin
+
+
 class PolicyEnforcingToolsProvider(ToolsProvider):
     """Wraps another provider and enforces policy allow/deny/confirm decisions."""
 
@@ -847,9 +854,30 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         if can_confirm in self._tool_definitions_by_confirmation:
             return self._tool_definitions_by_confirmation[can_confirm]
 
+        # Execution resolves a name to the *first* descriptor with that name
+        # (composite order, local-before-MCP), so advertisement must evaluate
+        # policy against that same descriptor. Treating a name as allowed when
+        # *any* same-named descriptor passes would advertise a tool whose
+        # execution is denied (and hide the allowed one behind it).
+        first_descriptor_by_name: dict[str, ToolDescriptor] = {}
+        for descriptor in await self._descriptor_provider.get_tool_descriptors():
+            winner = first_descriptor_by_name.setdefault(descriptor.name, descriptor)
+            if winner is not descriptor:
+                # A collision is almost always operator misconfiguration or a
+                # misbehaving MCP server; the shadowed tool silently loses
+                # otherwise, so make it loud (ERROR reaches the persistent
+                # error log surfaced by the diagnostics endpoints).
+                logger.error(
+                    "Tool name collision on %r: %s descriptor is shadowed by "
+                    "the first-registered %s descriptor and is unreachable. "
+                    "Rename the tool or deny the shadowed origin by policy.",
+                    descriptor.name,
+                    _describe_descriptor_origin(descriptor),
+                    _describe_descriptor_origin(winner),
+                )
         allowed_names = {
-            descriptor.name
-            for descriptor in await self._descriptor_provider.get_tool_descriptors()
+            name
+            for name, descriptor in first_descriptor_by_name.items()
             if self._policy_engine.evaluate_for_advertisement(
                 descriptor,
                 can_confirm=can_confirm,
