@@ -13,9 +13,11 @@ import pytest
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     ToolPolicyDeniedError,
+    resolve_descriptors_version,
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 from family_assistant.tools.policy import (
@@ -1145,3 +1147,150 @@ class TestPolicyEnforcingToolsProvider:
                 {"title": "hello"},
                 self._make_context(),
             )
+
+
+class _VersionedDescriptorProvider:
+    """Descriptor provider whose descriptor set (and version) can change.
+
+    Models an ``MCPToolsProvider`` whose server was down at startup and later
+    reconnects: ``add_descriptor`` mutates the descriptor set and bumps
+    ``descriptors_version`` exactly as the real provider does.
+    """
+
+    def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+        self._descriptors = list(descriptors)
+        self._descriptors_version = 0
+
+    @property
+    def descriptors_version(self) -> int:
+        return self._descriptors_version
+
+    def add_descriptor(self, descriptor: ToolDescriptor) -> None:
+        self._descriptors.append(descriptor)
+        self._descriptors_version += 1
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return [descriptor.definition for descriptor in self._descriptors]
+
+    async def get_tool_descriptors(self) -> list[ToolDescriptor]:
+        return list(self._descriptors)
+
+    async def get_tool_descriptor(self, name: str) -> ToolDescriptor | None:
+        for descriptor in self._descriptors:
+            if descriptor.name == name:
+                return descriptor
+        return None
+
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: dict[str, object],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        del arguments, context, call_id
+        return f"executed:{name}"
+
+    async def close(self) -> None:
+        return None
+
+
+def _make_mcp_descriptor(name: str, server_id: str) -> ToolDescriptor:
+    return ToolDescriptor(
+        name=name,
+        definition={
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": f"{name} description",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        tags=frozenset(),
+        origin="mcp",
+        mcp_server_id=server_id,
+    )
+
+
+class TestResolveDescriptorsVersion:
+    """The version resolver aggregates through wrappers and composites."""
+
+    def test_static_provider_is_version_zero(self) -> None:
+        provider = LocalToolsProvider(registrations=[])
+        assert resolve_descriptors_version(provider) == 0
+
+    def test_reads_descriptors_version_attribute(self) -> None:
+        provider = _VersionedDescriptorProvider([])
+        provider.add_descriptor(_make_mcp_descriptor("t", "srv"))
+        assert resolve_descriptors_version(provider) == 1
+
+    def test_composite_sums_child_versions(self) -> None:
+        versioned = _VersionedDescriptorProvider([])
+        versioned.add_descriptor(_make_mcp_descriptor("a", "srv"))
+        versioned.add_descriptor(_make_mcp_descriptor("b", "srv"))
+        composite = CompositeToolsProvider(
+            providers=[LocalToolsProvider(registrations=[]), versioned]
+        )
+        # Static child contributes 0; versioned child contributes 2.
+        assert resolve_descriptors_version(composite) == 2
+
+    def test_wrapper_forwards_inner_version(self) -> None:
+        versioned = _VersionedDescriptorProvider([])
+        versioned.add_descriptor(_make_mcp_descriptor("a", "srv"))
+        wrapper = PolicyEnforcingToolsProvider(
+            wrapped_provider=versioned,
+            policy_engine=PolicyEngine.from_policy_config(
+                ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+            ),
+        )
+        assert resolve_descriptors_version(wrapper) == 1
+
+
+class TestPolicyEnforcingCacheInvalidation:
+    """The advertised-definitions cache rebuilds when descriptors change."""
+
+    @staticmethod
+    def _allow_all_engine() -> PolicyEngine:
+        return PolicyEngine.from_policy_config(
+            ToolPolicyConfig(default_decision=ToolPolicyDecision.ALLOW)
+        )
+
+    @pytest.mark.asyncio
+    async def test_reconnected_server_tools_become_advertisable(self) -> None:
+        """A server down at startup becomes advertisable once it reconnects.
+
+        Regression test for the indefinite ``get_tool_definitions`` cache: the
+        first call (server down) cached an advertised set without the MCP
+        tools, and nothing invalidated it when the tools later appeared.
+        """
+        wrapped = _VersionedDescriptorProvider([])
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=wrapped,
+            policy_engine=self._allow_all_engine(),
+        )
+
+        # Server down at startup: nothing advertised, cache warmed empty.
+        assert await provider.get_tool_definitions() == []
+
+        # Health-check loop reconnects the server and its tool appears.
+        wrapped.add_descriptor(_make_mcp_descriptor("execute_python", "code-execution"))
+
+        names = [d["function"]["name"] for d in await provider.get_tool_definitions()]
+        assert names == ["execute_python"]
+
+    @pytest.mark.asyncio
+    async def test_cache_served_while_descriptors_unchanged(self) -> None:
+        """Without a descriptor change the cached result is reused as-is."""
+        wrapped = _VersionedDescriptorProvider([
+            _make_mcp_descriptor("execute_python", "code-execution")
+        ])
+        provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=wrapped,
+            policy_engine=self._allow_all_engine(),
+        )
+
+        first = await provider.get_tool_definitions()
+        second = await provider.get_tool_definitions()
+
+        # Same cached list object is returned when nothing changed.
+        assert first is second

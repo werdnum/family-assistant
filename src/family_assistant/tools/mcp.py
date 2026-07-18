@@ -96,6 +96,7 @@ class MCPToolsProvider:
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: list[ToolDefinition] = []
         self._descriptors: list[ToolDescriptor] = []
+        self._descriptors_version = 0
         self._initialized = False
         self._connection_contexts: dict[str, contextlib.AsyncExitStack] = {}
         self._server_statuses: dict[str, str] = {
@@ -618,6 +619,7 @@ class MCPToolsProvider:
                         self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
 
         self._initialized = True
+        self._bump_descriptors_version()
         # Summarize outcomes based on statuses
         connected_count = sum(
             1
@@ -692,6 +694,23 @@ class MCPToolsProvider:
         if not self._initialized:
             await self.initialize()
         return self._definitions
+
+    @property
+    def descriptors_version(self) -> int:
+        """Monotonic counter that changes whenever the descriptor set changes.
+
+        Downstream wrappers cache policy-filtered tool listings for the process
+        lifetime. They compare this counter against the version their cache was
+        built at, so a server connecting, reconnecting, or disconnecting forces
+        a rebuild instead of serving a stale list. Without this, an MCP server
+        that is down at startup stays unadvertisable even after the health-check
+        loop reconnects it.
+        """
+        return self._descriptors_version
+
+    def _bump_descriptors_version(self) -> None:
+        """Signal that the discovered descriptor set has changed."""
+        self._descriptors_version += 1
 
     async def get_tool_descriptors(self) -> list[ToolDescriptor]:
         """Return descriptors for discovered MCP tools."""
@@ -860,6 +879,8 @@ class MCPToolsProvider:
             for descriptor in self._descriptors
             if descriptor.mcp_server_id != server_id
         ]
+        # The descriptor set shrank; a failed reconnect below leaves it that way.
+        self._bump_descriptors_version()
 
         # Attempt reconnection
         try:
@@ -889,6 +910,7 @@ class MCPToolsProvider:
                     self._definitions.append(tool_def)
                     self._descriptors.append(descriptor)
                     self._tool_map[tool_name] = server_id
+                self._bump_descriptors_version()
                 logger.info(
                     f"Successfully reconnected MCP server '{server_id}' with {len(discovered_tools)} tools"
                 )
@@ -1092,5 +1114,6 @@ class MCPToolsProvider:
         self._tool_map.clear()
         self._definitions.clear()
         self._descriptors.clear()
+        self._bump_descriptors_version()
         self._initialized = False
         logger.info("MCPToolsProvider closed.")

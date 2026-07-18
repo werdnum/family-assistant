@@ -365,3 +365,57 @@ class TestOnDemandActivateToolsCollision:
 
         with pytest.raises(ValueError, match="reserved for the on-demand meta-tool"):
             await on_demand.get_tool_definitions()
+
+
+class _VersionedMCPDescriptorProvider(_StubMCPDescriptorProvider):
+    """Stub MCP provider whose descriptor set (and version) can change.
+
+    Models a server that was down at startup and later reconnects: ``reconnect``
+    adds the server's descriptors and bumps ``descriptors_version`` exactly as
+    the real ``MCPToolsProvider`` does.
+    """
+
+    def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+        super().__init__(descriptors)
+        self._descriptors_version = 0
+
+    @property
+    def descriptors_version(self) -> int:
+        return self._descriptors_version
+
+    def reconnect(self, descriptors: list[ToolDescriptor]) -> None:
+        self._descriptors.extend(descriptors)
+        self._definitions.extend(d.definition for d in descriptors)
+        self._descriptors_version += 1
+
+
+class TestOnDemandDescriptorCacheInvalidation:
+    """On-demand activation reflects MCP servers that reconnect after startup."""
+
+    @pytest.mark.asyncio
+    async def test_server_down_at_startup_is_activatable_after_reconnect(self) -> None:
+        """Regression: a server down at startup is unactivatable until reconnect.
+
+        The descriptor cache was populated once on first access and never
+        refreshed, so an MCP server that failed to connect at startup stayed
+        unactivatable even after the health-check loop reconnected it.
+        """
+        # Server down at startup: no code-execution descriptors present.
+        wrapped = _VersionedMCPDescriptorProvider([])
+        on_demand = OnDemandToolsView(
+            wrapped_provider=wrapped,
+            on_demand_tool_names=set(),
+            on_demand_mcp_server_ids={"code-execution"},
+        )
+
+        before = await on_demand.activate_tools(mcp_server_ids=["code-execution"])
+        assert before.newly_activated == frozenset()
+
+        # Health-check loop reconnects the server; its tools appear.
+        wrapped.reconnect([
+            _make_mcp_descriptor("execute_python", "code-execution"),
+            _make_mcp_descriptor("execute_shell", "code-execution"),
+        ])
+
+        after = await on_demand.activate_tools(mcp_server_ids=["code-execution"])
+        assert after.newly_activated == frozenset({"execute_python", "execute_shell"})

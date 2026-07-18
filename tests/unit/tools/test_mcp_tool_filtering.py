@@ -399,6 +399,55 @@ async def test_mcp_reconnect_preserves_existing_duplicate_tool_mapping() -> None
 
 
 @pytest.mark.asyncio
+async def test_reconnect_bumps_descriptors_version_and_restores_tools() -> None:
+    """Reconnecting a server that was down at startup must signal a change.
+
+    Regression test: a server that failed to connect at startup exposes no
+    descriptors, so downstream caches (policy/on-demand) omit its tools. When
+    the health-check loop later reconnects it, ``descriptors_version`` must
+    advance so those caches rebuild instead of serving a stale list; otherwise
+    the tools stay unadvertisable until the process restarts.
+    """
+    provider = MCPToolsProvider({
+        "code-execution": {"transport": "stdio", "command": "echo"},
+    })
+    # Simulate "down at startup": initialised, but no descriptors discovered.
+    provider._initialized = True
+    version_while_down = provider.descriptors_version
+
+    recovered_definition = _tool_definition("execute_python")
+
+    async def fake_connect_and_discover_mcp(
+        server_id: str,
+        server_conf: MCPServerConfig,
+    ) -> tuple[object, list[ToolDefinition], list, dict[str, str]]:
+        del server_conf
+        return (
+            object(),
+            [recovered_definition],
+            [
+                build_tool_descriptor(
+                    recovered_definition,
+                    frozenset({ToolTag.CODE_EXECUTION, ToolTag.OUTPUT_UNTRUSTED}),
+                    origin="mcp",
+                    mcp_server_id=server_id,
+                )
+            ],
+            {"execute_python": server_id},
+        )
+
+    provider._connect_and_discover_mcp = fake_connect_and_discover_mcp  # type: ignore[method-assign]
+    provider._close_server_connections = AsyncMock()
+
+    reconnected = await provider._reconnect_server("code-execution")
+
+    assert reconnected is True
+    assert provider.descriptors_version > version_while_down
+    descriptor_names = {descriptor.name for descriptor in provider._descriptors}
+    assert "execute_python" in descriptor_names
+
+
+@pytest.mark.asyncio
 async def test_health_check_retries_failed_and_cancelled_servers() -> None:
     """Health check loop retries servers that failed or timed out during init."""
     all_retried = asyncio.Event()
