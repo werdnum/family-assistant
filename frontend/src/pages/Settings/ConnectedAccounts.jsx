@@ -6,8 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 const SCOPE_LABELS = {
   'https://www.googleapis.com/auth/gmail.readonly': 'Gmail read access',
+  'https://www.googleapis.com/auth/gmail.compose': 'Create Gmail drafts',
   'https://www.googleapis.com/auth/drive.readonly': 'Drive read access',
   'https://www.googleapis.com/auth/drive.metadata.readonly': 'Drive metadata access',
+  'https://www.googleapis.com/auth/drive.file': 'Family Assistant Drive file access',
   openid: 'OpenID',
   email: 'Email identity',
 };
@@ -15,6 +17,12 @@ const SCOPE_LABELS = {
 const scopeLabel = (scope) => SCOPE_LABELS[scope] ?? scope;
 
 const missingHumanLabel = (scope) => {
+  if (scope.includes('gmail.compose')) {
+    return 'Gmail draft access not granted';
+  }
+  if (scope.includes('drive.file')) {
+    return 'Family Assistant Drive file access not granted';
+  }
   if (scope.includes('gmail')) {
     return 'Gmail access not granted';
   }

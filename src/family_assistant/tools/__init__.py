@@ -134,6 +134,8 @@ from family_assistant.tools.google_data import (
     GOOGLE_DATA_TOOLS_DEFINITION,
     drive_get_file_tool,
     drive_search_tool,
+    drive_write_file_tool,
+    gmail_create_draft_tool,
     gmail_get_attachment_tool,
     gmail_get_message_tool,
     gmail_search_tool,
@@ -483,10 +485,12 @@ __all__ = [
     # Google personal data (Gmail/Drive) tools
     "GOOGLE_DATA_TOOLS_DEFINITION",
     "gmail_search_tool",
+    "gmail_create_draft_tool",
     "gmail_get_message_tool",
     "gmail_get_attachment_tool",
     "drive_search_tool",
     "drive_get_file_tool",
+    "drive_write_file_tool",
 ]
 
 
@@ -690,10 +694,12 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "report_technical_problem": report_technical_problem_tool,
     # Google personal data (Gmail/Drive) tools
     "gmail_search": gmail_search_tool,
+    "gmail_create_draft": gmail_create_draft_tool,
     "gmail_get_message": gmail_get_message_tool,
     "gmail_get_attachment": gmail_get_attachment_tool,
     "drive_search": drive_search_tool,
     "drive_get_file": drive_get_file_tool,
+    "drive_write_file": drive_write_file_tool,
 }
 
 LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
@@ -1470,6 +1476,24 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.OUTPUT_UNTRUSTED,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
+    ),
+    # These deterministic writes persist artifacts in the acting user's own
+    # connected account. A draft is not delivered, and Drive writes cannot
+    # choose an external recipient or a folder outside the app boundary, so
+    # both intentionally resolve to the same artifact_write sink as notes.
+    "gmail_create_draft": _metadata(
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "drive_write_file": _metadata(
+        ToolTag.CONNECTED_ACCOUNT_DATA,
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
     ),
 }
 

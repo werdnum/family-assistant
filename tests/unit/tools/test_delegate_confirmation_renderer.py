@@ -126,10 +126,10 @@ def test_over_length_block_reason_only_fires_above_the_cap() -> None:
     assert "exceeds" in reason
 
 
-def test_confirmation_payload_block_reason_only_applies_to_delegation() -> None:
+def test_confirmation_payload_block_reason_applies_only_to_scoped_tools() -> None:
     over_limit = "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
 
-    # A non-delegation tool is never size-capped by this hook.
+    # An unrelated tool is never size-capped by this hook.
     assert (
         confirmation_payload_block_reason(
             "add_calendar_event", {"user_request": over_limit}

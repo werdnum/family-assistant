@@ -8,11 +8,13 @@ from family_assistant.services.oauth_provider import OAuthProviderSpec
 
 
 class GoogleScope(StrEnum):
-    """OAuth scopes the shipped Google tools can exercise (read-only)."""
+    """OAuth scopes the shipped Google tools can exercise."""
 
     GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
+    GMAIL_COMPOSE = "https://www.googleapis.com/auth/gmail.compose"
     DRIVE_READONLY = "https://www.googleapis.com/auth/drive.readonly"
     DRIVE_METADATA_READONLY = "https://www.googleapis.com/auth/drive.metadata.readonly"
+    DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
 
 
 GOOGLE_PROVIDER = OAuthProviderSpec(

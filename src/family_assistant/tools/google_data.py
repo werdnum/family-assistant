@@ -1,4 +1,4 @@
-"""Read-only Gmail/Drive tools that act strictly as the turn's acting user.
+"""Scoped Gmail/Drive tools that act strictly as the turn's acting user.
 
 Every tool resolves a per-user Google access token from the execution context
 (never from tool arguments), so the LLM cannot address another user's mailbox or
@@ -14,13 +14,19 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
+import json
 import logging
 import mimetypes
+from email.errors import HeaderParseError
+from email.headerregistry import Address
+from email.message import EmailMessage
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from markdownify import markdownify
 
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.services.api_backend import ApiBackendError
 from family_assistant.services.google_provider import GOOGLE_PROVIDER, GoogleScope
 from family_assistant.services.oauth_credentials import (
@@ -33,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
 
     from family_assistant.services.api_backend import ApiBackend, ApiResponse
+    from family_assistant.services.attachment_registry import AttachmentMetadata
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -60,6 +67,20 @@ _DRIVE_INLINE_TEXT_LIMIT = 200 * 1024
 # response-body cap (``HttpApiBackend.max_response_bytes``), which is the
 # defense for Google-native exports that report no size.
 _DRIVE_DOWNLOAD_LIMIT = 25 * 1024 * 1024
+# Write requests are intentionally limited to the APIs' non-resumable upload
+# budgets. Gmail attachments expand inside MIME and the API's base64url JSON;
+# Drive multipart uploads are the documented small-file path (up to 5 MiB).
+_GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT = 18 * 1024 * 1024
+_GMAIL_DRAFT_RAW_MESSAGE_LIMIT = 25 * 1024 * 1024
+_DRIVE_MULTIPART_CONTENT_LIMIT = 5 * 1024 * 1024
+_GMAIL_DRAFT_ATTACHMENT_CAP = 10
+
+_DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
+_GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+_APP_PROPERTY_KEY = "family_assistant"
+_APP_FOLDER_PROPERTY_VALUE = "app_folder_v1"
+_APP_FILE_PROPERTY_VALUE = "app_file_v1"
+_APP_FOLDER_DEFAULT_NAME = "Family Assistant"
 
 # Google-native mime types and the export format we fetch them as.
 _GOOGLE_DOC_EXPORTS: dict[str, str] = {
@@ -74,11 +95,13 @@ GOOGLE_TOOL_REQUIRED_SCOPES: dict[str, frozenset[str]] = {
     "gmail_search": frozenset({GoogleScope.GMAIL_READONLY.value}),
     "gmail_get_message": frozenset({GoogleScope.GMAIL_READONLY.value}),
     "gmail_get_attachment": frozenset({GoogleScope.GMAIL_READONLY.value}),
+    "gmail_create_draft": frozenset({GoogleScope.GMAIL_COMPOSE.value}),
     "drive_search": frozenset({
         GoogleScope.DRIVE_READONLY.value,
         GoogleScope.DRIVE_METADATA_READONLY.value,
     }),
     "drive_get_file": frozenset({GoogleScope.DRIVE_READONLY.value}),
+    "drive_write_file": frozenset({GoogleScope.DRIVE_FILE.value}),
 }
 
 
@@ -183,6 +206,54 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
+            "name": "gmail_create_draft",
+            "description": (
+                "Create an unsent draft in the requesting user's own Gmail account. "
+                "This tool can only create a draft; it cannot send mail. Provide one "
+                "or more recipient email addresses, a subject, and a plain-text body. "
+                "Existing owned attachments can be included by attachment ID."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Recipient email addresses for the draft.",
+                        "minItems": 1,
+                    },
+                    "subject": {"type": "string", "description": "Draft subject."},
+                    "body": {
+                        "type": "string",
+                        "description": "Plain-text draft body.",
+                    },
+                    "cc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional CC email addresses.",
+                    },
+                    "bcc": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional BCC email addresses.",
+                    },
+                    "attachment_ids": {
+                        "type": "array",
+                        "items": {"type": "attachment"},
+                        "description": (
+                            "Optional IDs of existing attachments owned by the "
+                            "requesting user."
+                        ),
+                        "maxItems": _GMAIL_DRAFT_ATTACHMENT_CAP,
+                    },
+                },
+                "required": ["to", "subject", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "drive_search",
             "description": (
                 "Search the requesting user's own Google Drive and return matching "
@@ -238,6 +309,60 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_write_file",
+            "description": (
+                "Create or replace a file only inside the requesting user's "
+                "Family Assistant Drive folder. For authored content, provide "
+                "name and content; native Google Docs are the default, with plain "
+                "text and Markdown also available. To upload an existing owned "
+                "attachment instead, provide attachment_id and optionally name. "
+                "The tool cannot choose another folder or arbitrary Drive file ID."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Filename or Google Doc title. Required for authored "
+                            "content; optional for attachment uploads."
+                        ),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "UTF-8 content to write. Do not provide with attachment_id."
+                        ),
+                    },
+                    "file_type": {
+                        "type": "string",
+                        "enum": ["google_doc", "text", "markdown"],
+                        "description": "Authored-content format (default google_doc).",
+                        "default": "google_doc",
+                    },
+                    "attachment_id": {
+                        "type": "attachment",
+                        "description": (
+                            "Owned attachment to upload as an ordinary Drive file. "
+                            "Do not provide content at the same time."
+                        ),
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": (
+                            "Replace an existing app-created file of the same name "
+                            "inside the app folder. Defaults to false."
+                        ),
+                        "default": False,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -266,6 +391,8 @@ async def _google_request(
     method: str = "GET",
     url: str,
     params: Mapping[str, str] | None = None,
+    content: bytes | None = None,
+    content_type: str | None = None,
 ) -> ApiResponse:
     """Issue an authenticated Google REST request for the acting user.
 
@@ -286,14 +413,26 @@ async def _google_request(
 
     access_token = await resolver.access_token_for(exec_context, scope)
     response = await _backend_request(
-        backend, method=method, url=url, access_token=access_token, params=params
+        backend,
+        method=method,
+        url=url,
+        access_token=access_token,
+        params=params,
+        content=content,
+        content_type=content_type,
     )
     if response.status_code == 401:
         if exec_context.user_id is not None:
             resolver.evict_cached_token(exec_context.user_id)
         access_token = await resolver.access_token_for(exec_context, scope)
         response = await _backend_request(
-            backend, method=method, url=url, access_token=access_token, params=params
+            backend,
+            method=method,
+            url=url,
+            access_token=access_token,
+            params=params,
+            content=content,
+            content_type=content_type,
         )
 
     if 200 <= response.status_code < 300:
@@ -312,6 +451,8 @@ async def _backend_request(
     url: str,
     access_token: str,
     params: Mapping[str, str] | None,
+    content: bytes | None,
+    content_type: str | None,
 ) -> ApiResponse:
     """Call the shared backend, naming the provider in transport errors.
 
@@ -322,7 +463,12 @@ async def _backend_request(
     """
     try:
         return await backend.request(
-            method=method, url=url, access_token=access_token, params=params
+            method=method,
+            url=url,
+            access_token=access_token,
+            params=params,
+            content=content,
+            content_type=content_type,
         )
     except ApiBackendError as exc:
         raise ApiBackendError(f"{GOOGLE_PROVIDER.display_name} {exc}") from exc
@@ -682,6 +828,230 @@ def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
         return None
 
 
+def _validated_addresses(addresses: list[str], field_name: str) -> list[str]:
+    """Return normalized bare email addresses or raise a user-facing error."""
+    if not addresses and field_name == "to":
+        raise _GoogleToolError("A Gmail draft requires at least one recipient.")
+    normalized: list[str] = []
+    for raw_address in addresses:
+        candidate = raw_address.strip()
+        try:
+            address = Address(addr_spec=candidate)
+        except (HeaderParseError, TypeError, ValueError) as exc:
+            raise _GoogleToolError(
+                f"Invalid {field_name} email address: {raw_address!r}."
+            ) from exc
+        if not address.username or not address.domain:
+            raise _GoogleToolError(
+                f"Invalid {field_name} email address: {raw_address!r}."
+            )
+        normalized.append(str(address))
+    return normalized
+
+
+def _google_user_operation_lock(
+    exec_context: ToolExecutionContext, operation: str
+) -> asyncio.Lock:
+    """Return a per-user lock owned by the app-wired Google credential resolver."""
+    user_id = exec_context.user_id
+    resolver = (exec_context.credential_resolvers or {}).get(GOOGLE_PROVIDER.name)
+    if user_id is None or resolver is None:
+        raise _GoogleToolError(
+            "Google integration is not configured for a specific requesting user."
+        )
+    return resolver.user_operation_lock(user_id, operation)
+
+
+def _set_draft_header(message: EmailMessage, name: str, value: str) -> None:
+    """Set one MIME header and render header-injection errors safely."""
+    try:
+        message[name] = value
+    except ValueError as exc:
+        raise _GoogleToolError(f"Invalid Gmail draft {name} header: {exc}") from exc
+
+
+def _attachment_filename(metadata: AttachmentMetadata, attachment_id: str) -> str:
+    """Choose a safe display filename from attachment-registry metadata."""
+    original = metadata.metadata.get("original_filename")
+    if isinstance(original, str) and original:
+        filename = PurePosixPath(original).name
+    elif metadata.storage_path:
+        filename = PurePosixPath(metadata.storage_path).name
+    else:
+        filename = f"attachment-{attachment_id}"
+    if "\r" in filename or "\n" in filename:
+        raise _GoogleToolError(f"Attachment {attachment_id} has an invalid filename.")
+    return filename
+
+
+def _encode_gmail_draft_payload(message: EmailMessage) -> bytes:
+    """Serialize and encode a Gmail draft outside the async event loop."""
+    raw_message = message.as_bytes()
+    if len(raw_message) > _GMAIL_DRAFT_RAW_MESSAGE_LIMIT:
+        raise _GoogleToolError("The encoded Gmail draft is too large to upload.")
+    return json.dumps({
+        "message": {"raw": base64.urlsafe_b64encode(raw_message).decode("ascii")}
+    }).encode("utf-8")
+
+
+async def _load_owned_attachment(
+    exec_context: ToolExecutionContext,
+    attachment_id: ScriptAttachment | str,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, str, str]:
+    """Load one attachment through the registry's acting-user boundary."""
+    attachment_id_str = (
+        attachment_id.get_id()
+        if isinstance(attachment_id, ScriptAttachment)
+        else attachment_id
+    )
+    registry = exec_context.attachment_registry
+    if registry is None:
+        raise _GoogleToolError("Attachment registry is not available.")
+    metadata = await registry.get_attachment(
+        exec_context.db_context,
+        attachment_id_str,
+        acting_user_id=exec_context.user_id,
+    )
+    if metadata is None:
+        raise _GoogleToolError(
+            f"Attachment {attachment_id_str} was not found for the requesting user."
+        )
+    legacy_user_owned = (
+        metadata.owner_user_id is None
+        and metadata.source_type == "user"
+        and metadata.source_id == exec_context.user_id
+    )
+    same_conversation_ownerless = (
+        metadata.owner_user_id is None
+        and metadata.conversation_id is not None
+        and metadata.conversation_id == exec_context.conversation_id
+    )
+    if (
+        metadata.owner_user_id != exec_context.user_id
+        and not legacy_user_owned
+        and not same_conversation_ownerless
+    ):
+        raise _GoogleToolError(
+            f"Attachment {attachment_id_str} is not owned by the requesting user."
+        )
+    if metadata.size > max_bytes:
+        raise _GoogleToolError(
+            f"Attachment {attachment_id_str} exceeds the {max_bytes}-byte upload limit."
+        )
+    content = await registry.get_attachment_content(
+        exec_context.db_context,
+        attachment_id_str,
+        acting_user_id=exec_context.user_id,
+    )
+    if content is None:
+        raise _GoogleToolError(
+            f"Attachment {attachment_id_str} has no readable content."
+        )
+    if len(content) > max_bytes:
+        raise _GoogleToolError(
+            f"Attachment {attachment_id_str} exceeds the {max_bytes}-byte upload limit."
+        )
+    return (
+        content,
+        _attachment_filename(metadata, attachment_id_str),
+        metadata.mime_type,
+    )
+
+
+async def gmail_create_draft_tool(
+    exec_context: ToolExecutionContext,
+    to: list[str],
+    subject: str,
+    body: str,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    attachment_ids: list[ScriptAttachment | str] | None = None,
+) -> ToolResult:
+    """Create an unsent Gmail draft for the acting user."""
+
+    async def _impl() -> ToolResult:
+        if len(attachment_ids or []) > _GMAIL_DRAFT_ATTACHMENT_CAP:
+            raise _GoogleToolError(
+                f"A Gmail draft supports at most {_GMAIL_DRAFT_ATTACHMENT_CAP} "
+                "attachments."
+            )
+        if exec_context.user_id is None:
+            raise _GoogleToolError("Google access requires a specific requesting user.")
+        connection = await exec_context.db_context.oauth_connections.get_connection(
+            exec_context.user_id, GOOGLE_PROVIDER.name
+        )
+        if connection is None:
+            raise _GoogleToolError(
+                "No Google account is connected — connect from Settings."
+            )
+
+        if len(body.encode("utf-8")) > _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT:
+            raise _GoogleToolError("The Gmail draft body is too large to upload.")
+        message = EmailMessage()
+        _set_draft_header(message, "From", connection.provider_account_email)
+        _set_draft_header(message, "To", ", ".join(_validated_addresses(to, "to")))
+        if cc:
+            _set_draft_header(message, "Cc", ", ".join(_validated_addresses(cc, "cc")))
+        if bcc:
+            _set_draft_header(
+                message, "Bcc", ", ".join(_validated_addresses(bcc, "bcc"))
+            )
+        _set_draft_header(message, "Subject", subject)
+        message.set_content(body)
+
+        total_attachment_bytes = 0
+        attached_names: list[str] = []
+        for attachment_id in attachment_ids or []:
+            content, filename, mime_type = await _load_owned_attachment(
+                exec_context,
+                attachment_id,
+                max_bytes=_GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT,
+            )
+            total_attachment_bytes += len(content)
+            if total_attachment_bytes > _GMAIL_DRAFT_ATTACHMENT_BYTES_LIMIT:
+                raise _GoogleToolError(
+                    "The draft attachments exceed the combined Google upload limit."
+                )
+            maintype, separator, subtype = mime_type.partition("/")
+            if not separator or not maintype or not subtype:
+                maintype, subtype = "application", "octet-stream"
+            message.add_attachment(
+                content,
+                maintype=maintype,
+                subtype=subtype,
+                filename=filename,
+            )
+            attached_names.append(filename)
+
+        payload = await asyncio.to_thread(_encode_gmail_draft_payload, message)
+        draft = (
+            await _google_request(
+                exec_context,
+                GoogleScope.GMAIL_COMPOSE,
+                method="POST",
+                url=f"{_GMAIL_API_BASE}/users/me/drafts",
+                content=payload,
+                content_type="application/json; charset=UTF-8",
+            )
+        ).json()
+        return ToolResult(
+            data={
+                "status": "draft_created",
+                "draft_id": draft.get("id"),
+                "message_id": draft.get("message", {}).get("id"),
+                "to": to,
+                "cc": cc or [],
+                "bcc": bcc or [],
+                "subject": subject,
+                "attachments": attached_names,
+            }
+        )
+
+    return await _guard(_impl)
+
+
 def _mime_consistent_filename(name: str, content_type: str) -> str:
     """Force the stored name's extension to agree with the authoritative MIME type.
 
@@ -944,3 +1314,270 @@ def _is_texty(mime_type: str) -> bool:
         "application/x-yaml",
         "application/yaml",
     }
+
+
+def _drive_query_literal(value: str) -> str:
+    """Escape one string literal for Drive query syntax."""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _validated_drive_name(name: str) -> str:
+    """Validate a single file name; paths and control characters are forbidden."""
+    normalized = name.strip()
+    if (
+        not normalized
+        or normalized in {".", ".."}
+        or "/" in normalized
+        or "\\" in normalized
+        or len(normalized) > 200
+        or any(ord(character) < 32 for character in normalized)
+    ):
+        raise _GoogleToolError(
+            "Drive file names must be 1-200 characters and cannot contain paths "
+            "or control characters."
+        )
+    return normalized
+
+
+def _multipart_related(
+    metadata: GoogleJson, media: bytes, media_type: str
+) -> tuple[bytes, str]:
+    """Build a bounded RFC 2387 multipart/related Drive upload body."""
+    metadata_bytes = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+    seed = metadata_bytes + b"\0" + media
+    boundary = f"family_assistant_{hashlib.sha256(seed).hexdigest()}"
+    counter = 0
+    while boundary.encode("ascii") in media:
+        counter += 1
+        boundary = (
+            "family_assistant_"
+            + hashlib.sha256(seed + str(counter).encode("ascii")).hexdigest()
+        )
+    body = b"\r\n".join([
+        f"--{boundary}".encode("ascii"),
+        b"Content-Type: application/json; charset=UTF-8",
+        b"",
+        metadata_bytes,
+        f"--{boundary}".encode("ascii"),
+        f"Content-Type: {media_type}".encode("ascii"),
+        b"",
+        media,
+        f"--{boundary}--".encode("ascii"),
+        b"",
+    ])
+    return body, f"multipart/related; boundary={boundary}"
+
+
+async def _find_app_folder(exec_context: ToolExecutionContext) -> GoogleJson | None:
+    """Find the one Drive folder marked as this app's dedicated folder."""
+    marker = _drive_query_literal(_APP_FOLDER_PROPERTY_VALUE)
+    key = _drive_query_literal(_APP_PROPERTY_KEY)
+    listing = (
+        await _google_request(
+            exec_context,
+            GoogleScope.DRIVE_FILE,
+            url=f"{_DRIVE_API_BASE}/files",
+            params={
+                "q": (
+                    f"appProperties has {{ key='{key}' and value='{marker}' }} "
+                    f"and mimeType = '{_DRIVE_FOLDER_MIME}' and trashed = false"
+                ),
+                "pageSize": "2",
+                "fields": "files(id,name,mimeType,webViewLink)",
+            },
+        )
+    ).json()
+    folders = listing.get("files") or []
+    if len(folders) > 1:
+        raise _GoogleToolError(
+            "Multiple Family Assistant Drive folders are marked for this account; "
+            "resolve the duplicate folders before writing."
+        )
+    return folders[0] if folders else None
+
+
+async def _ensure_app_folder(exec_context: ToolExecutionContext) -> GoogleJson:
+    """Return the dedicated Drive folder, creating it in My Drive if absent."""
+    existing = await _find_app_folder(exec_context)
+    if existing is not None:
+        return existing
+    metadata = {
+        "name": _APP_FOLDER_DEFAULT_NAME,
+        "mimeType": _DRIVE_FOLDER_MIME,
+        "parents": ["root"],
+        "appProperties": {_APP_PROPERTY_KEY: _APP_FOLDER_PROPERTY_VALUE},
+    }
+    return (
+        await _google_request(
+            exec_context,
+            GoogleScope.DRIVE_FILE,
+            method="POST",
+            url=f"{_DRIVE_API_BASE}/files",
+            params={"fields": "id,name,mimeType,webViewLink"},
+            content=json.dumps(metadata).encode("utf-8"),
+            content_type="application/json; charset=UTF-8",
+        )
+    ).json()
+
+
+async def _find_app_file(
+    exec_context: ToolExecutionContext, folder_id: str, name: str
+) -> GoogleJson | None:
+    """Find one app-marked file with ``name`` beneath the app folder."""
+    escaped_name = _drive_query_literal(name)
+    escaped_parent = _drive_query_literal(folder_id)
+    key = _drive_query_literal(_APP_PROPERTY_KEY)
+    marker = _drive_query_literal(_APP_FILE_PROPERTY_VALUE)
+    listing = (
+        await _google_request(
+            exec_context,
+            GoogleScope.DRIVE_FILE,
+            url=f"{_DRIVE_API_BASE}/files",
+            params={
+                "q": (
+                    f"'{escaped_parent}' in parents and name = '{escaped_name}' "
+                    f"and appProperties has {{ key='{key}' and value='{marker}' }} "
+                    "and trashed = false"
+                ),
+                "pageSize": "2",
+                "fields": "files(id,name,mimeType,webViewLink)",
+            },
+        )
+    ).json()
+    files = listing.get("files") or []
+    if len(files) > 1:
+        raise _GoogleToolError(
+            f"Multiple app-created Drive files are named {name!r}; rename the "
+            "duplicates before overwriting."
+        )
+    return files[0] if files else None
+
+
+async def _drive_write_payload(
+    exec_context: ToolExecutionContext,
+    *,
+    folder_id: str,
+    name: str,
+    content: bytes,
+    mime_type: str,
+    overwrite: bool,
+) -> tuple[GoogleJson, str]:
+    """Create or replace one app-marked file beneath the dedicated folder."""
+    existing = await _find_app_file(exec_context, folder_id, name)
+    if existing is not None and not overwrite:
+        raise _GoogleToolError(
+            f"A file named {name!r} already exists in the Family Assistant "
+            "folder; set overwrite=true to replace it."
+        )
+    if existing is not None and existing.get("mimeType") != mime_type:
+        raise _GoogleToolError(
+            f"Cannot overwrite {name!r} with a different file type; choose a new "
+            "name or match the existing type."
+        )
+
+    metadata: GoogleJson = {
+        "name": name,
+        "mimeType": mime_type,
+        "appProperties": {_APP_PROPERTY_KEY: _APP_FILE_PROPERTY_VALUE},
+    }
+    method = "POST"
+    url = "https://www.googleapis.com/upload/drive/v3/files"
+    status = "created"
+    if existing is None:
+        metadata["parents"] = [folder_id]
+    else:
+        method = "PATCH"
+        url = f"https://www.googleapis.com/upload/drive/v3/files/{existing['id']}"
+        status = "replaced"
+    request_body, request_content_type = _multipart_related(
+        metadata,
+        content,
+        "text/plain; charset=UTF-8" if mime_type == _GOOGLE_DOC_MIME else mime_type,
+    )
+    result = (
+        await _google_request(
+            exec_context,
+            GoogleScope.DRIVE_FILE,
+            method=method,
+            url=url,
+            params={
+                "uploadType": "multipart",
+                "fields": "id,name,mimeType,webViewLink,parents",
+            },
+            content=request_body,
+            content_type=request_content_type,
+        )
+    ).json()
+    return result, status
+
+
+async def drive_write_file_tool(
+    exec_context: ToolExecutionContext,
+    name: str | None = None,
+    content: str | None = None,
+    file_type: str = "google_doc",
+    attachment_id: ScriptAttachment | str | None = None,
+    overwrite: bool = False,
+) -> ToolResult:
+    """Write authored content or an owned attachment inside the app Drive folder."""
+
+    async def _impl() -> ToolResult:
+        if (content is None) == (attachment_id is None):
+            raise _GoogleToolError(
+                "Provide exactly one of content or attachment_id when writing to Drive."
+            )
+        if attachment_id is not None:
+            file_content, attachment_name, mime_type = await _load_owned_attachment(
+                exec_context,
+                attachment_id,
+                max_bytes=_DRIVE_MULTIPART_CONTENT_LIMIT,
+            )
+            resolved_name = _validated_drive_name(name or attachment_name)
+        else:
+            assert content is not None
+            if name is None:
+                raise _GoogleToolError("A name is required for authored Drive content.")
+            resolved_name = _validated_drive_name(name)
+            file_content = content.encode("utf-8")
+            mime_types = {
+                "google_doc": _GOOGLE_DOC_MIME,
+                "text": "text/plain",
+                "markdown": "text/markdown",
+            }
+            try:
+                mime_type = mime_types[file_type]
+            except KeyError as exc:
+                raise _GoogleToolError(
+                    "file_type must be google_doc, text, or markdown."
+                ) from exc
+        if len(file_content) > _DRIVE_MULTIPART_CONTENT_LIMIT:
+            raise _GoogleToolError(
+                f"Drive writes are limited to {_DRIVE_MULTIPART_CONTENT_LIMIT} bytes."
+            )
+
+        async with _google_user_operation_lock(exec_context, "drive_write"):
+            folder = await _ensure_app_folder(exec_context)
+            folder_id = folder.get("id")
+            if not isinstance(folder_id, str) or not folder_id:
+                raise _GoogleToolError("Google Drive did not return an app folder ID.")
+            written, status = await _drive_write_payload(
+                exec_context,
+                folder_id=folder_id,
+                name=resolved_name,
+                content=file_content,
+                mime_type=mime_type,
+                overwrite=overwrite,
+            )
+        return ToolResult(
+            data={
+                "status": status,
+                "file_id": written.get("id"),
+                "name": written.get("name", resolved_name),
+                "mime_type": written.get("mimeType", mime_type),
+                "web_view_link": written.get("webViewLink"),
+                "folder_id": folder_id,
+                "folder_name": folder.get("name", _APP_FOLDER_DEFAULT_NAME),
+            }
+        )
+
+    return await _guard(_impl)

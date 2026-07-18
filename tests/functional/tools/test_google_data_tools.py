@@ -1,4 +1,4 @@
-"""Functional tests for the read-only Gmail/Drive tools.
+"""Functional tests for the scoped Gmail/Drive tools.
 
 The tools are exercised against a fake :class:`ApiBackend` and a fake
 credential resolver (both implementing the real protocols, no monkeypatching),
@@ -8,10 +8,13 @@ attachment references are validated end to end.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import tempfile
 from dataclasses import dataclass, field
+from email import policy
+from email.parser import BytesParser
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
@@ -33,10 +36,13 @@ from family_assistant.services.oauth_credentials import (
 )
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.attachment_utils import fetch_attachment_object
 from family_assistant.tools.google_data import (
     GOOGLE_TOOL_REQUIRED_SCOPES,
     drive_get_file_tool,
     drive_search_tool,
+    drive_write_file_tool,
+    gmail_create_draft_tool,
     gmail_get_attachment_tool,
     gmail_get_message_tool,
     gmail_search_tool,
@@ -77,6 +83,8 @@ class FakeApiBackend:
     routes: dict[str, dict[tuple[str, str], object]] = field(default_factory=dict)
     scripted: list[tuple[int, bytes]] = field(default_factory=list)
     requests: list[tuple[str, str, str]] = field(default_factory=list)
+    request_params: list[Mapping[str, str] | None] = field(default_factory=list)
+    request_bodies: list[tuple[bytes | None, str | None]] = field(default_factory=list)
     transport_error: Exception | None = None
 
     async def request(
@@ -86,8 +94,12 @@ class FakeApiBackend:
         url: str,
         access_token: str,
         params: Mapping[str, str] | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
     ) -> ApiResponse:
         self.requests.append((method, url, access_token))
+        self.request_params.append(params)
+        self.request_bodies.append((content, content_type))
         if self.transport_error is not None:
             raise self.transport_error
         if self.scripted:
@@ -123,6 +135,7 @@ class FakeCredentialResolver:
     granted_scopes: dict[str, set[str]] = field(default_factory=dict)
     raise_for_user: dict[str, Exception] = field(default_factory=dict)
     evicted: list[str] = field(default_factory=list)
+    operation_locks: dict[tuple[str, str], asyncio.Lock] = field(default_factory=dict)
 
     async def access_token_for(
         self, exec_context: ToolExecutionContext, scope: GoogleScope
@@ -139,6 +152,61 @@ class FakeCredentialResolver:
 
     def evict_cached_token(self, user_id: str) -> None:
         self.evicted.append(user_id)
+
+    def user_operation_lock(self, user_id: str, operation: str) -> asyncio.Lock:
+        return self.operation_locks.setdefault((user_id, operation), asyncio.Lock())
+
+
+@dataclass
+class ConcurrentDriveApiBackend(FakeApiBackend):
+    """Pause the first folder lookup so a second Drive write overlaps it."""
+
+    first_folder_search_started: asyncio.Event = field(default_factory=asyncio.Event)
+    release_first_folder_search: asyncio.Event = field(default_factory=asyncio.Event)
+    folder_created: bool = False
+    folder_create_count: int = 0
+
+    async def request(
+        self,
+        *,
+        method: str,
+        url: str,
+        access_token: str,
+        params: Mapping[str, str] | None = None,
+        content: bytes | None = None,
+        content_type: str | None = None,
+    ) -> ApiResponse:
+        query = (params or {}).get("q", "")
+        is_folder_search = method == "GET" and "google-apps.folder" in query
+        is_folder_create = (
+            method == "POST"
+            and url == "https://www.googleapis.com/drive/v3/files"
+            and content is not None
+            and b"google-apps.folder" in content
+        )
+        if is_folder_search:
+            if not self.folder_created:
+                if not self.first_folder_search_started.is_set():
+                    self.first_folder_search_started.set()
+                    await self.release_first_folder_search.wait()
+                response = b'{"files":[]}'
+            else:
+                response = b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'
+            self.scripted.insert(0, (200, response))
+        elif is_folder_create:
+            self.folder_created = True
+            self.folder_create_count += 1
+            self.scripted.insert(
+                0, (200, b'{"id":"folder-1","name":"Family Assistant"}')
+            )
+        return await super().request(
+            method=method,
+            url=url,
+            access_token=access_token,
+            params=params,
+            content=content,
+            content_type=content_type,
+        )
 
 
 def _make_context(
@@ -173,6 +241,19 @@ def _make_context(
 def _registry(db_engine: AsyncEngine) -> AttachmentRegistry:
     return AttachmentRegistry(
         storage_path=tempfile.mkdtemp(), db_engine=db_engine, config=None
+    )
+
+
+async def _store_google_connection(
+    db: DatabaseContext, user_id: str = "user-a"
+) -> None:
+    """Store the connected-account email needed for RFC-compliant draft headers."""
+    await db.oauth_connections.upsert_connection(
+        user_id=user_id,
+        provider="google",
+        provider_account_email=f"{user_id}@example.com",
+        scopes=[scope.value for scope in GoogleScope],
+        refresh_token_encrypted="ciphertext-not-used-by-fake-resolver",
     )
 
 
@@ -817,6 +898,403 @@ async def test_drive_get_file_oversized_metadata_errors_without_media_request(
 
 
 # --------------------------------------------------------------------------- #
+# Scoped writes
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_gmail_create_draft_uses_only_drafts_create_and_owned_attachment(
+    db_engine: AsyncEngine,
+) -> None:
+    registry = _registry(db_engine)
+    backend = FakeApiBackend(
+        scripted=[(200, b'{"id":"draft-1","message":{"id":"draft-message-1"}}')]
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_google_connection(db)
+        attachment = await registry.store_and_register_tool_attachment(
+            file_content=b"draft attachment",
+            filename="details.txt",
+            content_type="text/plain",
+            tool_name="test",
+            owner_user_id="user-a",
+            db_context=db,
+        )
+        context = _make_context(
+            db,
+            user_id="user-a",
+            resolver=resolver,
+            backend=backend,
+            attachment_registry=registry,
+        )
+        attachment_object = await fetch_attachment_object(
+            attachment.attachment_id, context
+        )
+        assert attachment_object is not None
+        result = await gmail_create_draft_tool(
+            context,
+            to=["recipient@example.com"],
+            cc=["copy@example.com"],
+            subject="Draft subject",
+            body="Draft body",
+            attachment_ids=[attachment_object],
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["draft_id"] == "draft-1"
+    assert backend.requests == [
+        (
+            "POST",
+            "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+            "token-a",
+        )
+    ]
+    request_body, content_type = backend.request_bodies[0]
+    assert request_body is not None
+    assert content_type == "application/json; charset=UTF-8"
+    raw = json.loads(request_body)["message"]["raw"]
+    parsed = BytesParser(policy=policy.default).parsebytes(
+        base64.urlsafe_b64decode(raw)
+    )
+    assert parsed["From"] == "user-a@example.com"
+    assert parsed["To"] == "recipient@example.com"
+    assert parsed["Cc"] == "copy@example.com"
+    assert parsed["Subject"] == "Draft subject"
+    assert [part.get_filename() for part in parsed.iter_attachments()] == [
+        "details.txt"
+    ]
+
+
+@pytest.mark.parametrize("invalid_address", ["not-an-address", "a@b@c"])
+@pytest.mark.asyncio
+async def test_gmail_create_draft_rejects_invalid_address_before_google_request(
+    db_engine: AsyncEngine,
+    invalid_address: str,
+) -> None:
+    backend = FakeApiBackend()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_google_connection(db)
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        result = await gmail_create_draft_tool(
+            context,
+            to=[invalid_address],
+            subject="Nope",
+            body="Nope",
+        )
+
+    assert "invalid to email address" in result.get_text().lower()
+    assert backend.requests == []
+
+
+@pytest.mark.asyncio
+async def test_gmail_create_draft_rejects_another_users_attachment(
+    db_engine: AsyncEngine,
+) -> None:
+    registry = _registry(db_engine)
+    backend = FakeApiBackend()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_google_connection(db)
+        attachment = await registry.store_and_register_tool_attachment(
+            file_content=b"private to user b",
+            filename="private.txt",
+            content_type="text/plain",
+            tool_name="test",
+            owner_user_id="user-b",
+            db_context=db,
+        )
+        context = _make_context(
+            db,
+            user_id="user-a",
+            resolver=resolver,
+            backend=backend,
+            attachment_registry=registry,
+        )
+        result = await gmail_create_draft_tool(
+            context,
+            to=["recipient@example.com"],
+            subject="No leak",
+            body="No leak",
+            attachment_ids=[attachment.attachment_id],
+        )
+
+    assert "not found for the requesting user" in result.get_text().lower()
+    assert backend.requests == []
+
+
+@pytest.mark.asyncio
+async def test_gmail_create_draft_rejects_attachment_filename_with_newline(
+    db_engine: AsyncEngine,
+) -> None:
+    registry = _registry(db_engine)
+    backend = FakeApiBackend()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        await _store_google_connection(db)
+        attachment = await registry.store_and_register_tool_attachment(
+            file_content=b"draft attachment",
+            filename="unsafe\nname.txt",
+            content_type="text/plain",
+            tool_name="test",
+            owner_user_id="user-a",
+            db_context=db,
+        )
+        context = _make_context(
+            db,
+            user_id="user-a",
+            resolver=resolver,
+            backend=backend,
+            attachment_registry=registry,
+        )
+        result = await gmail_create_draft_tool(
+            context,
+            to=["recipient@example.com"],
+            subject="No invalid MIME headers",
+            body="No invalid MIME headers",
+            attachment_ids=[attachment.attachment_id],
+        )
+
+    assert "invalid filename" in result.get_text().lower()
+    assert backend.requests == []
+
+
+@pytest.mark.asyncio
+async def test_drive_write_creates_app_folder_and_native_google_doc(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[]}'),
+            (200, b'{"id":"folder-1","name":"Family Assistant"}'),
+            (200, b'{"files":[]}'),
+            (
+                200,
+                b'{"id":"doc-1","name":"Plan","mimeType":'
+                b'"application/vnd.google-apps.document",'
+                b'"webViewLink":"https://docs.google.com/document/d/doc-1"}',
+            ),
+        ]
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        result = await drive_write_file_tool(
+            context, name="Plan", content="Family plan"
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["status"] == "created"
+    assert data["file_id"] == "doc-1"
+    assert [request[0] for request in backend.requests] == [
+        "GET",
+        "POST",
+        "GET",
+        "POST",
+    ]
+    assert backend.requests[-1][1] == (
+        "https://www.googleapis.com/upload/drive/v3/files"
+    )
+    request_body, content_type = backend.request_bodies[-1]
+    assert request_body is not None
+    assert b'"parents":["folder-1"]' in request_body
+    assert b'"mimeType":"application/vnd.google-apps.document"' in request_body
+    assert b"Family plan" in request_body
+    assert content_type is not None and content_type.startswith("multipart/related")
+
+
+@pytest.mark.asyncio
+async def test_parallel_drive_writes_create_only_one_app_folder(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = ConcurrentDriveApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/files"): {"files": []},
+                ("POST", "/files"): {
+                    "id": "file-1",
+                    "name": "Written file",
+                    "mimeType": "application/vnd.google-apps.document",
+                },
+            }
+        }
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        first_write = asyncio.create_task(
+            drive_write_file_tool(context, name="First", content="one")
+        )
+        await backend.first_folder_search_started.wait()
+        second_write = asyncio.create_task(
+            drive_write_file_tool(context, name="Second", content="two")
+        )
+        backend.release_first_folder_search.set()
+        first_result, second_result = await asyncio.gather(first_write, second_write)
+
+    assert first_result.get_data() is not None
+    assert second_result.get_data() is not None
+    assert backend.folder_create_count == 1
+    folder_create_requests = [
+        request
+        for request, (body, _) in zip(
+            backend.requests, backend.request_bodies, strict=True
+        )
+        if request[0] == "POST"
+        and request[1] == "https://www.googleapis.com/drive/v3/files"
+        and body is not None
+        and b"google-apps.folder" in body
+    ]
+    assert len(folder_create_requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_drive_write_uploads_owned_attachment_and_preserves_filename(
+    db_engine: AsyncEngine,
+) -> None:
+    registry = _registry(db_engine)
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[{"id":"folder-1","name":"Renamed Folder"}]}'),
+            (200, b'{"files":[]}'),
+            (
+                200,
+                b'{"id":"file-1","name":"report.pdf","mimeType":"application/pdf"}',
+            ),
+        ]
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        attachment = await registry.store_and_register_tool_attachment(
+            file_content=b"%PDF-owned-content",
+            filename="report.pdf",
+            content_type="application/pdf",
+            tool_name="test",
+            owner_user_id="user-a",
+            db_context=db,
+        )
+        context = _make_context(
+            db,
+            user_id="user-a",
+            resolver=resolver,
+            backend=backend,
+            attachment_registry=registry,
+        )
+        attachment_object = await fetch_attachment_object(
+            attachment.attachment_id, context
+        )
+        assert attachment_object is not None
+        result = await drive_write_file_tool(context, attachment_id=attachment_object)
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["name"] == "report.pdf"
+    request_body, _ = backend.request_bodies[-1]
+    assert request_body is not None
+    assert b'"name":"report.pdf"' in request_body
+    assert b"%PDF-owned-content" in request_body
+    assert b"Content-Type: application/pdf" in request_body
+
+
+@pytest.mark.asyncio
+async def test_drive_write_refuses_existing_file_without_overwrite(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'),
+            (
+                200,
+                b'{"files":[{"id":"doc-1","name":"Plan",'
+                b'"mimeType":"application/vnd.google-apps.document"}]}',
+            ),
+        ]
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        result = await drive_write_file_tool(
+            context, name="Plan", content="Replacement"
+        )
+
+    assert "overwrite=true" in result.get_text()
+    assert [request[0] for request in backend.requests] == ["GET", "GET"]
+
+
+@pytest.mark.asyncio
+async def test_drive_write_overwrites_only_discovered_same_type_file(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = FakeApiBackend(
+        scripted=[
+            (200, b'{"files":[{"id":"folder-1","name":"Family Assistant"}]}'),
+            (
+                200,
+                b'{"files":[{"id":"doc-1","name":"Plan",'
+                b'"mimeType":"application/vnd.google-apps.document"}]}',
+            ),
+            (
+                200,
+                b'{"id":"doc-1","name":"Plan","mimeType":'
+                b'"application/vnd.google-apps.document"}',
+            ),
+        ]
+    )
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        result = await drive_write_file_tool(
+            context,
+            name="Plan",
+            content="Replacement",
+            overwrite=True,
+        )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["status"] == "replaced"
+    assert backend.requests[-1][0] == "PATCH"
+    assert backend.requests[-1][1].endswith("/upload/drive/v3/files/doc-1")
+    request_body, _ = backend.request_bodies[-1]
+    assert request_body is not None
+    assert b'"parents"' not in request_body
+    assert b"Replacement" in request_body
+
+
+@pytest.mark.asyncio
+async def test_drive_write_rejects_content_over_multipart_limit(
+    db_engine: AsyncEngine,
+) -> None:
+    backend = FakeApiBackend()
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    async with DatabaseContext(engine=db_engine) as db:
+        context = _make_context(
+            db, user_id="user-a", resolver=resolver, backend=backend
+        )
+        result = await drive_write_file_tool(
+            context,
+            name="Too large",
+            content="x" * (5 * 1024 * 1024 + 1),
+        )
+
+    assert "limited to 5242880 bytes" in result.get_text()
+    assert backend.requests == []
+
+
+# --------------------------------------------------------------------------- #
 # Taint metadata
 # --------------------------------------------------------------------------- #
 
@@ -827,7 +1305,12 @@ _GOOGLE_TOOL_NAMES = [
     "gmail_get_attachment",
     "drive_search",
     "drive_get_file",
+    "gmail_create_draft",
+    "drive_write_file",
 ]
+
+_GOOGLE_READ_TOOL_NAMES = _GOOGLE_TOOL_NAMES[:5]
+_GOOGLE_WRITE_TOOL_NAMES = _GOOGLE_TOOL_NAMES[5:]
 
 
 def _descriptor(name: str) -> ToolDescriptor:
@@ -837,7 +1320,7 @@ def _descriptor(name: str) -> ToolDescriptor:
     )
 
 
-@pytest.mark.parametrize("tool_name", _GOOGLE_TOOL_NAMES)
+@pytest.mark.parametrize("tool_name", _GOOGLE_READ_TOOL_NAMES)
 def test_google_tools_taint_unknown_external(tool_name: str) -> None:
     source = derive_tool_result_taint_source(
         descriptor=_descriptor(tool_name), call_id=None
@@ -846,12 +1329,19 @@ def test_google_tools_taint_unknown_external(tool_name: str) -> None:
     assert source.tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
-@pytest.mark.parametrize("tool_name", _GOOGLE_TOOL_NAMES)
+@pytest.mark.parametrize("tool_name", _GOOGLE_READ_TOOL_NAMES)
 def test_google_tools_are_sensitive_read_broadening(tool_name: str) -> None:
     assert (
         resolve_tool_sink_class(_descriptor(tool_name))
         is SinkClass.SENSITIVE_READ_BROADENING
     )
+
+
+@pytest.mark.parametrize("tool_name", _GOOGLE_WRITE_TOOL_NAMES)
+def test_google_write_tools_are_trusted_artifact_writes(tool_name: str) -> None:
+    descriptor = _descriptor(tool_name)
+    assert derive_tool_result_taint_source(descriptor=descriptor, call_id=None) is None
+    assert resolve_tool_sink_class(descriptor) is SinkClass.ARTIFACT_WRITE
 
 
 def test_attach_to_response_is_user_local() -> None:
@@ -869,4 +1359,10 @@ def test_required_scopes_map_matches_tools() -> None:
     })
     assert GOOGLE_TOOL_REQUIRED_SCOPES["drive_get_file"] == frozenset({
         GoogleScope.DRIVE_READONLY.value
+    })
+    assert GOOGLE_TOOL_REQUIRED_SCOPES["gmail_create_draft"] == frozenset({
+        GoogleScope.GMAIL_COMPOSE.value
+    })
+    assert GOOGLE_TOOL_REQUIRED_SCOPES["drive_write_file"] == frozenset({
+        GoogleScope.DRIVE_FILE.value
     })

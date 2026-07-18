@@ -284,20 +284,29 @@ You can ask the assistant a wide variety of things:
     "cinematic" or "high-quality" video and it can switch to Google's Veo models, which trade some
     speed for more polished, film-like output.*
 
-- **Search Your Gmail and Drive:** If you have connected a Google account (see
+- **Use Your Gmail and Drive:** If you have connected a Google account (see
   [Connect your Google account](#connect-your-google-account) below), the assistant can search and
-  read your own Gmail and Google Drive on your behalf:
+  read your own Gmail and Google Drive, create unsent email drafts, and write files to its dedicated
+  Drive folder on your behalf:
 
   - "Did the school send the excursion permission form?" — the assistant searches your inbox.
   - "Find the tax PDF my accountant shared with me" — the assistant searches your Drive.
   - "Show me the email from Jane last week about the lease renewal."
   - "Get the spreadsheet called Family Budget."
+  - "Draft an email to the school about tomorrow's absence and attach the doctor's note."
+  - "Save this trip plan as a Google Doc."
+  - "Upload this PDF to my Family Assistant Drive folder."
   - The assistant can also fetch attachments from emails and return them to you inline.
   - Gmail results use standard Gmail search syntax (e.g. `from:school has:attachment`); Drive
     results use Drive query syntax (e.g. `name contains 'budget'`).
-  - **What the assistant cannot do:** send email, modify or delete anything, or see another
-    household member's mailbox or Drive. Access is strictly read-only and strictly limited to your
-    own connected account.
+  - Drafts remain unsent for you to review and send from Gmail. The deterministic tool has no send
+    operation.
+  - Authored Drive content becomes a native Google Doc by default; plain-text and Markdown files are
+    also supported. Existing Family Assistant attachments can be uploaded as ordinary files.
+  - Drive writes are confined to an app-created **Family Assistant** folder and app-created files
+    inside it. The assistant cannot choose an arbitrary parent or file ID.
+  - **What the assistant cannot do:** send email, delete Google data, modify files outside the app
+    folder, or see another household member's mailbox or Drive.
   - **Mind the audience:** the assistant replies wherever you asked. If you ask about your email in
     a group chat, the answer (and any fetched attachment) is visible to everyone in that chat. The
     assistant is instructed to prefer summaries and offer private delivery for personal content in
@@ -891,8 +900,16 @@ Once connected, you can ask things like:
 The assistant can search your inbox, read full messages (HTML is converted to readable text), fetch
 email attachments, search your Drive, and fetch or export files (Google Docs/Sheets/Slides are
 exported as text; other small text files are returned inline; larger or binary files come back as
-downloadable attachments). Everything is read-only — the assistant cannot send email, modify or
-delete anything, or see another household member's account.
+downloadable attachments). It can also create unsent Gmail drafts, optionally with existing Family
+Assistant attachments, and create or replace native Google Docs, text/Markdown files, and uploaded
+attachments inside its dedicated **Family Assistant** Drive folder. It cannot send email, delete
+Google data, write outside that app folder, or see another household member's account.
+
+Draft creation and Drive writing require their corresponding Google permissions. If your account was
+connected before these features were enabled, use **Reconnect** in Connected Accounts and approve
+the new permissions. Creating a file of an existing name is refused by default; the assistant must
+explicitly request overwrite, and even then it can replace only an app-marked file of the same type
+inside the app folder.
 
 ### How to connect
 
@@ -937,7 +954,7 @@ member who will use this feature as a test user in the OAuth consent screen. A c
 mode is sufficient and requires no Google verification for these sensitive scopes — however, refresh
 tokens issued to test-mode clients expire after **7 days**, which triggers re-authorization
 notifications for all users on that cycle. To avoid this, publish the OAuth client to production
-mode; for Gmail and Drive read scopes this may involve Google's verification process. The design
+mode; for the Gmail and Drive scopes this may involve Google's verification process. The design
 intentionally does not work around this in code — the right fix is production mode, not silence.
 
 **Required environment variables** (see also the `google_integration` section in AGENTS.md):
