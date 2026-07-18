@@ -100,8 +100,8 @@ def make_tool_executor(
         attachment_processor=attachment_processor,
         attachment_registry=None,
         clock=SystemClock(),
-        google_credentials=None,
-        google_api_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
     )
 
 
