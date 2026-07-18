@@ -715,6 +715,12 @@ async def delegate_to_service_tool(
             attachments=None,
         )
 
+    # The /tools JSON editor posts every schema property, so an unset
+    # resume_delegation_id arrives as "" rather than being omitted. Treat a blank
+    # (or whitespace-only) value as absent so a normal fresh delegation is not
+    # rejected as an attempt to resume delegation ''.
+    resume_delegation_id = (resume_delegation_id or "").strip() or None
+
     resumed_subconversation_id: str | None = None
     if resume_delegation_id is not None:
         (

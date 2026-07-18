@@ -3226,3 +3226,33 @@ async def test_resume_delegation_rejects_other_users_delegation(
     assert result.text is not None
     assert "no such delegation reference" in result.text.lower()
     assert target_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_delegate_treats_blank_resume_id_as_fresh_delegation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A blank resume_delegation_id (as the /tools editor posts) starts fresh.
+
+    The JSON editor posts every schema property, so an unset optional string
+    arrives as "" rather than being omitted; that must not be treated as a
+    resume attempt.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        result = await delegate_to_service_tool(
+            exec_context=_tool_context(db_context, processing_service, chat_interface),
+            target_service_id="target_profile",
+            user_request="fresh delegation",
+            delivery_hint="background",
+            resume_delegation_id="   ",
+        )
+
+    assert result.text is not None
+    assert "cannot resume" not in result.text.lower()
+    assert isinstance(result.data, dict)
+    assert str(result.data["delegation_id"]).startswith("delegation_")
