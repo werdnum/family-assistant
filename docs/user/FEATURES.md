@@ -404,7 +404,8 @@ ______________________________________________________________________
 
 ### Video Generation
 
-Create short videos from text descriptions using Google's Veo model.
+Create short videos from text descriptions using Gemini Omni Flash by default, or Google's Veo model
+for higher-quality cinematic clips.
 
 **Capabilities:**
 
@@ -423,7 +424,7 @@ Create short videos from text descriptions using Google's Veo model.
 - "Create a video of ocean waves crashing on rocks"
 - "Make a 4-second video of a puppy playing"
 
-**Requirements:** Gemini API key with Veo access
+**Requirements:** Gemini API key (with Veo access for the cinematic model)
 
 **Documentation:**
 [User Guide - Video Generation](USER_GUIDE.md#3-what-can-the-assistant-do-for-you-core-features)

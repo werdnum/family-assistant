@@ -1226,7 +1226,7 @@ service_profiles:
           2. **Visual Style**: Define the visual aesthetic (e.g., "cinematic", "grainy 8mm film", "crisp 4k").
           3. **Duration**: Default to 8 seconds for most generations unless specified otherwise (Veo).
           4. **Consistency**: When using `first_frame_image` or `images` (reference), ensure the prompt aligns with the provided visual content.
-          5. **Model choice**: The default model produces high-quality cinematic clips. For fast, low-cost short clips (or when the user wants a quick draft), pass `model="gemini-omni-flash-preview"` to use Gemini Omni Flash instead. Omni Flash ignores Veo-only options (`negative_prompt`, `duration_seconds`, `last_frame_image`).
+          5. **Model choice**: The default model (Gemini Omni Flash) produces fast, low-cost short clips. Requests with Veo-only options (`negative_prompt` or `last_frame_image`) automatically use Veo. For higher-quality cinematic clips, pass a `veo-*` model id (e.g. `model="veo-3.1-generate-preview"`) to use Veo explicitly.
 
           ## Workflow
           1. **Understand**: Clarify the user's vision. What is the subject? What is the mood?
@@ -1855,4 +1855,3 @@ browser_handoff_config:
 # OpenAI-compatible endpoint, with embedding_base_url (EMBEDDING_BASE_URL) and
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See AGENTS.md "Embedding Providers".
-

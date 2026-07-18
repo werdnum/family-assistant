@@ -1301,7 +1301,8 @@ class AppConfig(BaseSettings):
     gemini_image: GeminiImageConfig = Field(default_factory=GeminiImageConfig)
 
     # Video generation. When backend is None it is inferred from the requested
-    # model (``veo-*`` -> Veo, otherwise Gemini Omni Flash), defaulting to Veo.
+    # model (``veo-*`` -> Veo, otherwise Gemini Omni Flash), defaulting to
+    # Gemini Omni Flash.
     video_generation_backend: Literal["veo", "gemini_omni", "mock"] | None = None
     veo_video: VeoVideoConfig = Field(default_factory=VeoVideoConfig)
     gemini_omni_video: GeminiOmniVideoConfig = Field(
