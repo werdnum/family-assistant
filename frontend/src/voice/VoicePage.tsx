@@ -28,6 +28,24 @@ function getRemainingTime(duration: number): number {
   return Math.max(0, SESSION_CONFIG.MAX_DURATION_MINUTES * 60 - duration);
 }
 
+export async function resolveVoiceProfileId(): Promise<string | undefined> {
+  try {
+    const response = await fetch('/api/v1/profiles');
+    if (!response.ok) {
+      return undefined;
+    }
+    const data: { profiles: Array<{ id: string }>; default_profile_id: string } =
+      await response.json();
+    const storedProfileId = localStorage.getItem('selectedProfileId');
+    if (storedProfileId && data.profiles.some((profile) => profile.id === storedProfileId)) {
+      return storedProfileId;
+    }
+    return data.default_profile_id || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Session timer display component.
  */
@@ -102,7 +120,7 @@ export function VoicePage() {
   const { sessionState, transcripts, connect, disconnect } = useGeminiLive();
 
   const handleStartCall = () => {
-    connect(localStorage.getItem('selectedProfileId') || 'default_assistant');
+    void resolveVoiceProfileId().then(connect);
   };
 
   const handleEndCall = () => {
