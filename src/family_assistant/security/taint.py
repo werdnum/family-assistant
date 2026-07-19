@@ -636,6 +636,14 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         or "calendar" in tag_values
     ):
         return SinkClass.ARTIFACT_WRITE
+    if "read_only" in tag_values:
+        # A read-only tool cannot deliver free-form external messages, so the
+        # arbitrary_external_message fallback below would misstate its risk.
+        # Without sensitive_data metadata the read is still conservatively
+        # treated as read-broadening rather than allowed outright. Placed last
+        # so read-only tools that also carry a higher-risk tag (browser reads,
+        # external_comm reads such as ucp_get_cart) keep their stricter class.
+        return SinkClass.SENSITIVE_READ_BROADENING
     logger.warning(
         "Tool '%s' has no sink-class metadata; defaulting to arbitrary external "
         "message for runtime taint policy.",
