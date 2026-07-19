@@ -572,9 +572,7 @@ class KubernetesBackend:
     def _worker_start_command(self, webhook_url: str) -> str:
         """Build the container command that marks a Kubernetes worker running."""
         separator = "&" if "?" in webhook_url else "?"
-        start_webhook_url = (
-            f"{webhook_url}{separator}event_type=worker_started&source=worker"
-        )
+        start_webhook_url = f"{webhook_url}{separator}event_type=worker_started"
         start_script = """
 import json
 import os
@@ -586,14 +584,17 @@ data = {
     "message": f"Worker task {os.environ['TASK_ID']} started.",
     "data": {
         "task_id": os.environ["TASK_ID"],
-        "callback_token": os.environ.get("TASK_CALLBACK_TOKEN"),
     },
 }
 body = json.dumps(data).encode("utf-8")
+headers = {"Content-Type": "application/json"}
+callback_token = os.environ.get("TASK_CALLBACK_TOKEN")
+if callback_token:
+    headers["X-Worker-Callback-Token"] = callback_token
 request = urllib.request.Request(
     url,
     data=body,
-    headers={"Content-Type": "application/json"},
+    headers=headers,
 )
 try:
     urllib.request.urlopen(request, timeout=10).close()

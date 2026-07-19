@@ -536,6 +536,7 @@ async def handle_generic_webhook(
     Headers (optional):
         - X-Webhook-Signature: HMAC-SHA256 signature for verification
         - X-Webhook-Source: Alternative source identifier (overrides body and query source)
+        - X-Worker-Callback-Token: Per-task proof for worker_started events
 
     Returns:
         JSON response with status and event_id
@@ -588,6 +589,14 @@ async def handle_generic_webhook(
 
     # Build event data for the processor
     # Extra fields first so system-generated values take precedence
+    persisted_data = body.data
+    if effective_event_type == "worker_started" and persisted_data:
+        persisted_data = {
+            key: value
+            for key, value in persisted_data.items()
+            if key != "callback_token"
+        }
+
     # ast-grep-ignore: no-dict-any - Event data intentionally combines webhook payload with generated fields
     event_data: dict[str, Any] = {
         **(body.model_extra or {}),  # Extra fields from payload (lowest priority)
@@ -597,12 +606,16 @@ async def handle_generic_webhook(
         "title": body.title,
         "message": body.message,
         "severity": body.severity,
-        "data": body.data,
+        "data": persisted_data,
     }
 
     # Handle worker lifecycle events - update task status in database
     if effective_event_type == "worker_started":
-        await _handle_worker_started(db_context, body.data)
+        await _handle_worker_started(
+            db_context,
+            body.data,
+            request.headers.get("X-Worker-Callback-Token"),
+        )
     elif effective_event_type == "worker_completion":
         await _handle_worker_completion(
             db_context,
@@ -628,6 +641,7 @@ async def _handle_worker_started(
     db_context: DatabaseContext,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
+    callback_token: str | None,
 ) -> None:
     """Handle worker start webhook by marking the task running."""
     if not data:
@@ -645,14 +659,13 @@ async def _handle_worker_started(
         return
 
     stored_token = task.get("callback_token")
-    provided_token = data.get("callback_token")
     if stored_token:
-        if not provided_token:
+        if not callback_token:
             logger.warning(
                 "Worker start for task %s missing required callback_token", task_id
             )
             return
-        if not hmac.compare_digest(stored_token, provided_token):
+        if not hmac.compare_digest(stored_token, callback_token):
             logger.warning(
                 "Worker start for task %s has invalid callback_token", task_id
             )

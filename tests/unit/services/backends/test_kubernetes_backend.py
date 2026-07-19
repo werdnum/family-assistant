@@ -233,6 +233,9 @@ class TestKubernetesBackendBuildJobManifest:
 
         compile(python_source, "<worker-start-command>", "exec")
         assert "\nimport json\n" in python_source
+        assert "source=worker" not in python_source
+        assert "X-Worker-Callback-Token" in python_source
+        assert '"callback_token":' not in python_source
 
     def test_build_manifest_gemini_model(self, backend: KubernetesBackend) -> None:
         """Test job manifest for gemini model uses gemini config volume."""
