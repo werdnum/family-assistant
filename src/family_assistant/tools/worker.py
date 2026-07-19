@@ -495,10 +495,13 @@ async def spawn_worker_tool(
                 )
             raise
 
-        # Update task status to submitted (started_at set later when task runs)
+        # Record the backend job id without regressing a fast lifecycle callback
+        # that may already have marked the task running or terminal.
+        current_task = await db_context.worker_tasks.get_task(task_id)
+        current_status = current_task["status"] if current_task else "pending"
         await db_context.worker_tasks.update_task_status(
             task_id=task_id,
-            status="submitted",
+            status="submitted" if current_status == "pending" else current_status,
             job_name=job_id,
         )
 

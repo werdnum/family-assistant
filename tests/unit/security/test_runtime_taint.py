@@ -843,14 +843,14 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     assert isinstance(result, ToolResult)
     assert result.get_text() == "opened url"
     assert "requested=confirm effective=audit mode=observe" in caplog.text
-    would_enforce_errors = [
+    would_enforce_warnings = [
         record
         for record in caplog.records
-        if record.levelno == logging.ERROR
+        if record.levelno == logging.WARNING
         and "Runtime taint WOULD ENFORCE" in record.getMessage()
     ]
-    assert len(would_enforce_errors) == 1
-    would_enforce_message = would_enforce_errors[0].getMessage()
+    assert len(would_enforce_warnings) == 1
+    would_enforce_message = would_enforce_warnings[0].getMessage()
     assert "would_be=confirm" in would_enforce_message
     assert "max_tier=unknown_external" in would_enforce_message
     assert "do-not-store" not in would_enforce_message
@@ -886,13 +886,13 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
         result = await provider.execute_tool("home_tool", {}, context, "call_home")
 
     assert isinstance(result, ToolResult)
-    would_enforce_errors = [
+    would_enforce_warnings = [
         record
         for record in caplog.records
-        if record.levelno == logging.ERROR
+        if record.levelno == logging.WARNING
         and "Runtime taint WOULD ENFORCE" in record.getMessage()
     ]
-    assert would_enforce_errors == []
+    assert would_enforce_warnings == []
 
 
 @pytest.mark.asyncio

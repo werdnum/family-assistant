@@ -600,8 +600,10 @@ async def handle_generic_webhook(
         "data": body.data,
     }
 
-    # Handle worker completion events - update task status in database
-    if effective_event_type == "worker_completion":
+    # Handle worker lifecycle events - update task status in database
+    if effective_event_type == "worker_started":
+        await _handle_worker_started(db_context, body.data)
+    elif effective_event_type == "worker_completion":
         await _handle_worker_completion(
             db_context,
             body.data,
@@ -620,6 +622,51 @@ async def handle_generic_webhook(
         await webhook_source.emit_event(event_data)
 
     return WebhookEventResponse(status="accepted", event_id=event_id)
+
+
+async def _handle_worker_started(
+    db_context: DatabaseContext,
+    # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
+    data: dict[str, Any] | None,
+) -> None:
+    """Handle worker start webhook by marking the task running."""
+    if not data:
+        logger.warning("Worker started event missing data payload")
+        return
+
+    task_id = data.get("task_id")
+    if not task_id:
+        logger.warning("Worker started event missing task_id")
+        return
+
+    task = await db_context.worker_tasks.get_task(task_id)
+    if not task:
+        logger.warning("Worker task %s not found for start update", task_id)
+        return
+
+    stored_token = task.get("callback_token")
+    provided_token = data.get("callback_token")
+    if stored_token:
+        if not provided_token:
+            logger.warning(
+                "Worker start for task %s missing required callback_token", task_id
+            )
+            return
+        if not hmac.compare_digest(stored_token, provided_token):
+            logger.warning(
+                "Worker start for task %s has invalid callback_token", task_id
+            )
+            return
+
+    updated = await db_context.worker_tasks.update_task_status(
+        task_id=task_id,
+        status="running",
+        started_at=datetime.now(UTC),
+    )
+    if updated:
+        logger.info("Updated worker task %s status to running", task_id)
+    else:
+        logger.warning("Worker task %s not found for start update", task_id)
 
 
 async def _handle_worker_completion(

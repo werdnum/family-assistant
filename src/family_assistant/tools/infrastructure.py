@@ -1173,9 +1173,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 and evaluation.requested_outcome is not evaluation.effective_outcome
             ):
                 # Observe mode downgraded a gating outcome (confirm/deny/redact) to
-                # audit. Surface it at ERROR so a dry run can be reviewed from the
-                # error-log / diagnostics endpoints before enabling enforce mode.
-                logger.error(
+                # audit. Surface it at WARNING so dry-run diagnostics remain visible
+                # without polluting error-log triage.
+                logger.warning(
                     "Runtime taint WOULD ENFORCE (observe mode, not blocked): "
                     "tool=%s call_id=%s conversation=%s sink=%s would_be=%s "
                     "max_tier=%s reason=%s",
