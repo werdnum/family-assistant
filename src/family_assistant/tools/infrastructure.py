@@ -837,6 +837,14 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         self._tool_definitions_by_confirmation: dict[bool, list[ToolDefinition]] = {}
         self._cached_descriptors_version: int | None = None
 
+    @property
+    def policy_engine(self) -> PolicyEngine:
+        """Return the policy engine backing this provider.
+
+        Exposed for diagnostics (engineer profile policy resolution).
+        """
+        return self._policy_engine
+
     async def get_tool_definitions(
         self,
         *,

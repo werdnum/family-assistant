@@ -37,6 +37,22 @@ CONFIRMATION_VALUE_MAX_CHARS = 1200
 # and code fences. Bulk content belongs in an attachment, not the request string.
 MAX_DELEGATION_REQUEST_CHARS = 3000
 
+# Approving spawn_worker launches a code-running agent against the shared
+# workspace, so the approver must see the ENTIRE task description — the same
+# full-review contract as delegation, with the same Telegram-budget cap. There
+# is no side channel for bulk content (the worker sandbox mounts only its own
+# task directory; backends do not mount context_paths), so a longer brief must
+# be shortened or split into smaller worker tasks.
+MAX_WORKER_TASK_DESCRIPTION_CHARS = 3000
+
+# The per-field caps alone cannot guarantee the WHOLE spawn_worker prompt fits
+# Telegram's single-message confirmation budget (3800 chars in telegram/ui.py):
+# a near-cap description plus context paths would render over it and be
+# truncated, letting an approver approve fields they never saw. The payload
+# guard therefore also refuses on the total rendered prompt, with headroom
+# under 3800 for the interface's own additions (e.g. the source prefix).
+MAX_WORKER_CONFIRMATION_PROMPT_CHARS = 3400
+
 
 def _markdown_code_block(text: str) -> str:
     """Render text as inert markdown using a fence longer than any content fence."""
@@ -548,6 +564,108 @@ async def render_delegate_to_service_confirmation(
     return "Do you want to delegate this task to another profile?\n" + "\n".join(fields)
 
 
+def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
+    """Build the full spawn_worker confirmation prompt.
+
+    Shared by the async renderer and the payload guard so the total-length
+    refusal in ``confirmation_payload_block_reason`` measures exactly the
+    prompt the approver would see.
+    """
+    task_description = str(arguments.get("task_description", "")).strip()
+
+    if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
+        # An over-length spawn is refused before it runs (see
+        # confirmation_payload_block_reason), so never show a partial body the
+        # approver might rubber-stamp — say plainly that it will be refused.
+        description_field = (
+            f"- Task description: ⚠️ This description is {len(task_description)} characters, "
+            f"longer than the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that keeps it "
+            "fully reviewable here. The worker will not be launched — shorten the task "
+            "description or split the work into smaller worker tasks."
+        )
+    else:
+        description_field = (
+            f"- Task description:\n{_markdown_code_block(task_description)}"
+        )
+
+    fields = [
+        _confirmation_field("Agent", arguments.get("agent", "claude")),
+        description_field,
+    ]
+    raw_context_paths = arguments.get("context_paths")
+    if isinstance(raw_context_paths, (list, tuple)):
+        if raw_context_paths:
+            fields.append(
+                _confirmation_field(
+                    "Context paths", ", ".join(str(path) for path in raw_context_paths)
+                )
+            )
+    elif raw_context_paths is not None:
+        # Script callers bypass JSON-schema validation, so a non-list value
+        # (e.g. a mapping whose keys the tool would later iterate as paths)
+        # must not be silently omitted from the prompt: the guard refuses the
+        # call (see confirmation_payload_block_reason), and the prompt says so.
+        fields.append(
+            f"- Context paths: ⚠️ Malformed value of type "
+            f"{type(raw_context_paths).__name__} — context_paths must be an array of "
+            "workspace path strings. The worker will not be launched."
+        )
+    fields.append(
+        _confirmation_field("Timeout (minutes)", arguments.get("timeout_minutes", 30))
+    )
+    return (
+        "Do you want to launch an isolated AI coding worker? It executes code in a "
+        "sandboxed container with network access — it can clone public git "
+        "repositories, including this application's — but has no access to Family "
+        "Assistant tools or data. It works from the task description below and "
+        "returns output files:\n" + "\n".join(fields)
+    )
+
+
+async def render_spawn_worker_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for launching an isolated AI coding worker."""
+    _ = context
+    return _spawn_worker_confirmation_prompt(args)
+
+
+async def render_cancel_worker_task_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for cancelling a worker task.
+
+    Looks the task up so the approver sees what they are stopping, not just an
+    opaque id. Mirrors cancel_worker_task_tool's conversation scoping: a task
+    belonging to a different conversation is treated as not found, so the
+    prompt never leaks another conversation's task details for a cancel that
+    would be refused anyway.
+    """
+    task_id = str(args.get("task_id", "")).strip()
+    fields = [_confirmation_field("Task ID", task_id)]
+
+    task = None
+    db_context = getattr(context, "db_context", None)
+    if task_id and db_context is not None:
+        task = await db_context.worker_tasks.get_task(task_id)
+        if task is not None and task.get("conversation_id") != context.conversation_id:
+            task = None
+
+    if task is not None:
+        fields.append(_confirmation_field("Status", task.get("status")))
+        fields.append(
+            _confirmation_field("Task description", task.get("task_description"))
+        )
+    else:
+        fields.append(
+            "- Task details: not found — the task may have already finished or the "
+            "id may be wrong."
+        )
+    return "Do you want to *cancel* this worker task?\n" + "\n".join(fields)
+
+
 def over_length_delegation_block_reason(user_request: str) -> str | None:
     """Return an error if a delegation request is too long to confirm, else None.
 
@@ -577,13 +695,56 @@ def confirmation_payload_block_reason(
     could not show the approver the full payload they would be approving,
     instead of rendering a truncated or misleading prompt. Only invoked once a
     call is known to be confirm-gated, so it never constrains unconfirmed calls.
-    Delegations, authored Google writes, and every executable computer-use
-    argument must remain fully reviewable.
+    Delegations, worker spawns, authored Google writes, and every executable
+    computer-use argument must remain fully reviewable.
     """
     if tool_name == "delegate_to_service":
         return over_length_delegation_block_reason(
             str(arguments.get("user_request", ""))
         )
+    if tool_name == "spawn_worker":
+        task_description = str(arguments.get("task_description", ""))
+        if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
+            return (
+                f"Error: the worker task_description is {len(task_description)} characters, "
+                f"which exceeds the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that "
+                "keeps it fully reviewable in a confirmation prompt. Shorten it or split "
+                "the work into smaller worker tasks."
+            )
+        # The context paths scope what the worker can read, so they must be
+        # fully reviewable too. Script callers bypass JSON-schema validation,
+        # so a present-but-non-list value is refused outright: the tool would
+        # later iterate it (a mapping's keys would become paths) while the
+        # prompt showed the approver no paths at all.
+        raw_context_paths = arguments.get("context_paths")
+        if raw_context_paths is not None and not isinstance(
+            raw_context_paths, (list, tuple)
+        ):
+            return (
+                f"Error: context_paths must be an array of workspace path strings, "
+                f"got {type(raw_context_paths).__name__}. Pass the paths as a JSON "
+                'array (e.g. ["shared/data/input.csv"]).'
+            )
+        if isinstance(raw_context_paths, (list, tuple)):
+            rendered_paths = ", ".join(str(path) for path in raw_context_paths)
+            if len(rendered_paths) > CONFIRMATION_VALUE_MAX_CHARS:
+                return (
+                    f"Error: the worker context_paths render to {len(rendered_paths)} "
+                    f"characters, which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character "
+                    "confirmation limit. Pass fewer paths (e.g. a shared parent directory)."
+                )
+        # The per-field caps can individually pass while the combined prompt
+        # still exceeds Telegram's single-message budget (and gets truncated),
+        # so also refuse on the total rendered prompt.
+        rendered_prompt = _spawn_worker_confirmation_prompt(arguments)
+        if len(rendered_prompt) > MAX_WORKER_CONFIRMATION_PROMPT_CHARS:
+            return (
+                f"Error: the spawn_worker confirmation prompt renders to "
+                f"{len(rendered_prompt)} characters, which exceeds the "
+                f"{MAX_WORKER_CONFIRMATION_PROMPT_CHARS}-character limit that keeps the "
+                "whole prompt reviewable in a single confirmation message. Shorten the "
+                "task description or pass fewer context paths."
+            )
     if tool_name == "gmail_create_draft":
         for field in ("to", "cc", "bcc", "subject", "body", "attachment_ids"):
             rendered = str(arguments.get(field, ""))
@@ -677,6 +838,8 @@ _base_renderers: dict[str, ConfirmationRenderer] = {
     "drive_write_file": render_drive_write_file_confirmation,
     "ingest_document_from_url": render_ingest_document_from_url_confirmation,
     "delegate_to_service": render_delegate_to_service_confirmation,
+    "spawn_worker": render_spawn_worker_confirmation,
+    "cancel_worker_task": render_cancel_worker_task_confirmation,
 }
 
 TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {
