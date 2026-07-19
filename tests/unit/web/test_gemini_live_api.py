@@ -14,7 +14,11 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.web.routers.gemini_live_api import gemini_live_router
+from family_assistant.web.routers.gemini_live_api import (
+    _convert_json_schema_type_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
+    _convert_properties_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
+    gemini_live_router,
+)
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
@@ -23,6 +27,41 @@ if TYPE_CHECKING:
         ToolExecutionContext,
         ToolResult,
     )
+
+
+def test_convert_scalar_type_to_gemini() -> None:
+    assert _convert_json_schema_type_to_gemini("string") == ("STRING", False)
+
+
+def test_convert_nullable_list_type_to_gemini() -> None:
+    assert _convert_json_schema_type_to_gemini(["string", "null"]) == ("STRING", True)
+
+
+def test_convert_properties_marks_nullable_field() -> None:
+    properties = {"note": {"type": ["string", "null"], "description": "Optional"}}
+
+    converted = _convert_properties_to_gemini(properties)
+
+    assert converted["note"]["type"] == "STRING"
+    assert converted["note"]["nullable"] is True
+
+
+def test_convert_properties_nullable_array_items() -> None:
+    properties = {"tags": {"type": "array", "items": {"type": ["string", "null"]}}}
+
+    converted = _convert_properties_to_gemini(properties)
+
+    assert converted["tags"]["type"] == "ARRAY"
+    assert converted["tags"]["items"]["type"] == "STRING"
+    assert converted["tags"]["items"]["nullable"] is True
+
+
+def test_convert_properties_non_nullable_field_omits_flag() -> None:
+    properties = {"query": {"type": "string"}}
+
+    converted = _convert_properties_to_gemini(properties)
+
+    assert "nullable" not in converted["query"]
 
 
 class VoiceModeStubToolsProvider:

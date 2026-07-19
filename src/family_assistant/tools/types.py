@@ -115,7 +115,10 @@ class ToolPropertyItems(TypedDict, total=False):
     For complex nested objects, additional fields may be present.
     """
 
-    type: str
+    # JSON Schema permits ``type`` to be a list such as ``["string", "null"]`` to
+    # express a nullable field, so it is not always a bare string. Use
+    # ``normalize_json_schema_type`` before treating it as a single scalar type.
+    type: str | list[str]
     description: str
     # ast-grep-ignore: no-dict-any - JSON Schema nested properties can be arbitrarily deep
     properties: dict[str, Any]  # Nested object properties
@@ -133,7 +136,9 @@ class ToolPropertySchema(TypedDict, total=False):
     Follows JSON Schema format as used by OpenAI function calling.
     """
 
-    type: str
+    # See ``ToolPropertyItems.type``: JSON Schema allows the list form (e.g.
+    # ``["string", "null"]``) for nullable fields.
+    type: str | list[str]
     description: str
     format: str
     default: Any
@@ -153,7 +158,9 @@ class ToolParametersSchema(TypedDict, total=False):
     Follows JSON Schema 'object' type format.
     """
 
-    type: str
+    # See ``ToolPropertyItems.type``: JSON Schema allows the list form here too,
+    # although the parameters object is conventionally a bare ``"object"``.
+    type: str | list[str]
     properties: dict[str, ToolPropertySchema]
     required: list[str]
     additionalProperties: bool
@@ -178,6 +185,33 @@ class ToolDefinition(TypedDict):
 
     type: str
     function: ToolFunctionSchema
+
+
+def normalize_json_schema_type(
+    type_value: object, default: str = "string"
+) -> tuple[str, bool]:
+    """Normalize a JSON Schema ``type`` value to a single type name plus nullability.
+
+    JSON Schema permits ``type`` to be either a string or a list of strings such as
+    ``["string", "null"]`` to express a nullable field. Consumers that need a single
+    scalar type (e.g. the Gemini schema converters) should route the raw ``type``
+    through here to collapse the list form and learn whether ``"null"`` was present.
+
+    Returns a ``(type_name, nullable)`` tuple. ``type_name`` falls back to ``default``
+    when the value is missing, all-null, or not a string.
+    """
+    if isinstance(type_value, list):
+        non_null = [t for t in type_value if t != "null"]
+        nullable = len(non_null) != len(type_value)
+        resolved: object = non_null[0] if non_null else default
+    else:
+        resolved = type_value
+        nullable = False
+
+    if not isinstance(resolved, str):
+        resolved = default
+
+    return resolved, nullable
 
 
 if TYPE_CHECKING:

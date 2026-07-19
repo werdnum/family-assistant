@@ -9,10 +9,9 @@ from typing import Any, cast
 from google.genai import types
 
 from family_assistant.llm.providers.google_genai_client import (
-    _normalize_json_schema_type,  # noqa: PLC2701 - unit tests need direct access to internal helper
     convert_tools_to_genai_format,
 )
-from family_assistant.tools.types import ToolDefinition
+from family_assistant.tools.types import ToolDefinition, normalize_json_schema_type
 
 
 def _tool_with_properties(
@@ -59,22 +58,22 @@ class TestNormalizeJsonSchemaType:
     """Tests for the JSON Schema ``type`` normalization helper."""
 
     def test_scalar_string_type(self) -> None:
-        assert _normalize_json_schema_type("string") == ("string", False)
+        assert normalize_json_schema_type("string") == ("string", False)
 
     def test_nullable_list_type_collapses_to_non_null(self) -> None:
-        assert _normalize_json_schema_type(["string", "null"]) == ("string", True)
+        assert normalize_json_schema_type(["string", "null"]) == ("string", True)
 
     def test_null_first_ordering(self) -> None:
-        assert _normalize_json_schema_type(["null", "integer"]) == ("integer", True)
+        assert normalize_json_schema_type(["null", "integer"]) == ("integer", True)
 
     def test_list_without_null_is_not_nullable(self) -> None:
-        assert _normalize_json_schema_type(["string", "number"]) == ("string", False)
+        assert normalize_json_schema_type(["string", "number"]) == ("string", False)
 
     def test_all_null_falls_back_to_default(self) -> None:
-        assert _normalize_json_schema_type(["null"]) == ("string", True)
+        assert normalize_json_schema_type(["null"]) == ("string", True)
 
     def test_non_string_value_falls_back_to_default(self) -> None:
-        assert _normalize_json_schema_type(None) == ("string", False)
+        assert normalize_json_schema_type(None) == ("string", False)
 
 
 class TestConvertToolsToGenaiFormat:
