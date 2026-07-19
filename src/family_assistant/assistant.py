@@ -96,6 +96,7 @@ from family_assistant.storage.base import create_engine_with_sqlite_optimization
 from family_assistant.storage.context import (
     DatabaseContext,
     get_db_context,
+    set_engine_history_taint_epoch,
 )
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
@@ -646,6 +647,14 @@ class Assistant:
             await init_db(self.database_engine)
             async with get_db_context(self.database_engine) as db_ctx:
                 await db_ctx.init_vector_db()
+
+        # Attach the deployment history taint epoch to the engine so every
+        # DatabaseContext (web, telegram, task worker, scripts) applies the same
+        # read-time amnesty when materializing message-history taint metadata.
+        set_engine_history_taint_epoch(
+            self.database_engine,
+            self.config.taint_policy.history_taint_epoch,
+        )
 
         # Store engine in FastAPI app state for web dependencies
         self.fastapi_app.state.database_engine = self.database_engine

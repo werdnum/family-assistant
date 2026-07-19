@@ -287,6 +287,18 @@ taint_policy:
   # observe records audit events and stores provenance, but converts confirm/deny
   # decisions to audit. Switch to enforce after reviewing audit behavior.
   mode: "observe"
+  # Optional read-time amnesty cutoff for legacy history taint metadata. Message
+  # history rows persisted BEFORE this instant contribute taint only from their
+  # explicitly attributed sources: the synthetic legacy_missing_taint_metadata
+  # fallback for rows without metadata and anonymous manual escalation
+  # artifacts are ignored, and the row's taint is recomputed from what remains.
+  # Rows at or after the epoch are trusted as recorded, and a post-epoch row
+  # missing metadata is logged as an ERROR (write-path regression alarm).
+  # Must be timezone-aware; QUOTE the value so YAML passes it through as an
+  # ISO-8601 string (unquoted YAML timestamps parse as naive datetimes and are
+  # rejected at startup). Unset/null disables the amnesty.
+  # Example: history_taint_epoch: "2026-07-06T00:00:00+00:00"
+  history_taint_epoch: null
   high_taint_tier: "unknown_external"
   default_unspecified_tool_output_tier: "unknown_external"
   # Deployment-level minimum outcomes that profile overrides cannot relax.

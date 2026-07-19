@@ -127,19 +127,30 @@ class MessageHistoryTaintGroup(BaseModel):
     tool_name: str | None
     metadata_version: str | None
     max_tier: str | None
+    pre_epoch: bool | None
     oldest_timestamp: datetime
     newest_timestamp: datetime
     count: int
 
 
 class MessageHistoryTaintDiagnostics(BaseModel):
-    """Breakdown of persisted message-history rows by taint state."""
+    """Breakdown of persisted message-history rows by taint state.
+
+    The ``*_epoch_*`` fields are ``None`` unless
+    ``taint_policy.history_taint_epoch`` is configured; with an epoch set they
+    split the inventory into rows amnestied at read time (pre-epoch) and rows
+    trusted as recorded (post-epoch), and count the post-epoch rows whose
+    missing metadata indicates a write-path regression.
+    """
 
     total_rows: int
     classified_rows: int
     missing_required_metadata_rows: int
     malformed_metadata_rows: int
     not_applicable_rows: int
+    pre_epoch_rows: int | None
+    post_epoch_rows: int | None
+    post_epoch_missing_required_metadata_rows: int | None
     by_status: list[DiagnosticCount]
     by_metadata_version: list[DiagnosticCount]
     by_max_tier: list[DiagnosticCount]
@@ -156,6 +167,7 @@ class TaintDiagnosticsResponse(BaseModel):
     generated_at: str
     window_days: int
     max_events: int
+    history_taint_epoch: str | None
     audit: TaintAuditDiagnostics
     message_history: MessageHistoryTaintDiagnostics
 
@@ -418,11 +430,14 @@ async def get_taint_diagnostics(
     """
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=days)
+    history_taint_epoch = db_context.history_taint_epoch
     audit_count = await db_context.taint_audit_events.count_since(cutoff)
     audit_events = await db_context.taint_audit_events.list_since(
         cutoff, limit=max_events
     )
-    history_rows = await db_context.message_history.get_taint_diagnostics()
+    history_rows = await db_context.message_history.get_taint_diagnostics(
+        history_taint_epoch=history_taint_epoch
+    )
 
     event_type_counts: Counter[str | None] = Counter()
     mode_counts: Counter[str | None] = Counter()
@@ -456,6 +471,9 @@ async def get_taint_diagnostics(
     processing_profile_counts: Counter[str | None] = Counter()
     history_tool_counts: Counter[str | None] = Counter()
     total_history_rows = 0
+    pre_epoch_rows = 0
+    post_epoch_rows = 0
+    post_epoch_missing_rows = 0
     for row in history_rows:
         count = row["count"]
         total_history_rows += count
@@ -466,12 +484,21 @@ async def get_taint_diagnostics(
         interface_counts[row["interface_type"]] += count
         processing_profile_counts[row["processing_profile_id"]] += count
         history_tool_counts[row["tool_name"]] += count
+        if row["pre_epoch"]:
+            pre_epoch_rows += count
+        else:
+            post_epoch_rows += count
+            if row["status"] == "missing":
+                post_epoch_missing_rows += count
 
     timestamps = [event["created_at"] for event in audit_events]
     return TaintDiagnosticsResponse(
         generated_at=now.isoformat(),
         window_days=days,
         max_events=max_events,
+        history_taint_epoch=(
+            history_taint_epoch.isoformat() if history_taint_epoch else None
+        ),
         audit=TaintAuditDiagnostics(
             matched_event_count=audit_count,
             included_event_count=len(audit_events),
@@ -499,6 +526,11 @@ async def get_taint_diagnostics(
             missing_required_metadata_rows=status_counts["missing"],
             malformed_metadata_rows=status_counts["malformed"],
             not_applicable_rows=status_counts["not_applicable"],
+            pre_epoch_rows=pre_epoch_rows if history_taint_epoch else None,
+            post_epoch_rows=post_epoch_rows if history_taint_epoch else None,
+            post_epoch_missing_required_metadata_rows=(
+                post_epoch_missing_rows if history_taint_epoch else None
+            ),
             by_status=_diagnostic_counts(status_counts),
             by_metadata_version=_diagnostic_counts(version_counts),
             by_max_tier=_diagnostic_counts(history_tier_counts),

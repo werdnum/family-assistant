@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
 
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 TAINT_METADATA_VERSION = "runtime_v1"
 A2A_TAINT_METADATA_KEY = "family_assistant_taint_metadata"
+LEGACY_MISSING_TAINT_METADATA_LABEL = "legacy_missing_taint_metadata"
 
 
 class SourceTrustTier(IntEnum):
@@ -372,6 +374,7 @@ class TaintPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: TaintPolicyMode = TaintPolicyMode.OBSERVE
+    history_taint_epoch: datetime | None = None
     high_taint_tier: SourceTrustTier = SourceTrustTier.UNKNOWN_EXTERNAL
     default_unspecified_tool_output_tier: SourceTrustTier = (
         SourceTrustTier.UNKNOWN_EXTERNAL
@@ -392,6 +395,20 @@ class TaintPolicyConfig(BaseModel):
             SourceTrustTier.KNOWN_CONTACT: ["source_known_contact"],
         }
     )
+
+    @field_validator("history_taint_epoch", mode="after")
+    @classmethod
+    def _require_timezone_aware_epoch(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            msg = (
+                "taint_policy.history_taint_epoch must be timezone-aware. Quote "
+                "the value in YAML so it is parsed as an ISO-8601 string with an "
+                'offset, e.g. history_taint_epoch: "2026-07-06T00:00:00+00:00".'
+            )
+            raise ValueError(msg)
+        return value.astimezone(UTC)
 
     @field_validator(
         "high_taint_tier",
@@ -533,6 +550,9 @@ def merge_taint_policy_config(
     fields_set = profile.model_fields_set
     if "operator_minimum" in fields_set and profile.operator_minimum:
         msg = "Profile taint_policy cannot define operator_minimum"
+        raise ValueError(msg)
+    if "history_taint_epoch" in fields_set and profile.history_taint_epoch is not None:
+        msg = "Profile taint_policy cannot define history_taint_epoch"
         raise ValueError(msg)
     if "mode" in fields_set:
         if (
@@ -758,6 +778,50 @@ def derive_tool_result_taint_source(
         tier=tier,
         labels=frozenset(),
         reason=reason,
+    )
+
+
+def amnestied_history_taint_metadata(metadata: object) -> TaintMetadata | None:
+    """Recompute a pre-epoch history row's taint from attributed sources only.
+
+    Rows persisted before ``taint_policy.history_taint_epoch`` receive a
+    read-time amnesty for legacy taint poison: the synthetic
+    ``legacy_missing_taint_metadata`` fallback and the anonymous manual
+    escalation artifacts synthesized by :meth:`TurnTaintState.from_metadata`
+    for truncated or omitted source summaries are dropped, and the row's taint
+    contribution is recomputed from the explicitly attributed sources that
+    remain. The persisted ``max_tier`` is deliberately not honored, because
+    for pre-epoch rows it may encode nothing but re-baked legacy poison whose
+    attribution was truncated away. Rows with no metadata, malformed metadata,
+    or no surviving attributed sources contribute no taint at all.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    raw_sources = metadata.get("sources")
+    if not isinstance(raw_sources, list):
+        return None
+    state = TurnTaintState.empty()
+    for raw_source in raw_sources:
+        source = _source_from_metadata(
+            raw_source,
+            fallback_tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        )
+        if _is_amnestied_legacy_artifact(source):
+            continue
+        state = state.add_source(source, from_history=True)
+    if not state.sources:
+        return None
+    return state.to_metadata()
+
+
+def _is_amnestied_legacy_artifact(source: TaintSource) -> bool:
+    """Return whether a pre-epoch source is legacy poison rather than provenance."""
+    if LEGACY_MISSING_TAINT_METADATA_LABEL in source.labels:
+        return True
+    return (
+        source.source_type is TaintSourceType.MANUAL
+        and not source.labels
+        and source.source_id is None
     )
 
 
