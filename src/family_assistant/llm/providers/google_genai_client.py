@@ -160,7 +160,7 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
             if prop_type == "array":
                 # Handle array types - need to specify items
                 items_def = prop_def.get("items", {})
-                items_type_name, _ = normalize_json_schema_type(
+                items_type_name, items_nullable = normalize_json_schema_type(
                     items_def.get("type", "string")
                 )
                 items_type = types.Type(items_type_name.upper())
@@ -172,6 +172,7 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
                     items=types.Schema(
                         type=items_type,
                         description=items_def.get("description", ""),
+                        nullable=items_nullable,
                     ),
                 )
             else:

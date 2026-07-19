@@ -126,3 +126,4 @@ class TestConvertToolsToGenaiFormat:
         assert tags.type == types.Type.ARRAY
         assert tags.items is not None
         assert tags.items.type == types.Type.STRING
+        assert tags.items.nullable is True
