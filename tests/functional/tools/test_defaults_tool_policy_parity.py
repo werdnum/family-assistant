@@ -330,3 +330,33 @@ def test_engineer_can_delegate_out_only_with_confirmation() -> None:
             can_confirm=True,
         )
         assert outbound_blocked.decision is ToolPolicyDecision.DENY, blocked_target
+
+
+def test_engineer_worker_tools_are_confirm_gated_and_reads_are_allowed() -> None:
+    """The engineer may use AI workers, but only with a human in the loop.
+
+    spawn_worker and cancel_worker_task change state (launch/stop a sandboxed
+    worker), so the engineer profile confirm-gates them; without a confirmation
+    channel they degrade to deny so no worker is ever launched unattended.
+    Reading worker results is side-effect free and allowed outright, as is
+    resolve_tool_policy (the engineer's policy-introspection tool).
+    """
+    _, profiles = _load_resolved_profiles()
+    engineer = {profile.id: profile for profile in profiles}["engineer"]
+    engine = PolicyEngine.from_policy_config(engineer.tools_policy)
+
+    for gated_name in ("spawn_worker", "cancel_worker_task"):
+        descriptor = _local_descriptor(gated_name)
+        attended = engine.evaluate_for_execution(descriptor, can_confirm=True)
+        assert attended.decision is ToolPolicyDecision.CONFIRM, gated_name
+        unattended = engine.evaluate_for_execution(descriptor, can_confirm=False)
+        assert unattended.decision is ToolPolicyDecision.DENY, gated_name
+
+    for allowed_name in (
+        "read_task_result",
+        "list_worker_tasks",
+        "resolve_tool_policy",
+    ):
+        descriptor = _local_descriptor(allowed_name)
+        decision = engine.evaluate_for_execution(descriptor, can_confirm=False).decision
+        assert decision is ToolPolicyDecision.ALLOW, allowed_name
