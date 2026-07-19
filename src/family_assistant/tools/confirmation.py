@@ -39,8 +39,10 @@ MAX_DELEGATION_REQUEST_CHARS = 3000
 
 # Approving spawn_worker launches a code-running agent against the shared
 # workspace, so the approver must see the ENTIRE task description — the same
-# full-review contract as delegation, with the same Telegram-budget cap. Bulk
-# content belongs in a workspace file referenced via context_paths.
+# full-review contract as delegation, with the same Telegram-budget cap. There
+# is no side channel for bulk content (the worker sandbox mounts only its own
+# task directory; backends do not mount context_paths), so a longer brief must
+# be shortened or split into smaller worker tasks.
 MAX_WORKER_TASK_DESCRIPTION_CHARS = 3000
 
 # The per-field caps alone cannot guarantee the WHOLE spawn_worker prompt fits
@@ -579,7 +581,7 @@ def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
             f"- Task description: ⚠️ This description is {len(task_description)} characters, "
             f"longer than the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that keeps it "
             "fully reviewable here. The worker will not be launched — shorten the task "
-            "description or move bulk content into a workspace file referenced via context_paths."
+            "description or split the work into smaller worker tasks."
         )
     else:
         description_field = (
@@ -704,8 +706,8 @@ def confirmation_payload_block_reason(
             return (
                 f"Error: the worker task_description is {len(task_description)} characters, "
                 f"which exceeds the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that "
-                "keeps it fully reviewable in a confirmation prompt. Shorten it, or move bulk "
-                "content into a workspace file and reference it via context_paths."
+                "keeps it fully reviewable in a confirmation prompt. Shorten it or split "
+                "the work into smaller worker tasks."
             )
         # The context paths scope what the worker can read, so they must be
         # fully reviewable too. Script callers bypass JSON-schema validation,
@@ -739,8 +741,7 @@ def confirmation_payload_block_reason(
                 f"{len(rendered_prompt)} characters, which exceeds the "
                 f"{MAX_WORKER_CONFIRMATION_PROMPT_CHARS}-character limit that keeps the "
                 "whole prompt reviewable in a single confirmation message. Shorten the "
-                "task description or pass fewer context paths (bulk content belongs in "
-                "a workspace file referenced via context_paths)."
+                "task description or pass fewer context paths."
             )
     if tool_name == "gmail_create_draft":
         for field in ("to", "cc", "bcc", "subject", "body", "attachment_ids"):
