@@ -55,7 +55,7 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
-from family_assistant.tools.types import ToolDefinition
+from family_assistant.tools.types import ToolDefinition, normalize_json_schema_type
 
 from ..base import (
     AuthenticationError,
@@ -153,19 +153,26 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
         # Convert properties to Google format
         google_properties = {}
         for prop_name, prop_def in properties.items():
-            prop_type = prop_def.get("type", "string")
+            prop_type, prop_nullable = normalize_json_schema_type(
+                prop_def.get("type", "string")
+            )
 
             if prop_type == "array":
                 # Handle array types - need to specify items
                 items_def = prop_def.get("items", {})
-                items_type = types.Type(items_def.get("type", "string").upper())
+                items_type_name, items_nullable = normalize_json_schema_type(
+                    items_def.get("type", "string")
+                )
+                items_type = types.Type(items_type_name.upper())
 
                 google_properties[prop_name] = types.Schema(
                     type=types.Type.ARRAY,
                     description=prop_def.get("description", ""),
+                    nullable=prop_nullable or None,
                     items=types.Schema(
                         type=items_type,
                         description=items_def.get("description", ""),
+                        nullable=items_nullable or None,
                     ),
                 )
             else:
@@ -174,6 +181,7 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
                 google_properties[prop_name] = types.Schema(
                     type=schema_type,
                     description=prop_def.get("description", ""),
+                    nullable=prop_nullable or None,
                 )
 
         # Create function declaration
