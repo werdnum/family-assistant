@@ -88,23 +88,47 @@ is where the trust boundary is actually crossed.
 
 ### Confirmation for Side Effects
 
-`create_github_issue` is the only tool that has external side effects (creating an issue on GitHub).
-The engineer profile's `tools_policy` requires confirmation for that tool so the user must approve
-before execution.
+Every engineer tool with side effects is gated behind user confirmation rather than allowed
+outright: `create_github_issue` (creates an issue on GitHub), `reconnect_mcp_server` (tears down and
+re-establishes an MCP session), and the state-changing worker actions `spawn_worker` /
+`cancel_worker_task` (launch or stop an isolated AI coding worker). This keeps the profile's
+effective posture read-only: a human approves before anything outside the sandbox changes.
+
+### Self-Awareness of Restrictions
+
+The engineer's tool set is deliberately narrow, and its system prompt says so explicitly: a missing
+tool or a policy-denied call is expected configuration, not an application bug, and the prompt
+instructs the profile not to report such denials as errors. To make that checkable rather than an
+article of faith, the `resolve_tool_policy` tool resolves the live policy decision (allow / deny /
+confirm) for any tool name against any profile's policy engine and reports which rule matched
+(layer, priority, description) or that the default decision applied. It accepts hypothetical call
+arguments so argument-conditional rules (e.g. `delegate_to_service` targets) can be tested, and a
+`can_confirm` flag to model interactions that cannot prompt for confirmation. This is the intended
+first stop when diagnosing "tool missing" / "tool denied" reports for any profile — including the
+engineer itself.
 
 ## Tools
 
-| Tool                  | Purpose                                             | Side Effects                          |
-| --------------------- | --------------------------------------------------- | ------------------------------------- |
-| `read_source_file`    | Read project source files with optional line ranges | None                                  |
-| `search_source_code`  | Search codebase using ripgrep patterns              | None                                  |
-| `query_database`      | Execute read-only SQL SELECT queries                | None                                  |
-| `read_error_logs`     | Read application error/warning logs                 | None                                  |
-| `create_github_issue` | File bug reports on GitHub                          | Creates issue (requires confirmation) |
+| Tool                   | Purpose                                                | Side Effects                          |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------- |
+| `read_source_file`     | Read project source files with optional line ranges    | None                                  |
+| `search_source_code`   | Search codebase using ripgrep patterns                 | None                                  |
+| `query_database`       | Execute read-only SQL SELECT queries                   | None                                  |
+| `read_error_logs`      | Read application error/warning logs                    | None                                  |
+| `resolve_tool_policy`  | Explain the live tool-policy decision for any profile  | None                                  |
+| `read_task_result`     | Read the result of an AI worker task                   | None                                  |
+| `list_worker_tasks`    | List AI worker tasks and their statuses                | None                                  |
+| `create_github_issue`  | File bug reports on GitHub                             | Creates issue (requires confirmation) |
+| `reconnect_mcp_server` | Re-establish a failed MCP server session               | Reconnects (requires confirmation)    |
+| `spawn_worker`         | Launch an isolated AI coding worker to implement a fix | Starts worker (requires confirmation) |
+| `cancel_worker_task`   | Cancel a running AI worker task                        | Stops worker (requires confirmation)  |
 
 The profile also includes existing read-only tools: `list_notes`, `get_note`, `search_documents`,
 `get_full_document_content`, `get_user_documentation_content`, `list_pending_callbacks`,
-`query_recent_events`, `list_automations`, `get_automation`, `get_automation_stats`.
+`query_recent_events`, `list_automations`, `get_automation`, `get_automation_stats`, plus the
+diagnostic tools `get_llm_request_history`, `get_mcp_server_status`, `get_resolved_config`,
+`get_profile_config`, `get_profile_tool_inventory`, `get_system_info`, `get_message_history`,
+`get_delegation_status`, and `list_delegations`.
 
 ## Relationship with spawn_worker
 
@@ -113,8 +137,13 @@ The engineer profile and `spawn_worker` serve complementary but distinct purpose
 - **Engineer profile**: Diagnoses issues by reading application state (DB, error logs, source code)
 - **spawn_worker**: Implements fixes by executing code in an isolated container
 
-They do not overlap: workers cannot access the database or error logs; the engineer cannot execute
-code or modify files.
+They do not overlap in capability: workers cannot access the database, error logs, or any Family
+Assistant tools or data; the engineer cannot execute code or modify files itself. The engineer
+profile *can* invoke `spawn_worker` directly (behind user confirmation) so an investigation can hand
+a self-contained coding task — implement this fix, verify this hypothesis against the repo — to a
+sandboxed worker without leaving the engineer conversation. Because the worker sandbox has no access
+to Family Assistant data, this crosses no Rule-of-Two boundary beyond the state change of launching
+the worker, which is what the confirmation covers.
 
 ## Usage
 
