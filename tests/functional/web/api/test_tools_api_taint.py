@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -48,6 +49,7 @@ class TaintingDirectToolsProvider:
     def __init__(self) -> None:
         self.initial_tiers: list[SourceTrustTier] = []
         self.context_tools_providers: list[object | None] = []
+        self.context_timezones: list[ZoneInfo] = []
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
         return []
@@ -64,6 +66,7 @@ class TaintingDirectToolsProvider:
         assert context.taint_tracker is not None
         self.initial_tiers.append(context.taint_tracker.snapshot().max_tier)
         self.context_tools_providers.append(context.tools_provider)
+        self.context_timezones.append(context.timezone)
         context.taint_tracker.add_source(
             TaintSource(
                 source_type=TaintSourceType.EMAIL,
@@ -190,6 +193,7 @@ async def test_direct_tool_api_uses_selected_provider_for_nested_tools(
     app_fixture.state.tools_provider = root_provider
     processing_service = app_fixture.state.processing_service
     processing_service.tools_provider = profile_provider
+    processing_service.service_config.timezone = ZoneInfo("Pacific/Auckland")
     profile_id = processing_service.service_config.id
     app_fixture.state.processing_services = {profile_id: processing_service}
 
@@ -204,6 +208,7 @@ async def test_direct_tool_api_uses_selected_provider_for_nested_tools(
 
     assert response.status_code == 200
     assert profile_provider.context_tools_providers == [profile_provider]
+    assert profile_provider.context_timezones == [ZoneInfo("Pacific/Auckland")]
     assert root_provider.initial_tiers == []
 
 

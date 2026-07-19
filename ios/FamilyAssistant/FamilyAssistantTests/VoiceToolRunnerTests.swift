@@ -7,10 +7,15 @@ import XCTest
 final class VoiceToolRunnerTests: XCTestCase {
     private final class FakeToolExecutor: VoiceToolExecuting {
         var handler: (String, JSONValue) async throws -> JSONValue = { _, _ in .null }
-        private(set) var calls: [(name: String, arguments: JSONValue)] = []
+        private(set) var calls: [(name: String, arguments: JSONValue, profileID: String?, taintMetadata: JSONValue)] = []
 
-        func executeTool(name: String, arguments: JSONValue) async throws -> JSONValue {
-            calls.append((name, arguments))
+        func executeTool(
+            name: String,
+            arguments: JSONValue,
+            profileID: String?,
+            taintMetadata: JSONValue
+        ) async throws -> JSONValue {
+            calls.append((name, arguments, profileID, taintMetadata))
             return try await handler(name, arguments)
         }
     }
@@ -72,6 +77,52 @@ final class VoiceToolRunnerTests: XCTestCase {
         XCTAssertEqual(responses.map(\.name), ["a", "b"])
         XCTAssertEqual(executor.calls.map(\.name), ["a", "b"])
     }
+
+    func testThreadsProfileAndReturnedTaintAcrossCalls() async throws {
+        let executor = FakeToolExecutor()
+        let returnedTaint: JSONValue = .object([
+            "version": .string("runtime_v1"),
+            "max_tier": .string("unknown_external"),
+            "sources": .array([]),
+        ])
+        executor.handler = { name, _ in
+            .object([
+                "result": .string(name),
+                "taint_metadata": returnedTaint,
+            ])
+        }
+        let runner = VoiceToolRunner(executor: executor, profileID: "research")
+
+        _ = await runner.run([call("first"), call("second")])
+
+        XCTAssertEqual(executor.calls.map(\.profileID), ["research", "research"])
+        XCTAssertEqual(executor.calls[0].taintMetadata, VoiceToolRunner.initialTaintMetadata)
+        XCTAssertEqual(executor.calls[1].taintMetadata, returnedTaint)
+    }
+
+    func testRetainsTaintReturnedWithRejectedCall() async throws {
+        let executor = FakeToolExecutor()
+        let returnedTaint: JSONValue = .object([
+            "version": .string("runtime_v1"),
+            "max_tier": .string("unknown_external"),
+            "sources": .array([]),
+        ])
+        executor.handler = { name, _ in
+            if name == "rejected" {
+                return .object([
+                    "detail": .string("policy denied"),
+                    "taint_metadata": returnedTaint,
+                ])
+            }
+            return .object(["result": .string("ok")])
+        }
+        let runner = VoiceToolRunner(executor: executor)
+
+        let responses = await runner.run([call("rejected"), call("next")])
+
+        XCTAssertEqual(responses[0].response, .object(["error": .string("policy denied")]))
+        XCTAssertEqual(executor.calls[1].taintMetadata, returnedTaint)
+    }
 }
 
 @MainActor
@@ -109,10 +160,17 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
 
         let result = try await makeClient().executeTool(
             name: "get_weather",
-            arguments: .object(["city": .string("NYC")])
+            arguments: .object(["city": .string("NYC")]),
+            profileID: "research",
+            taintMetadata: VoiceToolRunner.initialTaintMetadata
         )
 
         XCTAssertEqual((capturedBody["arguments"] as? [String: Any])?["city"] as? String, "NYC")
+        XCTAssertEqual(capturedBody["profile_id"] as? String, "research")
+        XCTAssertEqual(
+            (capturedBody["taint_metadata"] as? [String: Any])?["max_tier"] as? String,
+            "trusted_user"
+        )
         XCTAssertEqual(result, .object(["forecast": .string("sunny")]))
     }
 
@@ -123,7 +181,12 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
             return .json("{}")
         }
 
-        _ = try await makeClient().executeTool(name: "noop", arguments: .null)
+        _ = try await makeClient().executeTool(
+            name: "noop",
+            arguments: .null,
+            profileID: nil,
+            taintMetadata: VoiceToolRunner.initialTaintMetadata
+        )
 
         let arguments = try XCTUnwrap(capturedBody["arguments"] as? [String: Any])
         XCTAssertTrue(arguments.isEmpty)

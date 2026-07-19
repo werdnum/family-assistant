@@ -4,7 +4,12 @@ import Foundation
 /// tool runner can be tested without a network.
 @MainActor
 protocol VoiceToolExecuting {
-    func executeTool(name: String, arguments: JSONValue) async throws -> JSONValue
+    func executeTool(
+        name: String,
+        arguments: JSONValue,
+        profileID: String?,
+        taintMetadata: JSONValue
+    ) async throws -> JSONValue
 }
 
 extension ChatAPIClient: VoiceToolExecuting {}
@@ -16,10 +21,21 @@ extension ChatAPIClient: VoiceToolExecuting {}
 /// model always receives a well-formed response and the turn can continue.
 @MainActor
 final class VoiceToolRunner {
-    private let executor: VoiceToolExecuting
+    static let initialTaintMetadata: JSONValue = .object([
+        "version": .string("runtime_v1"),
+        "max_tier": .string("trusted_user"),
+        "history_high_taint_present": .bool(false),
+        "fresh_high_taint_seen_at_sequence": .null,
+        "sources": .array([]),
+    ])
 
-    init(executor: VoiceToolExecuting) {
+    private let executor: VoiceToolExecuting
+    private let profileID: String?
+    private var taintMetadata = VoiceToolRunner.initialTaintMetadata
+
+    init(executor: VoiceToolExecuting, profileID: String? = nil) {
         self.executor = executor
+        self.profileID = profileID
     }
 
     /// Execute every call in order and collect the responses.
@@ -33,7 +49,18 @@ final class VoiceToolRunner {
 
     private func run(_ call: GeminiFunctionCall) async -> GeminiFunctionResponse {
         do {
-            let result = try await executor.executeTool(name: call.name, arguments: call.args)
+            let result = try await executor.executeTool(
+                name: call.name,
+                arguments: call.args,
+                profileID: profileID,
+                taintMetadata: taintMetadata
+            )
+            if let returnedTaint = result["taint_metadata"] {
+                taintMetadata = returnedTaint
+            }
+            if case .string(let detail) = result["detail"] {
+                return errorResponse(for: call, message: detail)
+            }
             return GeminiFunctionResponse(
                 id: call.id,
                 name: call.name,

@@ -116,7 +116,14 @@ private final class FakeTokenProvider: VoiceTokenProviding {
 @MainActor
 private final class FakeToolExecutor: VoiceToolExecuting {
     var handler: (String, JSONValue) async throws -> JSONValue = { _, _ in .null }
-    func executeTool(name: String, arguments: JSONValue) async throws -> JSONValue {
+    func executeTool(
+        name: String,
+        arguments: JSONValue,
+        profileID: String?,
+        taintMetadata: JSONValue
+    ) async throws -> JSONValue {
+        _ = profileID
+        _ = taintMetadata
         try await handler(name, arguments)
     }
 }
