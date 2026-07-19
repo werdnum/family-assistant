@@ -108,7 +108,11 @@ def test_resolve_mcp_tool_tags_prefers_config_then_wildcard_then_annotations() -
         ToolTag.OUTPUT_UNTRUSTED,
     }
     assert wildcard_tags == {ToolTag.READ_ONLY, ToolTag.OUTPUT_TRUSTED}
-    assert annotation_only_tags == {ToolTag.READ_ONLY, ToolTag.OUTPUT_UNTRUSTED}
+    assert annotation_only_tags == {
+        ToolTag.READ_ONLY,
+        ToolTag.OPEN_WORLD,
+        ToolTag.OUTPUT_UNTRUSTED,
+    }
 
 
 def test_resolve_mcp_tool_tags_adds_output_unspecified_when_annotations_lack_output() -> (
@@ -121,11 +125,53 @@ def test_resolve_mcp_tool_tags_adds_output_unspecified_when_annotations_lack_out
         open_world_hint=None,
     )
 
+    # openWorldHint defaults to true in the MCP spec, so a read-only tool that
+    # does not explicitly close its world is marked OPEN_WORLD.
     assert resolve_mcp_tool_tags(
         tool_name="read_only_tool",
         configured_tool_metadata=None,
         annotation_tags=annotation_tags,
-    ) == {ToolTag.READ_ONLY, ToolTag.OUTPUT_UNSPECIFIED}
+    ) == {ToolTag.READ_ONLY, ToolTag.OPEN_WORLD, ToolTag.OUTPUT_UNSPECIFIED}
+
+
+def test_derive_mcp_annotation_tags_marks_open_world_by_default() -> None:
+    """A read-only tool without explicit openWorldHint=false is open-world."""
+    # openWorldHint=None (unset) -> conservative open-world default.
+    assert derive_mcp_annotation_tags(
+        read_only_hint=True,
+        destructive_hint=None,
+        open_world_hint=None,
+    ) == frozenset({ToolTag.READ_ONLY, ToolTag.OPEN_WORLD})
+    # openWorldHint=True -> open-world plus untrusted output.
+    assert derive_mcp_annotation_tags(
+        read_only_hint=True,
+        destructive_hint=None,
+        open_world_hint=True,
+    ) == frozenset({
+        ToolTag.READ_ONLY,
+        ToolTag.OPEN_WORLD,
+        ToolTag.OUTPUT_UNTRUSTED,
+    })
+
+
+def test_derive_mcp_annotation_tags_closed_world_read_only_has_no_open_world() -> None:
+    """An explicit openWorldHint=false clears the open-world marker."""
+    assert derive_mcp_annotation_tags(
+        read_only_hint=True,
+        destructive_hint=None,
+        open_world_hint=False,
+    ) == frozenset({ToolTag.READ_ONLY})
+
+
+def test_derive_mcp_annotation_tags_open_world_requires_read_only() -> None:
+    """OPEN_WORLD is only derived alongside a read-only hint."""
+    # A non-read-only open-world tool already carries an egress-worthy sink
+    # classification via its other tags, so the marker is not added here.
+    assert derive_mcp_annotation_tags(
+        read_only_hint=None,
+        destructive_hint=None,
+        open_world_hint=True,
+    ) == frozenset({ToolTag.OUTPUT_UNTRUSTED})
 
 
 @pytest.mark.asyncio

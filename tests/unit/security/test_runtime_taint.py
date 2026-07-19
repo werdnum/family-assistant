@@ -660,6 +660,32 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
         )
         is SinkClass.SENSITIVE_READ_BROADENING
     )
+    # An open-world read-only tool (e.g. an external search/fetch tool) can still
+    # exfiltrate: the model controls the query/URL sent to the external service.
+    # It must keep the egress classification, not the read-broadening class.
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "open_world_search",
+                ToolTag.READ_ONLY,
+                ToolTag.OPEN_WORLD,
+                ToolTag.OUTPUT_UNTRUSTED,
+            )
+        )
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
+    # A read-only tool whose world is explicitly closed (no open_world tag) still
+    # resolves to the read-broadening class.
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "closed_world_read_only",
+                ToolTag.READ_ONLY,
+                ToolTag.OUTPUT_TRUSTED,
+            )
+        )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
     assert (
         resolve_tool_sink_class(descriptor("legacy_unclassified_tool"))
         is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
