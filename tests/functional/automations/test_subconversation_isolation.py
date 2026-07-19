@@ -26,6 +26,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.security.taint import TaintMetadata
 from family_assistant.storage import delegation_runs_table, message_history_table
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
@@ -84,8 +85,9 @@ class RecordingChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
-        _ = (parse_mode, reply_to_interface_id, on_behalf_of_user_id)
+        _ = (parse_mode, reply_to_interface_id, on_behalf_of_user_id, taint_metadata)
         self.messages.append(
             RecordedChatMessage(
                 conversation_id=conversation_id,

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from family_assistant.security.taint import InMemoryTurnTaintTracker
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     ToolExecutionContext,
@@ -136,6 +137,9 @@ async def execute_tool_api(
             processing_service.credential_resolvers if processing_service else None
         ),
         api_backend=(processing_service.api_backend if processing_service else None),
+        # Direct API calls come from an authenticated user; start from an
+        # explicit trusted-empty state so tool results carry taint metadata.
+        taint_tracker=InMemoryTurnTaintTracker(),
     )
 
     try:

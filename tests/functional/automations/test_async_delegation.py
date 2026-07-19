@@ -21,6 +21,13 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.processing import PENDING, RemoteSubmission
 from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintMetadata,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
@@ -335,6 +342,7 @@ class AttachmentVisibilityChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         _ = (
             conversation_id,
@@ -342,6 +350,7 @@ class AttachmentVisibilityChatInterface:
             parse_mode,
             reply_to_interface_id,
             on_behalf_of_user_id,
+            taint_metadata,
         )
         self.sent_text = text
         self.sent_attachment_ids = attachment_ids
@@ -550,6 +559,7 @@ async def _create_run(
     delegation_id: str,
     interface_type: str = TEST_INTERFACE_TYPE,
     source_subconversation_id: str | None = None,
+    taint_state_json: TaintMetadata | None = None,
 ) -> str:
     """Create a queued delegation run and return its delegation_id."""
     await db_context.delegation_runs.create_run({
@@ -566,6 +576,7 @@ async def _create_run(
         "source_subconversation_id": source_subconversation_id,
         "request_text": "do the thing",
         "content_parts_json": [],
+        "taint_state_json": taint_state_json,
     })
     return delegation_id
 
@@ -635,9 +646,22 @@ async def test_terminal_run_renotifies_when_not_yet_notified(
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
+    tainted_parent_state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="email-1",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="test email source",
+        )
+    )
     clock = SystemClock()
     async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_renotify")
+        await _create_run(
+            db_context,
+            delegation_id="delegation_renotify",
+            taint_state_json=tainted_parent_state.to_metadata(),
+        )
         await db_context.delegation_runs.mark_handed_off(
             "delegation_renotify", clock.now()
         )
@@ -664,6 +688,21 @@ async def test_terminal_run_renotifies_when_not_yet_notified(
         )
         assert run is not None
         assert run["notified_at"] is not None
+
+        # The notification history row carries the run's recorded taint state
+        # instead of being persisted without metadata.
+        notification_rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .where(message_history_table.c.role == "assistant")
+        )
+        assert len(notification_rows) == 1
+        assert notification_rows[0]["taint_metadata_version"] == "runtime_v1"
+        assert notification_rows[0]["taint_metadata_json"] is not None
+        assert (
+            notification_rows[0]["taint_metadata_json"]["max_tier"]
+            == "unknown_external"
+        )
 
 
 @pytest.mark.asyncio
@@ -1052,6 +1091,9 @@ async def test_source_wake_creates_history_row_for_attachment_only_web_response(
 
     assert len(rows) == 2
     source_row, visible_row = rows
+    # Worker-persisted delivery rows always carry runtime taint metadata.
+    assert source_row["taint_metadata_version"] == "runtime_v1"
+    assert visible_row["taint_metadata_version"] == "runtime_v1"
     assert source_row["content"] == "Delegated task finished."
     assert source_row["processing_profile_id"] == "source_profile"
     assert source_row["turn_id"] is not None

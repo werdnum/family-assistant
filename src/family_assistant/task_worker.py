@@ -54,8 +54,10 @@ from family_assistant.scripting import (
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
+    TaintMetadata,
     TaintSource,
     TurnTaintState,
+    coerce_taint_metadata,
 )
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.services import short_error_summary
@@ -131,6 +133,20 @@ def _taint_sources_from_delegation_run(
     if run["taint_state_json"] is None:
         return ()
     return TurnTaintState.from_metadata(run["taint_state_json"]).sources
+
+
+def _delegation_run_taint_metadata(run: DelegationRunDict) -> TaintMetadata:
+    """Taint metadata for history rows derived from a delegation run.
+
+    Uses the parent taint state captured when the delegation was created (the
+    best deterministic state available at notification time); runs recorded
+    before taint capture existed get an explicit empty state instead of no
+    metadata. The delegated turn's own history rows carry their authoritative
+    per-message state.
+    """
+    if run["taint_state_json"] is None:
+        return TurnTaintState.empty().to_metadata()
+    return TurnTaintState.from_metadata(run["taint_state_json"]).to_metadata()
 
 
 class ReminderConfig(TypedDict, total=False):
@@ -1923,9 +1939,13 @@ class TaskWorker:
 
         message_text = self._delegation_notification_text(run)
         attachments = self._delegation_notification_attachments(run)
+        notification_taint_metadata = _delegation_run_taint_metadata(run)
         async with exec_context.db_context.create_isolated_context() as isolated_db:
             message_internal_id = await isolated_db.message_history.add_message(
-                AssistantMessage(content=message_text),
+                AssistantMessage(
+                    content=message_text,
+                    taint_metadata=notification_taint_metadata,
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
@@ -1958,6 +1978,7 @@ class TaskWorker:
                     parse_mode=None,
                     attachment_ids=run["result_attachment_ids_json"] or None,
                     on_behalf_of_user_id=run["user_id"],
+                    taint_metadata=notification_taint_metadata,
                 )
                 if sent_message_id is None:
                     # Delivery failed (invalid chat, Bot API error, ...). Roll back
@@ -2015,7 +2036,10 @@ class TaskWorker:
         async with exec_context.db_context.create_isolated_context() as wake_db:
             wake_turn_id = str(uuid.uuid4())
             data_message_internal_id = await wake_db.message_history.add_message(
-                UserMessage(content=self._delegation_wakeup_data_text(run)),
+                UserMessage(
+                    content=self._delegation_wakeup_data_text(run),
+                    taint_metadata=_delegation_run_taint_metadata(run),
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 turn_id=wake_turn_id,
@@ -2112,9 +2136,28 @@ class TaskWorker:
         delivery_text = result.text_reply or "Delegated task finished."
         visible_message_internal_id = message_internal_id
 
+        # Delivery rows repeat the wake turn's response, so reuse the taint
+        # state persisted with the canonical assistant row when one exists;
+        # otherwise fall back to the run's recorded parent state.
+        delivery_taint_metadata = _delegation_run_taint_metadata(run)
+        if message_internal_id is not None:
+            canonical_row = await db_context.message_history.get_row_by_internal_id(
+                message_internal_id
+            )
+            canonical_metadata = (
+                coerce_taint_metadata(canonical_row.get("taint_metadata_json"))
+                if canonical_row is not None
+                else None
+            )
+            if canonical_metadata is not None:
+                delivery_taint_metadata = canonical_metadata
+
         if message_internal_id is None:
             message_internal_id = await db_context.message_history.add_message(
-                AssistantMessage(content=delivery_text),
+                AssistantMessage(
+                    content=delivery_text,
+                    taint_metadata=delivery_taint_metadata,
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
@@ -2139,7 +2182,10 @@ class TaskWorker:
 
         if run["source_subconversation_id"] is not None:
             visible_message_internal_id = await db_context.message_history.add_message(
-                AssistantMessage(content=delivery_text),
+                AssistantMessage(
+                    content=delivery_text,
+                    taint_metadata=delivery_taint_metadata,
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
@@ -4077,9 +4123,10 @@ async def _build_confirmation_execution_context(
         if request["taint_state_json"] is not None
         else None
     )
-    taint_tracker = (
-        InMemoryTurnTaintTracker(taint_state) if taint_state is not None else None
-    )
+    # Always execute with a real tracker: requests recorded before taint state
+    # capture existed start from an explicit empty state rather than running
+    # trackerless (which would persist tool results without taint metadata).
+    taint_tracker = InMemoryTurnTaintTracker(taint_state)
 
     async def approved_confirmation_callback(
         interface_type: str,
@@ -4356,12 +4403,20 @@ async def _notify_confirmation_execution_result(
                 f"Tool: {request['tool_name']}\n\n"
                 f"Error:\n{result_text}"
             )
+        # The execution context's tracker holds the confirmation's recorded
+        # taint state plus the executed tool's result taint.
+        result_taint_metadata = (
+            context.taint_tracker.snapshot().to_metadata()
+            if context.taint_tracker is not None
+            else TurnTaintState.empty().to_metadata()
+        )
         sent_message_id = await chat_interface.send_message(
             conversation_id=delivery_conversation_id,
             text=message,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
             on_behalf_of_user_id=context.user_id,
+            taint_metadata=result_taint_metadata,
         )
         if sent_message_id is None:
             raise ConfirmationNotificationError(

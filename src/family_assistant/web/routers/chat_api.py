@@ -2314,7 +2314,13 @@ async def api_chat_save_voice_session(
             turn_id = str(uuid.uuid4())
             message: UserMessage | AssistantMessage = UserMessage(content=turn.text)
         else:
-            message = AssistantMessage(content=turn.text)
+            # Voice transcripts are submitted by the authenticated user's own
+            # session, so assistant lines get the same explicit trusted-empty
+            # state that the user lines default to.
+            message = AssistantMessage(
+                content=turn.text,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            )
         # Strictly increasing timestamps keep the transcript ordered when the
         # conversation is read back (history is ordered by timestamp).
         timestamp = base_time + timedelta(milliseconds=index)

@@ -13,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.messages import UserMessage
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
 from family_assistant.storage.context import get_db_context
@@ -99,3 +105,55 @@ async def test_send_message_canonicalizes_alias_owner_for_activity(
 
     activity = await asyncio.wait_for(handle.queue.get(), timeout=1.0)
     assert activity.conversation_id == conversation_id
+
+
+@pytest.mark.asyncio
+async def test_send_message_persists_runtime_taint_metadata(
+    db_engine: AsyncEngine,
+) -> None:
+    """Web sends record taint state: caller-provided when given, explicit empty
+    (trusted baseline) otherwise — never a metadata-less row, which would be
+    escalated to unknown_external at read time."""
+    conversation_id = "web_conv_taint"
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+
+    interface = WebChatInterface(db_engine, notifier=None, stream_hub=None)
+
+    default_saved = await interface.send_message(conversation_id, "plain notification")
+    assert default_saved is not None
+
+    tainted_state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="email-1",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="test email source",
+        )
+    )
+    tainted_saved = await interface.send_message(
+        conversation_id,
+        "derived from a tainted turn",
+        taint_metadata=tainted_state.to_metadata(),
+    )
+    assert tainted_saved is not None
+
+    async with get_db_context(engine=db_engine) as ctx:
+        default_row = await ctx.message_history.get_row_by_internal_id(
+            int(default_saved)
+        )
+        tainted_row = await ctx.message_history.get_row_by_internal_id(
+            int(tainted_saved)
+        )
+
+    assert default_row is not None
+    assert default_row["taint_metadata_version"] == "runtime_v1"
+    assert default_row["taint_metadata_json"] is not None
+    assert default_row["taint_metadata_json"].get("max_tier") == "trusted_user"
+
+    assert tainted_row is not None
+    assert tainted_row["taint_metadata_version"] == "runtime_v1"
+    assert tainted_row["taint_metadata_json"] is not None
+    assert tainted_row["taint_metadata_json"].get("max_tier") == "unknown_external"

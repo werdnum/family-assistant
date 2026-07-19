@@ -68,7 +68,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.security.taint import merge_taint_policy_config
+from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
 from family_assistant.services.api_backend import HttpApiBackend
 from family_assistant.services.apns import APNsService, load_apns_auth_key
 from family_assistant.services.confirmation_service import (
@@ -241,8 +241,10 @@ class NullChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         """Does nothing, returns None."""
+        _ = taint_metadata
         logger.debug(
             "NullChatInterface: send_message called for conversation %s: %s",
             conversation_id,

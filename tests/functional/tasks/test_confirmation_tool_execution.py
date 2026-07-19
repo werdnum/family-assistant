@@ -15,6 +15,7 @@ from sqlalchemy import select, update
 from family_assistant import task_worker as task_worker_module
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm.messages import UserMessage
+from family_assistant.security.taint import SourceTrustTier, TaintMetadata
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
@@ -217,10 +218,11 @@ class RecordingChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - fake chat I/O must yield to exercise cancellation cleanup
         await asyncio.sleep(0)
-        _ = (parse_mode, on_behalf_of_user_id)
+        _ = (parse_mode, on_behalf_of_user_id, taint_metadata)
         self.messages.append((conversation_id, text, reply_to_interface_id))
         self.attachment_ids.append(attachment_ids)
         return f"chat-message-{len(self.messages)}"
@@ -237,6 +239,7 @@ class FailingChatInterface(RecordingChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -245,6 +248,7 @@ class FailingChatInterface(RecordingChatInterface):
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
             on_behalf_of_user_id=on_behalf_of_user_id,
+            taint_metadata=taint_metadata,
         )
         raise RuntimeError("chat send failed")
 
@@ -260,6 +264,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -268,6 +273,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
             on_behalf_of_user_id=on_behalf_of_user_id,
+            taint_metadata=taint_metadata,
         )
         return None
 
@@ -289,6 +295,7 @@ class BlockingChatInterface(RecordingChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         _ = (
             conversation_id,
@@ -297,6 +304,7 @@ class BlockingChatInterface(RecordingChatInterface):
             reply_to_interface_id,
             attachment_ids,
             on_behalf_of_user_id,
+            taint_metadata,
         )
         self.started.set()
         try:
@@ -550,6 +558,40 @@ async def test_approved_confirmation_preserves_google_dependencies(
     executed_context = provider.contexts[0]
     assert executed_context.credential_resolvers is credential_resolvers
     assert executed_context.api_backend is api_backend
+
+
+@pytest.mark.asyncio
+async def test_approved_confirmation_executes_with_taint_tracker(
+    db_engine: AsyncEngine,
+) -> None:
+    """Requests without recorded taint state still execute with a real tracker.
+
+    A trackerless context would let the tool result be persisted without taint
+    metadata; legacy requests (no taint_state_json) must instead start from an
+    explicit empty state.
+    """
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=RecordingChatInterface(),
+        task_id=task_id,
+    )
+
+    assert len(provider.contexts) == 1
+    executed_context = provider.contexts[0]
+    assert executed_context.taint_tracker is not None
+    assert (
+        executed_context.taint_tracker.snapshot().max_tier
+        == SourceTrustTier.TRUSTED_USER
+    )
 
 
 @pytest.mark.asyncio

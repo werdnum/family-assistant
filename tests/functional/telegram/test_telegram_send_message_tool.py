@@ -226,6 +226,20 @@ async def test_send_message_to_user_tool(
             assert_that([
                 msg["processing_profile_id"] for msg in bob_history_all
             ]).contains(fix.processing_service.service_config.id)
+
+            # 5. The recorded copy of the sent message carries runtime taint
+            # metadata from the originating turn (never version=None).
+            bob_assistant_rows = [
+                msg for msg in bob_history_all if msg["role"] == "assistant"
+            ]
+            assert_that(bob_assistant_rows).described_as(
+                "Assistant rows recorded for Bob"
+            ).is_not_empty()
+            assert_that([
+                msg["taint_metadata_version"] for msg in bob_assistant_rows
+            ]).described_as("Taint metadata version on recorded rows").contains_only(
+                "runtime_v1"
+            )
     finally:
         # Restore original context providers
         fix.processing_service.context_providers = original_providers
