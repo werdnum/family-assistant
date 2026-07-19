@@ -54,8 +54,10 @@ from family_assistant.scripting import (
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
+    SourceTrustTier,
     TaintMetadata,
     TaintSource,
+    TaintSourceType,
     TurnTaintState,
     coerce_taint_metadata,
 )
@@ -135,18 +137,101 @@ def _taint_sources_from_delegation_run(
     return TurnTaintState.from_metadata(run["taint_state_json"]).sources
 
 
-def _delegation_run_taint_metadata(run: DelegationRunDict) -> TaintMetadata:
-    """Taint metadata for history rows derived from a delegation run.
+def _conservative_unknown_external_metadata(reason: str) -> TaintMetadata:
+    """Return an unknown_external taint state for a result of unknown taint."""
+    return (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason=reason,
+            )
+        )
+        .to_metadata()
+    )
 
-    Uses the parent taint state captured when the delegation was created (the
-    best deterministic state available at notification time); runs recorded
-    before taint capture existed get an explicit empty state instead of no
-    metadata. The delegated turn's own history rows carry their authoritative
-    per-message state.
+
+async def _delegation_result_taint_metadata(
+    db_context: DatabaseContext,
+    run: DelegationRunDict,
+) -> TaintMetadata:
+    """Taint metadata for history rows that carry a delegation run's *result*.
+
+    The delegated run may have read untrusted content even when the parent that
+    queued it was trusted, so labeling result-bearing rows with the parent taint
+    alone (``run["taint_state_json"]``) under-taints them and would let the
+    source profile egress attacker-derived content without a runtime-taint
+    confirmation. Instead, start from the delegated run's OWN accumulated taint —
+    the newest assistant row persisted in its subconversation — and fold the
+    parent taint in (max wins). When the delegated run left no assistant row/taint
+    behind, fall back CONSERVATIVELY to unknown_external rather than to the parent
+    state or a trusted-empty baseline, because the result's provenance is unknown.
     """
-    if run["taint_state_json"] is None:
-        return TurnTaintState.empty().to_metadata()
-    return TurnTaintState.from_metadata(run["taint_state_json"]).to_metadata()
+    result_metadata = await db_context.message_history.get_latest_assistant_taint_metadata_for_subconversation(
+        interface_type=run["interface_type"],
+        conversation_id=run["conversation_id"],
+        subconversation_id=run["subconversation_id"],
+    )
+    if result_metadata is None:
+        merged = TurnTaintState.from_metadata(
+            _conservative_unknown_external_metadata(
+                "Delegated result taint unavailable; conservatively treated as "
+                "unknown external."
+            )
+        )
+    else:
+        merged = TurnTaintState.from_metadata(result_metadata)
+
+    if run["taint_state_json"] is not None:
+        parent_state = TurnTaintState.from_metadata(run["taint_state_json"])
+        for source in parent_state.sources:
+            merged = merged.add_source(source)
+        if parent_state.max_tier > merged.max_tier:
+            merged = merged.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.MANUAL,
+                    source_id=None,
+                    tier=parent_state.max_tier,
+                    labels=frozenset(),
+                    reason=(
+                        "Parent delegation taint max_tier exceeded retained "
+                        "source summaries."
+                    ),
+                )
+            )
+    return merged.to_metadata()
+
+
+async def _llm_callback_delivery_taint_metadata(
+    db_context: DatabaseContext,
+    assistant_message_internal_id: int | None,
+) -> TaintMetadata:
+    """Taint metadata for an LLM-callback delivery copy of a turn's reply.
+
+    The reply is LLM-derived and may fold in tainted tool output, so the delivery
+    copy must inherit the turn's authoritative taint from the canonical assistant
+    row the turn already persisted. When that row (or its metadata) cannot be
+    resolved, fall back CONSERVATIVELY to unknown_external rather than the
+    trusted-empty baseline, because the reply's provenance is unknown.
+    """
+    if assistant_message_internal_id is not None:
+        canonical_row = await db_context.message_history.get_row_by_internal_id(
+            assistant_message_internal_id
+        )
+        if canonical_row is not None:
+            canonical_metadata = coerce_taint_metadata(
+                canonical_row.get("taint_metadata_json")
+            )
+            if canonical_metadata is not None:
+                return canonical_metadata
+    return _conservative_unknown_external_metadata(
+        "LLM-callback reply taint unavailable; conservatively treated as "
+        "unknown external."
+    )
 
 
 class ReminderConfig(TypedDict, total=False):
@@ -769,6 +854,17 @@ async def handle_llm_callback(
         sent_message_id_str = None
         # Send message if there's text content OR attachments
         if final_llm_content_to_send or response_attachment_ids:
+            # This delivery copy repeats an LLM-derived reply, so it must carry
+            # the turn's authoritative taint rather than defaulting to the
+            # trusted-empty baseline (which a persisted-but-metadata-less copy
+            # would otherwise get). Reuse the taint the turn already persisted on
+            # its canonical assistant row; if that row can't be resolved, fall
+            # back CONSERVATIVELY to unknown_external since the reply may derive
+            # from tainted tool output.
+            delivery_taint_metadata = await _llm_callback_delivery_taint_metadata(
+                db_context,
+                final_assistant_message_internal_id,
+            )
             sent_message_id_str = await chat_interface.send_message(
                 conversation_id=conversation_id,
                 text=final_llm_content_to_send
@@ -776,6 +872,7 @@ async def handle_llm_callback(
                 parse_mode="MarkdownV2",
                 attachment_ids=response_attachment_ids,
                 on_behalf_of_user_id=callback_owner_user_id,
+                taint_metadata=delivery_taint_metadata,
             )
             logger.info(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
@@ -1939,8 +2036,10 @@ class TaskWorker:
 
         message_text = self._delegation_notification_text(run)
         attachments = self._delegation_notification_attachments(run)
-        notification_taint_metadata = _delegation_run_taint_metadata(run)
         async with exec_context.db_context.create_isolated_context() as isolated_db:
+            notification_taint_metadata = await _delegation_result_taint_metadata(
+                isolated_db, run
+            )
             message_internal_id = await isolated_db.message_history.add_message(
                 AssistantMessage(
                     content=message_text,
@@ -2035,10 +2134,16 @@ class TaskWorker:
         source_subconversation_id = run["source_subconversation_id"]
         async with exec_context.db_context.create_isolated_context() as wake_db:
             wake_turn_id = str(uuid.uuid4())
+            # The wakeup data message carries the delegated result, so it must be
+            # labeled with the delegated run's own taint (folded with the parent's)
+            # rather than the parent taint alone.
+            wakeup_data_taint_metadata = await _delegation_result_taint_metadata(
+                wake_db, run
+            )
             data_message_internal_id = await wake_db.message_history.add_message(
                 UserMessage(
                     content=self._delegation_wakeup_data_text(run),
-                    taint_metadata=_delegation_run_taint_metadata(run),
+                    taint_metadata=wakeup_data_taint_metadata,
                 ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
@@ -2138,8 +2243,11 @@ class TaskWorker:
 
         # Delivery rows repeat the wake turn's response, so reuse the taint
         # state persisted with the canonical assistant row when one exists;
-        # otherwise fall back to the run's recorded parent state.
-        delivery_taint_metadata = _delegation_run_taint_metadata(run)
+        # otherwise fall back to the delegated result's taint (own accumulated
+        # taint folded with the parent's), never the parent state alone.
+        delivery_taint_metadata = await _delegation_result_taint_metadata(
+            db_context, run
+        )
         if message_internal_id is not None:
             canonical_row = await db_context.message_history.get_row_by_internal_id(
                 message_internal_id
