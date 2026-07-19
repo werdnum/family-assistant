@@ -88,6 +88,7 @@ export function useGeminiLive(): GeminiLiveState {
   const canSendRealtimeInputRef = useRef(false);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const duckingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toolProfileIdRef = useRef<string | undefined>(undefined);
   const toolTaintMetadataRef = useRef<TaintMetadata>({
     version: 'runtime_v1',
     max_tier: 'trusted_user',
@@ -185,6 +186,7 @@ export function useGeminiLive(): GeminiLiveState {
           body: JSON.stringify({
             arguments: toolCall.args,
             taint_metadata: toolTaintMetadataRef.current,
+            profile_id: toolProfileIdRef.current,
           }),
         });
 
@@ -427,6 +429,7 @@ export function useGeminiLive(): GeminiLiveState {
         setTranscripts([]);
         setSessionDuration(0);
         lastTranscriptRef.current = null;
+        toolProfileIdRef.current = profileId;
         toolTaintMetadataRef.current = {
           version: 'runtime_v1',
           max_tier: 'trusted_user',

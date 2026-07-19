@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -12,6 +12,15 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    TaintTrackingToolsProvider,
+)
+from family_assistant.tools.metadata import (
+    ToolRegistration,
+    ToolTag,
+    make_local_tool_metadata,
+)
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
@@ -19,6 +28,14 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
 
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
+
+
+async def _descriptor_tainted_tool() -> ToolResult:
+    return ToolResult(text="external descriptor result")
+
+
+def _set_profile_tools_provider(app: FastAPI, provider: object) -> None:
+    app.state.processing_service.tools_provider = provider
 
 
 class TaintingDirectToolsProvider:
@@ -78,6 +95,7 @@ async def test_direct_tool_api_threads_taint_between_voice_calls(
 ) -> None:
     provider = TaintingDirectToolsProvider()
     app_fixture.state.tools_provider = provider
+    _set_profile_tools_provider(app_fixture, provider)
 
     first = await api_test_client.post(
         "/api/tools/execute/read_external",
@@ -108,6 +126,7 @@ async def test_direct_tool_api_missing_taint_is_conservative(
 ) -> None:
     provider = TaintingDirectToolsProvider()
     app_fixture.state.tools_provider = provider
+    _set_profile_tools_provider(app_fixture, provider)
 
     response = await api_test_client.post(
         "/api/tools/execute/read_external",
@@ -123,7 +142,9 @@ async def test_direct_tool_api_failure_returns_accumulated_taint(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,
 ) -> None:
-    app_fixture.state.tools_provider = FailingTaintingDirectToolsProvider()
+    provider = FailingTaintingDirectToolsProvider()
+    app_fixture.state.tools_provider = provider
+    _set_profile_tools_provider(app_fixture, provider)
 
     response = await api_test_client.post(
         "/api/tools/execute/read_external",
@@ -134,4 +155,51 @@ async def test_direct_tool_api_failure_returns_accumulated_taint(
     )
 
     assert response.status_code == 500
+    assert response.json()["taint_metadata"]["max_tier"] == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_direct_tool_api_uses_selected_profile_taint_provider(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+) -> None:
+    profile_provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "descriptor_external",
+                                "description": "Return untrusted external data.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_descriptor_tainted_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.READ_ONLY,
+                        ToolTag.OUTPUT_UNTRUSTED,
+                    ]),
+                )
+            ]
+        )
+    )
+    processing_service = app_fixture.state.processing_service
+    processing_service.tools_provider = profile_provider
+    profile_id = processing_service.service_config.id
+    app_fixture.state.processing_services = {profile_id: processing_service}
+
+    response = await api_test_client.post(
+        "/api/tools/execute/descriptor_external",
+        json={
+            "arguments": {},
+            "profile_id": profile_id,
+            "taint_metadata": TurnTaintState.empty().to_metadata(),
+        },
+    )
+
+    assert response.status_code == 200
     assert response.json()["taint_metadata"]["max_tier"] == "unknown_external"

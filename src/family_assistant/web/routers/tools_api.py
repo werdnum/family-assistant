@@ -37,6 +37,7 @@ class ToolExecutionRequest(BaseModel):
     # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
     arguments: dict[str, Any]
     taint_metadata: TaintMetadata | None = None
+    profile_id: str | None = None
 
 
 @tools_api_router.post("/execute/{tool_name}", response_class=JSONResponse)
@@ -76,6 +77,26 @@ async def execute_tool_api(
     # Find camera backend from any profile that has one configured
     camera_backend = None
     processing_services = getattr(request.app.state, "processing_services", {})
+    if payload.profile_id is not None:
+        selected_service = processing_services.get(payload.profile_id)
+        if selected_service is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Processing profile '{payload.profile_id}' not found.",
+            )
+        if getattr(selected_service, "kind", None) == "remote":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Processing profile '{payload.profile_id}' is remote and "
+                    "cannot execute direct tools."
+                ),
+            )
+        processing_service = selected_service
+
+    selected_tools_provider = (
+        processing_service.tools_provider if processing_service else tools_provider
+    )
     for service in processing_services.values():
         if service.kind == "remote":
             continue
@@ -162,7 +183,7 @@ async def execute_tool_api(
     )
 
     try:
-        result = await tools_provider.execute_tool(
+        result = await selected_tools_provider.execute_tool(
             name=tool_name, arguments=payload.arguments, context=execution_context
         )
         logger.info(f"Tool '{tool_name}' executed successfully.")
