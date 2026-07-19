@@ -37,6 +37,12 @@ CONFIRMATION_VALUE_MAX_CHARS = 1200
 # and code fences. Bulk content belongs in an attachment, not the request string.
 MAX_DELEGATION_REQUEST_CHARS = 3000
 
+# Approving spawn_worker launches a code-running agent against the shared
+# workspace, so the approver must see the ENTIRE task description — the same
+# full-review contract as delegation, with the same Telegram-budget cap. Bulk
+# content belongs in a workspace file referenced via context_paths.
+MAX_WORKER_TASK_DESCRIPTION_CHARS = 3000
+
 
 def _markdown_code_block(text: str) -> str:
     """Render text as inert markdown using a fence longer than any content fence."""
@@ -548,6 +554,80 @@ async def render_delegate_to_service_confirmation(
     return "Do you want to delegate this task to another profile?\n" + "\n".join(fields)
 
 
+async def render_spawn_worker_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for launching an isolated AI coding worker."""
+    _ = context
+    task_description = str(args.get("task_description", "")).strip()
+
+    if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
+        # An over-length spawn is refused before it runs (see
+        # confirmation_payload_block_reason), so never show a partial body the
+        # approver might rubber-stamp — say plainly that it will be refused.
+        description_field = (
+            f"- Task description: ⚠️ This description is {len(task_description)} characters, "
+            f"longer than the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that keeps it "
+            "fully reviewable here. The worker will not be launched — shorten the task "
+            "description or move bulk content into a workspace file referenced via context_paths."
+        )
+    else:
+        description_field = (
+            f"- Task description:\n{_markdown_code_block(task_description)}"
+        )
+
+    fields = [
+        _confirmation_field("Agent", args.get("agent", "claude")),
+        description_field,
+    ]
+    raw_context_paths = args.get("context_paths")
+    if isinstance(raw_context_paths, (list, tuple)) and raw_context_paths:
+        fields.append(
+            _confirmation_field(
+                "Context paths", ", ".join(str(path) for path in raw_context_paths)
+            )
+        )
+    fields.append(
+        _confirmation_field("Timeout (minutes)", args.get("timeout_minutes", 30))
+    )
+    return (
+        "Do you want to launch an isolated AI coding worker? It executes code in a "
+        "sandboxed container with access to the shared workspace (it has no access "
+        "to Family Assistant tools or data):\n" + "\n".join(fields)
+    )
+
+
+async def render_cancel_worker_task_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+) -> str:
+    """Render a confirmation prompt for cancelling a worker task.
+
+    Looks the task up so the approver sees what they are stopping, not just an
+    opaque id.
+    """
+    task_id = str(args.get("task_id", "")).strip()
+    fields = [_confirmation_field("Task ID", task_id)]
+
+    task = None
+    db_context = getattr(context, "db_context", None)
+    if task_id and db_context is not None:
+        task = await db_context.worker_tasks.get_task(task_id)
+
+    if task is not None:
+        fields.append(_confirmation_field("Status", task.get("status")))
+        fields.append(
+            _confirmation_field("Task description", task.get("task_description"))
+        )
+    else:
+        fields.append(
+            "- Task details: not found — the task may have already finished or the "
+            "id may be wrong."
+        )
+    return "Do you want to *cancel* this worker task?\n" + "\n".join(fields)
+
+
 def over_length_delegation_block_reason(user_request: str) -> str | None:
     """Return an error if a delegation request is too long to confirm, else None.
 
@@ -577,13 +657,33 @@ def confirmation_payload_block_reason(
     could not show the approver the full payload they would be approving,
     instead of rendering a truncated or misleading prompt. Only invoked once a
     call is known to be confirm-gated, so it never constrains unconfirmed calls.
-    Delegations, authored Google writes, and every executable computer-use
-    argument must remain fully reviewable.
+    Delegations, worker spawns, authored Google writes, and every executable
+    computer-use argument must remain fully reviewable.
     """
     if tool_name == "delegate_to_service":
         return over_length_delegation_block_reason(
             str(arguments.get("user_request", ""))
         )
+    if tool_name == "spawn_worker":
+        task_description = str(arguments.get("task_description", ""))
+        if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
+            return (
+                f"Error: the worker task_description is {len(task_description)} characters, "
+                f"which exceeds the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that "
+                "keeps it fully reviewable in a confirmation prompt. Shorten it, or move bulk "
+                "content into a workspace file and reference it via context_paths."
+            )
+        # The context paths scope what the worker can read, so they must be
+        # fully reviewable too.
+        raw_context_paths = arguments.get("context_paths")
+        if isinstance(raw_context_paths, (list, tuple)):
+            rendered_paths = ", ".join(str(path) for path in raw_context_paths)
+            if len(rendered_paths) > CONFIRMATION_VALUE_MAX_CHARS:
+                return (
+                    f"Error: the worker context_paths render to {len(rendered_paths)} "
+                    f"characters, which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character "
+                    "confirmation limit. Pass fewer paths (e.g. a shared parent directory)."
+                )
     if tool_name == "gmail_create_draft":
         for field in ("to", "cc", "bcc", "subject", "body", "attachment_ids"):
             rendered = str(arguments.get(field, ""))
@@ -677,6 +777,8 @@ _base_renderers: dict[str, ConfirmationRenderer] = {
     "drive_write_file": render_drive_write_file_confirmation,
     "ingest_document_from_url": render_ingest_document_from_url_confirmation,
     "delegate_to_service": render_delegate_to_service_confirmation,
+    "spawn_worker": render_spawn_worker_confirmation,
+    "cancel_worker_task": render_cancel_worker_task_confirmation,
 }
 
 TOOL_CONFIRMATION_RENDERERS: dict[str, ConfirmationRenderer] = {

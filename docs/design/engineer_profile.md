@@ -94,6 +94,13 @@ re-establishes an MCP session), and the state-changing worker actions `spawn_wor
 `cancel_worker_task` (launch or stop an isolated AI coding worker). This keeps the profile's
 effective posture read-only: a human approves before anything outside the sandbox changes.
 
+The worker actions carry custom confirmation renderers so the approver reviews the actual payload,
+not a bare tool name: `spawn_worker` shows the agent, the **complete** task description (refusing,
+like delegation, any description over `MAX_WORKER_TASK_DESCRIPTION_CHARS` = 3000 or a
+`context_paths` rendering over the generic 1200-char bound, rather than truncating what the approver
+sees), the context paths, and the timeout; `cancel_worker_task` looks the task up and shows its
+status and description alongside the id.
+
 ### Self-Awareness of Restrictions
 
 The engineer's tool set is deliberately narrow, and its system prompt says so explicitly: a missing
