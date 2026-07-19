@@ -406,6 +406,17 @@ not registered and the integration status endpoint reports the unmet condition. 
 `require_taint_enforcement: false` waives the check (logged at startup and surfaced on the status
 endpoint); the tools then register regardless of taint mode.
 
+**`taint_policy.history_taint_epoch`.** Optional timezone-aware ISO-8601 timestamp (quote the value
+in YAML; naive or unparseable values fail startup) granting a read-time amnesty to legacy
+message-history taint metadata. Rows persisted before the epoch contribute taint only from
+explicitly attributed sources — the synthetic `legacy_missing_taint_metadata` fallback and anonymous
+escalation artifacts are ignored and the row's tier is recomputed from what remains — while rows at
+or after the epoch are trusted as recorded (a post-epoch row missing metadata logs an ERROR as a
+write-path regression alarm). Deployment-level only; profiles cannot set it.
+`GET /api/diagnostics/taint-audit` reports the configured epoch and pre/post-epoch row splits so the
+poison collapse can be verified before switching `taint_policy.mode` to `enforce`. See
+[docs/design/taint-history-epoch-amnesty.md](docs/design/taint-history-epoch-amnesty.md).
+
 ### Environment Variable for Read-Only Diagnostics Access
 
 - **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret that grants read-only access to the
