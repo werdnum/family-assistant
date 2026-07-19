@@ -124,7 +124,7 @@ private final class FakeToolExecutor: VoiceToolExecuting {
     ) async throws -> JSONValue {
         _ = profileID
         _ = taintMetadata
-        try await handler(name, arguments)
+        return try await handler(name, arguments)
     }
 }
 
