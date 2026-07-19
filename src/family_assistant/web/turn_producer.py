@@ -29,7 +29,13 @@ from family_assistant.llm.messages import (
     ContentPartDict,
     MessageAttachmentMetadata,
 )
-from family_assistant.security.taint import merge_history_taint
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    TaintMetadata,
+    TurnTaintState,
+    merge_history_taint,
+    merge_taint_state_into_tracker,
+)
 from family_assistant.services.confirmation_service import (
     ConfirmationService,
 )
@@ -122,6 +128,7 @@ async def run_turn_producer(
     interface_type: str,
     trigger_content_parts: list[ContentPartDict],
     trigger_attachments: list[MessageAttachmentMetadata] | None,
+    initial_history_taint_metadata: TaintMetadata,
     mid_turn_input_provider: "MidTurnInputProvider | None" = None,
     ack_grace_seconds: float = DEFAULT_ACK_GRACE_SECONDS,
 ) -> None:
@@ -318,6 +325,7 @@ async def run_turn_producer(
                 user_id=user_id,
                 reply_text="".join(final_reply_parts),
                 processing_profile_id=processing_service.service_config.id,
+                initial_history_taint_metadata=initial_history_taint_metadata,
             )
         await _fail_turn_best_effort(
             hub,
@@ -404,6 +412,7 @@ async def persist_stopped_reply(
     user_id: str,
     reply_text: str,
     processing_profile_id: str,
+    initial_history_taint_metadata: TaintMetadata,
 ) -> None:
     """Persist a durable assistant row for a user-stopped turn.
 
@@ -422,7 +431,14 @@ async def persist_stopped_reply(
             # is the merge of the turn's already-persisted rows (user prompt
             # plus any tool results committed before the stop).
             turn_messages = await db_context.message_history.get_by_turn_id(turn_id)
-            stopped_taint_metadata = merge_history_taint(turn_messages).to_metadata()
+            stopped_taint_tracker = InMemoryTurnTaintTracker(
+                TurnTaintState.from_metadata(initial_history_taint_metadata)
+            )
+            merge_taint_state_into_tracker(
+                stopped_taint_tracker,
+                merge_history_taint(turn_messages),
+            )
+            stopped_taint_metadata = stopped_taint_tracker.snapshot().to_metadata()
             await db_context.message_history.add_message(
                 AssistantMessage(
                     content=content,

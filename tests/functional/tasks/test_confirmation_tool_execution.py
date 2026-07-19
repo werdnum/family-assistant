@@ -147,6 +147,21 @@ class FailingToolsProvider(RecordingToolsProvider):
         raise RuntimeError("tool exploded")
 
 
+class FailingDescriptorToolsProvider(RecordingDescriptorToolsProvider):
+    """Descriptor provider that records an attempted call and then raises."""
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool provider protocol accepts arbitrary JSON arguments
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        await super().execute_tool(name, arguments, context, call_id)
+        raise RuntimeError("tool exploded")
+
+
 class AttachmentToolsProvider(RecordingToolsProvider):
     """Fake tool provider that returns a result attachment."""
 
@@ -663,7 +678,8 @@ async def test_confirmation_execution_failure_resolves_live_waiter(
     confirmation_result_waiters = ConfirmationResultWaiterRegistry()
     waiter = confirmation_result_waiters.register(request_id)
     task_id = await _approve_request(db_engine, request_id)
-    provider = FailingToolsProvider()
+    wrapped_provider = FailingDescriptorToolsProvider({ToolTag.OUTPUT_UNTRUSTED})
+    provider = TaintTrackingToolsProvider(wrapped_provider)
     chat_interface = RecordingChatInterface()
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -692,7 +708,12 @@ async def test_confirmation_execution_failure_resolves_live_waiter(
     assert (
         outcome.result == "Error executing approved tool 'record_tool': tool exploded"
     )
-    assert provider.calls == [
+    assert outcome.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(outcome.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+    assert wrapped_provider.calls == [
         (
             "record_tool",
             {"value": "payload"},

@@ -19,7 +19,12 @@ from family_assistant.llm.messages import (
     SystemMessage,
     ToolMessage,
 )
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 
 # Import metadata to create tables
 from family_assistant.storage.base import metadata
@@ -588,3 +593,56 @@ async def test_add_message_without_taint_metadata_logs_regression_guard(
     )
     assert classified_row is not None
     assert classified_row["taint_metadata_version"] == "runtime_v1"
+
+
+@pytest.mark.asyncio
+async def test_subconversation_taint_merges_tool_rows_after_assistant(
+    db_context: DatabaseContext,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    subconversation_id = str(uuid.uuid4())
+    await db_context.message_history.add_message(
+        AssistantMessage(
+            content="calling a tool",
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+        timestamp=datetime.now(UTC),
+    )
+    untrusted_tool_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="call_untrusted",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="untrusted tool output",
+        )
+    )
+    await db_context.message_history.add_message(
+        ToolMessage(
+            tool_call_id="call_untrusted",
+            content="external result",
+            name="external_tool",
+            taint_metadata=untrusted_tool_taint.to_metadata(),
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+        timestamp=datetime.now(UTC),
+    )
+
+    merged_metadata = (
+        await db_context.message_history.get_merged_taint_metadata_for_subconversation(
+            interface_type="web",
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+        )
+    )
+
+    assert merged_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(merged_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )

@@ -40,6 +40,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     coerce_taint_metadata,
+    merge_history_taint,
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
@@ -1602,25 +1603,23 @@ class MessageHistoryRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return cast("MessageHistoryRow", dict(row)) if row else None
 
-    async def get_latest_assistant_taint_metadata_for_subconversation(
+    async def get_merged_taint_metadata_for_subconversation(
         self,
         *,
         interface_type: str,
         conversation_id: str,
         subconversation_id: str | None,
     ) -> TaintMetadata | None:
-        """Return the taint metadata of the most recent assistant row in a scope.
+        """Return merged taint metadata for every message in a scope.
 
         Used to recover the accumulated taint of a completed (sub)conversation —
-        e.g. a delegated run's own final assistant row — when only the delegation
-        run dict (parent taint) is otherwise available. Returns ``None`` when no
-        assistant row exists in the scope or the newest one carries no metadata,
-        so callers can fall back conservatively.
+        e.g. a delegated run that stopped after a tainted tool result but before
+        persisting a final assistant row. Returns ``None`` only when the scope has
+        no rows, so callers can fall back conservatively.
         """
-        stmt = select(message_history_table.c.taint_metadata_json).where(
+        stmt = select(message_history_table).where(
             message_history_table.c.interface_type == interface_type,
             message_history_table.c.conversation_id == conversation_id,
-            message_history_table.c.role == "assistant",
         )
         if subconversation_id is None:
             stmt = stmt.where(message_history_table.c.subconversation_id.is_(None))
@@ -1628,12 +1627,13 @@ class MessageHistoryRepository(BaseRepository):
             stmt = stmt.where(
                 message_history_table.c.subconversation_id == subconversation_id
             )
-        stmt = stmt.order_by(message_history_table.c.internal_id.desc()).limit(1)
+        stmt = stmt.order_by(message_history_table.c.internal_id.asc())
 
-        row = await self._db.fetch_one(stmt)
-        if row is None:
+        rows = await self._db.fetch_all(stmt)
+        if not rows:
             return None
-        return coerce_taint_metadata(row["taint_metadata_json"])
+        messages = [self._process_message_row(row) for row in rows]
+        return merge_history_taint(messages).to_metadata()
 
     async def get_user_row_by_turn_id(
         self,

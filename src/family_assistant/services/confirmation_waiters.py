@@ -81,11 +81,21 @@ class ConfirmationResultWaiterRegistry:
         """Resolve a live waiter as cancelled."""
         return self._resolve(request_id, ConfirmationOutcome(kind="cancelled"))
 
-    def resolve_failed(self, request_id: str, result: str | ToolResult) -> bool:
+    def resolve_failed(
+        self,
+        request_id: str,
+        result: str | ToolResult,
+        *,
+        taint_metadata: TaintMetadata,
+    ) -> bool:
         """Resolve a live waiter with a failed execution result."""
         return self._resolve(
             request_id,
-            ConfirmationOutcome(kind="failed", result=result),
+            ConfirmationOutcome(
+                kind="failed",
+                result=result,
+                taint_metadata=taint_metadata,
+            ),
         )
 
     def _resolve(self, request_id: str, outcome: ConfirmationOutcome) -> bool:

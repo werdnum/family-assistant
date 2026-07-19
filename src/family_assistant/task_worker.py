@@ -171,10 +171,12 @@ async def _delegation_result_taint_metadata(
     behind, fall back CONSERVATIVELY to unknown_external rather than to the parent
     state or a trusted-empty baseline, because the result's provenance is unknown.
     """
-    result_metadata = await db_context.message_history.get_latest_assistant_taint_metadata_for_subconversation(
-        interface_type=run["interface_type"],
-        conversation_id=run["conversation_id"],
-        subconversation_id=run["subconversation_id"],
+    result_metadata = (
+        await db_context.message_history.get_merged_taint_metadata_for_subconversation(
+            interface_type=run["interface_type"],
+            conversation_id=run["conversation_id"],
+            subconversation_id=run["subconversation_id"],
+        )
     )
     if result_metadata is None:
         merged = TurnTaintState.from_metadata(
@@ -4471,6 +4473,21 @@ def _resolve_confirmation_result_delivery(
     return telegram_interface, str(telegram_user_id), None
 
 
+def _confirmation_result_taint_metadata(
+    context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+) -> TaintMetadata:
+    """Return the best available taint state for a confirmed execution result."""
+    if context.taint_tracker is not None:
+        return context.taint_tracker.snapshot().to_metadata()
+    if request["taint_state_json"] is not None:
+        return TurnTaintState.from_metadata(request["taint_state_json"]).to_metadata()
+    return _conservative_unknown_external_metadata(
+        "Confirmation result taint unavailable; conservatively treated as "
+        "unknown external."
+    )
+
+
 async def _notify_confirmation_execution_result(
     context: ToolExecutionContext,
     request: ConfirmationRequestRow,
@@ -4513,11 +4530,7 @@ async def _notify_confirmation_execution_result(
             )
         # The execution context's tracker holds the confirmation's recorded
         # taint state plus the executed tool's result taint.
-        result_taint_metadata = (
-            context.taint_tracker.snapshot().to_metadata()
-            if context.taint_tracker is not None
-            else TurnTaintState.empty().to_metadata()
-        )
+        result_taint_metadata = _confirmation_result_taint_metadata(context, request)
         sent_message_id = await chat_interface.send_message(
             conversation_id=delivery_conversation_id,
             text=message,
@@ -4595,6 +4608,7 @@ async def handle_confirmation_tool_execution(
             delivered_to_waiter = context.confirmation_result_waiters.resolve_failed(
                 request_id,
                 error_result,
+                taint_metadata=_confirmation_result_taint_metadata(context, request),
             )
         if not delivered_to_waiter:
             try:

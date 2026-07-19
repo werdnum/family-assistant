@@ -287,6 +287,7 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
         user_id="test_user",
         reply_text="",
         processing_profile_id="prof-x",
+        initial_history_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
     # A partial reply -> the partial text is persisted (what the client rendered).
     await persist_stopped_reply(
@@ -297,6 +298,7 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
         user_id="test_user",
         reply_text="half an answer",
         processing_profile_id="prof-x",
+        initial_history_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
 
     async with get_db_context(engine=db_engine) as ctx:
@@ -313,6 +315,55 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
         assert row["taint_metadata_version"] == "runtime_v1"
         assert row["taint_metadata_json"] is not None
         assert row["taint_metadata_json"].get("max_tier") == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_stopped_reply_inherits_initial_history_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_prior_taint_{uuid.uuid4().hex[:8]}"
+    initial_history_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="prior-email",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="prior conversation history",
+        )
+    )
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="continue"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="prof-x",
+        )
+
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="partial response",
+        processing_profile_id="prof-x",
+        initial_history_taint_metadata=initial_history_taint.to_metadata(),
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id, limit=50
+        )
+    assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    assert len(assistant_rows) == 1
+    assert assistant_rows[0]["taint_metadata_json"] is not None
+    assert (
+        assistant_rows[0]["taint_metadata_json"].get("max_tier") == "unknown_external"
+    )
 
 
 async def test_completed_web_turn_persists_single_user_row(

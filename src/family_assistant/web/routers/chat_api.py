@@ -26,7 +26,7 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import TurnTaintState, merge_history_taint
 from family_assistant.services.confirmation_service import (
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
@@ -1029,6 +1029,23 @@ async def api_chat_create_turn(
                 attachments=trigger_attachments,
                 processing_profile_id=selected_processing_service.service_config.id,
             )
+            history_limit, history_max_age = (
+                selected_processing_service.context_preparer.get_history_limits(
+                    interface_type
+                )
+            )
+            initial_history_messages = await user_msg_db.message_history.get_recent(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                limit=history_limit,
+                max_age=history_max_age,
+                processing_profile_id=(selected_processing_service.service_config.id),
+                subconversation_id=None,
+                current_time=selected_processing_service.clock.now(),
+            )
+            initial_history_taint_metadata = merge_history_taint(
+                initial_history_messages
+            ).to_metadata()
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
         # thus no done-callback safety net), so without ending it here the
@@ -1065,6 +1082,7 @@ async def api_chat_create_turn(
             user_id=user_id,
             reply_text="",
             processing_profile_id=selected_processing_service.service_config.id,
+            initial_history_taint_metadata=initial_history_taint_metadata,
         )
 
     producer_task = asyncio.create_task(
@@ -1083,6 +1101,7 @@ async def api_chat_create_turn(
             interface_type=interface_type,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
+            initial_history_taint_metadata=initial_history_taint_metadata,
             mid_turn_input_provider=mid_turn_controller,
         ),
         name=f"chat-turn:{conversation_id}:{payload.turn_id}",

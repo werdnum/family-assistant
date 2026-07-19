@@ -859,12 +859,23 @@ async def test_safety_confirmation_failed_durable_execution_acknowledged() -> No
     provider = MinimalToolsProvider()
     executor = make_tool_executor(provider)
 
+    failed_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="call_123",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="failed browser output",
+        )
+    )
     callback = StubConfirmationCallback(
         outcome=ConfirmationOutcome(
             kind="failed",
             result="Error executing approved tool 'click': backend exploded",
+            taint_metadata=failed_taint.to_metadata(),
         )
     )
+    turn_taint_tracker = InMemoryTurnTaintTracker()
 
     tool_call = ToolCallItem(
         id="call_123",
@@ -891,6 +902,7 @@ async def test_safety_confirmation_failed_durable_execution_acknowledged() -> No
         db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=callback,
+        taint_tracker=turn_taint_tracker,
     )
 
     assert isinstance(result, ToolExecutionResult)
@@ -898,6 +910,12 @@ async def test_safety_confirmation_failed_durable_execution_acknowledged() -> No
     payload = json.loads(result.llm_message.content)
     assert payload["safety_acknowledgement"] is True
     assert "backend exploded" in payload["error"]
+    assert result.llm_message.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(result.llm_message.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+    assert turn_taint_tracker.snapshot().max_tier == SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 @pytest.mark.asyncio

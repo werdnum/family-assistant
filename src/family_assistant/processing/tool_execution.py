@@ -327,21 +327,22 @@ class ToolExecutor:
         if confirmation_result.kind == "approved":
             return None
 
+        result_taint_metadata = taint_metadata
+        if confirmation_result.taint_metadata is not None:
+            result_taint_metadata = confirmation_result.taint_metadata
+            tool_execution_context.tool_result_taint_metadata[call_id] = (
+                confirmation_result.taint_metadata
+            )
+            if tool_execution_context.taint_tracker is not None:
+                merge_taint_state_into_tracker(
+                    tool_execution_context.taint_tracker,
+                    TurnTaintState.from_metadata(confirmation_result.taint_metadata),
+                )
+
         if confirmation_result.kind == "completed":
             # A durable confirmation normally completed after the task worker
             # attempted the tool. A deferred callback can also return a queued
             # placeholder explicitly marked action_attempted=False.
-            if confirmation_result.taint_metadata is not None:
-                tool_execution_context.tool_result_taint_metadata[call_id] = (
-                    confirmation_result.taint_metadata
-                )
-                if tool_execution_context.taint_tracker is not None:
-                    merge_taint_state_into_tracker(
-                        tool_execution_context.taint_tracker,
-                        TurnTaintState.from_metadata(
-                            confirmation_result.taint_metadata
-                        ),
-                    )
             return _PrecomputedToolResult(
                 result=confirmation_outcome_to_tool_result(
                     name=function_name,
@@ -383,7 +384,7 @@ class ToolExecutor:
                 tool_call_id=call_id,
                 content=result_content,
                 name=function_name,
-                taint_metadata=taint_metadata,
+                taint_metadata=result_taint_metadata,
             ),
             auto_attachment_ids=None,
             explicit_attachment_ids=None,
