@@ -168,11 +168,11 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
                 google_properties[prop_name] = types.Schema(
                     type=types.Type.ARRAY,
                     description=prop_def.get("description", ""),
-                    nullable=prop_nullable,
+                    nullable=prop_nullable or None,
                     items=types.Schema(
                         type=items_type,
                         description=items_def.get("description", ""),
-                        nullable=items_nullable,
+                        nullable=items_nullable or None,
                     ),
                 )
             else:
@@ -181,7 +181,7 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
                 google_properties[prop_name] = types.Schema(
                     type=schema_type,
                     description=prop_def.get("description", ""),
-                    nullable=prop_nullable,
+                    nullable=prop_nullable or None,
                 )
 
         # Create function declaration
