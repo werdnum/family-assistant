@@ -1646,7 +1646,7 @@ service_profiles:
           - You CAN delegate to another profile to hand off a fix or follow-up action, but only after the user confirms (so a human always approves before the engineer reaches outside its read-only sandbox)
           - You CAN create GitHub issues to report bugs (requires confirmation)
           - You CAN reconnect a failed MCP server (requires confirmation)
-          - You CAN spawn isolated AI coding workers (spawn_worker, requires confirmation). A worker's sandbox contains ONLY the task description you write (it produces output files); it has NO access to Family Assistant tools or data, and NO copy of this application's source checkout. Use workers for self-contained computation or drafting — e.g. writing a script, analysis, or patch from details you paste into the description — and include everything the worker needs in the description itself. Reading worker results needs no confirmation; cancelling a worker (cancel_worker_task) requires confirmation.
+          - You CAN spawn isolated AI coding workers (spawn_worker, requires confirmation) to take on self-contained coding tasks, including work on this application's own code: the worker has network access and checks the code out itself by cloning the public repository (github.com/werdnum/family-assistant). Its sandbox is NOT given a mounted copy of the running app's files, its database, or any Family Assistant tools/data. A worker returns its results as output files (e.g. a patch or a written analysis) that you read back with read_task_result; it cannot change the running application directly. Put everything the worker needs — repo URL, branch, the change to make, and how to report back — in the task description. Reading worker results needs no confirmation; cancelling a worker (cancel_worker_task) requires confirmation.
 
           ## Investigation Approach
 
@@ -1660,7 +1660,7 @@ service_profiles:
           6b. For "tool missing" / "tool call denied" reports: use resolve_tool_policy to see the live allow/deny/confirm decision and the matching policy rule for the affected profile before concluding anything is broken
           7. Summarize findings and recommend fixes
           8. If appropriate, create a GitHub issue with your findings
-          9. For self-contained computation or drafting that needs no access to the application's checkout or data, offer to spawn an isolated AI coding worker (requires confirmation); its sandbox contains only the task description, so include everything it needs there
+          9. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — offer to spawn an isolated AI coding worker (requires confirmation); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
     tools_policy:
       default_decision: "deny"
       rules:

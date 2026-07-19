@@ -145,8 +145,18 @@ async def test_cancel_worker_task_confirmation_hides_other_conversations_task() 
 
 
 def test_spawn_worker_block_reason_fires_only_above_caps() -> None:
-    within = {
+    # A description at the per-field cap is spawnable on its own; combined
+    # payloads are additionally bounded by the total prompt cap, so the
+    # description must leave room for the other fields.
+    max_description_alone = {
         "task_description": "z" * MAX_WORKER_TASK_DESCRIPTION_CHARS,
+    }
+    assert confirmation_payload_block_reason("spawn_worker", max_description_alone) is (
+        None
+    )
+
+    within = {
+        "task_description": "z" * 2800,
         "context_paths": ["shared/data"],
     }
     assert confirmation_payload_block_reason("spawn_worker", within) is None

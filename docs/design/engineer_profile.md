@@ -147,13 +147,15 @@ The engineer profile and `spawn_worker` serve complementary but distinct purpose
 They do not overlap in capability: workers cannot access the database, error logs, or any Family
 Assistant tools or data; the engineer cannot execute code or modify files itself. The engineer
 profile *can* invoke `spawn_worker` directly (behind user confirmation) so an investigation can hand
-a self-contained computation or drafting task to a sandboxed worker without leaving the engineer
-conversation. The worker sandbox mounts only the task's own directory — it receives the task
-description and produces output files, with no copy of the application's source checkout and no
-`context_paths` mounts (both backends document that parameter as unused) — so everything the worker
-needs must be included in the task description, and the engineer's system prompt says so. Because
-the worker sandbox has no access to Family Assistant data, this crosses no Rule-of-Two boundary
-beyond the state change of launching the worker, which is what the confirmation covers.
+a self-contained coding task to a sandboxed worker without leaving the engineer conversation. The
+worker sandbox is given only the task's own directory, but it has network access and can clone the
+public repository itself, so it *can* work on this application's code — it just receives no mounted
+local checkout and no `context_paths` mounts (both backends document that parameter as unused), and
+returns its work as output files (e.g. a patch) rather than modifying the running application.
+Everything the worker needs therefore goes in the task description, and the engineer's system prompt
+says so. Because the worker sandbox has no access to Family Assistant data, this crosses no
+Rule-of-Two boundary beyond the state change of launching the worker, which is what the confirmation
+covers.
 
 ## Usage
 
