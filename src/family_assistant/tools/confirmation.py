@@ -591,11 +591,22 @@ def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
         description_field,
     ]
     raw_context_paths = arguments.get("context_paths")
-    if isinstance(raw_context_paths, (list, tuple)) and raw_context_paths:
-        fields.append(
-            _confirmation_field(
-                "Context paths", ", ".join(str(path) for path in raw_context_paths)
+    if isinstance(raw_context_paths, (list, tuple)):
+        if raw_context_paths:
+            fields.append(
+                _confirmation_field(
+                    "Context paths", ", ".join(str(path) for path in raw_context_paths)
+                )
             )
+    elif raw_context_paths is not None:
+        # Script callers bypass JSON-schema validation, so a non-list value
+        # (e.g. a mapping whose keys the tool would later iterate as paths)
+        # must not be silently omitted from the prompt: the guard refuses the
+        # call (see confirmation_payload_block_reason), and the prompt says so.
+        fields.append(
+            f"- Context paths: ⚠️ Malformed value of type "
+            f"{type(raw_context_paths).__name__} — context_paths must be an array of "
+            "workspace path strings. The worker will not be launched."
         )
     fields.append(
         _confirmation_field("Timeout (minutes)", arguments.get("timeout_minutes", 30))
@@ -697,8 +708,19 @@ def confirmation_payload_block_reason(
                 "content into a workspace file and reference it via context_paths."
             )
         # The context paths scope what the worker can read, so they must be
-        # fully reviewable too.
+        # fully reviewable too. Script callers bypass JSON-schema validation,
+        # so a present-but-non-list value is refused outright: the tool would
+        # later iterate it (a mapping's keys would become paths) while the
+        # prompt showed the approver no paths at all.
         raw_context_paths = arguments.get("context_paths")
+        if raw_context_paths is not None and not isinstance(
+            raw_context_paths, (list, tuple)
+        ):
+            return (
+                f"Error: context_paths must be an array of workspace path strings, "
+                f"got {type(raw_context_paths).__name__}. Pass the paths as a JSON "
+                'array (e.g. ["shared/data/input.csv"]).'
+            )
         if isinstance(raw_context_paths, (list, tuple)):
             rendered_paths = ", ".join(str(path) for path in raw_context_paths)
             if len(rendered_paths) > CONFIRMATION_VALUE_MAX_CHARS:

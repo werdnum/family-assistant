@@ -181,6 +181,34 @@ def test_spawn_worker_block_reason_fires_on_combined_total_over_cap() -> None:
     assert str(MAX_WORKER_CONFIRMATION_PROMPT_CHARS) in reason
 
 
+def test_spawn_worker_block_reason_rejects_non_list_context_paths() -> None:
+    # Script callers bypass JSON-schema validation; a mapping's keys would be
+    # iterated as paths by the tool while the prompt showed no paths at all.
+    malformed = {
+        "task_description": "ok",
+        "context_paths": {"shared/secret": True},
+    }
+    reason = confirmation_payload_block_reason("spawn_worker", malformed)
+    assert reason is not None
+    assert "context_paths" in reason
+    assert "array" in reason
+
+
+@pytest.mark.asyncio
+async def test_spawn_worker_confirmation_flags_non_list_context_paths() -> None:
+    prompt = await render_spawn_worker_confirmation(
+        {
+            "task_description": "ok",
+            "context_paths": {"shared/secret": True},
+        },
+        _no_context(),
+    )
+
+    # The malformed value must be visible as a refusal, never silently omitted.
+    assert "Malformed" in prompt
+    assert "will not be launched" in prompt
+
+
 def test_cancel_worker_task_is_not_size_capped() -> None:
     # Cancelling only carries an id; the guard must not constrain it.
     assert (
