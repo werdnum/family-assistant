@@ -615,8 +615,10 @@ def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
     )
     return (
         "Do you want to launch an isolated AI coding worker? It executes code in a "
-        "sandboxed container with access to the shared workspace (it has no access "
-        "to Family Assistant tools or data):\n" + "\n".join(fields)
+        "sandboxed container that contains only this task's own directory — the "
+        "task description below and the output files it produces. It has no access "
+        "to Family Assistant tools or data and no copy of the application's source "
+        "checkout:\n" + "\n".join(fields)
     )
 
 
