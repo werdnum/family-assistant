@@ -339,10 +339,10 @@ def load_json_file(
 def expand_env_vars_in_dict(
     data: Any,  # noqa: ANN401
 ) -> Any:  # noqa: ANN401
-    """Recursively expand environment variables in dictionary values.
+    """Recursively expand environment variables in configuration strings.
 
-    Uses ${VAR} syntax for safer expansion to avoid accidental substitution
-    of literal dollar signs in configuration values.
+    Supports both ``$VAR`` and ``${VAR}`` syntax, including variables embedded
+    within a larger value such as an MCP server URL or stdio command path.
 
     Args:
         data: The data structure to process (dict, list, or scalar)

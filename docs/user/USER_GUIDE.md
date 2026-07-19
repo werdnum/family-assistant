@@ -880,6 +880,11 @@ various tasks with dark mode support and mobile optimization.
   declare `output_trusted` or `output_untrusted`; an exact `tool_metadata` entry replaces the tool's
   MCP annotation-derived tags rather than adding to them.
 
+- **Using environment variables in MCP configuration:** MCP server string values accept `$VAR` and
+  `${VAR}` placeholders. This includes stdio `command`, `args`, and `env` values as well as remote
+  SSE or Streamable HTTP `url` values. For example, set `url: "${MCP_HTTP_ORIGIN}/mcp"` to keep the
+  deployment-specific origin outside `config.yaml`.
+
 - **If you need more help:** Contact the family member who set up and manages the assistant for your
   family. They can help with configuration issues or more complex problems.
 
