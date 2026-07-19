@@ -299,6 +299,7 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
     assert confirmation_waiters.resolve_completed(
         confirmation_service.created_request_id,
         "executed:test",
+        taint_metadata=TurnTaintState.empty().to_metadata(),
     )
     outcome = await asyncio.wait_for(confirmation_task, timeout=2.0)
 
@@ -519,6 +520,7 @@ async def test_durable_telegram_external_approval_timeout_waits_for_execution() 
     assert confirmation_waiters.resolve_completed(
         confirmation_service.created_request_id,
         "executed:external",
+        taint_metadata=TurnTaintState.empty().to_metadata(),
     )
     outcome = await asyncio.wait_for(confirmation_task, timeout=2.0)
 

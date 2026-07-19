@@ -15,7 +15,11 @@ from sqlalchemy import select, update
 from family_assistant import task_worker as task_worker_module
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm.messages import UserMessage
-from family_assistant.security.taint import SourceTrustTier, TaintMetadata
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintMetadata,
+    TurnTaintState,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
@@ -27,7 +31,10 @@ from family_assistant.services.confirmation_waiters import (
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
-from family_assistant.tools.infrastructure import PolicyEnforcingToolsProvider
+from family_assistant.tools.infrastructure import (
+    PolicyEnforcingToolsProvider,
+    TaintTrackingToolsProvider,
+)
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 from family_assistant.tools.policy import (
     PolicyEngine,
@@ -606,7 +613,8 @@ async def test_approved_confirmation_delivers_live_waiter_without_notification(
     confirmation_result_waiters = ConfirmationResultWaiterRegistry()
     waiter = confirmation_result_waiters.register(request_id)
     task_id = await _approve_request(db_engine, request_id)
-    provider = RecordingToolsProvider()
+    wrapped_provider = RecordingDescriptorToolsProvider({ToolTag.OUTPUT_UNTRUSTED})
+    provider = TaintTrackingToolsProvider(wrapped_provider)
     chat_interface = RecordingChatInterface()
 
     await _run_worker_until_task_finishes(
@@ -625,7 +633,12 @@ async def test_approved_confirmation_delivers_live_waiter_without_notification(
     outcome = waiter.result()
     assert outcome.kind == "completed"
     assert outcome.result == "executed:payload"
-    assert provider.calls == [
+    assert outcome.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(outcome.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+    assert wrapped_provider.calls == [
         (
             "record_tool",
             {"value": "payload"},

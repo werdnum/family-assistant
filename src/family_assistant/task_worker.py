@@ -4685,11 +4685,17 @@ async def handle_confirmation_tool_execution(
         await deliver_execution_failure(execution_context, error_result)
         raise
 
+    if execution_context.taint_tracker is None:
+        raise RuntimeError(
+            f"Confirmation {request_id} executed without a taint tracker"
+        )
+    result_taint_metadata = execution_context.taint_tracker.snapshot().to_metadata()
     if (
         execution_context.confirmation_result_waiters is not None
         and execution_context.confirmation_result_waiters.resolve_completed(
             request_id,
             result,
+            taint_metadata=result_taint_metadata,
         )
     ):
         logger.info(

@@ -14,6 +14,13 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing.attachments import AttachmentProcessor
 from family_assistant.processing.tool_execution import ToolExecutor
 from family_assistant.processing.types import ToolExecutionResult
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.types import (
@@ -647,9 +654,23 @@ async def test_safety_confirmation_completed_result_preserved_with_ack() -> None
             )
         ],
     )
-    callback = StubConfirmationCallback(
-        outcome=ConfirmationOutcome(kind="completed", result=completed_result)
+    completed_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="call_123",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="browser output",
+        )
     )
+    callback = StubConfirmationCallback(
+        outcome=ConfirmationOutcome(
+            kind="completed",
+            result=completed_result,
+            taint_metadata=completed_taint.to_metadata(),
+        )
+    )
+    turn_taint_tracker = InMemoryTurnTaintTracker()
 
     tool_call = ToolCallItem(
         id="call_123",
@@ -676,6 +697,7 @@ async def test_safety_confirmation_completed_result_preserved_with_ack() -> None
         db_context=Mock(spec=DatabaseContext),
         chat_interface=None,
         request_confirmation_callback=callback,
+        taint_tracker=turn_taint_tracker,
     )
 
     assert isinstance(result, ToolExecutionResult)
@@ -685,6 +707,12 @@ async def test_safety_confirmation_completed_result_preserved_with_ack() -> None
     assert payload["safety_acknowledgement"] is True
     assert payload["url"] == "https://example.com"
     assert result.llm_message.transient_attachments is not None
+    assert result.llm_message.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(result.llm_message.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+    assert turn_taint_tracker.snapshot().max_tier == SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 @pytest.mark.asyncio
