@@ -1058,6 +1058,12 @@ async def api_chat_create_turn(
                     source
                 )
             initial_context_taint_metadata = initial_context_taint_state.to_metadata()
+            initial_live_taint_state = TurnTaintState.from_metadata(
+                initial_history_taint_metadata
+            )
+            for source in initial_context_taint_state.sources:
+                initial_live_taint_state = initial_live_taint_state.add_source(source)
+            initial_live_taint_metadata = initial_live_taint_state.to_metadata()
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
         # thus no done-callback safety net), so without ending it here the
@@ -1096,6 +1102,7 @@ async def api_chat_create_turn(
             processing_profile_id=selected_processing_service.service_config.id,
             initial_history_taint_metadata=initial_history_taint_metadata,
             initial_context_taint_metadata=initial_context_taint_metadata,
+            live_taint_metadata=initial_live_taint_metadata,
         )
 
     producer_task = asyncio.create_task(

@@ -141,6 +141,13 @@ async def run_turn_producer(
     """
     final_reply_parts: list[str] = []
     latex_normalizer = StreamingLatexNormalizer()
+    live_taint_tracker = InMemoryTurnTaintTracker(
+        TurnTaintState.from_metadata(initial_history_taint_metadata)
+    )
+    merge_taint_state_into_tracker(
+        live_taint_tracker,
+        TurnTaintState.from_metadata(initial_context_taint_metadata),
+    )
 
     chat_interfaces = getattr(app_state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(app_state, "confirmation_ui_managers", None)
@@ -243,6 +250,7 @@ async def run_turn_producer(
                 # The chat endpoint persisted the user message before launching
                 # this producer, so reuse that row instead of inserting again.
                 reuse_existing_user_row=True,
+                taint_tracker=live_taint_tracker,
             ):
                 reasoning_info = await _publish_llm_event(
                     hub=hub,
@@ -328,6 +336,7 @@ async def run_turn_producer(
                 processing_profile_id=processing_service.service_config.id,
                 initial_history_taint_metadata=initial_history_taint_metadata,
                 initial_context_taint_metadata=initial_context_taint_metadata,
+                live_taint_metadata=live_taint_tracker.snapshot().to_metadata(),
             )
         await _fail_turn_best_effort(
             hub,
@@ -416,6 +425,7 @@ async def persist_stopped_reply(
     processing_profile_id: str,
     initial_history_taint_metadata: TaintMetadata,
     initial_context_taint_metadata: TaintMetadata,
+    live_taint_metadata: TaintMetadata,
 ) -> None:
     """Persist a durable assistant row for a user-stopped turn.
 
@@ -440,6 +450,10 @@ async def persist_stopped_reply(
             merge_taint_state_into_tracker(
                 stopped_taint_tracker,
                 TurnTaintState.from_metadata(initial_context_taint_metadata),
+            )
+            merge_taint_state_into_tracker(
+                stopped_taint_tracker,
+                TurnTaintState.from_metadata(live_taint_metadata),
             )
             merge_taint_state_into_tracker(
                 stopped_taint_tracker,

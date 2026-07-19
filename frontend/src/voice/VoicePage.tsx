@@ -102,7 +102,7 @@ export function VoicePage() {
   const { sessionState, transcripts, connect, disconnect } = useGeminiLive();
 
   const handleStartCall = () => {
-    connect();
+    connect(localStorage.getItem('selectedProfileId') || 'default_assistant');
   };
 
   const handleEndCall = () => {

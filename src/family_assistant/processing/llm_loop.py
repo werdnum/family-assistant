@@ -20,6 +20,7 @@ from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     TurnTaintState,
     merge_history_taint,
+    merge_taint_state_into_tracker,
 )
 from family_assistant.tools import (
     collect_system_prompt_addition,
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
-    from family_assistant.security.taint import TaintSource
+    from family_assistant.security.taint import TaintSource, TurnTaintTracker
     from family_assistant.storage.context import DatabaseContext
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById, ToolDefinition
@@ -180,6 +181,7 @@ class LLMStreamingLoop:
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -213,6 +215,7 @@ class LLMStreamingLoop:
             event_sources=event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
+            taint_tracker=taint_tracker,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -246,6 +249,7 @@ class LLMStreamingLoop:
         event_sources: EventSourcesById | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -279,7 +283,10 @@ class LLMStreamingLoop:
         initial_taint_state = merge_history_taint(messages)
         for source in initial_taint_sources or ():
             initial_taint_state = initial_taint_state.add_source(source)
-        taint_tracker = InMemoryTurnTaintTracker(initial_taint_state)
+        if taint_tracker is None:
+            taint_tracker = InMemoryTurnTaintTracker(initial_taint_state)
+        else:
+            merge_taint_state_into_tracker(taint_tracker, initial_taint_state)
 
         async def refresh_on_demand_tools() -> tuple[list[ToolDefinition], str | None]:
             """Re-compute the tool list and system prompt addition for this turn.
