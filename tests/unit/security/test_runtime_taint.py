@@ -1427,6 +1427,85 @@ async def test_completed_taint_confirmation_records_result_taint(
 
 
 @pytest.mark.asyncio
+async def test_completed_taint_confirmation_merges_worker_metadata(
+    db_engine: AsyncEngine,
+) -> None:
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "confirmed_dynamic_read",
+                                "description": "Read stored content after approval.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_browser_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.SENSITIVE_DATA,
+                        ToolTag.OUTPUT_TRUSTED,
+                    ]),
+                )
+            ]
+        ),
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.MANUAL,
+            source_id="recognized-machine",
+            tier=SourceTrustTier.RECOGNIZED_MACHINE,
+            labels=frozenset({"source_recognized_machine"}),
+            reason="test recognized machine source",
+        )
+    )
+    worker_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="tainted-note",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="stored note provenance",
+        )
+    )
+
+    async def _completed_confirmation(
+        **_kwargs: object,
+    ) -> ConfirmationOutcome:
+        return ConfirmationOutcome(
+            kind="completed",
+            result=ToolResult(text="confirmed note contents"),
+            taint_metadata=worker_taint.to_metadata(),
+        )
+
+    async with get_db_context(db_engine) as db_context:
+        context = replace(
+            _minimal_context(db_context, tracker),
+            request_confirmation_callback=_completed_confirmation,
+        )
+        result = await provider.execute_tool(
+            "confirmed_dynamic_read",
+            {},
+            context,
+            "call_confirmed_dynamic",
+        )
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "confirmed note contents"
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert (
+        context.tool_result_taint_metadata["call_confirmed_dynamic"].get("max_tier")
+        == "unknown_external"
+    )
+
+
+@pytest.mark.asyncio
 async def test_dynamic_provenance_added_by_trusted_read_is_persisted_on_result(
     db_engine: AsyncEngine,
 ) -> None:

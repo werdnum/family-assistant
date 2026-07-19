@@ -26,7 +26,13 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
-from family_assistant.security.taint import TurnTaintState, merge_history_taint
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+    merge_history_taint,
+)
 from family_assistant.services.confirmation_service import (
     ConfirmationAlreadyResolvedError,
     ConfirmationAuthorizationError,
@@ -1046,6 +1052,12 @@ async def api_chat_create_turn(
             initial_history_taint_metadata = merge_history_taint(
                 initial_history_messages
             ).to_metadata()
+            initial_context_taint_state = TurnTaintState.empty()
+            for source in await selected_processing_service.context_preparer.aggregate_context_taint_sources():
+                initial_context_taint_state = initial_context_taint_state.add_source(
+                    source
+                )
+            initial_context_taint_metadata = initial_context_taint_state.to_metadata()
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
         # thus no done-callback safety net), so without ending it here the
@@ -1083,6 +1095,7 @@ async def api_chat_create_turn(
             reply_text="",
             processing_profile_id=selected_processing_service.service_config.id,
             initial_history_taint_metadata=initial_history_taint_metadata,
+            initial_context_taint_metadata=initial_context_taint_metadata,
         )
 
     producer_task = asyncio.create_task(
@@ -1102,6 +1115,7 @@ async def api_chat_create_turn(
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
             initial_history_taint_metadata=initial_history_taint_metadata,
+            initial_context_taint_metadata=initial_context_taint_metadata,
             mid_turn_input_provider=mid_turn_controller,
         ),
         name=f"chat-turn:{conversation_id}:{payload.turn_id}",
@@ -2333,12 +2347,27 @@ async def api_chat_save_voice_session(
             turn_id = str(uuid.uuid4())
             message: UserMessage | AssistantMessage = UserMessage(content=turn.text)
         else:
-            # Voice transcripts are submitted by the authenticated user's own
-            # session, so assistant lines get the same explicit trusted-empty
-            # state that the user lines default to.
+            # Native voice replies may summarize tool output, but the transcript
+            # payload does not carry the session's runtime tracker. Preserve the
+            # pre-metadata conservative behavior rather than labeling model- and
+            # tool-derived text as trusted.
             message = AssistantMessage(
                 content=turn.text,
-                taint_metadata=TurnTaintState.empty().to_metadata(),
+                taint_metadata=TurnTaintState
+                .empty()
+                .add_source(
+                    TaintSource(
+                        source_type=TaintSourceType.TOOL_OUTPUT,
+                        source_id=None,
+                        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                        labels=frozenset(),
+                        reason=(
+                            "Native voice assistant transcript may derive from "
+                            "tool output without persisted session provenance."
+                        ),
+                    )
+                )
+                .to_metadata(),
             )
         # Strictly increasing timestamps keep the transcript ordered when the
         # conversation is read back (history is ordered by timestamp).

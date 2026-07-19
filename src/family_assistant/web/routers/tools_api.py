@@ -9,7 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
-from family_assistant.security.taint import InMemoryTurnTaintTracker
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    TaintMetadata,
+    TurnTaintState,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     ToolExecutionContext,
@@ -32,6 +36,7 @@ tools_api_router = APIRouter()
 class ToolExecutionRequest(BaseModel):
     # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
     arguments: dict[str, Any]
+    taint_metadata: TaintMetadata | None = None
 
 
 @tools_api_router.post("/execute/{tool_name}", response_class=JSONResponse)
@@ -82,6 +87,19 @@ async def execute_tool_api(
     # We need some context, minimum placeholders for now
     # Generate a unique ID for this specific API call context
     # This isn't a persistent conversation like Telegram
+
+    taint_tracker = InMemoryTurnTaintTracker(
+        TurnTaintState.from_metadata(payload.taint_metadata or {})
+    )
+
+    def error_response(*, status_code: int, detail: str) -> JSONResponse:
+        return JSONResponse(
+            content={
+                "detail": detail,
+                "taint_metadata": taint_tracker.snapshot().to_metadata(),
+            },
+            status_code=status_code,
+        )
 
     execution_context = ToolExecutionContext(
         interface_type="api",  # Identify interface
@@ -137,9 +155,10 @@ async def execute_tool_api(
             processing_service.credential_resolvers if processing_service else None
         ),
         api_backend=(processing_service.api_backend if processing_service else None),
-        # Direct API calls come from an authenticated user; start from an
-        # explicit trusted-empty state so tool results carry taint metadata.
-        taint_tracker=InMemoryTurnTaintTracker(),
+        # Native voice threads this snapshot through consecutive calls. Missing
+        # or malformed state is treated conservatively as unknown external so a
+        # client cannot silently reset a tainted session to trusted.
+        taint_tracker=taint_tracker,
     )
 
     try:
@@ -176,42 +195,48 @@ async def execute_tool_api(
             final_result = result
 
         return JSONResponse(
-            content={"success": True, "result": final_result}, status_code=200
+            content={
+                "success": True,
+                "result": final_result,
+                "taint_metadata": taint_tracker.snapshot().to_metadata(),
+            },
+            status_code=200,
         )
     except ToolPolicyDeniedError as e:
         logger.warning("Tool '%s' denied by policy: %s", tool_name, e.reason)
-        raise HTTPException(
-            status_code=403, detail=f"Tool '{tool_name}' denied by policy: {e.reason}"
-        ) from None
+        return error_response(
+            status_code=403,
+            detail=f"Tool '{tool_name}' denied by policy: {e.reason}",
+        )
     except ToolNotFoundError:
         logger.warning(f"Tool '{tool_name}' not found for execution request.")
-        raise HTTPException(
-            status_code=404, detail=f"Tool '{tool_name}' not found."
-        ) from None
+        return error_response(
+            status_code=404,
+            detail=f"Tool '{tool_name}' not found.",
+        )
     except (
         ValidationError
     ) as ve:  # Catch Pydantic validation errors if execute_tool raises them
         logger.warning(f"Argument validation error for tool '{tool_name}': {ve}")
-        raise HTTPException(
+        return error_response(
             status_code=400, detail=f"Invalid arguments for tool '{tool_name}': {ve}"
-        ) from ve
+        )
     except (
         TypeError
     ) as te:  # Catch potential argument mismatches within the tool function
         logger.error(
             f"Type error during execution of tool '{tool_name}': {te}", exc_info=True
         )
-        raise HTTPException(
+        return error_response(
             status_code=400,
             detail=f"Argument mismatch or type error in tool '{tool_name}': {te}",
-        ) from te
+        )
     except Exception as e:
         logger.error(f"Error executing tool '{tool_name}': {e}", exc_info=True)
-        # Avoid leaking internal error details unless intended
-        raise HTTPException(
+        return error_response(
             status_code=500,
             detail=f"An error occurred while executing tool '{tool_name}'.",
-        ) from e
+        )
 
 
 @tools_api_router.get("/definitions")

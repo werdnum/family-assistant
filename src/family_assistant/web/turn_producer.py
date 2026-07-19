@@ -129,6 +129,7 @@ async def run_turn_producer(
     trigger_content_parts: list[ContentPartDict],
     trigger_attachments: list[MessageAttachmentMetadata] | None,
     initial_history_taint_metadata: TaintMetadata,
+    initial_context_taint_metadata: TaintMetadata,
     mid_turn_input_provider: "MidTurnInputProvider | None" = None,
     ack_grace_seconds: float = DEFAULT_ACK_GRACE_SECONDS,
 ) -> None:
@@ -326,6 +327,7 @@ async def run_turn_producer(
                 reply_text="".join(final_reply_parts),
                 processing_profile_id=processing_service.service_config.id,
                 initial_history_taint_metadata=initial_history_taint_metadata,
+                initial_context_taint_metadata=initial_context_taint_metadata,
             )
         await _fail_turn_best_effort(
             hub,
@@ -413,6 +415,7 @@ async def persist_stopped_reply(
     reply_text: str,
     processing_profile_id: str,
     initial_history_taint_metadata: TaintMetadata,
+    initial_context_taint_metadata: TaintMetadata,
 ) -> None:
     """Persist a durable assistant row for a user-stopped turn.
 
@@ -433,6 +436,10 @@ async def persist_stopped_reply(
             turn_messages = await db_context.message_history.get_by_turn_id(turn_id)
             stopped_taint_tracker = InMemoryTurnTaintTracker(
                 TurnTaintState.from_metadata(initial_history_taint_metadata)
+            )
+            merge_taint_state_into_tracker(
+                stopped_taint_tracker,
+                TurnTaintState.from_metadata(initial_context_taint_metadata),
             )
             merge_taint_state_into_tracker(
                 stopped_taint_tracker,
