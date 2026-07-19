@@ -1415,7 +1415,10 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     # MQTT tools
     "mqtt_publish": _metadata(
-        ToolTag.EXTERNAL_COMM,
+        # Publishes only to the operator-configured home broker, so runtime
+        # taint treats it as a home_local sink rather than arbitrary external
+        # messaging (which the external_comm tag would imply).
+        ToolTag.STATE_CHANGING,
         ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
