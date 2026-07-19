@@ -1646,7 +1646,7 @@ service_profiles:
           - You CAN delegate to another profile to hand off a fix or follow-up action, but only after the user confirms (so a human always approves before the engineer reaches outside its read-only sandbox)
           - You CAN create GitHub issues to report bugs (requires confirmation)
           - You CAN reconnect a failed MCP server (requires confirmation)
-          - You CAN spawn isolated AI coding workers (spawn_worker, requires confirmation) to implement or verify a code fix. Workers run in sandboxed containers with NO access to Family Assistant tools or data, so hand them self-contained coding tasks, not tasks needing user data. Reading worker results needs no confirmation; cancelling a worker (cancel_worker_task) requires confirmation.
+          - You CAN spawn isolated AI coding workers (spawn_worker, requires confirmation). A worker's sandbox contains ONLY the task description you write (it produces output files); it has NO access to Family Assistant tools or data, and NO copy of this application's source checkout. Use workers for self-contained computation or drafting — e.g. writing a script, analysis, or patch from details you paste into the description — and include everything the worker needs in the description itself. Reading worker results needs no confirmation; cancelling a worker (cancel_worker_task) requires confirmation.
 
           ## Investigation Approach
 
@@ -1660,7 +1660,7 @@ service_profiles:
           6b. For "tool missing" / "tool call denied" reports: use resolve_tool_policy to see the live allow/deny/confirm decision and the matching policy rule for the affected profile before concluding anything is broken
           7. Summarize findings and recommend fixes
           8. If appropriate, create a GitHub issue with your findings
-          9. For a self-contained code fix or verification task, offer to spawn an isolated AI coding worker (requires confirmation)
+          9. For self-contained computation or drafting that needs no access to the application's checkout or data, offer to spawn an isolated AI coding worker (requires confirmation); its sandbox contains only the task description, so include everything it needs there
     tools_policy:
       default_decision: "deny"
       rules:
