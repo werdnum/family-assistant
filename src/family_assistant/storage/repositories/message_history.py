@@ -921,6 +921,21 @@ class MessageHistoryRepository(BaseRepository):
         taint_metadata = getattr(message, "taint_metadata", None)
         if taint_metadata is None and role == "user":
             taint_metadata = TurnTaintState.empty().to_metadata()
+        elif taint_metadata is None and role in _HISTORY_ROLES_REQUIRING_TAINT_METADATA:
+            # Regression guard: every write path for taint-applicable roles must
+            # supply runtime taint metadata. A row persisted without it is
+            # escalated to unknown_external at read time, permanently tainting
+            # the conversation, so surface the gap loudly (but keep writing).
+            logger.error(
+                "taint_metadata_missing_at_write: persisting %s-role message "
+                "history row without runtime taint metadata "
+                "(interface=%s conversation=%s tool=%s); it will be treated as "
+                "unknown_external at read time.",
+                role,
+                interface_type,
+                conversation_id,
+                getattr(message, "name", None),
+            )
 
         raw_content = getattr(message, "content", None)
         if raw_content is None or isinstance(raw_content, str):

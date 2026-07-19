@@ -1,6 +1,7 @@
 """Functional tests for message history storage operations."""
 
 import json  # Import json for parsing SQLite results
+import logging
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,13 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     create_async_engine,
 )  # Need these for engine fixture
+
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from family_assistant.security.taint import TurnTaintState
 
 # Import metadata to create tables
 from family_assistant.storage.base import metadata
@@ -515,3 +523,68 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(
     empty_thread_messages = await get_messages_by_thread_id(db_context, non_existent_id)
     # Assert outside context
     assert len(empty_thread_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_add_message_without_taint_metadata_logs_regression_guard(
+    db_context: DatabaseContext,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Assistant/tool rows persisted without taint metadata trip the write guard."""
+    conversation_id = str(uuid.uuid4())
+    repo_logger = "family_assistant.storage.repositories.message_history"
+
+    with caplog.at_level(logging.ERROR, logger=repo_logger):
+        assistant_id = await db_context.message_history.add_message(
+            AssistantMessage(content="no metadata"),
+            interface_type="test_guard",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+        )
+        tool_id = await db_context.message_history.add_message(
+            ToolMessage(tool_call_id="call_1", content="{}", name="some_tool"),
+            interface_type="test_guard",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+        )
+
+    assert assistant_id is not None
+    assert tool_id is not None
+    guard_records = [
+        record
+        for record in caplog.records
+        if "taint_metadata_missing_at_write" in record.getMessage()
+    ]
+    assert len(guard_records) == 2
+
+    # Rows with metadata (or non-applicable roles) do not trip the guard.
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger=repo_logger):
+        classified_id = await db_context.message_history.add_message(
+            AssistantMessage(
+                content="with metadata",
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            ),
+            interface_type="test_guard",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+        )
+        system_id = await db_context.message_history.add_message(
+            SystemMessage(content="system trigger"),
+            interface_type="test_guard",
+            conversation_id=conversation_id,
+            timestamp=datetime.now(UTC),
+        )
+
+    assert classified_id is not None
+    assert system_id is not None
+    assert not any(
+        "taint_metadata_missing_at_write" in record.getMessage()
+        for record in caplog.records
+    )
+
+    classified_row = await db_context.message_history.get_row_by_internal_id(
+        classified_id
+    )
+    assert classified_row is not None
+    assert classified_row["taint_metadata_version"] == "runtime_v1"
