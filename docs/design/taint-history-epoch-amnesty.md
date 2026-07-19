@@ -93,15 +93,46 @@ Rows with `timestamp < history_taint_epoch` (**pre-epoch** rows):
 - **Malformed metadata**: contributes no taint (it is pre-epoch legacy junk by definition; the same
   amnesty as null metadata).
 
-Rows with `timestamp >= history_taint_epoch` (**post-epoch** rows) are **trusted as recorded** — no
-filtering. A post-epoch row with a taint-applicable role (`user`/`assistant`/`tool`) and missing
-metadata still receives the worst-case `legacy_missing_taint_metadata` fallback, but the event is
-now logged at **ERROR** level with conversation id, role, tool name, and timestamp: with the epoch
-set, missing metadata on a new row is a write-path regression, not an expected legacy condition. The
-alarm is deduplicated once per conversation per process (a small LRU) so a single broken
-conversation does not flood the error log on every history read. (The known metadata-less write
-paths are being fixed in a separate in-flight PR; this alarm is the read-side tripwire that keeps
-them fixed.)
+Rows with `timestamp >= history_taint_epoch` (**post-epoch** rows) are **trusted as recorded**, with
+one timestamp-independent exception described next. A post-epoch row with a taint-applicable role
+(`user`/`assistant`/`tool`) and missing metadata still receives the worst-case
+`legacy_missing_taint_metadata` fallback, but the event is now logged at **ERROR** level with
+conversation id, role, tool name, and timestamp: with the epoch set, missing metadata on a new row
+is a write-path regression, not an expected legacy condition. The alarm is deduplicated once per
+conversation per process (a small LRU) so a single broken conversation does not flood the error log
+on every history read. (The known metadata-less write paths are being fixed in a separate in-flight
+PR; this alarm is the read-side tripwire that keeps them fixed.)
+
+### Timestamp-independent legacy-echo filtering
+
+A source labeled `legacy_missing_taint_metadata` found *inside* persisted `runtime_v1` metadata is,
+by construction, a second-hand **echo** of some other row's read-time fallback: the label is only
+ever stamped on the synthetic source that `_message_history_taint_metadata()` fabricates for a row
+with *missing* metadata, which is then re-baked into that turn's snapshot. It is never a first-hand
+attribution. `strip_legacy_labeled_echoes()` (`src/family_assistant/security/taint.py`) therefore
+drops these echoes from every history row's stored `sources` **regardless of the row's timestamp**
+(the pre-epoch path in `amnestied_history_taint_metadata()` already dropped them; this extends the
+same drop to post-epoch rows). When an echo is dropped, the row's contribution is **recomputed from
+the surviving sources** rather than honoring the stored `max_tier` — a row whose only source was the
+echo contributes nothing.
+
+This closes a self-healing gap: if an operator sets the epoch earlier than this feature's deploy,
+rows written between the epoch and the deploy already carry re-baked echoes in their own snapshots.
+Without this filter those rows read as post-epoch and unfiltered, so an active conversation keeps
+re-seeding `unknown_external` from them and re-persisting poisoned snapshots — self-healing would be
+blocked until a full prompt window turned over with no such row.
+
+Two properties are deliberately preserved:
+
+- **First-hand missing metadata is not weakened.** A post-epoch row that itself has *missing*
+  metadata (null `taint_metadata_json`) still gets the synthetic labeled fallback (worst-case
+  `unknown_external`) and still fires the ERROR write-path regression alarm. That path synthesizes
+  the label fresh; it does not read it back from stored `sources`, so echo-stripping never touches
+  it.
+- **Anonymous manual artifacts in post-epoch rows are NOT dropped.** Only the explicitly labeled
+  echoes are stripped. Anonymous `manual`/no-label/no-`source_id` escalation artifacts can
+  legitimately represent a *truncated genuine* source in a post-epoch row, so they are read
+  conservatively.
 
 ### Where the filtering runs
 
@@ -165,11 +196,24 @@ Note that `get_note`/`list_notes` are `OUTPUT_TRUSTED` and do not re-taint turns
 trigger `sensitive_read_broadening` confirmations only in genuinely tainted turns, which is the
 intended behavior.
 
+If an operator sets the epoch *earlier* than this feature's deploy (against the guidance below),
+rows written in the gap between the epoch and the deploy may carry re-baked poison as an **anonymous
+truncation artifact** rather than a labeled echo. Timestamp-independent echo-stripping removes the
+labeled form but reads the anonymous form conservatively, so such a row keeps contributing
+`unknown_external` until the thread's prompt window turns over past it. This residual is bounded (it
+never touches rows written after the deploy) and is moot when the epoch is set to the deploy time or
+later, as prescribed below.
+
 ## Rollout plan
 
-1. **Deploy** with `taint_policy.history_taint_epoch` set in operator config (quoted ISO-8601 with
-   offset, e.g. `"2026-07-06T00:00:00+00:00"` — the taint-metadata migration date; any pre-deploy
-   instant that predates genuine metadata-bearing rows works).
+1. **Deploy** with `taint_policy.history_taint_epoch` set in operator config to the instant this
+   feature is **deployed** (or later) — quoted ISO-8601 with offset, e.g.
+   `"2026-08-01T00:00:00+00:00"`. **Never set it earlier** (in particular, not the taint-metadata
+   migration date `2026-07-06`): rows written before the deploy may contain re-baked legacy poison
+   that read-time amnesty only partially neutralizes (labeled echoes are dropped regardless of
+   timestamp, but anonymized truncation artifacts in those rows are read conservatively), so an
+   earlier epoch treats them as post-epoch and keeps re-seeding the poison. Setting the epoch at (or
+   after) deploy makes every gap row a genuine post-deploy write with clean metadata.
 2. **Watch `GET /api/diagnostics/taint-audit` for ~1 week**: `unknown_external` share and
    `legacy_missing_taint_metadata` occurrences should collapse;
    `post_epoch_missing_required_metadata_rows` must be zero (any nonzero value or

@@ -43,6 +43,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     amnestied_history_taint_metadata,
     coerce_taint_metadata,
+    strip_legacy_labeled_echoes,
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
@@ -127,6 +128,16 @@ def _message_history_taint_metadata(
         msg.get("timestamp"), history_taint_epoch
     ):
         return amnestied_history_taint_metadata(raw_metadata)
+
+    if isinstance(raw_metadata, dict):
+        # Sources labeled ``legacy_missing_taint_metadata`` inside persisted
+        # runtime_v1 metadata are second-hand echoes of another row's read-time
+        # fallback (never a first-hand attribution). They are dropped
+        # regardless of the row's timestamp, so an active conversation whose
+        # rows re-baked such an echo can self-heal rather than seeding
+        # unknown_external forever. First-hand missing metadata (a null
+        # ``taint_metadata_json``) is handled below and is unaffected.
+        return strip_legacy_labeled_echoes(raw_metadata)
 
     taint_metadata = coerce_taint_metadata(raw_metadata)
     if taint_metadata is not None:

@@ -297,7 +297,13 @@ taint_policy:
   # Must be timezone-aware; QUOTE the value so YAML passes it through as an
   # ISO-8601 string (unquoted YAML timestamps parse as naive datetimes and are
   # rejected at startup). Unset/null disables the amnesty.
-  # Example: history_taint_epoch: "2026-07-06T00:00:00+00:00"
+  # Set this to the instant this feature is DEPLOYED (or later) -- NEVER earlier
+  # (e.g. not the taint-metadata migration date). Rows written before deploy may
+  # contain re-baked legacy poison that read-time amnesty only partially
+  # neutralizes (labeled echoes are dropped, but anonymized truncation artifacts
+  # in those rows are read conservatively), so an earlier epoch treats them as
+  # post-epoch and reintroduces the poison.
+  # Example: history_taint_epoch: "2026-08-01T00:00:00+00:00"
   history_taint_epoch: null
   high_taint_tier: "unknown_external"
   default_unspecified_tool_output_tier: "unknown_external"
