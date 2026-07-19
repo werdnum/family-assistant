@@ -4325,19 +4325,28 @@ def _build_confirmation_notification_context(
     source_row: MessageHistoryRow | None,
 ) -> ToolExecutionContext:
     """Reconstruct enough context to notify the original conversation."""
+    request_taint_state = (
+        TurnTaintState.from_metadata(request["taint_state_json"])
+        if request["taint_state_json"] is not None
+        else None
+    )
+    notification_context = replace(
+        exec_context,
+        taint_tracker=InMemoryTurnTaintTracker(request_taint_state),
+    )
     if source_row is None:
-        return exec_context
+        return notification_context
 
     interface_type = str(source_row["interface_type"])
-    chat_interface = exec_context.chat_interface
-    if exec_context.chat_interfaces is not None:
-        chat_interface = exec_context.chat_interfaces.get(
+    chat_interface = notification_context.chat_interface
+    if notification_context.chat_interfaces is not None:
+        chat_interface = notification_context.chat_interfaces.get(
             interface_type,
             chat_interface,
         )
 
     return replace(
-        exec_context,
+        notification_context,
         interface_type=interface_type,
         conversation_id=str(source_row["conversation_id"]),
         turn_id=(
@@ -4350,12 +4359,12 @@ def _build_confirmation_notification_context(
         processing_profile_id=(
             str(source_row["processing_profile_id"])
             if source_row.get("processing_profile_id") is not None
-            else exec_context.processing_profile_id
+            else notification_context.processing_profile_id
         ),
         subconversation_id=(
             str(source_row["subconversation_id"])
             if source_row.get("subconversation_id") is not None
-            else exec_context.subconversation_id
+            else notification_context.subconversation_id
         ),
     )
 

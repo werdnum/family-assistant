@@ -18,6 +18,8 @@ from family_assistant.llm.messages import UserMessage
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintMetadata,
+    TaintSource,
+    TaintSourceType,
     TurnTaintState,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -405,6 +407,7 @@ async def _create_request(
     origin_interface_type: str | None = None,
     origin_conversation_id: str | None = None,
     approval_policy_fingerprint: str | None = None,
+    taint_state_json: TaintMetadata | None = None,
 ) -> str:
     resolved_tool_args: ToolArguments = (
         tool_args if tool_args is not None else {"value": "payload"}
@@ -420,6 +423,7 @@ async def _create_request(
         origin_interface_type=origin_interface_type,
         origin_conversation_id=origin_conversation_id,
         approval_policy_fingerprint=approval_policy_fingerprint,
+        taint_state_json=taint_state_json,
     )
     return request["id"]
 
@@ -1330,9 +1334,19 @@ async def test_confirmation_task_fails_when_source_profile_is_missing(
         db_engine,
         processing_profile_id="secondary-profile",
     )
+    request_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="confirmed-email",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="confirmation request derived from external email",
+        )
+    )
     request_id = await _create_request(
         db_engine,
         source_message_internal_id=source_message_id,
+        taint_state_json=request_taint.to_metadata(),
     )
     task_id = await _approve_request(db_engine, request_id)
     confirmation_result_waiters = ConfirmationResultWaiterRegistry()
@@ -1374,6 +1388,11 @@ async def test_confirmation_task_fails_when_source_profile_is_missing(
     assert outcome.kind == "failed"
     assert isinstance(outcome.result, str)
     assert "secondary-profile" in outcome.result
+    assert outcome.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(outcome.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
     status, error = await _task_status(db_engine, task_id)
     assert status == "failed"
     assert error is not None
