@@ -658,15 +658,14 @@ async def _handle_worker_started(
             )
             return
 
-    updated = await db_context.worker_tasks.update_task_status(
+    updated = await db_context.worker_tasks.mark_task_running(
         task_id=task_id,
-        status="running",
         started_at=datetime.now(UTC),
     )
     if updated:
         logger.info("Updated worker task %s status to running", task_id)
     else:
-        logger.warning("Worker task %s not found for start update", task_id)
+        logger.info("Worker task %s was not awaiting a start update", task_id)
 
 
 async def _handle_worker_completion(

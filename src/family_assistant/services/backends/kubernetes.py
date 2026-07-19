@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -599,7 +600,7 @@ try:
 except Exception as exc:
     print(f"worker start webhook failed: {exc}", flush=True)
 """.replace("__START_WEBHOOK_URL__", repr(start_webhook_url))
-        return f'python -c {start_script!r}\nrun-task < "$TASK_INPUT"'
+        return f'python -c {shlex.quote(start_script)}\nrun-task < "$TASK_INPUT"'
 
     async def cancel_task(self, job_id: str) -> bool:
         """Cancel a running Kubernetes Job.
