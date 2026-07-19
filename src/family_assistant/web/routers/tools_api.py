@@ -72,7 +72,6 @@ async def execute_tool_api(
     clock = getattr(request.app.state, "clock", None)
     event_sources = getattr(request.app.state, "event_sources", None)
     attachment_registry = getattr(request.app.state, "attachment_registry", None)
-    root_tools_provider = getattr(request.app.state, "tools_provider", None)
 
     # Find camera backend from any profile that has one configured
     camera_backend = None
@@ -113,7 +112,9 @@ async def execute_tool_api(
         TurnTaintState.from_metadata(payload.taint_metadata or {})
     )
 
-    def error_response(*, status_code: int, detail: str) -> JSONResponse:
+    async def error_response(*, status_code: int, detail: str) -> JSONResponse:
+        if db_context.conn is not None:
+            await db_context.conn.rollback()
         return JSONResponse(
             content={
                 "detail": detail,
@@ -142,7 +143,7 @@ async def execute_tool_api(
         chat_interface=None,  # No direct chat interface for API calls
         timezone=timezone,  # Pass fetched timezone
         request_confirmation_callback=None,  # No confirmation from API for now
-        tools_provider=root_tools_provider,  # Pass root tools provider for execute_script
+        tools_provider=selected_tools_provider,
         processing_profile_id=(
             processing_service.service_config.id if processing_service else None
         ),
@@ -225,13 +226,13 @@ async def execute_tool_api(
         )
     except ToolPolicyDeniedError as e:
         logger.warning("Tool '%s' denied by policy: %s", tool_name, e.reason)
-        return error_response(
+        return await error_response(
             status_code=403,
             detail=f"Tool '{tool_name}' denied by policy: {e.reason}",
         )
     except ToolNotFoundError:
         logger.warning(f"Tool '{tool_name}' not found for execution request.")
-        return error_response(
+        return await error_response(
             status_code=404,
             detail=f"Tool '{tool_name}' not found.",
         )
@@ -239,7 +240,7 @@ async def execute_tool_api(
         ValidationError
     ) as ve:  # Catch Pydantic validation errors if execute_tool raises them
         logger.warning(f"Argument validation error for tool '{tool_name}': {ve}")
-        return error_response(
+        return await error_response(
             status_code=400, detail=f"Invalid arguments for tool '{tool_name}': {ve}"
         )
     except (
@@ -248,13 +249,13 @@ async def execute_tool_api(
         logger.error(
             f"Type error during execution of tool '{tool_name}': {te}", exc_info=True
         )
-        return error_response(
+        return await error_response(
             status_code=400,
             detail=f"Argument mismatch or type error in tool '{tool_name}': {te}",
         )
     except Exception as e:
         logger.error(f"Error executing tool '{tool_name}': {e}", exc_info=True)
-        return error_response(
+        return await error_response(
             status_code=500,
             detail=f"An error occurred while executing tool '{tool_name}'.",
         )

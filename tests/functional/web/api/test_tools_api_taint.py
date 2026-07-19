@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from family_assistant.llm.messages import UserMessage
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
 )
+from family_assistant.storage.context import get_db_context
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     TaintTrackingToolsProvider,
@@ -26,6 +29,7 @@ from family_assistant.tools.types import ToolResult
 if TYPE_CHECKING:
     from fastapi import FastAPI
     from httpx import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
@@ -43,6 +47,7 @@ class TaintingDirectToolsProvider:
 
     def __init__(self) -> None:
         self.initial_tiers: list[SourceTrustTier] = []
+        self.context_tools_providers: list[object | None] = []
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
         return []
@@ -58,6 +63,7 @@ class TaintingDirectToolsProvider:
         del name, arguments, call_id
         assert context.taint_tracker is not None
         self.initial_tiers.append(context.taint_tracker.snapshot().max_tier)
+        self.context_tools_providers.append(context.tools_provider)
         context.taint_tracker.add_source(
             TaintSource(
                 source_type=TaintSourceType.EMAIL,
@@ -85,6 +91,15 @@ class FailingTaintingDirectToolsProvider(TaintingDirectToolsProvider):
         call_id: str | None = None,
     ) -> ToolResult:
         await super().execute_tool(name, arguments, context, call_id)
+        await context.db_context.message_history.add_message(
+            UserMessage(content="must roll back"),
+            interface_type="api",
+            conversation_id="failed-direct-tool",
+            timestamp=datetime.now(UTC),
+            turn_id=context.turn_id,
+            user_id=context.user_id,
+            processing_profile_id=context.processing_profile_id,
+        )
         raise RuntimeError("tool failed after reading external data")
 
 
@@ -141,6 +156,7 @@ async def test_direct_tool_api_missing_taint_is_conservative(
 async def test_direct_tool_api_failure_returns_accumulated_taint(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
 ) -> None:
     provider = FailingTaintingDirectToolsProvider()
     app_fixture.state.tools_provider = provider
@@ -156,6 +172,39 @@ async def test_direct_tool_api_failure_returns_accumulated_taint(
 
     assert response.status_code == 500
     assert response.json()["taint_metadata"]["max_tier"] == "unknown_external"
+    async with get_db_context(db_engine) as db_context:
+        messages = await db_context.message_history.get_recent(
+            interface_type="api",
+            conversation_id="failed-direct-tool",
+        )
+    assert messages == []
+
+
+@pytest.mark.asyncio
+async def test_direct_tool_api_uses_selected_provider_for_nested_tools(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+) -> None:
+    root_provider = TaintingDirectToolsProvider()
+    profile_provider = TaintingDirectToolsProvider()
+    app_fixture.state.tools_provider = root_provider
+    processing_service = app_fixture.state.processing_service
+    processing_service.tools_provider = profile_provider
+    profile_id = processing_service.service_config.id
+    app_fixture.state.processing_services = {profile_id: processing_service}
+
+    response = await api_test_client.post(
+        "/api/tools/execute/read_external",
+        json={
+            "arguments": {},
+            "profile_id": profile_id,
+            "taint_metadata": TurnTaintState.empty().to_metadata(),
+        },
+    )
+
+    assert response.status_code == 200
+    assert profile_provider.context_tools_providers == [profile_provider]
+    assert root_provider.initial_tiers == []
 
 
 @pytest.mark.asyncio
