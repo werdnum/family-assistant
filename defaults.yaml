@@ -189,7 +189,8 @@ indexing_pipeline_config:
 #     (aliases: "streamablehttp", "http").
 # Remote transports (sse, streamable_http) accept an optional `token` for a
 # Bearer Authorization header. Use "$ENV_VAR" to read the token from the
-# environment, e.g. token: "$MY_MCP_TOKEN".
+# environment, e.g. token: "$MY_MCP_TOKEN". Variables can also be embedded in
+# stdio commands, arguments, and remote URLs with "$VAR" or "${VAR}" syntax.
 #
 # Example remote servers:
 #   remote_sse:
@@ -198,7 +199,7 @@ indexing_pipeline_config:
 #     token: "$MY_MCP_TOKEN"
 #   remote_http:
 #     transport: "streamable_http"
-#     url: "https://example.com/mcp"
+#     url: "${MCP_HTTP_ORIGIN}/mcp"
 #     token: "$MY_MCP_TOKEN"
 mcp_config:
   mcpServers:
