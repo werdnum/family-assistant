@@ -135,6 +135,30 @@ def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
     return raw_value
 
 
+def _normalize_json_schema_type(
+    type_value: object, default: str = "string"
+) -> tuple[str, bool]:
+    """Normalize a JSON Schema ``type`` value to a single type name plus nullability.
+
+    JSON Schema permits ``type`` to be either a string or a list of strings such as
+    ``["string", "null"]`` to express a nullable field. Gemini's schema expects a
+    single scalar type together with a separate ``nullable`` flag, so collapse the
+    list form here and report whether ``"null"`` was present.
+    """
+    if isinstance(type_value, list):
+        non_null = [t for t in type_value if t != "null"]
+        nullable = len(non_null) != len(type_value)
+        resolved: object = non_null[0] if non_null else default
+    else:
+        resolved = type_value
+        nullable = False
+
+    if not isinstance(resolved, str):
+        resolved = default
+
+    return resolved, nullable
+
+
 def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
     """Convert OpenAI-style tools to Gemini format."""
 
@@ -153,16 +177,22 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
         # Convert properties to Google format
         google_properties = {}
         for prop_name, prop_def in properties.items():
-            prop_type = prop_def.get("type", "string")
+            prop_type, prop_nullable = _normalize_json_schema_type(
+                prop_def.get("type", "string")
+            )
 
             if prop_type == "array":
                 # Handle array types - need to specify items
                 items_def = prop_def.get("items", {})
-                items_type = types.Type(items_def.get("type", "string").upper())
+                items_type_name, _ = _normalize_json_schema_type(
+                    items_def.get("type", "string")
+                )
+                items_type = types.Type(items_type_name.upper())
 
                 google_properties[prop_name] = types.Schema(
                     type=types.Type.ARRAY,
                     description=prop_def.get("description", ""),
+                    nullable=prop_nullable,
                     items=types.Schema(
                         type=items_type,
                         description=items_def.get("description", ""),
@@ -174,6 +204,7 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
                 google_properties[prop_name] = types.Schema(
                     type=schema_type,
                     description=prop_def.get("description", ""),
+                    nullable=prop_nullable,
                 )
 
         # Create function declaration
