@@ -536,6 +536,7 @@ async def handle_generic_webhook(
     Headers (optional):
         - X-Webhook-Signature: HMAC-SHA256 signature for verification
         - X-Webhook-Source: Alternative source identifier (overrides body and query source)
+        - X-Worker-Callback-Token: Per-task proof for worker_started events
 
     Returns:
         JSON response with status and event_id
@@ -588,6 +589,14 @@ async def handle_generic_webhook(
 
     # Build event data for the processor
     # Extra fields first so system-generated values take precedence
+    persisted_data = body.data
+    if effective_event_type == "worker_started" and persisted_data:
+        persisted_data = {
+            key: value
+            for key, value in persisted_data.items()
+            if key != "callback_token"
+        }
+
     # ast-grep-ignore: no-dict-any - Event data intentionally combines webhook payload with generated fields
     event_data: dict[str, Any] = {
         **(body.model_extra or {}),  # Extra fields from payload (lowest priority)
@@ -597,11 +606,17 @@ async def handle_generic_webhook(
         "title": body.title,
         "message": body.message,
         "severity": body.severity,
-        "data": body.data,
+        "data": persisted_data,
     }
 
-    # Handle worker completion events - update task status in database
-    if effective_event_type == "worker_completion":
+    # Handle worker lifecycle events - update task status in database
+    if effective_event_type == "worker_started":
+        await _handle_worker_started(
+            db_context,
+            body.data,
+            request.headers.get("X-Worker-Callback-Token"),
+        )
+    elif effective_event_type == "worker_completion":
         await _handle_worker_completion(
             db_context,
             body.data,
@@ -620,6 +635,50 @@ async def handle_generic_webhook(
         await webhook_source.emit_event(event_data)
 
     return WebhookEventResponse(status="accepted", event_id=event_id)
+
+
+async def _handle_worker_started(
+    db_context: DatabaseContext,
+    # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
+    data: dict[str, Any] | None,
+    callback_token: str | None,
+) -> None:
+    """Handle worker start webhook by marking the task running."""
+    if not data:
+        logger.warning("Worker started event missing data payload")
+        return
+
+    task_id = data.get("task_id")
+    if not task_id:
+        logger.warning("Worker started event missing task_id")
+        return
+
+    task = await db_context.worker_tasks.get_task(task_id)
+    if not task:
+        logger.warning("Worker task %s not found for start update", task_id)
+        return
+
+    stored_token = task.get("callback_token")
+    if stored_token:
+        if not callback_token:
+            logger.warning(
+                "Worker start for task %s missing required callback_token", task_id
+            )
+            return
+        if not hmac.compare_digest(stored_token, callback_token):
+            logger.warning(
+                "Worker start for task %s has invalid callback_token", task_id
+            )
+            return
+
+    updated = await db_context.worker_tasks.mark_task_running(
+        task_id=task_id,
+        started_at=datetime.now(UTC),
+    )
+    if updated:
+        logger.info("Updated worker task %s status to running", task_id)
+    else:
+        logger.info("Worker task %s was not awaiting a start update", task_id)
 
 
 async def _handle_worker_completion(

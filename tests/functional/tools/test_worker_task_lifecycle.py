@@ -366,6 +366,114 @@ class TestMarkStaleTasks:
         assert "exceeded timeout" in (task.get("error_message") or "")
 
 
+class TestAtomicLifecycleTransitions:
+    """Tests for lifecycle updates that can race backend callbacks."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status", ["running", "success", "failed", "timeout", "cancelled"]
+    )
+    async def test_record_submission_preserves_newer_status(
+        self, db_context: DatabaseContext, status: str
+    ) -> None:
+        task_id = f"submission-{status}"
+        await db_context.worker_tasks.create_task(
+            task_id=task_id,
+            conversation_id="conv-1",
+            interface_type="test",
+            task_description="Fast lifecycle callback",
+        )
+        await db_context.worker_tasks.update_task_status(task_id=task_id, status=status)
+
+        updated = await db_context.worker_tasks.record_task_submission(
+            task_id=task_id, job_name="backend-job"
+        )
+
+        assert updated is True
+        task = await db_context.worker_tasks.get_task(task_id)
+        assert task is not None
+        assert task["status"] == status
+        assert task.get("job_name") == "backend-job"
+
+    @pytest.mark.asyncio
+    async def test_record_submission_transitions_pending_task(
+        self, db_context: DatabaseContext
+    ) -> None:
+        await db_context.worker_tasks.create_task(
+            task_id="submission-pending",
+            conversation_id="conv-1",
+            interface_type="test",
+            task_description="Normal submission",
+        )
+
+        updated = await db_context.worker_tasks.record_task_submission(
+            task_id="submission-pending", job_name="backend-job"
+        )
+
+        assert updated is True
+        task = await db_context.worker_tasks.get_task("submission-pending")
+        assert task is not None
+        assert task["status"] == "submitted"
+        assert task.get("job_name") == "backend-job"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["success", "failed", "timeout", "cancelled"])
+    async def test_mark_running_preserves_terminal_status(
+        self, db_context: DatabaseContext, status: str
+    ) -> None:
+        task_id = f"late-start-{status}"
+        await db_context.worker_tasks.create_task(
+            task_id=task_id,
+            conversation_id="conv-1",
+            interface_type="test",
+            task_description="Late start callback",
+        )
+        await db_context.worker_tasks.update_task_status(task_id=task_id, status=status)
+
+        updated = await db_context.worker_tasks.mark_task_running(
+            task_id=task_id, started_at=datetime.now(UTC)
+        )
+
+        assert updated is False
+        task = await db_context.worker_tasks.get_task(task_id)
+        assert task is not None
+        assert task["status"] == status
+        assert task.get("started_at") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["pending", "submitted"])
+    async def test_mark_running_transitions_prestart_status(
+        self, db_context: DatabaseContext, status: str
+    ) -> None:
+        task_id = f"start-{status}"
+        await db_context.worker_tasks.create_task(
+            task_id=task_id,
+            conversation_id="conv-1",
+            interface_type="test",
+            task_description="Start callback",
+        )
+        if status == "submitted":
+            await db_context.worker_tasks.update_task_status(
+                task_id=task_id, status=status
+            )
+        started_at = datetime.now(UTC)
+
+        updated = await db_context.worker_tasks.mark_task_running(
+            task_id=task_id, started_at=started_at
+        )
+
+        assert updated is True
+        task = await db_context.worker_tasks.get_task(task_id)
+        assert task is not None
+        assert task["status"] == "running"
+        stored_started_at = task.get("started_at")
+        assert stored_started_at is not None
+        parsed_started_at = datetime.fromisoformat(stored_started_at)
+        if parsed_started_at.tzinfo is None:
+            parsed_started_at = parsed_started_at.replace(tzinfo=UTC)
+        assert parsed_started_at == started_at
+
+
 class TestCleanupProtectsActive:
     """Tests for cleanup_old_tasks skipping active tasks."""
 

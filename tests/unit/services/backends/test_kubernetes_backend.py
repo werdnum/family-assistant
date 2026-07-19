@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -186,7 +187,10 @@ class TestKubernetesBackendBuildJobManifest:
         assert container.name == "worker"
         assert container.image == "test-image:latest"
         assert container.command is None
-        assert container.args == ["sh", "-c", 'run-task < "$TASK_INPUT"']
+        assert container.args is not None
+        assert container.args[:2] == ["sh", "-c"]
+        assert "event_type=worker_started" in container.args[2]
+        assert 'run-task < "$TASK_INPUT"' in container.args[2]
 
     def test_build_manifest_env_vars(self, backend: KubernetesBackend) -> None:
         """Test job manifest includes correct environment variables."""
@@ -218,6 +222,20 @@ class TestKubernetesBackendBuildJobManifest:
         env_from = container.env_from
         assert len(env_from) == 1
         assert env_from[0].secret_ref.name == "test-api-keys"
+
+    def test_worker_start_command_contains_valid_python_source(
+        self, backend: KubernetesBackend
+    ) -> None:
+        """The shell must pass multiline source to Python rather than escaped text."""
+        command = backend._worker_start_command("https://example.com/webhook")
+
+        python_source = shlex.split(command)[2]
+
+        compile(python_source, "<worker-start-command>", "exec")
+        assert "\nimport json\n" in python_source
+        assert "source=worker" not in python_source
+        assert "X-Worker-Callback-Token" in python_source
+        assert '"callback_token":' not in python_source
 
     def test_build_manifest_gemini_model(self, backend: KubernetesBackend) -> None:
         """Test job manifest for gemini model uses gemini config volume."""

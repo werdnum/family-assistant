@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    case,
     delete,
     insert,
     select,
@@ -287,6 +288,48 @@ class WorkerTasksRepository(BaseRepository):
             self._logger.warning(f"Worker task not found for update: {task_id}")
 
         return updated
+
+    async def record_task_submission(self, task_id: str, job_name: str) -> bool:
+        """Record a backend job ID and submit a task that is still pending.
+
+        A lifecycle callback may update the task before the backend spawn call
+        returns. The conditional status expression preserves that newer state.
+        """
+        stmt = (
+            update(worker_tasks_table)
+            .where(worker_tasks_table.c.task_id == task_id)
+            .values(
+                job_name=job_name,
+                status=case(
+                    (worker_tasks_table.c.status == "pending", "submitted"),
+                    else_=worker_tasks_table.c.status,
+                ),
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+        result = await self._execute_with_logging("record_task_submission", stmt)
+        # CursorResult.rowcount returns int but type stubs don't reflect this for async
+        return result.rowcount > 0  # type: ignore[union-attr]
+
+    async def mark_task_running(self, task_id: str, started_at: datetime) -> bool:
+        """Mark a pending or submitted task as running."""
+        stmt = (
+            update(worker_tasks_table)
+            .where(
+                worker_tasks_table.c.task_id == task_id,
+                worker_tasks_table.c.status.in_(["pending", "submitted"]),
+            )
+            .values(
+                status="running",
+                started_at=started_at,
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+        result = await self._execute_with_logging("mark_task_running", stmt)
+        # CursorResult.rowcount returns int but type stubs don't reflect this for async
+        return result.rowcount > 0  # type: ignore[union-attr]
 
     async def get_running_tasks_count(self) -> int:
         """Count currently running tasks (for concurrency limit).

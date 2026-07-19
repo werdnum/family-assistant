@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.webhook_source import WebhookEventSource
+from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.app_creator import app as fastapi_app
 
 
@@ -261,6 +262,58 @@ async def test_webhook_event_no_signature_needed_for_unconfigured_source(
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_worker_started_uses_nonpersisted_callback_token_header(
+    db_engine: AsyncEngine,
+) -> None:
+    """Worker start proof bypasses source signing and is excluded from event data."""
+    callback_token = "worker-callback-token"
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await db_context.worker_tasks.create_task(
+            task_id="worker-start-task",
+            conversation_id="conv-1",
+            interface_type="test",
+            task_description="Worker start callback",
+            callback_token=callback_token,
+        )
+
+    mock_config = MagicMock()
+    mock_config.event_system.sources.webhook.secrets = {"worker": "source-secret"}
+    mock_webhook_source = AsyncMock(spec=WebhookEventSource)
+    transport = ASGITransport(app=fastapi_app)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        with (
+            patch.object(fastapi_app.state, "config", mock_config, create=True),
+            patch.object(
+                fastapi_app.state,
+                "webhook_source",
+                mock_webhook_source,
+                create=True,
+            ),
+        ):
+            response = await client.post(
+                "/webhook/event?event_type=worker_started",
+                headers={"X-Worker-Callback-Token": callback_token},
+                json={
+                    "title": "Worker task started",
+                    "data": {
+                        "task_id": "worker-start-task",
+                        "callback_token": callback_token,
+                    },
+                },
+            )
+
+    assert response.status_code == 200
+    emitted_event = mock_webhook_source.emit_event.await_args.args[0]
+    assert emitted_event["source"] is None
+    assert emitted_event["data"] == {"task_id": "worker-start-task"}
+    async with DatabaseContext(engine=db_engine) as db_context:
+        task = await db_context.worker_tasks.get_task("worker-start-task")
+    assert task is not None
+    assert task["status"] == "running"
 
 
 @pytest.mark.asyncio

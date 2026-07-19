@@ -70,6 +70,15 @@ from ..base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _system_prefixed_content(content: str) -> str:
+    """Prefix system content for Gemini without duplicating an existing marker."""
+    if content.startswith("System:"):
+        return content
+    return f"System: {content}"
+
+
 tracer = trace.get_tracer(__name__)
 T = TypeVar("T", bound=BaseModel)
 
@@ -622,10 +631,13 @@ class GoogleGenAIClient(BaseLLMClient):
 
             if role == "system":
                 # System messages can be included as user messages with a prefix
+                system_content = content if isinstance(content, str) else ""
                 contents.append(
                     types.Content(
                         role="user",
-                        parts=[types.Part(text=f"System: {content}")],
+                        parts=[
+                            types.Part(text=_system_prefixed_content(system_content))
+                        ],
                     )
                 )
             elif role == "user":
@@ -1484,7 +1496,7 @@ class GoogleGenAIClient(BaseLLMClient):
             system_prompt = ""
             for msg in messages:
                 if msg.role == "system" and msg.content:
-                    system_prompt += f"System: {msg.content}\n\n"
+                    system_prompt += f"{_system_prefixed_content(msg.content)}\n\n"
 
             if system_prompt:
                 input_text = system_prompt + input_text

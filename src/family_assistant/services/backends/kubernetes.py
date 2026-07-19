@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -452,7 +453,11 @@ class KubernetesBackend:
                             V1Container(
                                 name="worker",
                                 image=self.image,
-                                args=["sh", "-c", 'run-task < "$TASK_INPUT"'],
+                                args=[
+                                    "sh",
+                                    "-c",
+                                    self._worker_start_command(webhook_url),
+                                ],
                                 env=env_vars,
                                 env_from=env_from,
                                 volume_mounts=volume_mounts,
@@ -563,6 +568,40 @@ class KubernetesBackend:
 
         # Job exists but no active/succeeded/failed - still pending
         return WorkerTaskResult(status=WorkerStatus.SUBMITTED)
+
+    def _worker_start_command(self, webhook_url: str) -> str:
+        """Build the container command that marks a Kubernetes worker running."""
+        separator = "&" if "?" in webhook_url else "?"
+        start_webhook_url = f"{webhook_url}{separator}event_type=worker_started"
+        start_script = """
+import json
+import os
+import urllib.request
+
+url = __START_WEBHOOK_URL__
+data = {
+    "title": "Worker task started",
+    "message": f"Worker task {os.environ['TASK_ID']} started.",
+    "data": {
+        "task_id": os.environ["TASK_ID"],
+    },
+}
+body = json.dumps(data).encode("utf-8")
+headers = {"Content-Type": "application/json"}
+callback_token = os.environ.get("TASK_CALLBACK_TOKEN")
+if callback_token:
+    headers["X-Worker-Callback-Token"] = callback_token
+request = urllib.request.Request(
+    url,
+    data=body,
+    headers=headers,
+)
+try:
+    urllib.request.urlopen(request, timeout=10).close()
+except Exception as exc:
+    print(f"worker start webhook failed: {exc}", flush=True)
+""".replace("__START_WEBHOOK_URL__", repr(start_webhook_url))
+        return f'python -c {shlex.quote(start_script)}\nrun-task < "$TASK_INPUT"'
 
     async def cancel_task(self, job_id: str) -> bool:
         """Cancel a running Kubernetes Job.
