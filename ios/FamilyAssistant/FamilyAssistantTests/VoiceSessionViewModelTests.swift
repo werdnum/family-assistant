@@ -315,7 +315,9 @@ final class VoiceSessionViewModelTests: XCTestCase {
     }
 
     func testToolCallExecutesAndRespondsToSession() async throws {
-        toolExecutor.handler = { _, _ in .object(["ok": .bool(true)]) }
+        toolExecutor.handler = { _, _ in
+            .object(["result": .object(["ok": .bool(true)])])
+        }
         let model = makeModel()
         await model.start()
         session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
