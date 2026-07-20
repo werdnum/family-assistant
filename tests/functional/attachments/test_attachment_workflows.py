@@ -15,6 +15,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.storage.events import EventActionType, EventSourceType
@@ -395,6 +396,7 @@ class TestAttachmentWorkflows:
                 text="Here's your enhanced photo!",
                 attachment_ids=[processed_attachment_id],
                 on_behalf_of_user_id=None,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
             )
 
             # Verify the workflow created the expected attachments

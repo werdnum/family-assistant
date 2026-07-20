@@ -32,6 +32,7 @@ class ToolTag(StrEnum):
     LOW_BANDWIDTH_EXTERNAL = "low_bandwidth_external"
     DESTRUCTIVE = "destructive"
     CODE_EXECUTION = "code_execution"
+    OPEN_WORLD = "open_world"
     BROWSER = "browser"
     CAMERA = "camera"
     HOME_AUTOMATION = "home_auto"
@@ -249,6 +250,14 @@ def derive_mcp_annotation_tags(
     tags: set[ToolTag] = set()
     if read_only_hint is True:
         tags.add(ToolTag.READ_ONLY)
+        # The MCP spec defaults openWorldHint to true (mcp/types.py: "Default:
+        # true"). A read-only tool whose server did not explicitly close its
+        # world (openWorldHint is None or true) can still exfiltrate: the model
+        # controls the query/URL sent to the external service. Mark it OPEN_WORLD
+        # so the taint resolver keeps it egress-classified rather than treating it
+        # as a bare local read. Only an explicit openWorldHint=false clears this.
+        if open_world_hint is not False:
+            tags.add(ToolTag.OPEN_WORLD)
     if destructive_hint is True and read_only_hint is not True:
         tags.add(ToolTag.DESTRUCTIVE)
     if open_world_hint is True:

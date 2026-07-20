@@ -60,7 +60,7 @@ final class VoiceSessionViewModel {
     }
 
     private let tokenProvider: VoiceTokenProviding
-    private let toolExecutor: VoiceToolExecuting
+    private let toolRunner: VoiceToolRunner
     private let transcriptStore: VoiceTranscriptStoring?
     private let audio: VoiceAudioIO
     private let permission: VoiceMicrophonePermission
@@ -74,9 +74,12 @@ final class VoiceSessionViewModel {
     private var audioPumpTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
     private var toolTasks: [String: Task<Void, Never>] = [:]
+    private var toolExecutionTail: Task<Void, Never>?
     private var audioOut: AsyncStream<Data>.Continuation?
     private var didStart = false
     private var didPersist = false
+
+    var pendingToolCallIDs: Set<String> { Set(toolTasks.keys) }
 
     init(
         tokenProvider: VoiceTokenProviding,
@@ -90,7 +93,7 @@ final class VoiceSessionViewModel {
         reportError: @escaping @MainActor (Error) -> Void = { ErrorReporter.shared.report($0, component: "Voice") }
     ) {
         self.tokenProvider = tokenProvider
-        self.toolExecutor = toolExecutor
+        self.toolRunner = VoiceToolRunner(executor: toolExecutor, profileID: profileID)
         self.transcriptStore = transcriptStore
         self.audio = audio
         self.permission = permission
@@ -242,21 +245,29 @@ final class VoiceSessionViewModel {
     }
 
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
-        let runner = VoiceToolRunner(executor: toolExecutor)
-        for call in calls {
-            // Track every task — synthesizing a key for an id-less call — so
-            // teardown can cancel it and a toolCallCancellation can suppress its
-            // (now stale) response. An untracked task would outlive the session,
-            // retaining it and trying to respond on a closed socket.
-            let key = call.id ?? UUID().uuidString
-            let task = Task { [weak self] in
-                defer { self?.toolTasks[key] = nil }
-                let response = await runner.run([call]).first
-                guard let response, !Task.isCancelled else { return }
-                try? await session.sendToolResponses([response])
+        guard !calls.isEmpty else { return }
+        let keys = calls.map { $0.id ?? UUID().uuidString }
+        let previousTask = toolExecutionTail
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                for key in keys {
+                    self.toolTasks[key] = nil
+                }
             }
+            await previousTask?.value
+            guard !Task.isCancelled else { return }
+            let responses = await self.toolRunner.run(calls)
+            guard !Task.isCancelled else { return }
+            try? await session.sendToolResponses(responses)
+        }
+        // A Gemini tool-call event is one ordered batch. Map every call ID to
+        // the shared task so cancelling any member suppresses the whole batch
+        // before a response can leak stale session taint.
+        for key in keys {
             toolTasks[key] = task
         }
+        toolExecutionTail = task
     }
 
     private func cancelToolCalls(_ ids: [String]) {
@@ -338,6 +349,8 @@ final class VoiceSessionViewModel {
             task.cancel()
         }
         toolTasks.removeAll()
+        toolExecutionTail?.cancel()
+        toolExecutionTail = nil
         timeoutTask?.cancel()
         timeoutTask = nil
         audio.onCapturedAudio = nil

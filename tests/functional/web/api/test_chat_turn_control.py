@@ -33,7 +33,14 @@ from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageReasoningInfo,
+    ToolMessage,
     UserMessage,
+)
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
 )
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
@@ -243,6 +250,33 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
             user_id="test_user",
             processing_profile_id="prof-x",
         )
+        # A tool result committed before the stop taints the turn; the stopped
+        # marker must inherit that state rather than being written untainted.
+        await ctx.message_history.add_message(
+            ToolMessage(
+                tool_call_id="call_email",
+                content="email body",
+                name="get_email",
+                taint_metadata=TurnTaintState
+                .empty()
+                .add_source(
+                    TaintSource(
+                        source_type=TaintSourceType.EMAIL,
+                        source_id="email-9",
+                        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                        labels=frozenset(),
+                        reason="test email source",
+                    )
+                )
+                .to_metadata(),
+            ),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="prof-x",
+        )
 
     # No partial reply -> a Stopped marker.
     await persist_stopped_reply(
@@ -253,6 +287,9 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
         user_id="test_user",
         reply_text="",
         processing_profile_id="prof-x",
+        initial_history_taint_metadata=TurnTaintState.empty().to_metadata(),
+        initial_context_taint_metadata=TurnTaintState.empty().to_metadata(),
+        live_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
     # A partial reply -> the partial text is persisted (what the client rendered).
     await persist_stopped_reply(
@@ -263,6 +300,9 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
         user_id="test_user",
         reply_text="half an answer",
         processing_profile_id="prof-x",
+        initial_history_taint_metadata=TurnTaintState.empty().to_metadata(),
+        initial_context_taint_metadata=TurnTaintState.empty().to_metadata(),
+        live_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
 
     async with get_db_context(engine=db_engine) as ctx:
@@ -273,6 +313,165 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
     assert all(row["processing_profile_id"] == "prof-x" for row in assistant_rows)
     assert any("Stopped" in str(row["content"]) for row in assistant_rows)
     assert any("half an answer" in str(row["content"]) for row in assistant_rows)
+    # Stopped rows carry runtime taint metadata merged from the turn's persisted
+    # rows (here: the tainted tool result committed before the stop).
+    for row in assistant_rows:
+        assert row["taint_metadata_version"] == "runtime_v1"
+        assert row["taint_metadata_json"] is not None
+        assert row["taint_metadata_json"].get("max_tier") == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_stopped_reply_inherits_initial_history_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_prior_taint_{uuid.uuid4().hex[:8]}"
+    initial_history_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="prior-email",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="prior conversation history",
+        )
+    )
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="continue"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="prof-x",
+        )
+
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="partial response",
+        processing_profile_id="prof-x",
+        initial_history_taint_metadata=initial_history_taint.to_metadata(),
+        initial_context_taint_metadata=TurnTaintState.empty().to_metadata(),
+        live_taint_metadata=TurnTaintState.empty().to_metadata(),
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id, limit=50
+        )
+    assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    assert len(assistant_rows) == 1
+    assert assistant_rows[0]["taint_metadata_json"] is not None
+    assert (
+        assistant_rows[0]["taint_metadata_json"].get("max_tier") == "unknown_external"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stopped_reply_inherits_initial_context_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_context_taint_{uuid.uuid4().hex[:8]}"
+    initial_context_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="context-note",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="tainted system-prompt context",
+        )
+    )
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="continue"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="prof-x",
+        )
+
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="partial response from context",
+        processing_profile_id="prof-x",
+        initial_history_taint_metadata=TurnTaintState.empty().to_metadata(),
+        initial_context_taint_metadata=initial_context_taint.to_metadata(),
+        live_taint_metadata=TurnTaintState.empty().to_metadata(),
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id, limit=50
+        )
+    assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    assert len(assistant_rows) == 1
+    assert assistant_rows[0]["taint_metadata_json"] is not None
+    assert (
+        assistant_rows[0]["taint_metadata_json"].get("max_tier") == "unknown_external"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stopped_reply_inherits_uncommitted_live_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_live_taint_{uuid.uuid4().hex[:8]}"
+    live_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="uncommitted-email",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="tool result observed before transaction cancellation",
+        )
+    )
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="continue"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            timestamp=datetime.now(UTC),
+            user_id="test_user",
+            processing_profile_id="prof-x",
+        )
+
+    await persist_stopped_reply(
+        db_engine,
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        reply_text="partial response after tool use",
+        processing_profile_id="prof-x",
+        initial_history_taint_metadata=TurnTaintState.empty().to_metadata(),
+        initial_context_taint_metadata=TurnTaintState.empty().to_metadata(),
+        live_taint_metadata=live_taint.to_metadata(),
+    )
+
+    async with get_db_context(engine=db_engine) as ctx:
+        rows = await ctx.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id, limit=50
+        )
+    assistant_rows = [row for row in rows if row["role"] == "assistant"]
+    assert len(assistant_rows) == 1
+    assert assistant_rows[0]["taint_metadata_json"] is not None
+    assert (
+        assistant_rows[0]["taint_metadata_json"].get("max_tier") == "unknown_external"
+    )
 
 
 async def test_completed_web_turn_persists_single_user_row(

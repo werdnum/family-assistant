@@ -119,6 +119,7 @@ from family_assistant.tools.engineering import (
     read_error_logs,
     read_source_file,
     reconnect_mcp_server,
+    resolve_tool_policy,
     search_source_code,
 )
 from family_assistant.tools.events import (
@@ -466,6 +467,7 @@ __all__ = [
     "get_profile_config",
     "get_profile_tool_inventory",
     "get_system_info",
+    "resolve_tool_policy",
     # On-demand tool activation
     "ACTIVATE_TOOLS_DEFINITION",
     "OnDemandCatalogEntry",
@@ -684,6 +686,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_profile_config": get_profile_config,
     "get_profile_tool_inventory": get_profile_tool_inventory,
     "get_system_info": get_system_info,
+    "resolve_tool_policy": resolve_tool_policy,
     # MQTT tools
     "mqtt_publish": mqtt_publish_tool,
     # Shopping/UCP tools
@@ -1409,13 +1412,21 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    "resolve_tool_policy": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
     "get_system_info": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.OUTPUT_TRUSTED,
     ),
     # MQTT tools
     "mqtt_publish": _metadata(
-        ToolTag.EXTERNAL_COMM,
+        # Publishes only to the operator-configured home broker, so runtime
+        # taint treats it as a home_local sink rather than arbitrary external
+        # messaging (which the external_comm tag would imply).
+        ToolTag.STATE_CHANGING,
         ToolTag.HOME_AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),

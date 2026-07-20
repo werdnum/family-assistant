@@ -636,6 +636,16 @@ async def send_message_to_user_tool(
             # Still proceed but without attachments
             validated_attachment_ids = None
 
+    # The recorded message is authored by the LLM within the requesting turn, so
+    # it carries that turn's taint state. A context without a tracker (should
+    # not happen for LLM-driven calls) falls back to an explicit empty state
+    # rather than omitting metadata.
+    message_taint_metadata = (
+        exec_context.taint_tracker.snapshot().to_metadata()
+        if exec_context.taint_tracker is not None
+        else TurnTaintState.empty().to_metadata()
+    )
+
     try:
         # Use the ChatInterface to send the message.
         # Assuming the target_chat_id is for the same interface type as the current context.
@@ -645,6 +655,7 @@ async def send_message_to_user_tool(
             text=message_content,
             attachment_ids=validated_attachment_ids,
             on_behalf_of_user_id=exec_context.user_id,
+            taint_metadata=message_taint_metadata,
             # parse_mode can be added if needed, default is plain text
         )
 
@@ -668,7 +679,10 @@ async def send_message_to_user_tool(
         if target_interface_type != "web":
             try:
                 await db_context.message_history.add_message(
-                    AssistantMessage(content=message_content),
+                    AssistantMessage(
+                        content=message_content,
+                        taint_metadata=message_taint_metadata,
+                    ),
                     interface_type=target_interface_type,  # Use detected interface type
                     conversation_id=target_chat_id,  # History is for the target user's conversation
                     interface_message_id=sent_message_id_str,

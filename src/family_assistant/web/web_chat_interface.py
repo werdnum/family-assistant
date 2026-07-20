@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, MessageAttachmentMetadata
+from family_assistant.security.taint import TaintMetadata, TurnTaintState
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.context import get_db_context
@@ -71,6 +72,7 @@ class WebChatInterface(ChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         """
         Sends a message to the web UI by saving it to the database.
@@ -89,6 +91,14 @@ class WebChatInterface(ChatInterface):
                 The web path stores attachment references (resolved later by the
                 owner-scoped HTTP attachment routes) and does not itself read
                 attachment content, so this is accepted for protocol parity.
+            taint_metadata: Runtime taint state recorded on the persisted row.
+                Callers that derive the text from a processing turn pass that
+                turn's state; when absent, the row is stored with an explicit
+                empty (trusted-baseline) state rather than no metadata, since a
+                metadata-less row is escalated to unknown_external at read time
+                and would falsely taint the conversation. Deliveries of turn
+                output keep their authoritative taint on the turn's own
+                history rows.
 
         Returns:
             The internal_id of the saved message as a string, or None if saving failed
@@ -121,7 +131,14 @@ class WebChatInterface(ChatInterface):
                     ]
 
                 saved_message = await db_context.message_history.add_message(
-                    AssistantMessage(content=text),
+                    AssistantMessage(
+                        content=text,
+                        taint_metadata=(
+                            taint_metadata
+                            if taint_metadata is not None
+                            else TurnTaintState.empty().to_metadata()
+                        ),
+                    ),
                     interface_type="web",
                     conversation_id=conversation_id,
                     timestamp=clock.now(),

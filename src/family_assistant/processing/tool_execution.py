@@ -16,7 +16,10 @@ from family_assistant.llm.messages import (
     ToolMessage,
     tool_result_to_llm_message,
 )
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import (
+    TurnTaintState,
+    merge_taint_state_into_tracker,
+)
 from family_assistant.tools import (
     ToolExecutionContext,
     ToolNotFoundError,
@@ -324,6 +327,18 @@ class ToolExecutor:
         if confirmation_result.kind == "approved":
             return None
 
+        result_taint_metadata = taint_metadata
+        if confirmation_result.taint_metadata is not None:
+            result_taint_metadata = confirmation_result.taint_metadata
+            tool_execution_context.tool_result_taint_metadata[call_id] = (
+                confirmation_result.taint_metadata
+            )
+            if tool_execution_context.taint_tracker is not None:
+                merge_taint_state_into_tracker(
+                    tool_execution_context.taint_tracker,
+                    TurnTaintState.from_metadata(confirmation_result.taint_metadata),
+                )
+
         if confirmation_result.kind == "completed":
             # A durable confirmation normally completed after the task worker
             # attempted the tool. A deferred callback can also return a queued
@@ -369,7 +384,7 @@ class ToolExecutor:
                 tool_call_id=call_id,
                 content=result_content,
                 name=function_name,
-                taint_metadata=taint_metadata,
+                taint_metadata=result_taint_metadata,
             ),
             auto_attachment_ids=None,
             explicit_attachment_ids=None,

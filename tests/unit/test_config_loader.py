@@ -28,6 +28,7 @@ from family_assistant.config_loader import (
     apply_calendar_env_vars,
     apply_env_var_overrides,
     apply_user_identity_file,
+    expand_env_vars_in_dict,
     get_nested_value,
     load_config,
     parse_env_value,
@@ -380,6 +381,40 @@ class TestMcpConfigDeepMerge:
             "mcp-server-time",
             "--tz=US/Eastern",
         ]
+
+
+def test_mcp_config_expands_env_vars_in_http_urls_and_stdio_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MCP interpolation covers remote URLs as well as stdio configuration."""
+    monkeypatch.setenv("MCP_HTTP_ORIGIN", "https://mcp.example.com")
+    monkeypatch.setenv("MCP_BIN_DIR", "/opt/mcp/bin")
+    monkeypatch.setenv("MCP_API_KEY", "secret-key")
+
+    config = {
+        "mcpServers": {
+            "remote": {
+                "transport": "streamable_http",
+                "url": "${MCP_HTTP_ORIGIN}/api/mcp",
+            },
+            "local": {
+                "command": "${MCP_BIN_DIR}/server",
+                "args": ["--endpoint", "$MCP_HTTP_ORIGIN/status"],
+                "env": {"API_KEY": "$MCP_API_KEY"},
+            },
+        }
+    }
+
+    expanded = expand_env_vars_in_dict(config)
+
+    assert expanded["mcpServers"]["remote"]["url"] == (
+        "https://mcp.example.com/api/mcp"
+    )
+    assert expanded["mcpServers"]["local"] == {
+        "command": "/opt/mcp/bin/server",
+        "args": ["--endpoint", "https://mcp.example.com/status"],
+        "env": {"API_KEY": "secret-key"},
+    }
 
 
 class TestNestedConfigPartialOverride:

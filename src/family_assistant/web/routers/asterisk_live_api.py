@@ -50,6 +50,7 @@ from google.genai.types import (
 from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
+from family_assistant.security.taint import InMemoryTurnTaintTracker
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
@@ -223,6 +224,9 @@ class AsteriskLiveHandler:
         self._debug_log(
             f"Asterisk live ducking: {self.assistant_duck_ms}ms gain={self.assistant_duck_gain}"
         )
+        # One tracker per call session so taint accumulated by one tool call
+        # (e.g. a note read) is visible to later calls in the same call.
+        self._taint_tracker = InMemoryTurnTaintTracker()
         self._transcript_segments: list[tuple[str, str, float]] = []
         self._caller_transcript_buf: list[str] = []
         self._assistant_transcript_buf: list[str] = []
@@ -1318,6 +1322,7 @@ class AsteriskLiveHandler:
                         ),
                         credential_resolvers=None,
                         api_backend=None,
+                        taint_tracker=self._taint_tracker,
                     )
 
                     result = await self.processing_service.tools_provider.execute_tool(

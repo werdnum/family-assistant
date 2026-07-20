@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import update
 
+from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
@@ -46,6 +47,7 @@ from family_assistant.storage.context import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.documents import get_full_document_content_tool
 from family_assistant.tools.infrastructure import (
@@ -776,10 +778,38 @@ def test_strip_legacy_echoes_keeps_anonymous_escalation_artifact() -> None:
     assert state.history_high_taint_present
 
 
-def test_history_taint_epoch_rejects_naive_timestamps() -> None:
-    with pytest.raises(ValueError, match="timezone-aware"):
-        TaintPolicyConfig(history_taint_epoch=datetime(2026, 7, 6))  # noqa: DTZ001
+def test_strip_legacy_echoes_preserves_hidden_persisted_max_tier() -> None:
+    metadata: TaintMetadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [
+            _legacy_fallback_source_summary(),
+            {
+                "source_type": "user_message",
+                "source_id": "user-1",
+                "tier": "trusted_user",
+                "labels": [],
+                "reason": "Direct user message.",
+            },
+        ],
+    }
 
+    result = strip_legacy_labeled_echoes(metadata)
+
+    assert result is not None
+    sources = result.get("sources")
+    assert sources is not None
+    assert all(
+        LEGACY_MISSING_TAINT_METADATA_LABEL not in source["labels"]
+        for source in sources
+    )
+    state = TurnTaintState.from_metadata(result, from_history=True)
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+
+
+def test_history_taint_epoch_rejects_naive_timestamps() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         TaintPolicyConfig.model_validate({"history_taint_epoch": "2026-07-06T00:00:00"})
 
@@ -873,6 +903,28 @@ async def test_pre_epoch_row_missing_taint_metadata_contributes_no_taint(
     assert not state.history_high_taint_present
     assert not state.sources
     assert "legacy_missing_taint_metadata" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_epoch_disabled_preserves_legacy_echo_fallback(
+    db_engine: AsyncEngine,
+) -> None:
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-disabled-echo",
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [_legacy_fallback_source_summary()],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-disabled-echo")
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
 
 
 @pytest.mark.asyncio
@@ -1017,6 +1069,63 @@ async def test_post_epoch_row_drops_legacy_echo_keeps_genuine_source(
 
 
 @pytest.mark.asyncio
+async def test_post_epoch_row_preserves_hidden_max_tier_after_echo_stripping(
+    db_engine: AsyncEngine,
+) -> None:
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-post-echo-hidden-tier",
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [
+                _legacy_fallback_source_summary(),
+                {
+                    "source_type": "user_message",
+                    "source_id": "user-1",
+                    "tier": "trusted_user",
+                    "labels": [],
+                    "reason": "Direct user message.",
+                },
+            ],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-post-echo-hidden-tier")
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+    assert all(
+        LEGACY_MISSING_TAINT_METADATA_LABEL not in source.labels
+        for source in state.sources
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_engine_inherits_history_taint_epoch(
+    db_engine: AsyncEngine,
+) -> None:
+    assistant = Assistant(
+        config=AppConfig(
+            taint_policy=TaintPolicyConfig(history_taint_epoch=_HISTORY_TAINT_EPOCH)
+        ),
+        database_engine=db_engine,
+    )
+    assistant.database_engine = db_engine
+
+    worker_engine = assistant.create_worker_engine()
+    try:
+        async with get_db_context(worker_engine) as db_context:
+            assert db_context.history_taint_epoch == _HISTORY_TAINT_EPOCH
+    finally:
+        if worker_engine is not db_engine:
+            await worker_engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_post_epoch_row_with_only_legacy_echo_contributes_no_taint(
     db_engine: AsyncEngine,
 ) -> None:
@@ -1120,11 +1229,41 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
     assert (
         resolve_tool_sink_class(
             descriptor(
-                "legacy_unclassified_tool",
+                "plain_read_only_tool",
                 ToolTag.READ_ONLY,
                 ToolTag.OUTPUT_TRUSTED,
             )
         )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+    # An open-world read-only tool (e.g. an external search/fetch tool) can still
+    # exfiltrate: the model controls the query/URL sent to the external service.
+    # It must keep the egress classification, not the read-broadening class.
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "open_world_search",
+                ToolTag.READ_ONLY,
+                ToolTag.OPEN_WORLD,
+                ToolTag.OUTPUT_UNTRUSTED,
+            )
+        )
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
+    # A read-only tool whose world is explicitly closed (no open_world tag) still
+    # resolves to the read-broadening class.
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "closed_world_read_only",
+                ToolTag.READ_ONLY,
+                ToolTag.OUTPUT_TRUSTED,
+            )
+        )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+    assert (
+        resolve_tool_sink_class(descriptor("legacy_unclassified_tool"))
         is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     )
     assert (
@@ -1184,6 +1323,46 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
                 ToolTag.OUTPUT_TRUSTED,
             )
         )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+
+
+def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
+    def registered_descriptor(name: str) -> ToolDescriptor:
+        metadata = LOCAL_TOOL_METADATA_BY_NAME[name]
+        return ToolDescriptor(
+            name=name,
+            definition=cast(
+                "ToolDefinition",
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": f"Run {name}.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+            ),
+            tags=metadata.tags,
+            origin="local",
+        )
+
+    # mqtt_publish talks only to the operator-configured home broker; the
+    # taint design doc lists "MQTT to configured broker" as home_local.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("mqtt_publish"))
+        is SinkClass.HOME_LOCAL
+    )
+    # Home Assistant actions stay conservatively classified because HA
+    # services can deliver messages or invoke webhooks outside the household.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("call_home_assistant_action"))
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
+    # Read-only tools without further classification resolve to the read
+    # class instead of the arbitrary-external-message fallback.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("jq_query"))
         is SinkClass.SENSITIVE_READ_BROADENING
     )
 
@@ -1311,14 +1490,14 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     assert isinstance(result, ToolResult)
     assert result.get_text() == "opened url"
     assert "requested=confirm effective=audit mode=observe" in caplog.text
-    would_enforce_errors = [
+    would_enforce_warnings = [
         record
         for record in caplog.records
-        if record.levelno == logging.ERROR
+        if record.levelno == logging.WARNING
         and "Runtime taint WOULD ENFORCE" in record.getMessage()
     ]
-    assert len(would_enforce_errors) == 1
-    would_enforce_message = would_enforce_errors[0].getMessage()
+    assert len(would_enforce_warnings) == 1
+    would_enforce_message = would_enforce_warnings[0].getMessage()
     assert "would_be=confirm" in would_enforce_message
     assert "max_tier=unknown_external" in would_enforce_message
     assert "do-not-store" not in would_enforce_message
@@ -1354,13 +1533,13 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
         result = await provider.execute_tool("home_tool", {}, context, "call_home")
 
     assert isinstance(result, ToolResult)
-    would_enforce_errors = [
+    would_enforce_warnings = [
         record
         for record in caplog.records
-        if record.levelno == logging.ERROR
+        if record.levelno == logging.WARNING
         and "Runtime taint WOULD ENFORCE" in record.getMessage()
     ]
-    assert would_enforce_errors == []
+    assert would_enforce_warnings == []
 
 
 @pytest.mark.asyncio
@@ -1892,6 +2071,85 @@ async def test_completed_taint_confirmation_records_result_taint(
     assert len(result_events) == 1
     assert result_events[0]["tool_name"] == "confirmed_browser_untrusted"
     assert result_events[0]["max_tier"] == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_completed_taint_confirmation_merges_worker_metadata(
+    db_engine: AsyncEngine,
+) -> None:
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "confirmed_dynamic_read",
+                                "description": "Read stored content after approval.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_browser_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.SENSITIVE_DATA,
+                        ToolTag.OUTPUT_TRUSTED,
+                    ]),
+                )
+            ]
+        ),
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.MANUAL,
+            source_id="recognized-machine",
+            tier=SourceTrustTier.RECOGNIZED_MACHINE,
+            labels=frozenset({"source_recognized_machine"}),
+            reason="test recognized machine source",
+        )
+    )
+    worker_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.NOTE,
+            source_id="tainted-note",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="stored note provenance",
+        )
+    )
+
+    async def _completed_confirmation(
+        **_kwargs: object,
+    ) -> ConfirmationOutcome:
+        return ConfirmationOutcome(
+            kind="completed",
+            result=ToolResult(text="confirmed note contents"),
+            taint_metadata=worker_taint.to_metadata(),
+        )
+
+    async with get_db_context(db_engine) as db_context:
+        context = replace(
+            _minimal_context(db_context, tracker),
+            request_confirmation_callback=_completed_confirmation,
+        )
+        result = await provider.execute_tool(
+            "confirmed_dynamic_read",
+            {},
+            context,
+            "call_confirmed_dynamic",
+        )
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "confirmed note contents"
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert (
+        context.tool_result_taint_metadata["call_confirmed_dynamic"].get("max_tier")
+        == "unknown_external"
+    )
 
 
 @pytest.mark.asyncio

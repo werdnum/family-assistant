@@ -26,6 +26,7 @@ from family_assistant.tools.engineering import (
     get_resolved_config,
     get_system_info,
     reconnect_mcp_server,
+    resolve_tool_policy,
 )
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.metadata import ToolTag
@@ -462,3 +463,233 @@ async def test_get_profile_tool_inventory_without_registry_returns_error(
     data = result.get_data()
     assert isinstance(data, dict)
     assert "error" in data
+
+
+# --- resolve_tool_policy ---
+
+
+def _diagnostic_policy_provider() -> PolicyEnforcingToolsProvider:
+    """Policy provider with allow, confirm, and argument-conditional rules."""
+    return PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.DENY,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["add_or_update_note"]),
+                        decision=ToolPolicyDecision.ALLOW,
+                        priority=10,
+                        description="notes tool allowed",
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(
+                            names=["add_or_update_note"],
+                            argument_equals={"title": "secret"},
+                        ),
+                        decision=ToolPolicyDecision.DENY,
+                        priority=20,
+                        description="secret titles denied",
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(names=["read_error_logs"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                        priority=10,
+                        description="error logs need confirmation",
+                    ),
+                ],
+            )
+        ),
+    )
+
+
+def _diagnostic_service(
+    on_demand_view: OnDemandToolsView | None = None,
+) -> Mock:
+    service = Mock()
+    service.tools_provider = _diagnostic_policy_provider()
+    service.on_demand_view = on_demand_view
+    return service
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_allowed_tool_reports_matched_rule() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    result = await resolve_tool_policy(ctx, tool_name="add_or_update_note")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["tool_exists"] is True
+    assert data["can_confirm"] is True
+    assert data["profile_count"] == 1
+    entry = data["profiles"][0]
+    assert entry["profile_id"] == "diag"
+    assert entry["default_decision"] == "deny"
+    assert entry["origin"] == "local"
+    assert entry["mcp_server_id"] is None
+    assert entry["on_demand"] is False
+    raw = entry["raw"]
+    assert raw["decision"] == "allow"
+    rule = raw["matched_rule"]
+    assert rule["layer"] == "defaults"
+    assert rule["priority"] == 10
+    assert rule["effective_priority"] == 10
+    assert rule["decision"] == "allow"
+    assert rule["description"] == "notes tool allowed"
+    assert rule["match"] == {"names": ["add_or_update_note"]}
+    assert entry["advertisement"]["decision"] == "allow"
+    assert entry["execution"]["decision"] == "allow"
+    # Without arguments the caller is warned that argument-conditional rules
+    # cannot match.
+    assert "argument_equals" in data["note"]
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_default_deny_has_no_matched_rule() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    result = await resolve_tool_policy(ctx, tool_name="search_documents")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["tool_exists"] is True
+    entry = data["profiles"][0]
+    raw = entry["raw"]
+    assert raw["decision"] == "deny"
+    assert raw["matched_rule"] is None
+    assert "default" in raw["reason"]
+    assert entry["execution"]["decision"] == "deny"
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_confirm_gated_tool_depends_on_can_confirm() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    confirmable = await resolve_tool_policy(
+        ctx, tool_name="read_error_logs", can_confirm=True
+    )
+    data = confirmable.get_data()
+    assert isinstance(data, dict)
+    entry = data["profiles"][0]
+    assert entry["raw"]["decision"] == "confirm"
+    assert entry["execution"]["decision"] == "confirm"
+    assert entry["advertisement"]["decision"] == "confirm"
+
+    unconfirmable = await resolve_tool_policy(
+        ctx, tool_name="read_error_logs", can_confirm=False
+    )
+    data = unconfirmable.get_data()
+    assert isinstance(data, dict)
+    entry = data["profiles"][0]
+    assert entry["raw"]["decision"] == "confirm"
+    assert entry["execution"]["decision"] == "deny"
+    assert "confirmation required but unavailable" in entry["execution"]["reason"]
+    assert entry["advertisement"]["decision"] == "deny"
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_argument_conditional_rule_needs_arguments() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    without_args = await resolve_tool_policy(ctx, tool_name="add_or_update_note")
+    data = without_args.get_data()
+    assert isinstance(data, dict)
+    assert data["profiles"][0]["raw"]["decision"] == "allow"
+    assert "note" in data
+
+    with_args = await resolve_tool_policy(
+        ctx,
+        tool_name="add_or_update_note",
+        arguments={"title": "secret"},
+    )
+    data = with_args.get_data()
+    assert isinstance(data, dict)
+    assert data["arguments"] == {"title": "secret"}
+    assert "note" not in data
+    entry = data["profiles"][0]
+    assert entry["raw"]["decision"] == "deny"
+    assert entry["raw"]["matched_rule"]["description"] == "secret titles denied"
+    assert entry["execution"]["decision"] == "deny"
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_unknown_tool_suggests_similar_names() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    result = await resolve_tool_policy(ctx, tool_name="add_or_update_notes")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["tool_exists"] is False
+    assert "add_or_update_note" in data["similar_tool_names"]
+    assert len(data["similar_tool_names"]) <= 10
+    assert data["profiles"][0]["profile_id"] == "diag"
+    assert "error" in data["profiles"][0]
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_unknown_profile_returns_error() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    result = await resolve_tool_policy(
+        ctx, tool_name="add_or_update_note", profile_id="missing"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert data["profile_ids"] == ["diag"]
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_without_registry_returns_error(
+    exec_context_with_db: ToolExecutionContext,
+) -> None:
+    result = await resolve_tool_policy(
+        exec_context_with_db, tool_name="add_or_update_note"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_reports_on_demand_tools() -> None:
+    provider = _diagnostic_policy_provider()
+    service = Mock()
+    service.tools_provider = provider
+    service.on_demand_view = OnDemandToolsView(
+        wrapped_provider=provider,
+        on_demand_tool_names={"add_or_update_note"},
+    )
+    ctx = _ctx_with_registry({"diag": service})
+
+    result = await resolve_tool_policy(ctx, tool_name="add_or_update_note")
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["profiles"][0]["on_demand"] is True
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_rejects_non_bool_can_confirm() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    result = await resolve_tool_policy(
+        ctx,
+        tool_name="add_or_update_note",
+        can_confirm="true",  # type: ignore[arg-type]  # script kwargs bypass schema coercion
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "can_confirm must be a boolean" in data["error"]
+
+
+@pytest.mark.anyio
+async def test_resolve_tool_policy_rejects_non_dict_arguments() -> None:
+    ctx = _ctx_with_registry({"diag": _diagnostic_service()})
+
+    result = await resolve_tool_policy(
+        ctx,
+        tool_name="add_or_update_note",
+        arguments=["title"],  # type: ignore[arg-type]  # script kwargs bypass schema coercion
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "arguments must be an object" in data["error"]

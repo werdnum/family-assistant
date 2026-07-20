@@ -9,6 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    TaintMetadata,
+    TurnTaintState,
+)
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import (
     ToolExecutionContext,
@@ -31,6 +36,8 @@ tools_api_router = APIRouter()
 class ToolExecutionRequest(BaseModel):
     # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
     arguments: dict[str, Any]
+    taint_metadata: TaintMetadata | None = None
+    profile_id: str | None = None
 
 
 @tools_api_router.post("/execute/{tool_name}", response_class=JSONResponse)
@@ -56,20 +63,40 @@ async def execute_tool_api(
             status_code=500,
             detail="Main application configuration not found in app state.",
         )
-    # ProcessingConfig.timezone is a str; convert to ZoneInfo
-    timezone_str = app_config.default_profile_settings.processing_config.timezone
-    timezone = ZoneInfo(timezone_str)
-
     # Get infrastructure dependencies from app state
     processing_service = getattr(request.app.state, "processing_service", None)
     clock = getattr(request.app.state, "clock", None)
     event_sources = getattr(request.app.state, "event_sources", None)
     attachment_registry = getattr(request.app.state, "attachment_registry", None)
-    root_tools_provider = getattr(request.app.state, "tools_provider", None)
 
     # Find camera backend from any profile that has one configured
     camera_backend = None
     processing_services = getattr(request.app.state, "processing_services", {})
+    if payload.profile_id is not None:
+        selected_service = processing_services.get(payload.profile_id)
+        if selected_service is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Processing profile '{payload.profile_id}' not found.",
+            )
+        if getattr(selected_service, "kind", None) == "remote":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Processing profile '{payload.profile_id}' is remote and "
+                    "cannot execute direct tools."
+                ),
+            )
+        processing_service = selected_service
+
+    timezone = (
+        processing_service.service_config.timezone
+        if processing_service
+        else ZoneInfo(app_config.default_profile_settings.processing_config.timezone)
+    )
+    selected_tools_provider = (
+        processing_service.tools_provider if processing_service else tools_provider
+    )
     for service in processing_services.values():
         if service.kind == "remote":
             continue
@@ -81,6 +108,21 @@ async def execute_tool_api(
     # We need some context, minimum placeholders for now
     # Generate a unique ID for this specific API call context
     # This isn't a persistent conversation like Telegram
+
+    taint_tracker = InMemoryTurnTaintTracker(
+        TurnTaintState.from_metadata(payload.taint_metadata or {})
+    )
+
+    async def error_response(*, status_code: int, detail: str) -> JSONResponse:
+        if db_context.conn is not None:
+            await db_context.conn.rollback()
+        return JSONResponse(
+            content={
+                "detail": detail,
+                "taint_metadata": taint_tracker.snapshot().to_metadata(),
+            },
+            status_code=status_code,
+        )
 
     execution_context = ToolExecutionContext(
         interface_type="api",  # Identify interface
@@ -102,7 +144,7 @@ async def execute_tool_api(
         chat_interface=None,  # No direct chat interface for API calls
         timezone=timezone,  # Pass fetched timezone
         request_confirmation_callback=None,  # No confirmation from API for now
-        tools_provider=root_tools_provider,  # Pass root tools provider for execute_script
+        tools_provider=selected_tools_provider,
         processing_profile_id=(
             processing_service.service_config.id if processing_service else None
         ),
@@ -136,10 +178,14 @@ async def execute_tool_api(
             processing_service.credential_resolvers if processing_service else None
         ),
         api_backend=(processing_service.api_backend if processing_service else None),
+        # Native voice threads this snapshot through consecutive calls. Missing
+        # or malformed state is treated conservatively as unknown external so a
+        # client cannot silently reset a tainted session to trusted.
+        taint_tracker=taint_tracker,
     )
 
     try:
-        result = await tools_provider.execute_tool(
+        result = await selected_tools_provider.execute_tool(
             name=tool_name, arguments=payload.arguments, context=execution_context
         )
         logger.info(f"Tool '{tool_name}' executed successfully.")
@@ -172,42 +218,48 @@ async def execute_tool_api(
             final_result = result
 
         return JSONResponse(
-            content={"success": True, "result": final_result}, status_code=200
+            content={
+                "success": True,
+                "result": final_result,
+                "taint_metadata": taint_tracker.snapshot().to_metadata(),
+            },
+            status_code=200,
         )
     except ToolPolicyDeniedError as e:
         logger.warning("Tool '%s' denied by policy: %s", tool_name, e.reason)
-        raise HTTPException(
-            status_code=403, detail=f"Tool '{tool_name}' denied by policy: {e.reason}"
-        ) from None
+        return await error_response(
+            status_code=403,
+            detail=f"Tool '{tool_name}' denied by policy: {e.reason}",
+        )
     except ToolNotFoundError:
         logger.warning(f"Tool '{tool_name}' not found for execution request.")
-        raise HTTPException(
-            status_code=404, detail=f"Tool '{tool_name}' not found."
-        ) from None
+        return await error_response(
+            status_code=404,
+            detail=f"Tool '{tool_name}' not found.",
+        )
     except (
         ValidationError
     ) as ve:  # Catch Pydantic validation errors if execute_tool raises them
         logger.warning(f"Argument validation error for tool '{tool_name}': {ve}")
-        raise HTTPException(
+        return await error_response(
             status_code=400, detail=f"Invalid arguments for tool '{tool_name}': {ve}"
-        ) from ve
+        )
     except (
         TypeError
     ) as te:  # Catch potential argument mismatches within the tool function
         logger.error(
             f"Type error during execution of tool '{tool_name}': {te}", exc_info=True
         )
-        raise HTTPException(
+        return await error_response(
             status_code=400,
             detail=f"Argument mismatch or type error in tool '{tool_name}': {te}",
-        ) from te
+        )
     except Exception as e:
         logger.error(f"Error executing tool '{tool_name}': {e}", exc_info=True)
-        # Avoid leaking internal error details unless intended
-        raise HTTPException(
+        return await error_response(
             status_code=500,
             detail=f"An error occurred while executing tool '{tool_name}'.",
-        ) from e
+        )
 
 
 @tools_api_router.get("/definitions")

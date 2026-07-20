@@ -15,6 +15,13 @@ from sqlalchemy import select, update
 from family_assistant import task_worker as task_worker_module
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.llm.messages import UserMessage
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintMetadata,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
@@ -26,7 +33,10 @@ from family_assistant.services.confirmation_waiters import (
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
-from family_assistant.tools.infrastructure import PolicyEnforcingToolsProvider
+from family_assistant.tools.infrastructure import (
+    PolicyEnforcingToolsProvider,
+    TaintTrackingToolsProvider,
+)
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 from family_assistant.tools.policy import (
     PolicyEngine,
@@ -139,6 +149,21 @@ class FailingToolsProvider(RecordingToolsProvider):
         raise RuntimeError("tool exploded")
 
 
+class FailingDescriptorToolsProvider(RecordingDescriptorToolsProvider):
+    """Descriptor provider that records an attempted call and then raises."""
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool provider protocol accepts arbitrary JSON arguments
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        await super().execute_tool(name, arguments, context, call_id)
+        raise RuntimeError("tool exploded")
+
+
 class AttachmentToolsProvider(RecordingToolsProvider):
     """Fake tool provider that returns a result attachment."""
 
@@ -217,10 +242,11 @@ class RecordingChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - fake chat I/O must yield to exercise cancellation cleanup
         await asyncio.sleep(0)
-        _ = (parse_mode, on_behalf_of_user_id)
+        _ = (parse_mode, on_behalf_of_user_id, taint_metadata)
         self.messages.append((conversation_id, text, reply_to_interface_id))
         self.attachment_ids.append(attachment_ids)
         return f"chat-message-{len(self.messages)}"
@@ -237,6 +263,7 @@ class FailingChatInterface(RecordingChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -245,6 +272,7 @@ class FailingChatInterface(RecordingChatInterface):
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
             on_behalf_of_user_id=on_behalf_of_user_id,
+            taint_metadata=taint_metadata,
         )
         raise RuntimeError("chat send failed")
 
@@ -260,6 +288,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         await super().send_message(
             conversation_id=conversation_id,
@@ -268,6 +297,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
             on_behalf_of_user_id=on_behalf_of_user_id,
+            taint_metadata=taint_metadata,
         )
         return None
 
@@ -289,6 +319,7 @@ class BlockingChatInterface(RecordingChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         _ = (
             conversation_id,
@@ -297,6 +328,7 @@ class BlockingChatInterface(RecordingChatInterface):
             reply_to_interface_id,
             attachment_ids,
             on_behalf_of_user_id,
+            taint_metadata,
         )
         self.started.set()
         try:
@@ -375,6 +407,7 @@ async def _create_request(
     origin_interface_type: str | None = None,
     origin_conversation_id: str | None = None,
     approval_policy_fingerprint: str | None = None,
+    taint_state_json: TaintMetadata | None = None,
 ) -> str:
     resolved_tool_args: ToolArguments = (
         tool_args if tool_args is not None else {"value": "payload"}
@@ -390,6 +423,7 @@ async def _create_request(
         origin_interface_type=origin_interface_type,
         origin_conversation_id=origin_conversation_id,
         approval_policy_fingerprint=approval_policy_fingerprint,
+        taint_state_json=taint_state_json,
     )
     return request["id"]
 
@@ -553,6 +587,40 @@ async def test_approved_confirmation_preserves_google_dependencies(
 
 
 @pytest.mark.asyncio
+async def test_approved_confirmation_executes_with_taint_tracker(
+    db_engine: AsyncEngine,
+) -> None:
+    """Requests without recorded taint state still execute with a real tracker.
+
+    A trackerless context would let the tool result be persisted without taint
+    metadata; legacy requests (no taint_state_json) must instead start from an
+    explicit empty state.
+    """
+    source_message_id = await _create_source_message(db_engine)
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=source_message_id,
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    provider = RecordingToolsProvider()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=RecordingChatInterface(),
+        task_id=task_id,
+    )
+
+    assert len(provider.contexts) == 1
+    executed_context = provider.contexts[0]
+    assert executed_context.taint_tracker is not None
+    assert (
+        executed_context.taint_tracker.snapshot().max_tier
+        == SourceTrustTier.TRUSTED_USER
+    )
+
+
+@pytest.mark.asyncio
 async def test_approved_confirmation_delivers_live_waiter_without_notification(
     db_engine: AsyncEngine,
 ) -> None:
@@ -564,7 +632,8 @@ async def test_approved_confirmation_delivers_live_waiter_without_notification(
     confirmation_result_waiters = ConfirmationResultWaiterRegistry()
     waiter = confirmation_result_waiters.register(request_id)
     task_id = await _approve_request(db_engine, request_id)
-    provider = RecordingToolsProvider()
+    wrapped_provider = RecordingDescriptorToolsProvider({ToolTag.OUTPUT_UNTRUSTED})
+    provider = TaintTrackingToolsProvider(wrapped_provider)
     chat_interface = RecordingChatInterface()
 
     await _run_worker_until_task_finishes(
@@ -583,7 +652,12 @@ async def test_approved_confirmation_delivers_live_waiter_without_notification(
     outcome = waiter.result()
     assert outcome.kind == "completed"
     assert outcome.result == "executed:payload"
-    assert provider.calls == [
+    assert outcome.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(outcome.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+    assert wrapped_provider.calls == [
         (
             "record_tool",
             {"value": "payload"},
@@ -608,7 +682,8 @@ async def test_confirmation_execution_failure_resolves_live_waiter(
     confirmation_result_waiters = ConfirmationResultWaiterRegistry()
     waiter = confirmation_result_waiters.register(request_id)
     task_id = await _approve_request(db_engine, request_id)
-    provider = FailingToolsProvider()
+    wrapped_provider = FailingDescriptorToolsProvider({ToolTag.OUTPUT_UNTRUSTED})
+    provider = TaintTrackingToolsProvider(wrapped_provider)
     chat_interface = RecordingChatInterface()
 
     async with DatabaseContext(engine=db_engine) as db:
@@ -637,7 +712,12 @@ async def test_confirmation_execution_failure_resolves_live_waiter(
     assert (
         outcome.result == "Error executing approved tool 'record_tool': tool exploded"
     )
-    assert provider.calls == [
+    assert outcome.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(outcome.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+    assert wrapped_provider.calls == [
         (
             "record_tool",
             {"value": "payload"},
@@ -1254,9 +1334,19 @@ async def test_confirmation_task_fails_when_source_profile_is_missing(
         db_engine,
         processing_profile_id="secondary-profile",
     )
+    request_taint = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="confirmed-email",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="confirmation request derived from external email",
+        )
+    )
     request_id = await _create_request(
         db_engine,
         source_message_internal_id=source_message_id,
+        taint_state_json=request_taint.to_metadata(),
     )
     task_id = await _approve_request(db_engine, request_id)
     confirmation_result_waiters = ConfirmationResultWaiterRegistry()
@@ -1298,6 +1388,11 @@ async def test_confirmation_task_fails_when_source_profile_is_missing(
     assert outcome.kind == "failed"
     assert isinstance(outcome.result, str)
     assert "secondary-profile" in outcome.result
+    assert outcome.taint_metadata is not None
+    assert (
+        TurnTaintState.from_metadata(outcome.taint_metadata).max_tier
+        == SourceTrustTier.UNKNOWN_EXTERNAL
+    )
     status, error = await _task_status(db_engine, task_id)
     assert status == "failed"
     assert error is not None

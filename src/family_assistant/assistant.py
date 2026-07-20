@@ -68,7 +68,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.security.taint import merge_taint_policy_config
+from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
 from family_assistant.services.api_backend import HttpApiBackend
 from family_assistant.services.apns import APNsService, load_apns_auth_key
 from family_assistant.services.confirmation_service import (
@@ -242,8 +242,10 @@ class NullChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         """Does nothing, returns None."""
+        _ = taint_metadata
         logger.debug(
             "NullChatInterface: send_message called for conversation %s: %s",
             conversation_id,
@@ -1549,7 +1551,7 @@ class Assistant:
         self.task_workers = [
             self._build_task_worker(
                 default_timezone=worker_timezone,
-                engine=self._worker_engine(),
+                engine=self.create_worker_engine(),
             )
             for _ in range(worker_count)
         ]
@@ -1757,7 +1759,7 @@ class Assistant:
         except Exception as e:
             logger.error(f"Failed to setup system tasks: {e}")
 
-    def _worker_engine(self) -> AsyncEngine:
+    def create_worker_engine(self) -> AsyncEngine:
         """Provide a database engine for one pool worker.
 
         Each worker gets its OWN engine (its own connection) so that a worker
@@ -1784,6 +1786,10 @@ class Assistant:
         engine = create_engine_with_sqlite_optimizations(
             url.render_as_string(hide_password=False)
         )
+        set_engine_history_taint_epoch(
+            engine,
+            self.config.taint_policy.history_taint_epoch,
+        )
         self.worker_engines.append(engine)
         return engine
 
@@ -1796,7 +1802,7 @@ class Assistant:
         set and the same shared dependencies (processing service, confirmation
         waiters/managers, etc.). They are interchangeable: any worker can pick up
         any queued task. Each worker is given its own ``engine`` (see
-        :meth:`_worker_engine`).
+        :meth:`create_worker_engine`).
         """
         if self.default_processing_service is None:
             raise RuntimeError("default_processing_service must be set before workers")

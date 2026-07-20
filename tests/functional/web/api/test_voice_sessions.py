@@ -67,6 +67,22 @@ async def test_voice_session_persists_as_listable_conversation(
         assert messages[0]["turn_id"] == messages[1]["turn_id"]
         assert messages[2]["turn_id"] != messages[0]["turn_id"]
 
+    # Every transcript row (user AND assistant) is persisted with explicit
+    # runtime taint metadata rather than version=None.
+    assert web_only_assistant.database_engine is not None
+    async with get_db_context(web_only_assistant.database_engine) as db_context:
+        rows = await db_context.message_history.get_recent_with_metadata(
+            interface_type="web", conversation_id=conversation_id
+        )
+    assert len(rows) == 3
+    assert all(row["taint_metadata_version"] == "runtime_v1" for row in rows)
+    assert rows[0]["taint_metadata_json"] is not None
+    assert rows[1]["taint_metadata_json"] is not None
+    assert rows[2]["taint_metadata_json"] is not None
+    assert rows[0]["taint_metadata_json"].get("max_tier") == "trusted_user"
+    assert rows[1]["taint_metadata_json"].get("max_tier") == "unknown_external"
+    assert rows[2]["taint_metadata_json"].get("max_tier") == "trusted_user"
+
 
 @pytest.mark.asyncio
 async def test_voice_session_generates_distinct_conversation_ids(

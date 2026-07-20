@@ -19,6 +19,7 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
+    SystemMessage,
     ToolMessage,
     UserMessage,
 )
@@ -38,6 +39,21 @@ class TestThoughtSignatureConversion:
         return GoogleGenAIClient(
             api_key="test_key_for_unit_tests", model="gemini-3.1-pro-preview"
         )
+
+    def test_system_message_with_existing_prefix_is_not_double_prefixed(
+        self, google_client: GoogleGenAIClient
+    ) -> None:
+        """Delegation wake system messages already include their user-facing marker."""
+        messages: list[LLMMessage] = [
+            SystemMessage(content="System: Delegated profile task completed."),
+        ]
+
+        contents = google_client._convert_messages_to_genai_format(messages)
+
+        content = cast("types.Content", contents[0])
+        assert content.parts is not None
+        part = cast("types.Part", content.parts[0])
+        assert part.text == "System: Delegated profile task completed."
 
     def test_thought_signature_attached_to_function_call_part(
         self, google_client: GoogleGenAIClient

@@ -660,6 +660,19 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         or "calendar" in tag_values
     ):
         return SinkClass.ARTIFACT_WRITE
+    if "read_only" in tag_values and "open_world" not in tag_values:
+        # A closed-world read-only tool cannot deliver free-form external
+        # messages, so the arbitrary_external_message fallback below would
+        # misstate its risk. Without sensitive_data metadata the read is still
+        # conservatively treated as read-broadening rather than allowed outright.
+        # Placed last so read-only tools that also carry a higher-risk tag
+        # (browser reads, external_comm reads such as ucp_get_cart) keep their
+        # stricter class. Open-world read-only tools are deliberately excluded:
+        # the model controls the query/URL sent to an external service, so a
+        # read-only open-world tool can still exfiltrate. Those fall through to
+        # the arbitrary_external_message egress classification below unless an
+        # operator narrows them via tool_metadata.
+        return SinkClass.SENSITIVE_READ_BROADENING
     logger.warning(
         "Tool '%s' has no sink-class metadata; defaulting to arbitrary external "
         "message for runtime taint policy.",
@@ -852,11 +865,12 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
     :func:`_is_legacy_labeled_echo`); they poison an active conversation into
     perpetual ``unknown_external`` and re-persist themselves. When at least one
     echo is present, it is dropped and the row's taint contribution is
-    recomputed from the surviving sources rather than honoring the stored
-    ``max_tier`` (which may encode nothing but the echo). Anonymous manual
-    escalation artifacts are intentionally NOT dropped here: in a post-epoch
-    row they may legitimately stand in for a truncated genuine source, so the
-    conservative reading is preserved.
+    recomputed from the surviving sources. A stored ``max_tier`` above the
+    retained sources is preserved unless echoes were the only sources, because
+    a genuine source at that tier may have been truncated from the compact
+    summaries. Anonymous manual escalation artifacts are intentionally NOT
+    dropped here: in a post-epoch row they may legitimately stand in for a
+    truncated genuine source, so the conservative reading is preserved.
 
     Returns the original metadata unchanged when no echo is present, so the
     first-hand missing-metadata fallback path (which is synthesized fresh, not
@@ -885,6 +899,9 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
         state = state.add_source(source, from_history=True)
     if not state.sources:
         return None
+    persisted_max_tier = TurnTaintState.from_metadata(metadata).max_tier
+    if persisted_max_tier > state.max_tier:
+        state = replace(state, max_tier=persisted_max_tier)
     return state.to_metadata()
 
 

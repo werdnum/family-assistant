@@ -9,6 +9,7 @@ for the engineer processing profile.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import logging
 import os
 import platform
@@ -31,7 +32,11 @@ from family_assistant.tool_inventory import (
     TOKEN_ESTIMATE_NOTE,
     inventory_dict_for_service,
 )
-from family_assistant.tools.infrastructure import find_provider_by_type
+from family_assistant.tools.infrastructure import (
+    PolicyEnforcingToolsProvider,
+    ToolDescriptorProvider,
+    find_provider_by_type,
+)
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
@@ -40,6 +45,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
+    from family_assistant.tools.policy import PolicyEvaluation, ResolvedPolicyRule
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -822,6 +828,228 @@ async def get_profile_tool_inventory(
     )
 
 
+def _serialize_policy_rule(resolved_rule: ResolvedPolicyRule) -> dict[str, object]:
+    """Serialize a resolved policy rule for diagnostic output."""
+    return {
+        "layer": resolved_rule.layer,
+        "priority": resolved_rule.rule.priority,
+        "effective_priority": resolved_rule.effective_priority,
+        "decision": str(resolved_rule.decision),
+        "description": resolved_rule.description,
+        "match": resolved_rule.match.model_dump(mode="json", exclude_none=True),
+    }
+
+
+def _serialize_policy_evaluation(evaluation: PolicyEvaluation) -> dict[str, object]:
+    """Serialize a policy evaluation (decision, reason, matched rule)."""
+    return {
+        "decision": str(evaluation.decision),
+        "reason": evaluation.reason,
+        "matched_rule": (
+            _serialize_policy_rule(evaluation.matched_rule)
+            if evaluation.matched_rule is not None
+            else None
+        ),
+    }
+
+
+async def resolve_tool_policy(
+    exec_context: ToolExecutionContext,
+    tool_name: str,
+    profile_id: str | None = None,
+    arguments: dict[str, object] | None = None,
+    can_confirm: bool = True,
+) -> ToolResult:
+    """Resolve the live tool-policy decision for a tool name per profile.
+
+    For each targeted profile, evaluates the tool's descriptor against the
+    profile's live policy engine three ways (raw policy, advertisement, and
+    execution) and reports which rule matched, from which layer, with what
+    priority and description — answering "why can't profile X use tool Y"
+    from live state rather than guesswork.
+
+    Args:
+        exec_context: The tool execution context.
+        tool_name: Name of the tool to resolve policy for.
+        profile_id: Optional profile id; omit to evaluate every live profile.
+        arguments: Optional hypothetical call arguments for
+            argument-conditional (argument_equals) rules.
+        can_confirm: Whether the interaction can prompt for confirmation.
+
+    Returns:
+        ToolResult with per-profile policy resolutions or error.
+    """
+    # Script kwargs bypass schema coercion (same pattern as read_error_logs),
+    # so reject non-bool / non-dict values instead of silently coercing them.
+    if not isinstance(can_confirm, bool):
+        error_msg = (
+            "can_confirm must be a boolean (true/false), got "
+            f"{type(can_confirm).__name__}: {can_confirm!r}"
+        )
+        return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+
+    if arguments is not None and not isinstance(arguments, dict):
+        error_msg = (
+            "arguments must be an object mapping argument names to values, got "
+            f"{type(arguments).__name__}: {arguments!r}"
+        )
+        return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
+
+    logger.info(
+        "resolve_tool_policy: tool_name=%s profile_id=%s can_confirm=%s arguments=%s",
+        tool_name,
+        profile_id,
+        can_confirm,
+        arguments,
+    )
+
+    registry = _resolve_services_registry(exec_context)
+    if registry is None:
+        return ToolResult(
+            data={
+                "error": (
+                    "No live processing-service registry available. This tool must "
+                    "be invoked from within a live processing flow."
+                )
+            }
+        )
+
+    if profile_id is not None and profile_id not in registry:
+        return ToolResult(
+            data={
+                "error": f"Profile {profile_id!r} not found in the live registry",
+                "profile_ids": sorted(registry.keys()),
+            }
+        )
+
+    target_ids = [profile_id] if profile_id is not None else sorted(registry.keys())
+
+    entries: list[dict[str, object]] = []
+    descriptor_found = False
+    known_names: set[str] = set()
+
+    for pid in target_ids:
+        service = registry[pid]
+        tools_provider = getattr(service, "tools_provider", None)
+        if tools_provider is None:
+            entries.append({
+                "profile_id": pid,
+                "error": "No tools provider wired into this profile's service.",
+            })
+            continue
+
+        policy_provider = find_provider_by_type(
+            tools_provider, PolicyEnforcingToolsProvider
+        )
+        if policy_provider is None:
+            entries.append({
+                "profile_id": pid,
+                "error": (
+                    "No policy-enforcing provider in this profile's tools "
+                    "provider chain."
+                ),
+            })
+            continue
+
+        # The pre-policy root provider: policy-DENIED tools are invisible on
+        # the policy provider itself, so the descriptor must come from the
+        # wrapped provider to explain a denial.
+        pre_policy_provider = policy_provider.wrapped_provider
+        if not isinstance(pre_policy_provider, ToolDescriptorProvider):
+            entries.append({
+                "profile_id": pid,
+                "error": (
+                    "The policy provider's wrapped provider does not expose "
+                    "tool descriptors."
+                ),
+            })
+            continue
+
+        descriptor = await pre_policy_provider.get_tool_descriptor(tool_name)
+        if descriptor is None:
+            known_names.update(
+                d.name for d in await pre_policy_provider.get_tool_descriptors()
+            )
+            entries.append({
+                "profile_id": pid,
+                "error": (
+                    f"Tool {tool_name!r} is not registered in this profile's "
+                    "provider (before policy filtering)."
+                ),
+            })
+            continue
+
+        descriptor_found = True
+        engine = policy_provider.policy_engine
+
+        on_demand_view = getattr(service, "on_demand_view", None)
+        on_demand = bool(
+            on_demand_view is not None
+            and (
+                descriptor.name in on_demand_view.on_demand_tool_names
+                or (
+                    descriptor.mcp_server_id is not None
+                    and descriptor.mcp_server_id
+                    in on_demand_view.on_demand_mcp_server_ids
+                )
+            )
+        )
+
+        entries.append({
+            "profile_id": pid,
+            "default_decision": str(engine.default_decision),
+            "origin": descriptor.origin,
+            "mcp_server_id": descriptor.mcp_server_id,
+            "tags": sorted(str(tag) for tag in descriptor.tags),
+            "on_demand": on_demand,
+            "raw": _serialize_policy_evaluation(
+                engine.evaluate(descriptor, arguments=arguments)
+            ),
+            "advertisement": _serialize_policy_evaluation(
+                engine.evaluate_for_advertisement(descriptor, can_confirm=can_confirm)
+            ),
+            "execution": _serialize_policy_evaluation(
+                engine.evaluate_for_execution(
+                    descriptor, arguments=arguments, can_confirm=can_confirm
+                )
+            ),
+        })
+
+    if not descriptor_found:
+        sorted_names = sorted(known_names)
+        similar = difflib.get_close_matches(tool_name, sorted_names, n=10, cutoff=0.5)
+        substring_matches = [
+            name
+            for name in sorted_names
+            if tool_name.lower() in name.lower() and name not in similar
+        ]
+        return ToolResult(
+            data={
+                "tool_name": tool_name,
+                "tool_exists": False,
+                "similar_tool_names": [*similar, *substring_matches][:10],
+                "profiles": entries,
+                "profile_count": len(entries),
+            }
+        )
+
+    data: dict[str, object] = {
+        "tool_name": tool_name,
+        "tool_exists": True,
+        "can_confirm": can_confirm,
+        "arguments": arguments,
+        "profiles": entries,
+        "profile_count": len(entries),
+    }
+    if arguments is None:
+        data["note"] = (
+            "No arguments were provided, so rules with argument_equals matchers "
+            "cannot match. Pass hypothetical call arguments to test "
+            "argument-conditional rules."
+        )
+    return ToolResult(data=data)
+
+
 async def get_system_info(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
@@ -1156,6 +1384,59 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "resolve_tool_policy",
+            "description": (
+                "Resolve the live tool-policy decision (allow/deny/confirm) for "
+                "a tool name against a profile's policy engine, explaining which "
+                "rule matched (layer, priority, description) and the resolved "
+                "default decision. Use it to check whether and why a tool is "
+                "available to the engineer or any other profile — e.g. before "
+                "reporting a tool as missing, or when a tool call was denied. "
+                "Pass arguments to test argument-conditional rules such as "
+                "delegate_to_service targets; omit profile_id to compare the "
+                "decision across all live profiles."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Name of the tool to resolve policy for.",
+                    },
+                    "profile_id": {
+                        "type": "string",
+                        "description": (
+                            "Service profile id whose policy engine to evaluate. "
+                            "Omit to evaluate every live profile."
+                        ),
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": (
+                            "Hypothetical call arguments, used to test "
+                            "argument-conditional rules (argument_equals "
+                            "matchers). Without arguments those rules cannot "
+                            "match."
+                        ),
+                    },
+                    "can_confirm": {
+                        "type": "boolean",
+                        "description": (
+                            "Whether the interaction can prompt the user for "
+                            "confirmation. When false, confirm-gated tools "
+                            "resolve to deny for advertisement/execution."
+                        ),
+                        "default": True,
+                    },
+                },
+                "required": ["tool_name"],
             },
         },
     },

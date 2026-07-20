@@ -53,7 +53,11 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
-    from family_assistant.security.taint import TaintMetadata, TaintSource
+    from family_assistant.security.taint import (
+        TaintMetadata,
+        TaintSource,
+        TurnTaintTracker,
+    )
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
@@ -774,6 +778,7 @@ class ProcessingService:
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -803,6 +808,7 @@ class ProcessingService:
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
+            taint_tracker=taint_tracker,
         )
 
     async def process_message_stream(
@@ -821,6 +827,7 @@ class ProcessingService:
         subconversation_id: str | None = None,
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -850,6 +857,7 @@ class ProcessingService:
             event_sources=self.event_sources,
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
+            taint_tracker=taint_tracker,
         ):
             yield item
 
@@ -1078,6 +1086,7 @@ class ProcessingService:
         turn_id: str | None = None,
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1157,6 +1166,7 @@ class ProcessingService:
                             *context_taint_sources,
                             *(initial_taint_sources or ()),
                         ),
+                        taint_tracker=taint_tracker,
                     ):
                         yield event  # noqa: ASYNC119
 
