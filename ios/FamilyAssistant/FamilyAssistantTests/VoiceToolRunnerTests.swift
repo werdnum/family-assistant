@@ -26,7 +26,9 @@ final class VoiceToolRunnerTests: XCTestCase {
 
     func testSuccessWrapsResultPreservingIDAndName() async throws {
         let executor = FakeToolExecutor()
-        executor.handler = { _, _ in .object(["temp": .number(72)]) }
+        executor.handler = { _, _ in
+            .object(["result": .object(["temp": .number(72)])])
+        }
         let runner = VoiceToolRunner(executor: executor)
 
         let responses = await runner.run([call("get_weather", .object(["city": .string("NYC")]))])

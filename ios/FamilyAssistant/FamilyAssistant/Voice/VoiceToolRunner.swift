@@ -61,10 +61,11 @@ final class VoiceToolRunner {
             if case .string(let detail) = result["detail"] {
                 return errorResponse(for: call, message: detail)
             }
+            let toolResult = result["result"] ?? .null
             return GeminiFunctionResponse(
                 id: call.id,
                 name: call.name,
-                response: .object(["result": result])
+                response: .object(["result": toolResult])
             )
         } catch let ChatAPIError.server(statusCode, detail) {
             let message = detail ?? "Tool execution failed with status \(statusCode)."

@@ -211,7 +211,7 @@ export function useGeminiLive(): GeminiLiveState {
         return {
           id: toolCall.id,
           name: toolCall.name,
-          response: { result },
+          response: { result: result.result },
         };
       } catch (err) {
         return {

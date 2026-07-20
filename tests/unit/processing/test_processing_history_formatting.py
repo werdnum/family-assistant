@@ -29,6 +29,12 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
@@ -109,6 +115,33 @@ async def test_format_simple_history(processing_service: ProcessingService) -> N
         history_messages
     )
     assert actual_output == expected_output
+
+
+async def test_format_history_preserves_assistant_taint(
+    processing_service: ProcessingService,
+) -> None:
+    taint_metadata = (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id="voice-session",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="voice transcript includes tool output",
+            )
+        )
+        .to_metadata()
+    )
+
+    actual_output = await processing_service.context_preparer.format_history([
+        AssistantMessage(content="Voice reply", taint_metadata=taint_metadata)
+    ])
+
+    assert actual_output == [
+        AssistantMessage(content="Voice reply", taint_metadata=taint_metadata)
+    ]
 
 
 async def test_handle_chat_interaction_persists_system_trigger(

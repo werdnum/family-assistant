@@ -165,6 +165,7 @@ class ContextPreparer:
                     content=final_content,
                     tool_calls=msg.tool_calls,
                     provider_metadata=msg.provider_metadata,
+                    taint_metadata=msg.taint_metadata,
                 )
                 messages.append(assistant_msg)
             elif isinstance(msg, ToolMessage):

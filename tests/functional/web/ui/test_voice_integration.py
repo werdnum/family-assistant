@@ -410,15 +410,26 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
     tool_api_called = []
 
     async def capture_tool_call(route: Route) -> None:
-        """Capture tool API calls but let them through to the real backend."""
+        """Capture the call and return a taint-bearing backend response."""
         request = route.request
         tool_api_called.append({
             "url": request.url,
             "method": request.method,
             "post_data": request.post_data,
         })
-        # Continue to real backend
-        await route.continue_()
+        await route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "result": {"notes": []},
+                "taint_metadata": {
+                    "version": "runtime_v1",
+                    "max_tier": "unknown_external",
+                    "sources": [],
+                },
+            }),
+        )
 
     await page.route("**/api/tools/execute/**", capture_tool_call)
 
@@ -466,6 +477,7 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
         "result" in func_response["response"]
         or "error" not in func_response["response"]
     ), f"Tool should have executed successfully, got: {func_response['response']}"
+    assert "taint_metadata" not in json.dumps(func_response["response"])
 
     await page.wait_for_function(
         "window.__TEST_REALTIME_INPUTS__ && window.__TEST_REALTIME_INPUTS__.length > 0",
