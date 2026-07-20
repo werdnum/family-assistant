@@ -95,9 +95,6 @@ if TYPE_CHECKING:
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.processing.utils import get_file_extension_from_mime_type
-from family_assistant.services.confirmation_service import (
-    build_confirmation_policy_fingerprint,
-)
 from family_assistant.services.deferred_tool_confirmation import (
     build_deferred_confirmation_callback,
 )
@@ -4647,19 +4644,6 @@ async def handle_confirmation_tool_execution(
             source_row,
             processing_service,
         )
-        approval_policy_fingerprint = request["approval_policy_fingerprint"]
-        if approval_policy_fingerprint is not None:
-            expected_fingerprint = build_confirmation_policy_fingerprint(
-                tool_name=request["tool_name"],
-                tool_call_id=request["tool_call_id"],
-                processing_profile_id=execution_context.processing_profile_id,
-                taint_state_json=request["taint_state_json"],
-            )
-            if approval_policy_fingerprint != expected_fingerprint:
-                raise RuntimeError(
-                    "Approved confirmation policy fingerprint no longer matches "
-                    "the execution context"
-                )
         tools_provider = _get_processing_tools_provider(execution_context)
         call_id = request["tool_call_id"] or request["id"]
 

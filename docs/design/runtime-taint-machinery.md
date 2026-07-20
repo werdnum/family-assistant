@@ -299,8 +299,14 @@ For durable confirmation rows, add confirmation-owned taint metadata:
 - `taint_state_json`: the stored state used to render the prompt.
 - `sink_class`: resolved sink class for the approved action.
 - `static_policy_reason` and `taint_policy_reason`: explanations shown or summarized at approval.
-- `approval_policy_fingerprint`: stable fingerprint used to avoid a second confirmation loop when
-  the approved action is executed.
+
+Re-confirmation avoidance when an approved action is executed is handled by the nested
+`approved_confirmation_callback` (which matches the approved tool name and arguments), not by a
+stored hash of the approval context. An earlier `approval_policy_fingerprint` column recomputed such
+a hash at execution time, but every input was persisted verbatim on the same row at creation, so the
+check was a stored-vs-stored tautology; it was removed. Profile drift is caught by
+`_resolve_confirmation_processing_service` (which raises if the recorded profile is unavailable or
+non-local) and argument integrity by the nested callback.
 
 ## Source Tier Assignment
 
