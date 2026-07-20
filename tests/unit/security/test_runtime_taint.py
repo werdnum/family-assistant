@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self, cast
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import update
 
+from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
@@ -20,21 +22,29 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.security.taint import (
+    LEGACY_MISSING_TAINT_METADATA_LABEL,
     InMemoryTurnTaintTracker,
     SinkClass,
     SourceTrustTier,
+    TaintMetadata,
+    TaintMetadataSource,
     TaintPolicyConfig,
     TaintPolicyMode,
     TaintPolicyOutcome,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    amnestied_history_taint_metadata,
     merge_history_taint,
     merge_taint_policy_config,
     resolve_tool_sink_class,
+    strip_legacy_labeled_echoes,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.context import (
+    get_db_context,
+    set_engine_history_taint_epoch,
+)
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
@@ -595,6 +605,572 @@ async def test_legacy_history_row_missing_taint_metadata_restores_unknown_extern
     ]
     assert legacy_records
     assert all(record.levelno == logging.WARNING for record in legacy_records)
+
+
+_HISTORY_TAINT_EPOCH = datetime(2026, 7, 6, tzinfo=UTC)
+_TEN_YEARS = timedelta(days=3650)
+
+
+def _legacy_fallback_source_summary() -> TaintMetadataSource:
+    return {
+        "source_type": "manual",
+        "source_id": "42",
+        "tier": "unknown_external",
+        "labels": [LEGACY_MISSING_TAINT_METADATA_LABEL],
+        "reason": "Message history row predates runtime taint metadata.",
+    }
+
+
+def _anonymous_escalation_source_summary() -> TaintMetadataSource:
+    return {
+        "source_type": "manual",
+        "source_id": None,
+        "tier": "unknown_external",
+        "labels": [],
+        "reason": "Persisted taint metadata max_tier exceeded retained summaries.",
+    }
+
+
+def _email_source_summary() -> TaintMetadataSource:
+    return {
+        "source_type": "email",
+        "source_id": "email-1",
+        "tier": "unknown_external",
+        "labels": ["source_unknown_external"],
+        "reason": "Inbound email from unknown sender.",
+    }
+
+
+def test_amnestied_metadata_is_none_for_missing_or_malformed_metadata() -> None:
+    assert amnestied_history_taint_metadata(None) is None
+    assert amnestied_history_taint_metadata("not a mapping") is None
+    assert amnestied_history_taint_metadata({"max_tier": "unknown_external"}) is None
+
+
+def test_amnestied_metadata_drops_legacy_and_anonymous_artifacts() -> None:
+    metadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [
+            _legacy_fallback_source_summary(),
+            _anonymous_escalation_source_summary(),
+        ],
+    }
+
+    assert amnestied_history_taint_metadata(metadata) is None
+
+
+def test_amnestied_metadata_keeps_attributed_sources_and_recomputes_tier() -> None:
+    metadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [
+            _legacy_fallback_source_summary(),
+            _email_source_summary(),
+        ],
+    }
+
+    result = amnestied_history_taint_metadata(metadata)
+
+    assert result is not None
+    sources = result.get("sources")
+    assert sources is not None
+    assert [source["source_type"] for source in sources] == ["email"]
+    state = TurnTaintState.from_metadata(result, from_history=True)
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+
+
+def test_amnestied_metadata_does_not_honor_persisted_max_tier() -> None:
+    metadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "sources": [
+            {
+                "source_type": "user_message",
+                "source_id": "user-1",
+                "tier": "trusted_user",
+                "labels": [],
+                "reason": "Direct user message.",
+            }
+        ],
+    }
+
+    result = amnestied_history_taint_metadata(metadata)
+
+    assert result is not None
+    assert result.get("max_tier") == SourceTrustTier.TRUSTED_USER.config_value
+    state = TurnTaintState.from_metadata(result, from_history=True)
+    assert state.max_tier is SourceTrustTier.TRUSTED_USER
+    assert not state.history_high_taint_present
+
+
+def test_strip_legacy_echoes_returns_metadata_unchanged_without_echoes() -> None:
+    metadata: TaintMetadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [
+            _anonymous_escalation_source_summary(),
+            _email_source_summary(),
+        ],
+    }
+
+    assert strip_legacy_labeled_echoes(metadata) is metadata
+
+
+def test_strip_legacy_echoes_none_for_non_mapping() -> None:
+    assert strip_legacy_labeled_echoes(None) is None
+    assert strip_legacy_labeled_echoes("not a mapping") is None
+
+
+def test_strip_legacy_echoes_drops_echo_keeps_genuine_and_recomputes() -> None:
+    metadata: TaintMetadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [
+            _legacy_fallback_source_summary(),
+            _email_source_summary(),
+        ],
+    }
+
+    result = strip_legacy_labeled_echoes(metadata)
+
+    assert result is not None
+    sources = result.get("sources")
+    assert sources is not None
+    assert [source["source_type"] for source in sources] == ["email"]
+    state = TurnTaintState.from_metadata(result, from_history=True)
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+
+
+def test_strip_legacy_echoes_only_echoes_contributes_nothing() -> None:
+    metadata: TaintMetadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [_legacy_fallback_source_summary()],
+    }
+
+    assert strip_legacy_labeled_echoes(metadata) is None
+
+
+def test_strip_legacy_echoes_keeps_anonymous_escalation_artifact() -> None:
+    metadata: TaintMetadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [
+            _legacy_fallback_source_summary(),
+            _anonymous_escalation_source_summary(),
+        ],
+    }
+
+    result = strip_legacy_labeled_echoes(metadata)
+
+    assert result is not None
+    state = TurnTaintState.from_metadata(result, from_history=True)
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+
+
+def test_strip_legacy_echoes_preserves_hidden_persisted_max_tier() -> None:
+    metadata: TaintMetadata = {
+        "version": "runtime_v1",
+        "max_tier": "unknown_external",
+        "history_high_taint_present": True,
+        "sources": [
+            _legacy_fallback_source_summary(),
+            {
+                "source_type": "user_message",
+                "source_id": "user-1",
+                "tier": "trusted_user",
+                "labels": [],
+                "reason": "Direct user message.",
+            },
+        ],
+    }
+
+    result = strip_legacy_labeled_echoes(metadata)
+
+    assert result is not None
+    sources = result.get("sources")
+    assert sources is not None
+    assert all(
+        LEGACY_MISSING_TAINT_METADATA_LABEL not in source["labels"]
+        for source in sources
+    )
+    state = TurnTaintState.from_metadata(result, from_history=True)
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+
+
+def test_history_taint_epoch_rejects_naive_timestamps() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        TaintPolicyConfig.model_validate({"history_taint_epoch": "2026-07-06T00:00:00"})
+
+
+def test_history_taint_epoch_rejects_unparseable_values() -> None:
+    with pytest.raises(ValueError, match="history_taint_epoch"):
+        TaintPolicyConfig.model_validate({"history_taint_epoch": "not-a-date"})
+
+
+def test_history_taint_epoch_normalizes_to_utc() -> None:
+    config = TaintPolicyConfig.model_validate({
+        "history_taint_epoch": "2026-07-06T02:00:00+02:00"
+    })
+
+    assert config.history_taint_epoch is not None
+    assert config.history_taint_epoch == datetime(2026, 7, 6, tzinfo=UTC)
+    assert config.history_taint_epoch.tzinfo == UTC
+
+
+def test_profile_taint_policy_cannot_define_history_taint_epoch() -> None:
+    base = TaintPolicyConfig()
+    profile = TaintPolicyConfig(history_taint_epoch=_HISTORY_TAINT_EPOCH)
+
+    with pytest.raises(ValueError, match="cannot define history_taint_epoch"):
+        merge_taint_policy_config(base=base, profile=profile)
+
+
+async def _seed_history_row(
+    db_engine: AsyncEngine,
+    *,
+    conversation_id: str,
+    timestamp: datetime,
+    taint_metadata_json: TaintMetadata | None,
+) -> int:
+    async with get_db_context(db_engine) as db_context:
+        internal_id = await db_context.message_history.add_message(
+            UserMessage(content="history text"),
+            interface_type="test",
+            conversation_id=conversation_id,
+            timestamp=timestamp,
+            turn_id=str(uuid.uuid4()),
+            processing_profile_id="runtime-taint-test",
+        )
+        assert internal_id is not None
+        await db_context.execute_with_retry(
+            update(message_history_table)
+            .where(message_history_table.c.internal_id == internal_id)
+            .values(
+                taint_metadata_json=taint_metadata_json,
+                taint_metadata_version=(
+                    "runtime_v1" if taint_metadata_json is not None else None
+                ),
+            )
+        )
+    return internal_id
+
+
+async def _merged_history_state(
+    db_engine: AsyncEngine,
+    conversation_id: str,
+) -> TurnTaintState:
+    async with get_db_context(db_engine) as db_context:
+        rows = await db_context.message_history.get_recent(
+            interface_type="test",
+            conversation_id=conversation_id,
+            limit=5,
+            max_age=_TEN_YEARS,
+            processing_profile_id="runtime-taint-test",
+        )
+    assert rows
+    return merge_history_taint(rows)
+
+
+@pytest.mark.asyncio
+async def test_pre_epoch_row_missing_taint_metadata_contributes_no_taint(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-pre-null",
+        timestamp=_HISTORY_TAINT_EPOCH - timedelta(days=1),
+        taint_metadata_json=None,
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-pre-null")
+
+    assert state.max_tier is SourceTrustTier.TRUSTED_USER
+    assert not state.history_high_taint_present
+    assert not state.sources
+    assert "legacy_missing_taint_metadata" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_epoch_disabled_preserves_legacy_echo_fallback(
+    db_engine: AsyncEngine,
+) -> None:
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-disabled-echo",
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [_legacy_fallback_source_summary()],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-disabled-echo")
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+
+
+@pytest.mark.asyncio
+async def test_pre_epoch_row_with_only_legacy_artifacts_contributes_no_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-pre-poison",
+        timestamp=_HISTORY_TAINT_EPOCH - timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [
+                _legacy_fallback_source_summary(),
+                _anonymous_escalation_source_summary(),
+            ],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-pre-poison")
+
+    assert state.max_tier is SourceTrustTier.TRUSTED_USER
+    assert not state.history_high_taint_present
+    assert not state.sources
+
+
+@pytest.mark.asyncio
+async def test_pre_epoch_row_keeps_genuine_email_source(
+    db_engine: AsyncEngine,
+) -> None:
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-pre-email",
+        timestamp=_HISTORY_TAINT_EPOCH - timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [
+                _legacy_fallback_source_summary(),
+                _email_source_summary(),
+            ],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-pre-email")
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+    assert [source.source_type for source in state.sources] == [TaintSourceType.EMAIL]
+
+
+@pytest.mark.asyncio
+async def test_post_epoch_row_missing_taint_metadata_escalates_and_logs_error(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    # Unique per parametrized run: the once-per-conversation ERROR dedupe guard
+    # is process-local, so a reused id would suppress the second run's record.
+    conversation_id = f"epoch-post-null-{uuid.uuid4().hex}"
+    await _seed_history_row(
+        db_engine,
+        conversation_id=conversation_id,
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json=None,
+    )
+
+    state = await _merged_history_state(db_engine, conversation_id)
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+    error_records = [
+        record
+        for record in caplog.records
+        if "post_epoch_missing_taint_metadata" in record.getMessage()
+    ]
+    assert error_records
+    assert all(record.levelno == logging.ERROR for record in error_records)
+    message = error_records[0].getMessage()
+    assert conversation_id in message
+    assert "role=user" in message
+
+
+@pytest.mark.asyncio
+async def test_post_epoch_missing_metadata_error_logged_once_per_conversation(
+    db_engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.ERROR)
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    conversation_id = f"epoch-post-dedupe-{uuid.uuid4().hex}"
+    await _seed_history_row(
+        db_engine,
+        conversation_id=conversation_id,
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json=None,
+    )
+
+    await _merged_history_state(db_engine, conversation_id)
+    await _merged_history_state(db_engine, conversation_id)
+
+    error_records = [
+        record
+        for record in caplog.records
+        if "post_epoch_missing_taint_metadata" in record.getMessage()
+        and conversation_id in record.getMessage()
+    ]
+    assert len(error_records) == 1
+
+
+@pytest.mark.asyncio
+async def test_post_epoch_row_drops_legacy_echo_keeps_genuine_source(
+    db_engine: AsyncEngine,
+) -> None:
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-post-echo-plus-genuine",
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [
+                _legacy_fallback_source_summary(),
+                _email_source_summary(),
+            ],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-post-echo-plus-genuine")
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+    assert [source.source_type for source in state.sources] == [TaintSourceType.EMAIL]
+
+
+@pytest.mark.asyncio
+async def test_post_epoch_row_preserves_hidden_max_tier_after_echo_stripping(
+    db_engine: AsyncEngine,
+) -> None:
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-post-echo-hidden-tier",
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [
+                _legacy_fallback_source_summary(),
+                {
+                    "source_type": "user_message",
+                    "source_id": "user-1",
+                    "tier": "trusted_user",
+                    "labels": [],
+                    "reason": "Direct user message.",
+                },
+            ],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-post-echo-hidden-tier")
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+    assert all(
+        LEGACY_MISSING_TAINT_METADATA_LABEL not in source.labels
+        for source in state.sources
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_engine_inherits_history_taint_epoch(
+    db_engine: AsyncEngine,
+) -> None:
+    assistant = Assistant(
+        config=AppConfig(
+            taint_policy=TaintPolicyConfig(history_taint_epoch=_HISTORY_TAINT_EPOCH)
+        ),
+        database_engine=db_engine,
+    )
+    assistant.database_engine = db_engine
+
+    worker_engine = assistant.create_worker_engine()
+    try:
+        async with get_db_context(worker_engine) as db_context:
+            assert db_context.history_taint_epoch == _HISTORY_TAINT_EPOCH
+    finally:
+        if worker_engine is not db_engine:
+            await worker_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_post_epoch_row_with_only_legacy_echo_contributes_no_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-post-echo-only",
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [_legacy_fallback_source_summary()],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-post-echo-only")
+
+    assert state.max_tier is SourceTrustTier.TRUSTED_USER
+    assert not state.history_high_taint_present
+    assert not state.sources
+
+
+@pytest.mark.asyncio
+async def test_post_epoch_row_keeps_anonymous_manual_artifact(
+    db_engine: AsyncEngine,
+) -> None:
+    set_engine_history_taint_epoch(db_engine, _HISTORY_TAINT_EPOCH)
+    await _seed_history_row(
+        db_engine,
+        conversation_id="epoch-post-anonymous",
+        timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
+        taint_metadata_json={
+            "version": "runtime_v1",
+            "max_tier": "unknown_external",
+            "history_high_taint_present": True,
+            "sources": [_anonymous_escalation_source_summary()],
+        },
+    )
+
+    state = await _merged_history_state(db_engine, "epoch-post-anonymous")
+
+    assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert state.history_high_taint_present
+    assert [source.source_type for source in state.sources] == [TaintSourceType.MANUAL]
 
 
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (

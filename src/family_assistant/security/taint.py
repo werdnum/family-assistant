@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
 
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 TAINT_METADATA_VERSION = "runtime_v1"
 A2A_TAINT_METADATA_KEY = "family_assistant_taint_metadata"
+LEGACY_MISSING_TAINT_METADATA_LABEL = "legacy_missing_taint_metadata"
 
 
 class SourceTrustTier(IntEnum):
@@ -372,6 +374,7 @@ class TaintPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: TaintPolicyMode = TaintPolicyMode.OBSERVE
+    history_taint_epoch: datetime | None = None
     high_taint_tier: SourceTrustTier = SourceTrustTier.UNKNOWN_EXTERNAL
     default_unspecified_tool_output_tier: SourceTrustTier = (
         SourceTrustTier.UNKNOWN_EXTERNAL
@@ -392,6 +395,24 @@ class TaintPolicyConfig(BaseModel):
             SourceTrustTier.KNOWN_CONTACT: ["source_known_contact"],
         }
     )
+
+    @field_validator("history_taint_epoch", mode="after")
+    @classmethod
+    def _require_timezone_aware_epoch(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            msg = (
+                "taint_policy.history_taint_epoch must be timezone-aware. Quote "
+                "the value in YAML so it is parsed as an ISO-8601 string with an "
+                'offset, e.g. history_taint_epoch: "2026-08-01T00:00:00+00:00". '
+                "Set it to the instant this feature is DEPLOYED (or later), "
+                "never earlier: rows written before deploy may contain re-baked "
+                "legacy taint poison that read-time amnesty only partially "
+                "neutralizes."
+            )
+            raise ValueError(msg)
+        return value.astimezone(UTC)
 
     @field_validator(
         "high_taint_tier",
@@ -533,6 +554,9 @@ def merge_taint_policy_config(
     fields_set = profile.model_fields_set
     if "operator_minimum" in fields_set and profile.operator_minimum:
         msg = "Profile taint_policy cannot define operator_minimum"
+        raise ValueError(msg)
+    if "history_taint_epoch" in fields_set and profile.history_taint_epoch is not None:
+        msg = "Profile taint_policy cannot define history_taint_epoch"
         raise ValueError(msg)
     if "mode" in fields_set:
         if (
@@ -772,6 +796,113 @@ def derive_tool_result_taint_source(
         labels=frozenset(),
         reason=reason,
     )
+
+
+def amnestied_history_taint_metadata(metadata: object) -> TaintMetadata | None:
+    """Recompute a pre-epoch history row's taint from attributed sources only.
+
+    Rows persisted before ``taint_policy.history_taint_epoch`` receive a
+    read-time amnesty for legacy taint poison: the synthetic
+    ``legacy_missing_taint_metadata`` fallback and the anonymous manual
+    escalation artifacts synthesized by :meth:`TurnTaintState.from_metadata`
+    for truncated or omitted source summaries are dropped, and the row's taint
+    contribution is recomputed from the explicitly attributed sources that
+    remain. The persisted ``max_tier`` is deliberately not honored, because
+    for pre-epoch rows it may encode nothing but re-baked legacy poison whose
+    attribution was truncated away. Rows with no metadata, malformed metadata,
+    or no surviving attributed sources contribute no taint at all.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    raw_sources = metadata.get("sources")
+    if not isinstance(raw_sources, list):
+        return None
+    state = TurnTaintState.empty()
+    for raw_source in raw_sources:
+        source = _source_from_metadata(
+            raw_source,
+            fallback_tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        )
+        if _is_amnestied_legacy_artifact(source):
+            continue
+        state = state.add_source(source, from_history=True)
+    if not state.sources:
+        return None
+    return state.to_metadata()
+
+
+def _is_amnestied_legacy_artifact(source: TaintSource) -> bool:
+    """Return whether a pre-epoch source is legacy poison rather than provenance."""
+    if _is_legacy_labeled_echo(source):
+        return True
+    return (
+        source.source_type is TaintSourceType.MANUAL
+        and not source.labels
+        and source.source_id is None
+    )
+
+
+def _is_legacy_labeled_echo(source: TaintSource) -> bool:
+    """Return whether a persisted source is a re-baked legacy fallback echo.
+
+    A source carrying ``legacy_missing_taint_metadata`` inside persisted
+    ``runtime_v1`` metadata is, by construction, a second-hand echo of some
+    other row's read-time fallback: the label is only ever stamped on the
+    synthetic source that :func:`_message_history_taint_metadata` fabricates at
+    read time and then re-bakes into that turn's snapshot. It is never a
+    first-hand attribution, so it can be dropped regardless of the row's
+    timestamp.
+    """
+    return LEGACY_MISSING_TAINT_METADATA_LABEL in source.labels
+
+
+def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
+    """Drop re-baked legacy-fallback echoes from persisted history metadata.
+
+    Applies to rows of any age (including post-epoch rows). Sources labeled
+    ``legacy_missing_taint_metadata`` inside persisted ``runtime_v1`` metadata
+    are second-hand echoes of another row's read-time fallback (see
+    :func:`_is_legacy_labeled_echo`); they poison an active conversation into
+    perpetual ``unknown_external`` and re-persist themselves. When at least one
+    echo is present, it is dropped and the row's taint contribution is
+    recomputed from the surviving sources. A stored ``max_tier`` above the
+    retained sources is preserved unless echoes were the only sources, because
+    a genuine source at that tier may have been truncated from the compact
+    summaries. Anonymous manual escalation artifacts are intentionally NOT
+    dropped here: in a post-epoch row they may legitimately stand in for a
+    truncated genuine source, so the conservative reading is preserved.
+
+    Returns the original metadata unchanged when no echo is present, so the
+    first-hand missing-metadata fallback path (which is synthesized fresh, not
+    read from stored ``sources``) is never weakened.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    raw_sources = metadata.get("sources")
+    if not isinstance(raw_sources, list):
+        return cast("TaintMetadata", metadata)
+    kept: list[TaintSource] = []
+    dropped_echo = False
+    for raw_source in raw_sources:
+        source = _source_from_metadata(
+            raw_source,
+            fallback_tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        )
+        if _is_legacy_labeled_echo(source):
+            dropped_echo = True
+            continue
+        kept.append(source)
+    if not dropped_echo:
+        return cast("TaintMetadata", metadata)
+    state = TurnTaintState.empty()
+    for source in kept:
+        state = state.add_source(source, from_history=True)
+    if not state.sources:
+        return None
+    persisted_max_tier = TurnTaintState.from_metadata(metadata).max_tier
+    if persisted_max_tier > state.max_tier:
+        state = replace(state, max_tier=persisted_max_tier)
+    return state.to_metadata()
 
 
 def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:

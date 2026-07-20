@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import weakref
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy import event
@@ -26,6 +27,7 @@ PGCODE_DEADLOCK_DETECTED = "40P01"  # Two processes blocked each other
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractAsyncContextManager
+    from datetime import datetime
     from types import TracebackType
 
     from sqlalchemy import TextClause
@@ -61,6 +63,42 @@ logger = logging.getLogger(__name__)
 
 # Type variable for query result type
 T = TypeVar("T")
+
+# Deployment-level history taint epoch (taint_policy.history_taint_epoch),
+# registered per engine. DatabaseContext instances are created from a bare
+# engine at dozens of call sites, so the epoch is attached to the engine once
+# at startup instead of being re-threaded through every creation site; every
+# context built from that engine then applies the same read-time amnesty
+# policy when materializing message-history taint metadata. Weak keys keep
+# short-lived test engines from accumulating entries.
+_ENGINE_HISTORY_TAINT_EPOCHS: weakref.WeakKeyDictionary[AsyncEngine, datetime] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def set_engine_history_taint_epoch(
+    engine: AsyncEngine,
+    epoch: datetime | None,
+) -> None:
+    """Attach the deployment history taint epoch to a database engine.
+
+    Called once at application startup with
+    ``taint_policy.history_taint_epoch``. ``None`` (the default for engines
+    that were never configured) disables the pre-epoch amnesty, preserving the
+    conservative legacy-fallback behavior.
+    """
+    if epoch is None:
+        _ENGINE_HISTORY_TAINT_EPOCHS.pop(engine, None)
+        return
+    if epoch.tzinfo is None:
+        msg = "history taint epoch must be timezone-aware"
+        raise ValueError(msg)
+    _ENGINE_HISTORY_TAINT_EPOCHS[engine] = epoch
+
+
+def _engine_history_taint_epoch(engine: AsyncEngine) -> datetime | None:
+    """Return the history taint epoch configured on an engine, if any."""
+    return _ENGINE_HISTORY_TAINT_EPOCHS.get(engine)
 
 
 def sanitize_text_for_postgres(text: str | None) -> str | None:
@@ -221,6 +259,11 @@ class DatabaseContext:
     def supports_isolated_writes(self) -> bool:
         """Whether this context can safely use a nested isolated write context."""
         return self.engine.dialect.name == "postgresql"
+
+    @property
+    def history_taint_epoch(self) -> datetime | None:
+        """The deployment history taint epoch configured on this engine, if any."""
+        return _engine_history_taint_epoch(self.engine)
 
     def create_isolated_context(self) -> DatabaseContext:
         """Create a new context sharing this context's engine settings."""

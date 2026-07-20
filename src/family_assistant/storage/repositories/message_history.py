@@ -3,12 +3,13 @@
 import json
 import logging
 import uuid
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
-from sqlalchemy import String, and_, insert, or_, select, update
+from sqlalchemy import String, and_, case, insert, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import cast as sa_cast
 from sqlalchemy.sql import func as sql_func
@@ -33,14 +34,17 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.security.taint import (
+    LEGACY_MISSING_TAINT_METADATA_LABEL,
     TAINT_METADATA_VERSION,
     SourceTrustTier,
     TaintMetadata,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    amnestied_history_taint_metadata,
     coerce_taint_metadata,
     merge_history_taint,
+    strip_legacy_labeled_echoes,
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
@@ -67,6 +71,7 @@ class MessageHistoryTaintDiagnosticsRow(TypedDict):
     tool_name: str | None
     metadata_version: str | None
     max_tier: str | None
+    pre_epoch: bool | None
     oldest_timestamp: datetime
     newest_timestamp: datetime
     count: int
@@ -79,9 +84,64 @@ _DELEGATION_WAKE_SYSTEM_PREFIXES = (
 
 _HISTORY_ROLES_REQUIRING_TAINT_METADATA = {"user", "assistant", "tool"}
 
+# Once-per-conversation guard for the post-epoch missing-metadata regression
+# alarm, so one broken write path does not emit an ERROR line on every history
+# read of every turn. Process-local log dedup only; carries no policy state.
+_POST_EPOCH_MISSING_METADATA_LOGGED: OrderedDict[str, None] = OrderedDict()
+_POST_EPOCH_MISSING_METADATA_LOGGED_LIMIT = 1024
 
-def _message_history_taint_metadata(msg: Mapping[str, Any]) -> TaintMetadata | None:
-    taint_metadata = coerce_taint_metadata(msg.get("taint_metadata_json"))
+
+def _should_log_post_epoch_missing_metadata(conversation_key: str) -> bool:
+    """Return whether this conversation's regression alarm was not yet logged."""
+    if conversation_key in _POST_EPOCH_MISSING_METADATA_LOGGED:
+        _POST_EPOCH_MISSING_METADATA_LOGGED.move_to_end(conversation_key)
+        return False
+    _POST_EPOCH_MISSING_METADATA_LOGGED[conversation_key] = None
+    while (
+        len(_POST_EPOCH_MISSING_METADATA_LOGGED)
+        > _POST_EPOCH_MISSING_METADATA_LOGGED_LIMIT
+    ):
+        _POST_EPOCH_MISSING_METADATA_LOGGED.popitem(last=False)
+    return True
+
+
+def _is_pre_epoch_row(timestamp: object, history_taint_epoch: datetime) -> bool:
+    """Return whether a row predates the configured history taint epoch.
+
+    Rows without a usable timestamp are treated as post-epoch so they keep the
+    conservative fallback behavior. Naive timestamps (SQLite round-trips drop
+    the offset) are interpreted as UTC, matching the storage convention.
+    """
+    if not isinstance(timestamp, datetime):
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp < history_taint_epoch
+
+
+def _message_history_taint_metadata(
+    msg: Mapping[str, Any],
+    *,
+    history_taint_epoch: datetime | None,
+) -> TaintMetadata | None:
+    raw_metadata = msg.get("taint_metadata_json")
+    if history_taint_epoch is not None and _is_pre_epoch_row(
+        msg.get("timestamp"), history_taint_epoch
+    ):
+        return amnestied_history_taint_metadata(raw_metadata)
+
+    if history_taint_epoch is not None and isinstance(raw_metadata, dict):
+        # Sources labeled ``legacy_missing_taint_metadata`` inside persisted
+        # runtime_v1 metadata are second-hand echoes of another row's read-time
+        # fallback (never a first-hand attribution). They are dropped
+        # regardless of the row's timestamp when the epoch amnesty is enabled,
+        # so an active conversation whose rows re-baked such an echo can
+        # self-heal rather than seeding unknown_external forever. First-hand
+        # missing metadata (a null ``taint_metadata_json``) is handled below
+        # and is unaffected.
+        return strip_legacy_labeled_echoes(raw_metadata)
+
+    taint_metadata = coerce_taint_metadata(raw_metadata)
     if taint_metadata is not None:
         return taint_metadata
 
@@ -90,12 +150,28 @@ def _message_history_taint_metadata(msg: Mapping[str, Any]) -> TaintMetadata | N
         return None
 
     internal_id = msg.get("internal_id")
-    logger.warning(
-        "legacy_missing_taint_metadata: message_history row %s role=%s has no "
-        "runtime taint metadata; treating as unknown_external until backfilled.",
-        internal_id,
-        role,
-    )
+    if history_taint_epoch is None:
+        logger.warning(
+            "legacy_missing_taint_metadata: message_history row %s role=%s has no "
+            "runtime taint metadata; treating as unknown_external until backfilled.",
+            internal_id,
+            role,
+        )
+    else:
+        conversation_id = msg.get("conversation_id")
+        if _should_log_post_epoch_missing_metadata(str(conversation_id)):
+            logger.error(
+                "post_epoch_missing_taint_metadata: message_history row %s in "
+                "conversation %s (role=%s, tool_name=%s, timestamp=%s) was written "
+                "after taint_policy.history_taint_epoch without runtime taint "
+                "metadata; treating as unknown_external. This indicates a "
+                "regression in a message-history write path.",
+                internal_id,
+                conversation_id,
+                role,
+                msg.get("tool_name"),
+                msg.get("timestamp"),
+            )
     return (
         TurnTaintState
         .empty()
@@ -104,7 +180,7 @@ def _message_history_taint_metadata(msg: Mapping[str, Any]) -> TaintMetadata | N
                 source_type=TaintSourceType.MANUAL,
                 source_id=str(internal_id) if internal_id is not None else None,
                 tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-                labels=frozenset({"legacy_missing_taint_metadata"}),
+                labels=frozenset({LEGACY_MISSING_TAINT_METADATA_LABEL}),
                 reason=(
                     "Message history row predates runtime taint metadata; "
                     "defaulting to unknown_external."
@@ -237,42 +313,48 @@ class MessageHistoryRepository(BaseRepository):
 
     async def get_taint_diagnostics(
         self,
+        *,
+        history_taint_epoch: datetime | None = None,
     ) -> list[MessageHistoryTaintDiagnosticsRow]:
-        """Return a distinct-row inventory of persisted history taint state."""
+        """Return a distinct-row inventory of persisted history taint state.
+
+        When ``history_taint_epoch`` is provided, each group is additionally
+        split by whether its rows predate the epoch, so operators can verify
+        that post-epoch rows carry metadata before enabling enforce mode.
+        """
         max_tier = (
             message_history_table.c
             .taint_metadata_json["max_tier"]
             .as_string()
             .label("max_tier")
         )
+        group_columns: list[ColumnElement[Any]] = [
+            message_history_table.c.interface_type,
+            message_history_table.c.role,
+            message_history_table.c.processing_profile_id,
+            message_history_table.c.tool_name,
+            message_history_table.c.taint_metadata_version,
+            max_tier,
+        ]
+        if history_taint_epoch is not None:
+            # SQLite stores naive UTC strings, so compare with the naive-UTC
+            # representation there; PostgreSQL timestamptz handles the offset.
+            history_taint_epoch = history_taint_epoch.astimezone(UTC)
+            group_columns.append(
+                case(
+                    (message_history_table.c.timestamp < history_taint_epoch, True),
+                    else_=False,
+                ).label("pre_epoch")
+            )
         stmt = (
             select(
-                message_history_table.c.interface_type,
-                message_history_table.c.role,
-                message_history_table.c.processing_profile_id,
-                message_history_table.c.tool_name,
-                message_history_table.c.taint_metadata_version,
-                max_tier,
+                *group_columns,
                 func.min(message_history_table.c.timestamp).label("oldest_timestamp"),
                 func.max(message_history_table.c.timestamp).label("newest_timestamp"),
                 func.count(message_history_table.c.internal_id).label("count"),
             )
-            .group_by(
-                message_history_table.c.interface_type,
-                message_history_table.c.role,
-                message_history_table.c.processing_profile_id,
-                message_history_table.c.tool_name,
-                message_history_table.c.taint_metadata_version,
-                max_tier,
-            )
-            .order_by(
-                message_history_table.c.interface_type,
-                message_history_table.c.role,
-                message_history_table.c.processing_profile_id,
-                message_history_table.c.tool_name,
-                message_history_table.c.taint_metadata_version,
-                max_tier,
-            )
+            .group_by(*group_columns)
+            .order_by(*group_columns)
         )
         rows = await self._db.fetch_all(stmt)
         valid_tiers = {tier.config_value for tier in SourceTrustTier}
@@ -311,6 +393,11 @@ class MessageHistoryRepository(BaseRepository):
                         str(metadata_version) if metadata_version is not None else None
                     ),
                     max_tier=str(tier) if tier is not None else None,
+                    pre_epoch=(
+                        bool(row["pre_epoch"])
+                        if history_taint_epoch is not None
+                        else None
+                    ),
                     oldest_timestamp=row["oldest_timestamp"],
                     newest_timestamp=row["newest_timestamp"],
                     count=int(row["count"]),
@@ -2235,7 +2322,9 @@ class MessageHistoryRepository(BaseRepository):
 
             msg["provider_metadata"] = provider_metadata
 
-        msg["taint_metadata"] = _message_history_taint_metadata(msg)
+        msg["taint_metadata"] = _message_history_taint_metadata(
+            msg, history_taint_epoch=self._db.history_taint_epoch
+        )
 
         # Convert dict to typed LLMMessage
         return self._dict_to_typed_message(msg)
@@ -2340,7 +2429,9 @@ class MessageHistoryRepository(BaseRepository):
             # (it has a different structure than tool-call-level provider_metadata)
             msg["provider_metadata"] = provider_metadata
 
-        msg["taint_metadata"] = _message_history_taint_metadata(msg)
+        msg["taint_metadata"] = _message_history_taint_metadata(
+            msg, history_taint_epoch=self._db.history_taint_epoch
+        )
 
         return cast("MessageHistoryRow", msg)
 

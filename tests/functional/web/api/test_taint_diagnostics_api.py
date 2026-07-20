@@ -1,13 +1,17 @@
 """Functional tests for runtime taint diagnostics."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import httpx
 import pytest
 from sqlalchemy import insert
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.context import (
+    DatabaseContext,
+    set_engine_history_taint_epoch,
+)
 from family_assistant.storage.message_history import message_history_table
 
 
@@ -154,7 +158,11 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
     assert _counts_by_key(data["audit"]["by_requested_outcome"])["confirm"] == 1
     assert _counts_by_key(data["audit"]["source_label_occurrences"]) == {"web": 1}
 
+    assert data["history_taint_epoch"] is None
     history = data["message_history"]
+    assert history["pre_epoch_rows"] is None
+    assert history["post_epoch_rows"] is None
+    assert history["post_epoch_missing_required_metadata_rows"] is None
     assert history["total_rows"] == 5
     assert history["classified_rows"] == 2
     assert history["missing_required_metadata_rows"] == 1
@@ -170,6 +178,82 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
     assert "source-secret" not in serialized
     assert "history-test" not in serialized
     assert "External web content" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_taint_diagnostics_splits_history_rows_by_epoch(
+    api_client: httpx.AsyncClient,
+    api_db_context: DatabaseContext,
+    db_engine: AsyncEngine,
+) -> None:
+    """With an epoch configured, history stats split pre/post epoch."""
+    epoch = datetime(2026, 7, 6, tzinfo=UTC)
+    set_engine_history_taint_epoch(db_engine, epoch)
+    pre_epoch = epoch - timedelta(days=3)
+    post_epoch = epoch + timedelta(days=3)
+    rows = [
+        {
+            "interface_type": "telegram",
+            "conversation_id": "epoch-test",
+            "timestamp": pre_epoch,
+            "role": "assistant",
+            "content": "pre-epoch missing metadata",
+            "processing_profile_id": "default_assistant",
+            "tool_name": None,
+            "taint_metadata_json": None,
+            "taint_metadata_version": None,
+        },
+        {
+            "interface_type": "telegram",
+            "conversation_id": "epoch-test",
+            "timestamp": pre_epoch,
+            "role": "user",
+            "content": "pre-epoch classified",
+            "processing_profile_id": "default_assistant",
+            "tool_name": None,
+            "taint_metadata_json": {"max_tier": "unknown_external", "sources": []},
+            "taint_metadata_version": "runtime_v1",
+        },
+        {
+            "interface_type": "telegram",
+            "conversation_id": "epoch-test",
+            "timestamp": post_epoch,
+            "role": "assistant",
+            "content": "post-epoch missing metadata",
+            "processing_profile_id": "default_assistant",
+            "tool_name": None,
+            "taint_metadata_json": None,
+            "taint_metadata_version": None,
+        },
+        {
+            "interface_type": "telegram",
+            "conversation_id": "epoch-test",
+            "timestamp": post_epoch,
+            "role": "user",
+            "content": "post-epoch classified",
+            "processing_profile_id": "default_assistant",
+            "tool_name": None,
+            "taint_metadata_json": {"max_tier": "trusted_user", "sources": []},
+            "taint_metadata_version": "runtime_v1",
+        },
+    ]
+    await api_db_context.execute_with_retry(insert(message_history_table).values(rows))
+    await _commit_seed_data(api_db_context)
+
+    response = await api_client.get("/api/diagnostics/taint-audit?days=1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["history_taint_epoch"] == epoch.isoformat()
+    history = data["message_history"]
+    assert history["total_rows"] == 4
+    assert history["pre_epoch_rows"] == 2
+    assert history["post_epoch_rows"] == 2
+    assert history["post_epoch_missing_required_metadata_rows"] == 1
+    missing_groups = [
+        group for group in history["groups"] if group["metadata_version"] is None
+    ]
+    assert {group["pre_epoch"] for group in missing_groups} == {True, False}
 
 
 @pytest.mark.asyncio

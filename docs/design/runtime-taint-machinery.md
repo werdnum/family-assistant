@@ -1027,6 +1027,12 @@ structured tier in audit logs.
     new runtime evidence.
 - Do not grant new source labels to the default assistant until observe data is reviewed.
 - Convert one ambient agent first, preferably mailbox digesting, as the acceptance test.
+- The legacy message-history backfill sketched above turned out to be infeasible on production data:
+  `to_metadata()` source truncation and `from_metadata()`'s anonymous escalation artifacts destroy
+  the attribution a backfill would need, and snapshot re-baking spread the read-time legacy fallback
+  into post-migration rows. The shipped alternative is read-time epoch filtering — see
+  [taint-history-epoch-amnesty.md](taint-history-epoch-amnesty.md)
+  (`taint_policy.history_taint_epoch`).
 
 ## Failure Modes and Required Defaults
 
