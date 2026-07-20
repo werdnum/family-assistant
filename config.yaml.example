@@ -127,7 +127,9 @@
 # Supported transports: "stdio" (default, local process), "sse" (remote
 # Server-Sent Events), and "streamable_http" (remote Streamable HTTP; aliases
 # "streamablehttp"/"http"). Remote transports accept an optional Bearer `token`
-# (use "$ENV_VAR" to read it from the environment).
+# (use "$ENV_VAR" to read it from the environment). Environment variables can
+# also be embedded in stdio commands, arguments, and remote URLs with either
+# "$VAR" or "${VAR}" syntax.
 # mcp_config:
 #   mcpServers:
 #     custom_server:
@@ -141,5 +143,5 @@
 #       token: "$MY_MCP_TOKEN"
 #     remote_http_server:
 #       transport: "streamable_http"
-#       url: "https://example.com/mcp"
+#       url: "${MCP_HTTP_ORIGIN}/mcp"
 #       token: "$MY_MCP_TOKEN"

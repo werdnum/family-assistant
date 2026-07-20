@@ -185,6 +185,22 @@ class OnDemandToolsView:
         """Return the underlying provider this view filters."""
         return self._wrapped_provider
 
+    @property
+    def on_demand_tool_names(self) -> frozenset[str]:
+        """Return the configured on-demand tool names.
+
+        Exposed for diagnostics (engineer profile policy resolution).
+        """
+        return frozenset(self._on_demand_tool_names)
+
+    @property
+    def on_demand_mcp_server_ids(self) -> frozenset[str]:
+        """Return the configured on-demand MCP server ids.
+
+        Exposed for diagnostics (engineer profile policy resolution).
+        """
+        return frozenset(self._on_demand_mcp_server_ids)
+
     def has_on_demand_tools(self) -> bool:
         """Return True if there are any on-demand tool names configured."""
         return bool(self._on_demand_tool_names) or bool(self._on_demand_mcp_server_ids)

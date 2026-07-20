@@ -405,6 +405,7 @@ _ENGINEERING_TOOL_NAMES: frozenset[str] = frozenset({
     "get_resolved_config",
     "get_profile_config",
     "get_profile_tool_inventory",
+    "resolve_tool_policy",
     "get_system_info",
 })
 

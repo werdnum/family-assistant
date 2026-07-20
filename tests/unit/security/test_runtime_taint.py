@@ -37,6 +37,7 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import get_db_context
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.documents import get_full_document_content_tool
 from family_assistant.tools.infrastructure import (
@@ -652,11 +653,41 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
     assert (
         resolve_tool_sink_class(
             descriptor(
-                "legacy_unclassified_tool",
+                "plain_read_only_tool",
                 ToolTag.READ_ONLY,
                 ToolTag.OUTPUT_TRUSTED,
             )
         )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+    # An open-world read-only tool (e.g. an external search/fetch tool) can still
+    # exfiltrate: the model controls the query/URL sent to the external service.
+    # It must keep the egress classification, not the read-broadening class.
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "open_world_search",
+                ToolTag.READ_ONLY,
+                ToolTag.OPEN_WORLD,
+                ToolTag.OUTPUT_UNTRUSTED,
+            )
+        )
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
+    # A read-only tool whose world is explicitly closed (no open_world tag) still
+    # resolves to the read-broadening class.
+    assert (
+        resolve_tool_sink_class(
+            descriptor(
+                "closed_world_read_only",
+                ToolTag.READ_ONLY,
+                ToolTag.OUTPUT_TRUSTED,
+            )
+        )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+    assert (
+        resolve_tool_sink_class(descriptor("legacy_unclassified_tool"))
         is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     )
     assert (
@@ -716,6 +747,46 @@ def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes()
                 ToolTag.OUTPUT_TRUSTED,
             )
         )
+        is SinkClass.SENSITIVE_READ_BROADENING
+    )
+
+
+def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
+    def registered_descriptor(name: str) -> ToolDescriptor:
+        metadata = LOCAL_TOOL_METADATA_BY_NAME[name]
+        return ToolDescriptor(
+            name=name,
+            definition=cast(
+                "ToolDefinition",
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": f"Run {name}.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+            ),
+            tags=metadata.tags,
+            origin="local",
+        )
+
+    # mqtt_publish talks only to the operator-configured home broker; the
+    # taint design doc lists "MQTT to configured broker" as home_local.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("mqtt_publish"))
+        is SinkClass.HOME_LOCAL
+    )
+    # Home Assistant actions stay conservatively classified because HA
+    # services can deliver messages or invoke webhooks outside the household.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("call_home_assistant_action"))
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
+    # Read-only tools without further classification resolve to the read
+    # class instead of the arbitrary-external-message fallback.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("jq_query"))
         is SinkClass.SENSITIVE_READ_BROADENING
     )
 
@@ -843,14 +914,14 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     assert isinstance(result, ToolResult)
     assert result.get_text() == "opened url"
     assert "requested=confirm effective=audit mode=observe" in caplog.text
-    would_enforce_errors = [
+    would_enforce_warnings = [
         record
         for record in caplog.records
-        if record.levelno == logging.ERROR
+        if record.levelno == logging.WARNING
         and "Runtime taint WOULD ENFORCE" in record.getMessage()
     ]
-    assert len(would_enforce_errors) == 1
-    would_enforce_message = would_enforce_errors[0].getMessage()
+    assert len(would_enforce_warnings) == 1
+    would_enforce_message = would_enforce_warnings[0].getMessage()
     assert "would_be=confirm" in would_enforce_message
     assert "max_tier=unknown_external" in would_enforce_message
     assert "do-not-store" not in would_enforce_message
@@ -886,13 +957,13 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
         result = await provider.execute_tool("home_tool", {}, context, "call_home")
 
     assert isinstance(result, ToolResult)
-    would_enforce_errors = [
+    would_enforce_warnings = [
         record
         for record in caplog.records
-        if record.levelno == logging.ERROR
+        if record.levelno == logging.WARNING
         and "Runtime taint WOULD ENFORCE" in record.getMessage()
     ]
-    assert would_enforce_errors == []
+    assert would_enforce_warnings == []
 
 
 @pytest.mark.asyncio

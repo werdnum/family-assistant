@@ -495,12 +495,14 @@ async def spawn_worker_tool(
                 )
             raise
 
-        # Update task status to submitted (started_at set later when task runs)
-        await db_context.worker_tasks.update_task_status(
+        await db_context.worker_tasks.record_task_submission(
             task_id=task_id,
-            status="submitted",
             job_name=job_id,
         )
+        submitted_task = await db_context.worker_tasks.get_task(task_id)
+        if submitted_task is None:
+            raise RuntimeError(f"Worker task {task_id} disappeared after submission")
+        current_status = submitted_task["status"]
 
         logger.info(f"Spawned worker task {task_id} with job {job_id}")
 
@@ -508,13 +510,10 @@ async def spawn_worker_tool(
         # ast-grep-ignore: no-dict-any - Tool result data is dynamic
         result_data: dict[str, Any] = {
             "task_id": task_id,
-            "status": "submitted",
+            "status": current_status,
             "agent": agent,
             "timeout_minutes": timeout_minutes,
-            "message": (
-                f"Worker task '{task_id}' has been submitted. "
-                "You will be notified when it completes."
-            ),
+            "message": _worker_submission_message(task_id, current_status),
         }
 
         if skipped_context_paths:
@@ -529,6 +528,24 @@ async def spawn_worker_tool(
     except Exception as e:
         logger.error(f"Failed to spawn worker task: {e}", exc_info=True)
         return ToolResult(data={"error": f"Failed to spawn worker: {e!s}"})
+
+
+def _worker_submission_message(task_id: str, status: str) -> str:
+    """Describe the lifecycle state observed after backend submission."""
+    if status == "running":
+        return (
+            f"Worker task '{task_id}' has started. "
+            "You will be notified when it completes."
+        )
+    if status in _TERMINAL_DB_STATUSES:
+        return (
+            f"Worker task '{task_id}' finished with status '{status}'. "
+            f"Use read_task_result('{task_id}') to see the results."
+        )
+    return (
+        f"Worker task '{task_id}' has been submitted. "
+        "You will be notified when it completes."
+    )
 
 
 async def read_task_result_tool(

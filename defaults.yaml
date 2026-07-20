@@ -189,7 +189,8 @@ indexing_pipeline_config:
 #     (aliases: "streamablehttp", "http").
 # Remote transports (sse, streamable_http) accept an optional `token` for a
 # Bearer Authorization header. Use "$ENV_VAR" to read the token from the
-# environment, e.g. token: "$MY_MCP_TOKEN".
+# environment, e.g. token: "$MY_MCP_TOKEN". Variables can also be embedded in
+# stdio commands, arguments, and remote URLs with "$VAR" or "${VAR}" syntax.
 #
 # Example remote servers:
 #   remote_sse:
@@ -198,7 +199,7 @@ indexing_pipeline_config:
 #     token: "$MY_MCP_TOKEN"
 #   remote_http:
 #     transport: "streamable_http"
-#     url: "https://example.com/mcp"
+#     url: "${MCP_HTTP_ORIGIN}/mcp"
 #     token: "$MY_MCP_TOKEN"
 mcp_config:
   mcpServers:
@@ -1629,19 +1630,24 @@ service_profiles:
           - **Automations**: View automation configurations and statistics
           - **Events**: Query recent system events
           - **Configuration**: Inspect the live AppConfig and individual service profile configs (with secrets redacted)
+          - **Tool policy**: Resolve the live tool-policy decision (allow/deny/confirm) for any tool against any profile, including which rule matched and why (resolve_tool_policy)
           - **MCP servers**: View live MCP server connection status and the tools each server provides
           - **System info**: Python version, OS platform, database dialect
           - **Runtime taint diagnostics**: Query the taint audit and message-history metadata tables
             to distinguish distinct legacy rows from repeated warning-log accesses
+          - **Worker tasks**: List AI worker tasks and read their results (read_task_result, list_worker_tasks)
 
-          ## Your Limitations
+          ## Your Limitations (deliberate, not bugs)
+
+          Your tool set is intentionally restricted to keep this profile read-only: you handle trusted requests and read sensitive data (source code, database, logs), so you must not change state or communicate externally without a human approving. Tools that other profiles have — editing notes, calendar changes, sending messages, browsing, Home Assistant control, scripts, image generation, and so on — are deliberately NOT available here. A missing tool or a policy-denied tool call is therefore expected configuration, not an application bug: do not report it as an error or tell the user something is broken. When in doubt, use resolve_tool_policy to see the exact policy decision and matching rule for your profile (or any other profile).
 
           - You CANNOT modify any data (no INSERT, UPDATE, DELETE)
-          - You CANNOT execute code or scripts
+          - You CANNOT execute code or scripts inside the application
           - You CANNOT send messages to users
           - You CAN delegate to another profile to hand off a fix or follow-up action, but only after the user confirms (so a human always approves before the engineer reaches outside its read-only sandbox)
           - You CAN create GitHub issues to report bugs (requires confirmation)
           - You CAN reconnect a failed MCP server (requires confirmation)
+          - You CAN spawn isolated AI coding workers (spawn_worker, requires confirmation) to take on self-contained coding tasks, including work on this application's own code: the worker has network access and checks the code out itself by cloning the public repository (github.com/werdnum/family-assistant). Its sandbox is NOT given a mounted copy of the running app's files, its database, or any Family Assistant tools/data. A worker returns its results as output files (e.g. a patch or a written analysis) that you read back with read_task_result; it cannot change the running application directly. Put everything the worker needs — repo URL, branch, the change to make, and how to report back — in the task description. Reading worker results needs no confirmation; cancelling a worker (cancel_worker_task) requires confirmation.
 
           ## Investigation Approach
 
@@ -1652,8 +1658,10 @@ service_profiles:
           5. For MCP/tool issues: use get_mcp_server_status to confirm each MCP server is connected and exposes the expected tool names
           6. For config issues: use get_resolved_config and get_profile_config to inspect the live runtime config
           6a. For tool-bloat / prompt-size issues: use get_profile_tool_inventory to see how many tools each profile advertises per turn (eager vs on-demand) and which source (local vs each MCP server) dominates the token cost
+          6b. For "tool missing" / "tool call denied" reports: use resolve_tool_policy to see the live allow/deny/confirm decision and the matching policy rule for the affected profile before concluding anything is broken
           7. Summarize findings and recommend fixes
           8. If appropriate, create a GitHub issue with your findings
+          9. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — offer to spawn an isolated AI coding worker (requires confirmation); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1670,8 +1678,11 @@ service_profiles:
               - "get_resolved_config"
               - "get_profile_config"
               - "get_profile_tool_inventory"
+              - "resolve_tool_policy"
               - "get_system_info"
               - "get_message_history"
+              - "read_task_result"
+              - "list_worker_tasks"
               - "list_notes"
               - "get_note"
               - "search_documents"
@@ -1719,6 +1730,13 @@ service_profiles:
               - "reconnect_mcp_server"
           decision: "confirm"
           priority: 20
+        - match:
+            names:
+              - "spawn_worker"
+              - "cancel_worker_task"
+          decision: "confirm"
+          priority: 20
+          description: "The engineer may launch or cancel isolated AI coding workers (sandboxed, no Family Assistant data access), but a human must approve each state-changing worker action to preserve the profile's read-only posture."
     slash_commands:
       - "/engineer"
   - id: "ops_automation"

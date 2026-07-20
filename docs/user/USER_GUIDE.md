@@ -862,6 +862,15 @@ various tasks with dark mode support and mobile optimization.
   web **Error Logs** page (`/errors`) or in the diagnostics export. This only files a report; it
   doesn't fix the problem on its own.
 
+- **Engineering diagnostics mode (`/engineer`):** For "why did the assistant do that?" questions,
+  `/engineer` switches to a read-only diagnostic mode that can read the application's source code,
+  query its database, inspect error logs and configuration, and explain which tools each mode is
+  allowed to use (and why a particular tool call was allowed, denied, or needed confirmation). It
+  deliberately cannot change any data or send messages — every action with side effects (filing a
+  GitHub issue, reconnecting an MCP server, launching or cancelling an isolated AI coding worker, or
+  handing work to another mode) asks for your approval first. If it says a tool isn't available to
+  it, that's the intended safety configuration, not a malfunction.
+
 - **Reviewing runtime taint rollout:** Administrators can call `GET /api/diagnostics/taint-audit`
   with a normal authenticated session/API token or the confined `DIAGNOSTICS_READONLY_TOKEN`. The
   response summarizes recent taint policy decisions by tool, sink, tier, outcome, and source
@@ -879,6 +888,11 @@ various tasks with dark mode support and mobile optimization.
   invokes webhooks, or accepts attacker-controlled destinations. Every configured entry should also
   declare `output_trusted` or `output_untrusted`; an exact `tool_metadata` entry replaces the tool's
   MCP annotation-derived tags rather than adding to them.
+
+- **Using environment variables in MCP configuration:** MCP server string values accept `$VAR` and
+  `${VAR}` placeholders. This includes stdio `command`, `args`, and `env` values as well as remote
+  SSE or Streamable HTTP `url` values. For example, set `url: "${MCP_HTTP_ORIGIN}/mcp"` to keep the
+  deployment-specific origin outside `config.yaml`.
 
 - **If you need more help:** Contact the family member who set up and manages the assistant for your
   family. They can help with configuration issues or more complex problems.

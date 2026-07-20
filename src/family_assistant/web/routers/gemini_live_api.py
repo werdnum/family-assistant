@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from family_assistant.processing import ProcessingService
 from family_assistant.tools import get_tool_definitions_for_advertisement
+from family_assistant.tools.types import normalize_json_schema_type
 from family_assistant.web.auth import get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
 from family_assistant.web.models import GeminiLiveConfig
@@ -59,8 +60,15 @@ class EphemeralTokenRequest(BaseModel):
     profile_id: str | None = None
 
 
-def _convert_json_schema_type_to_gemini(schema_type: str) -> str:
-    """Convert JSON Schema type to Gemini API type."""
+def _convert_json_schema_type_to_gemini(
+    schema_type: str | list[str],
+) -> tuple[str, bool]:
+    """Convert a JSON Schema type to a Gemini API type plus a nullability flag.
+
+    JSON Schema ``type`` may be a list such as ``["string", "null"]`` to express a
+    nullable field, so collapse it to a single Gemini type and report whether the
+    field is nullable.
+    """
     type_map = {
         "object": "OBJECT",
         "string": "STRING",
@@ -69,18 +77,20 @@ def _convert_json_schema_type_to_gemini(schema_type: str) -> str:
         "boolean": "BOOLEAN",
         "array": "ARRAY",
     }
-    return type_map.get(schema_type.lower(), schema_type.upper())
+    resolved, nullable = normalize_json_schema_type(schema_type, default="string")
+    return type_map.get(resolved.lower(), resolved.upper()), nullable
 
 
 def _convert_properties_to_gemini(properties: PropertySchema) -> PropertySchema:
     """Recursively convert JSON Schema properties to Gemini format."""
     result: PropertySchema = {}
     for name, prop_schema in properties.items():
-        converted: PropertySchema = {
-            "type": _convert_json_schema_type_to_gemini(
-                prop_schema.get("type", "string")
-            )
-        }
+        gemini_type, nullable = _convert_json_schema_type_to_gemini(
+            prop_schema.get("type", "string")
+        )
+        converted: PropertySchema = {"type": gemini_type}
+        if nullable:
+            converted["nullable"] = True
         if "description" in prop_schema:
             converted["description"] = prop_schema["description"]
         if "properties" in prop_schema:
@@ -89,9 +99,13 @@ def _convert_properties_to_gemini(properties: PropertySchema) -> PropertySchema:
             )
         if "items" in prop_schema:
             items = prop_schema["items"]
-            converted["items"] = {
-                "type": _convert_json_schema_type_to_gemini(items.get("type", "string"))
-            }
+            item_type, item_nullable = _convert_json_schema_type_to_gemini(
+                items.get("type", "string")
+            )
+            item_converted: PropertySchema = {"type": item_type}
+            if item_nullable:
+                item_converted["nullable"] = True
+            converted["items"] = item_converted
         if "enum" in prop_schema:
             converted["enum"] = prop_schema["enum"]
         result[name] = converted
@@ -108,8 +122,11 @@ def _convert_tool_to_gemini_format(tool: ToolSchema) -> GeminiToolDeclaration:
 
     if "parameters" in func:
         params = func["parameters"]
+        params_type, _ = _convert_json_schema_type_to_gemini(
+            params.get("type", "object")
+        )
         gemini_params: PropertySchema = {
-            "type": _convert_json_schema_type_to_gemini(params.get("type", "object")),
+            "type": params_type,
         }
         if "properties" in params:
             gemini_params["properties"] = _convert_properties_to_gemini(
