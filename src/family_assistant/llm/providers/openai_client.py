@@ -290,11 +290,14 @@ class OpenAIClient(BaseLLMClient):
                             ],
                         })
                     for tool_call in message.tool_calls or []:
+                        arguments = tool_call.function.arguments
+                        if isinstance(arguments, dict):
+                            arguments = json.dumps(arguments)
                         input_items.append({
                             "type": "function_call",
                             "call_id": tool_call.id,
                             "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
+                            "arguments": arguments,
                         })
             elif message.role == "tool":
                 input_items.append({
