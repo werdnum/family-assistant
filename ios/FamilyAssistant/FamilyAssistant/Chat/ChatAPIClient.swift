@@ -134,10 +134,15 @@ struct ChatAPIClient {
 
     /// Execute a tool by name on behalf of a Gemini voice function call.
     ///
-    /// POSTs `/api/tools/execute/{name}` with `{"arguments": ...}` and returns the
-    /// tool's raw JSON result. Non-2xx responses throw ``ChatAPIError`` so the
-    /// caller can relay a structured error back to the model.
-    func executeTool(name: String, arguments: JSONValue) async throws -> JSONValue {
+    /// POSTs `/api/tools/execute/{name}` with the session's profile and taint state.
+    /// The response body is returned for both successful and rejected calls so the
+    /// voice runner can retain any taint accumulated before an error.
+    func executeTool(
+        name: String,
+        arguments: JSONValue,
+        profileID: String?,
+        taintMetadata: JSONValue
+    ) async throws -> JSONValue {
         var request = try await authManager.authorizedRequest(
             url: apiURL("/api/tools/execute/\(Self.encodedPathComponent(name))"),
             method: "POST"
@@ -147,9 +152,17 @@ struct ChatAPIClient {
             if case .object = arguments { return arguments }
             return .object([:])
         }()
-        request.httpBody = try JSONEncoder().encode(ToolExecuteBody(arguments: argumentsObject))
+        request.httpBody = try JSONEncoder().encode(
+            ToolExecuteBody(
+                arguments: argumentsObject,
+                profileID: profileID,
+                taintMetadata: taintMetadata
+            )
+        )
         let (data, response) = try await urlSession.data(for: request)
-        try validate(response: response, data: data)
+        guard response is HTTPURLResponse else {
+            throw ChatAPIError.invalidResponse
+        }
         return try JSONDecoder.chatDecoder.decode(JSONValue.self, from: data)
     }
 
@@ -678,6 +691,14 @@ private struct EphemeralTokenRequestBody: Encodable {
 
 private struct ToolExecuteBody: Encodable {
     let arguments: JSONValue
+    let profileID: String?
+    let taintMetadata: JSONValue
+
+    enum CodingKeys: String, CodingKey {
+        case arguments
+        case profileID = "profile_id"
+        case taintMetadata = "taint_metadata"
+    }
 }
 
 private struct VoiceSessionTurnBody: Encodable {

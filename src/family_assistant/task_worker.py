@@ -54,8 +54,12 @@ from family_assistant.scripting import (
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    TaintMetadata,
     TaintSource,
+    TaintSourceType,
     TurnTaintState,
+    coerce_taint_metadata,
 )
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.services import short_error_summary
@@ -131,6 +135,105 @@ def _taint_sources_from_delegation_run(
     if run["taint_state_json"] is None:
         return ()
     return TurnTaintState.from_metadata(run["taint_state_json"]).sources
+
+
+def _conservative_unknown_external_metadata(reason: str) -> TaintMetadata:
+    """Return an unknown_external taint state for a result of unknown taint."""
+    return (
+        TurnTaintState
+        .empty()
+        .add_source(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason=reason,
+            )
+        )
+        .to_metadata()
+    )
+
+
+async def _delegation_result_taint_metadata(
+    db_context: DatabaseContext,
+    run: DelegationRunDict,
+) -> TaintMetadata:
+    """Taint metadata for history rows that carry a delegation run's *result*.
+
+    The delegated run may have read untrusted content even when the parent that
+    queued it was trusted, so labeling result-bearing rows with the parent taint
+    alone (``run["taint_state_json"]``) under-taints them and would let the
+    source profile egress attacker-derived content without a runtime-taint
+    confirmation. Instead, start from the delegated run's OWN accumulated taint —
+    the newest assistant row persisted in its subconversation — and fold the
+    parent taint in (max wins). When the delegated run left no assistant row/taint
+    behind, fall back CONSERVATIVELY to unknown_external rather than to the parent
+    state or a trusted-empty baseline, because the result's provenance is unknown.
+    """
+    result_metadata = (
+        await db_context.message_history.get_merged_taint_metadata_for_subconversation(
+            interface_type=run["interface_type"],
+            conversation_id=run["conversation_id"],
+            subconversation_id=run["subconversation_id"],
+        )
+    )
+    if result_metadata is None:
+        merged = TurnTaintState.from_metadata(
+            _conservative_unknown_external_metadata(
+                "Delegated result taint unavailable; conservatively treated as "
+                "unknown external."
+            )
+        )
+    else:
+        merged = TurnTaintState.from_metadata(result_metadata)
+
+    if run["taint_state_json"] is not None:
+        parent_state = TurnTaintState.from_metadata(run["taint_state_json"])
+        for source in parent_state.sources:
+            merged = merged.add_source(source)
+        if parent_state.max_tier > merged.max_tier:
+            merged = merged.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.MANUAL,
+                    source_id=None,
+                    tier=parent_state.max_tier,
+                    labels=frozenset(),
+                    reason=(
+                        "Parent delegation taint max_tier exceeded retained "
+                        "source summaries."
+                    ),
+                )
+            )
+    return merged.to_metadata()
+
+
+async def _llm_callback_delivery_taint_metadata(
+    db_context: DatabaseContext,
+    assistant_message_internal_id: int | None,
+) -> TaintMetadata:
+    """Taint metadata for an LLM-callback delivery copy of a turn's reply.
+
+    The reply is LLM-derived and may fold in tainted tool output, so the delivery
+    copy must inherit the turn's authoritative taint from the canonical assistant
+    row the turn already persisted. When that row (or its metadata) cannot be
+    resolved, fall back CONSERVATIVELY to unknown_external rather than the
+    trusted-empty baseline, because the reply's provenance is unknown.
+    """
+    if assistant_message_internal_id is not None:
+        canonical_row = await db_context.message_history.get_row_by_internal_id(
+            assistant_message_internal_id
+        )
+        if canonical_row is not None:
+            canonical_metadata = coerce_taint_metadata(
+                canonical_row.get("taint_metadata_json")
+            )
+            if canonical_metadata is not None:
+                return canonical_metadata
+    return _conservative_unknown_external_metadata(
+        "LLM-callback reply taint unavailable; conservatively treated as "
+        "unknown external."
+    )
 
 
 class ReminderConfig(TypedDict, total=False):
@@ -753,6 +856,17 @@ async def handle_llm_callback(
         sent_message_id_str = None
         # Send message if there's text content OR attachments
         if final_llm_content_to_send or response_attachment_ids:
+            # This delivery copy repeats an LLM-derived reply, so it must carry
+            # the turn's authoritative taint rather than defaulting to the
+            # trusted-empty baseline (which a persisted-but-metadata-less copy
+            # would otherwise get). Reuse the taint the turn already persisted on
+            # its canonical assistant row; if that row can't be resolved, fall
+            # back CONSERVATIVELY to unknown_external since the reply may derive
+            # from tainted tool output.
+            delivery_taint_metadata = await _llm_callback_delivery_taint_metadata(
+                db_context,
+                final_assistant_message_internal_id,
+            )
             sent_message_id_str = await chat_interface.send_message(
                 conversation_id=conversation_id,
                 text=final_llm_content_to_send
@@ -760,6 +874,7 @@ async def handle_llm_callback(
                 parse_mode="MarkdownV2",
                 attachment_ids=response_attachment_ids,
                 on_behalf_of_user_id=callback_owner_user_id,
+                taint_metadata=delivery_taint_metadata,
             )
             logger.info(
                 f"Sent LLM response for callback to {interface_type}:{conversation_id}."
@@ -1924,8 +2039,14 @@ class TaskWorker:
         message_text = self._delegation_notification_text(run)
         attachments = self._delegation_notification_attachments(run)
         async with exec_context.db_context.create_isolated_context() as isolated_db:
+            notification_taint_metadata = await _delegation_result_taint_metadata(
+                isolated_db, run
+            )
             message_internal_id = await isolated_db.message_history.add_message(
-                AssistantMessage(content=message_text),
+                AssistantMessage(
+                    content=message_text,
+                    taint_metadata=notification_taint_metadata,
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
@@ -1958,6 +2079,7 @@ class TaskWorker:
                     parse_mode=None,
                     attachment_ids=run["result_attachment_ids_json"] or None,
                     on_behalf_of_user_id=run["user_id"],
+                    taint_metadata=notification_taint_metadata,
                 )
                 if sent_message_id is None:
                     # Delivery failed (invalid chat, Bot API error, ...). Roll back
@@ -2014,8 +2136,17 @@ class TaskWorker:
         source_subconversation_id = run["source_subconversation_id"]
         async with exec_context.db_context.create_isolated_context() as wake_db:
             wake_turn_id = str(uuid.uuid4())
+            # The wakeup data message carries the delegated result, so it must be
+            # labeled with the delegated run's own taint (folded with the parent's)
+            # rather than the parent taint alone.
+            wakeup_data_taint_metadata = await _delegation_result_taint_metadata(
+                wake_db, run
+            )
             data_message_internal_id = await wake_db.message_history.add_message(
-                UserMessage(content=self._delegation_wakeup_data_text(run)),
+                UserMessage(
+                    content=self._delegation_wakeup_data_text(run),
+                    taint_metadata=wakeup_data_taint_metadata,
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 turn_id=wake_turn_id,
@@ -2112,9 +2243,31 @@ class TaskWorker:
         delivery_text = result.text_reply or "Delegated task finished."
         visible_message_internal_id = message_internal_id
 
+        # Delivery rows repeat the wake turn's response, so reuse the taint
+        # state persisted with the canonical assistant row when one exists;
+        # otherwise fall back to the delegated result's taint (own accumulated
+        # taint folded with the parent's), never the parent state alone.
+        delivery_taint_metadata = await _delegation_result_taint_metadata(
+            db_context, run
+        )
+        if message_internal_id is not None:
+            canonical_row = await db_context.message_history.get_row_by_internal_id(
+                message_internal_id
+            )
+            canonical_metadata = (
+                coerce_taint_metadata(canonical_row.get("taint_metadata_json"))
+                if canonical_row is not None
+                else None
+            )
+            if canonical_metadata is not None:
+                delivery_taint_metadata = canonical_metadata
+
         if message_internal_id is None:
             message_internal_id = await db_context.message_history.add_message(
-                AssistantMessage(content=delivery_text),
+                AssistantMessage(
+                    content=delivery_text,
+                    taint_metadata=delivery_taint_metadata,
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
@@ -2139,7 +2292,10 @@ class TaskWorker:
 
         if run["source_subconversation_id"] is not None:
             visible_message_internal_id = await db_context.message_history.add_message(
-                AssistantMessage(content=delivery_text),
+                AssistantMessage(
+                    content=delivery_text,
+                    taint_metadata=delivery_taint_metadata,
+                ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
@@ -4077,9 +4233,10 @@ async def _build_confirmation_execution_context(
         if request["taint_state_json"] is not None
         else None
     )
-    taint_tracker = (
-        InMemoryTurnTaintTracker(taint_state) if taint_state is not None else None
-    )
+    # Always execute with a real tracker: requests recorded before taint state
+    # capture existed start from an explicit empty state rather than running
+    # trackerless (which would persist tool results without taint metadata).
+    taint_tracker = InMemoryTurnTaintTracker(taint_state)
 
     async def approved_confirmation_callback(
         interface_type: str,
@@ -4168,19 +4325,28 @@ def _build_confirmation_notification_context(
     source_row: MessageHistoryRow | None,
 ) -> ToolExecutionContext:
     """Reconstruct enough context to notify the original conversation."""
+    request_taint_state = (
+        TurnTaintState.from_metadata(request["taint_state_json"])
+        if request["taint_state_json"] is not None
+        else None
+    )
+    notification_context = replace(
+        exec_context,
+        taint_tracker=InMemoryTurnTaintTracker(request_taint_state),
+    )
     if source_row is None:
-        return exec_context
+        return notification_context
 
     interface_type = str(source_row["interface_type"])
-    chat_interface = exec_context.chat_interface
-    if exec_context.chat_interfaces is not None:
-        chat_interface = exec_context.chat_interfaces.get(
+    chat_interface = notification_context.chat_interface
+    if notification_context.chat_interfaces is not None:
+        chat_interface = notification_context.chat_interfaces.get(
             interface_type,
             chat_interface,
         )
 
     return replace(
-        exec_context,
+        notification_context,
         interface_type=interface_type,
         conversation_id=str(source_row["conversation_id"]),
         turn_id=(
@@ -4193,12 +4359,12 @@ def _build_confirmation_notification_context(
         processing_profile_id=(
             str(source_row["processing_profile_id"])
             if source_row.get("processing_profile_id") is not None
-            else exec_context.processing_profile_id
+            else notification_context.processing_profile_id
         ),
         subconversation_id=(
             str(source_row["subconversation_id"])
             if source_row.get("subconversation_id") is not None
-            else exec_context.subconversation_id
+            else notification_context.subconversation_id
         ),
     )
 
@@ -4316,6 +4482,21 @@ def _resolve_confirmation_result_delivery(
     return telegram_interface, str(telegram_user_id), None
 
 
+def _confirmation_result_taint_metadata(
+    context: ToolExecutionContext,
+    request: ConfirmationRequestRow,
+) -> TaintMetadata:
+    """Return the best available taint state for a confirmed execution result."""
+    if context.taint_tracker is not None:
+        return context.taint_tracker.snapshot().to_metadata()
+    if request["taint_state_json"] is not None:
+        return TurnTaintState.from_metadata(request["taint_state_json"]).to_metadata()
+    return _conservative_unknown_external_metadata(
+        "Confirmation result taint unavailable; conservatively treated as "
+        "unknown external."
+    )
+
+
 async def _notify_confirmation_execution_result(
     context: ToolExecutionContext,
     request: ConfirmationRequestRow,
@@ -4356,12 +4537,16 @@ async def _notify_confirmation_execution_result(
                 f"Tool: {request['tool_name']}\n\n"
                 f"Error:\n{result_text}"
             )
+        # The execution context's tracker holds the confirmation's recorded
+        # taint state plus the executed tool's result taint.
+        result_taint_metadata = _confirmation_result_taint_metadata(context, request)
         sent_message_id = await chat_interface.send_message(
             conversation_id=delivery_conversation_id,
             text=message,
             reply_to_interface_id=reply_to_interface_id,
             attachment_ids=attachment_ids,
             on_behalf_of_user_id=context.user_id,
+            taint_metadata=result_taint_metadata,
         )
         if sent_message_id is None:
             raise ConfirmationNotificationError(
@@ -4432,6 +4617,7 @@ async def handle_confirmation_tool_execution(
             delivered_to_waiter = context.confirmation_result_waiters.resolve_failed(
                 request_id,
                 error_result,
+                taint_metadata=_confirmation_result_taint_metadata(context, request),
             )
         if not delivered_to_waiter:
             try:
@@ -4522,11 +4708,17 @@ async def handle_confirmation_tool_execution(
         await deliver_execution_failure(execution_context, error_result)
         raise
 
+    if execution_context.taint_tracker is None:
+        raise RuntimeError(
+            f"Confirmation {request_id} executed without a taint tracker"
+        )
+    result_taint_metadata = execution_context.taint_tracker.snapshot().to_metadata()
     if (
         execution_context.confirmation_result_waiters is not None
         and execution_context.confirmation_result_waiters.resolve_completed(
             request_id,
             result,
+            taint_metadata=result_taint_metadata,
         )
     ):
         logger.info(

@@ -279,6 +279,7 @@ class ConfirmationOutcome:
     ]
     result: str | ToolResult | None = None
     action_attempted: bool = True
+    taint_metadata: TaintMetadata | None = None
 
 
 class RequestConfirmationCallback(Protocol):

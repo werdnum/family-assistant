@@ -21,6 +21,13 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.processing import PENDING, RemoteSubmission
 from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintMetadata,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import message_history_table
 from family_assistant.storage.context import DatabaseContext
@@ -219,6 +226,54 @@ class FakeDelegatableService:
         )
 
 
+class TaintReadingDelegatableService:
+    """Target service that reads untrusted content during its delegated turn.
+
+    Persists an assistant row into its own delegated subconversation carrying
+    unknown_external taint, modeling a delegation that read attacker-controlled
+    data even though the parent that queued it was trusted.
+    """
+
+    kind = "local"
+
+    def __init__(self) -> None:
+        self.service_config = SimpleNamespace(
+            id="target_profile",
+            allowed_delegation_sources=["source_profile"],
+        )
+        self.calls: list[FakeDelegationCall] = []
+
+    async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
+        self.calls.append(cast("FakeDelegationCall", kwargs))
+        db_context = cast("DatabaseContext", kwargs["db_context"])
+        subconversation_id = cast("str | None", kwargs["subconversation_id"])
+        tainted_state = TurnTaintState.empty().add_source(
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="attacker-email",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="delegated read of untrusted email",
+            )
+        )
+        await db_context.message_history.add_message(
+            AssistantMessage(
+                content="delegated result derived from untrusted content",
+                taint_metadata=tainted_state.to_metadata(),
+            ),
+            interface_type=kwargs["interface_type"],
+            conversation_id=kwargs["conversation_id"],
+            timestamp=SystemClock().now(),
+            turn_id="delegated_tainted_turn",
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            user_id="async-delegation-user",
+        )
+        return ChatInteractionResult.success(
+            text_reply="delegated result derived from untrusted content",
+        )
+
+
 class FakeWakeCapableSourceService:
     """Source processing service fake that can handle delegation wakeups."""
 
@@ -335,6 +390,7 @@ class AttachmentVisibilityChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         _ = (
             conversation_id,
@@ -342,6 +398,7 @@ class AttachmentVisibilityChatInterface:
             parse_mode,
             reply_to_interface_id,
             on_behalf_of_user_id,
+            taint_metadata,
         )
         self.sent_text = text
         self.sent_attachment_ids = attachment_ids
@@ -550,6 +607,7 @@ async def _create_run(
     delegation_id: str,
     interface_type: str = TEST_INTERFACE_TYPE,
     source_subconversation_id: str | None = None,
+    taint_state_json: TaintMetadata | None = None,
 ) -> str:
     """Create a queued delegation run and return its delegation_id."""
     await db_context.delegation_runs.create_run({
@@ -566,6 +624,7 @@ async def _create_run(
         "source_subconversation_id": source_subconversation_id,
         "request_text": "do the thing",
         "content_parts_json": [],
+        "taint_state_json": taint_state_json,
     })
     return delegation_id
 
@@ -635,9 +694,22 @@ async def test_terminal_run_renotifies_when_not_yet_notified(
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
+    tainted_parent_state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="email-1",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="test email source",
+        )
+    )
     clock = SystemClock()
     async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_renotify")
+        await _create_run(
+            db_context,
+            delegation_id="delegation_renotify",
+            taint_state_json=tainted_parent_state.to_metadata(),
+        )
         await db_context.delegation_runs.mark_handed_off(
             "delegation_renotify", clock.now()
         )
@@ -664,6 +736,92 @@ async def test_terminal_run_renotifies_when_not_yet_notified(
         )
         assert run is not None
         assert run["notified_at"] is not None
+
+        # The notification history row carries the run's recorded taint state
+        # instead of being persisted without metadata.
+        notification_rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .where(message_history_table.c.role == "assistant")
+        )
+        assert len(notification_rows) == 1
+        assert notification_rows[0]["taint_metadata_version"] == "runtime_v1"
+        assert notification_rows[0]["taint_metadata_json"] is not None
+        assert (
+            notification_rows[0]["taint_metadata_json"]["max_tier"]
+            == "unknown_external"
+        )
+
+
+@pytest.mark.asyncio
+async def test_notification_uses_delegated_result_taint_not_trusted_parent(
+    db_engine: AsyncEngine,
+) -> None:
+    """A trusted parent's delegation that reads untrusted data taints the wake row.
+
+    The delegated run may read attacker-controlled content even when the parent
+    that queued it was fully trusted. Labeling the result-bearing notification
+    row with the parent taint would under-taint it and let the source profile
+    egress the delegated result without a runtime-taint confirmation. The row
+    must instead carry the delegated run's OWN accumulated (unknown_external)
+    taint.
+    """
+    target_service = TaintReadingDelegatableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target_service)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    trusted_parent_state = TurnTaintState.empty()
+    clock = SystemClock()
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await _create_run(
+            db_context,
+            delegation_id="delegation_tainted_result",
+            taint_state_json=trusted_parent_state.to_metadata(),
+        )
+        await db_context.delegation_runs.mark_handed_off(
+            "delegation_tainted_result", clock.now()
+        )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload("delegation_tainted_result"),
+        )
+
+    # The delegated turn ran (and read untrusted content) before notifying.
+    assert len(target_service.calls) == 1
+    chat_interface.send_message.assert_awaited_once()
+    # The delivery copy handed to the interface carries the delegated result's
+    # taint, not the trusted-empty parent baseline.
+    _, send_kwargs = chat_interface.send_message.await_args
+    assert send_kwargs["taint_metadata"] is not None
+    assert send_kwargs["taint_metadata"]["max_tier"] == "unknown_external"
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(
+            "delegation_tainted_result"
+        )
+        assert run is not None
+        assert run["notified_at"] is not None
+
+        # The notification row persisted in the source (main) conversation must
+        # inherit the delegated run's unknown_external taint, not trusted_user.
+        notification_rows = await db_context.fetch_all(
+            select(message_history_table)
+            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+            .where(message_history_table.c.role == "assistant")
+            .where(message_history_table.c.subconversation_id.is_(None))
+        )
+        assert len(notification_rows) == 1
+        assert notification_rows[0]["taint_metadata_version"] == "runtime_v1"
+        assert (
+            notification_rows[0]["taint_metadata_json"]["max_tier"]
+            == "unknown_external"
+        )
 
 
 @pytest.mark.asyncio
@@ -1052,6 +1210,9 @@ async def test_source_wake_creates_history_row_for_attachment_only_web_response(
 
     assert len(rows) == 2
     source_row, visible_row = rows
+    # Worker-persisted delivery rows always carry runtime taint metadata.
+    assert source_row["taint_metadata_version"] == "runtime_v1"
+    assert visible_row["taint_metadata_version"] == "runtime_v1"
     assert source_row["content"] == "Delegated task finished."
     assert source_row["processing_profile_id"] == "source_profile"
     assert source_row["turn_id"] is not None

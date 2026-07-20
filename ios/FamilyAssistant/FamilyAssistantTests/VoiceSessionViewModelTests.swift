@@ -116,8 +116,15 @@ private final class FakeTokenProvider: VoiceTokenProviding {
 @MainActor
 private final class FakeToolExecutor: VoiceToolExecuting {
     var handler: (String, JSONValue) async throws -> JSONValue = { _, _ in .null }
-    func executeTool(name: String, arguments: JSONValue) async throws -> JSONValue {
-        try await handler(name, arguments)
+    func executeTool(
+        name: String,
+        arguments: JSONValue,
+        profileID: String?,
+        taintMetadata: JSONValue
+    ) async throws -> JSONValue {
+        _ = profileID
+        _ = taintMetadata
+        return try await handler(name, arguments)
     }
 }
 
@@ -308,7 +315,9 @@ final class VoiceSessionViewModelTests: XCTestCase {
     }
 
     func testToolCallExecutesAndRespondsToSession() async throws {
-        toolExecutor.handler = { _, _ in .object(["ok": .bool(true)]) }
+        toolExecutor.handler = { _, _ in
+            .object(["result": .object(["ok": .bool(true)])])
+        }
         let model = makeModel()
         await model.start()
         session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
@@ -464,6 +473,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
 
         // Cancel while the tool is in flight, then let it finish.
         session.emit(.toolCallCancellation(["c1"]))
+        try await waitUntil { model.pendingToolCallIDs.contains("c1") == false }
         gate?.resume()
         try await waitUntil { toolReturned }
         await Task.yield()

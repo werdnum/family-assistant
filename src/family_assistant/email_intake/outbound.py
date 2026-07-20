@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.config_models import EmailIntakeConfig
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.user_identity import UserIdentityResolver
 
 logger = logging.getLogger(__name__)
@@ -172,11 +173,13 @@ class EmailChatInterface:
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         """Send a reply to the original authenticated inbound email sender."""
         _ = parse_mode
         _ = reply_to_interface_id
         _ = on_behalf_of_user_id
+        _ = taint_metadata
         if attachment_ids:
             raise OutboundEmailDeliveryError(
                 "Email replies with attachments are not supported"

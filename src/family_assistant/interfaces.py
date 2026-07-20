@@ -2,7 +2,10 @@
 Defines abstract interfaces for communication channels.
 """
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from family_assistant.security.taint import TaintMetadata
 
 
 class ChatInterface(Protocol):
@@ -19,6 +22,7 @@ class ChatInterface(Protocol):
         attachment_ids: list[str]
         | None = None,  # Attachment IDs to send with the message
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: "TaintMetadata | None" = None,
         # Potentially add other common parameters like inline keyboard markup
         # For now, keeping it simple with text, parse_mode, reply_to, and attachments.
     ) -> str | None:  # Returns interface-specific message ID if successful, else None
@@ -34,6 +38,10 @@ class ChatInterface(Protocol):
             on_behalf_of_user_id: Canonical id of the user the delivery acts as,
                 used as the acting user when reading owner-scoped attachments.
                 ``None`` reads ownerless attachments only.
+            taint_metadata: Runtime taint state of the turn that produced the
+                message. Interfaces that persist the delivery to message history
+                (e.g. web) record it on the stored row; transport-only
+                interfaces ignore it.
 
         Returns:
             The interface-specific ID of the sent message, or None if sending failed.

@@ -33,6 +33,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     derive_tool_result_taint_source,
+    merge_taint_state_into_tracker,
 )
 from family_assistant.tools.attachment_utils import (
     is_attachment_id,
@@ -1333,6 +1334,15 @@ class TaintTrackingToolsProvider(ToolsProvider):
             timeout_seconds=self.confirmation_timeout,
             context=context,
         )
+        if outcome.taint_metadata is not None:
+            context.tool_result_taint_metadata[resolved_call_id] = (
+                outcome.taint_metadata
+            )
+            if context.taint_tracker is not None:
+                merge_taint_state_into_tracker(
+                    context.taint_tracker,
+                    TurnTaintState.from_metadata(outcome.taint_metadata),
+                )
         if outcome.kind == "approved":
             return None
         if outcome.kind == "completed":

@@ -17,6 +17,7 @@ from family_assistant.telegram.markdown_utils import convert_to_telegram_markdow
 if TYPE_CHECKING:
     from telegram.ext import Application
 
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.attachment_registry import AttachmentRegistry
 
 
@@ -54,6 +55,7 @@ class TelegramChatInterface(ChatInterface):
         reply_to_interface_id: str | None = None,
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
+        taint_metadata: TaintMetadata | None = None,
     ) -> str | None:
         """
         Sends a message to the specified Telegram chat.
@@ -69,6 +71,9 @@ class TelegramChatInterface(ChatInterface):
         Returns:
             The Telegram message_id of the sent message as a string, or None if sending failed.
         """
+        # Telegram delivery does not persist history rows itself; taint state
+        # travels with whichever caller records the message.
+        _ = taint_metadata
         tg_parse_mode: ParseMode | None = None
         if parse_mode == "MarkdownV2":
             tg_parse_mode = ParseMode.MARKDOWN_V2

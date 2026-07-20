@@ -72,6 +72,20 @@ export interface GeminiToolResponse {
   };
 }
 
+export interface TaintMetadata {
+  version: string;
+  max_tier: string;
+  history_high_taint_present: boolean;
+  fresh_high_taint_seen_at_sequence: number | null;
+  sources: Array<{
+    source_type: string;
+    source_id: string | null;
+    tier: string;
+    labels: string[];
+    reason: string;
+  }>;
+}
+
 /**
  * Gemini Live voice configuration from backend.
  */

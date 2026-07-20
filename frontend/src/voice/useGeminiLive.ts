@@ -16,6 +16,8 @@ import type {
   EphemeralTokenResponse,
   GeminiLiveState,
   GeminiToolCall,
+  GeminiToolResponse,
+  TaintMetadata,
   TranscriptEntry,
   VoiceActivityState,
   VoiceConnectionState,
@@ -86,6 +88,14 @@ export function useGeminiLive(): GeminiLiveState {
   const canSendRealtimeInputRef = useRef(false);
   const sessionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const duckingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toolProfileIdRef = useRef<string | undefined>(undefined);
+  const toolTaintMetadataRef = useRef<TaintMetadata>({
+    version: 'runtime_v1',
+    max_tier: 'trusted_user',
+    history_high_taint_present: false,
+    fresh_high_taint_seen_at_sequence: null,
+    sources: [],
+  });
   // Store max duration from backend config (in minutes)
   const maxDurationMinutesRef = useRef<number>(SESSION_CONFIG.MAX_DURATION_MINUTES);
   // Track last transcription for accumulation (speaker, timestamp, entry ID)
@@ -165,43 +175,56 @@ export function useGeminiLive(): GeminiLiveState {
   /**
    * Execute a tool call via the backend.
    */
-  const executeToolCall = useCallback(async (toolCall: GeminiToolCall) => {
-    try {
-      const response = await fetch(`/api/tools/execute/${toolCall.name}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ arguments: toolCall.args }),
-      });
+  const executeToolCall = useCallback(
+    async (toolCall: GeminiToolCall): Promise<GeminiToolResponse> => {
+      try {
+        const response = await fetch(`/api/tools/execute/${toolCall.name}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            arguments: toolCall.args,
+            taint_metadata: toolTaintMetadataRef.current,
+            profile_id: toolProfileIdRef.current,
+          }),
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          if (errorData.taint_metadata) {
+            toolTaintMetadataRef.current = errorData.taint_metadata as TaintMetadata;
+          }
+          return {
+            id: toolCall.id,
+            name: toolCall.name,
+            response: {
+              error: errorData.detail || `Tool execution failed with status ${response.status}`,
+            },
+          };
+        }
+
+        const result = await response.json();
+        if (result.taint_metadata) {
+          toolTaintMetadataRef.current = result.taint_metadata as TaintMetadata;
+        }
+        return {
+          id: toolCall.id,
+          name: toolCall.name,
+          response: { result: result.result },
+        };
+      } catch (err) {
         return {
           id: toolCall.id,
           name: toolCall.name,
           response: {
-            error: errorData.detail || `Tool execution failed with status ${response.status}`,
+            error: err instanceof Error ? err.message : 'Unknown error executing tool',
           },
         };
       }
-
-      const result = await response.json();
-      return {
-        id: toolCall.id,
-        name: toolCall.name,
-        response: { result },
-      };
-    } catch (err) {
-      return {
-        id: toolCall.id,
-        name: toolCall.name,
-        response: {
-          error: err instanceof Error ? err.message : 'Unknown error executing tool',
-        },
-      };
-    }
-  }, []);
+    },
+    []
+  );
 
   /**
    * Handle tool calls from Gemini.
@@ -233,7 +256,10 @@ export function useGeminiLive(): GeminiLiveState {
       });
       setTranscripts((prev) => [...prev, ...newToolEntries]);
 
-      const responses = await Promise.all(toolCalls.map(executeToolCall));
+      const responses: GeminiToolResponse[] = [];
+      for (const toolCall of toolCalls) {
+        responses.push(await executeToolCall(toolCall));
+      }
 
       // Update all transcript entries with results in a single state update
       setTranscripts((prev) =>
@@ -403,6 +429,14 @@ export function useGeminiLive(): GeminiLiveState {
         setTranscripts([]);
         setSessionDuration(0);
         lastTranscriptRef.current = null;
+        toolProfileIdRef.current = profileId;
+        toolTaintMetadataRef.current = {
+          version: 'runtime_v1',
+          max_tier: 'trusted_user',
+          history_high_taint_present: false,
+          fresh_high_taint_seen_at_sequence: null,
+          sources: [],
+        };
         canSendRealtimeInputRef.current = false;
 
         await audioPlayback.preparePlayback();

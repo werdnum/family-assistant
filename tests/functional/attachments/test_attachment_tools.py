@@ -15,6 +15,7 @@ import pytest
 from PIL import Image
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
@@ -298,6 +299,7 @@ class TestSendMessageToUserWithAttachments:
                 text="Here's your document",
                 attachment_ids=[mock_attachment_metadata.id],
                 on_behalf_of_user_id="test_user",
+                taint_metadata=TurnTaintState.empty().to_metadata(),
             )
 
             assert "Message sent successfully" in result
@@ -345,6 +347,7 @@ class TestSendMessageToUserWithAttachments:
                 text="Just a message",
                 attachment_ids=None,
                 on_behalf_of_user_id=None,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
             )
 
             assert "Message sent successfully" in result

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from family_assistant.tools.types import ConfirmationOutcome, ToolResult
+
+if TYPE_CHECKING:
+    from family_assistant.security.taint import TaintMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +56,17 @@ class ConfirmationResultWaiterRegistry:
         self,
         request_id: str,
         result: str | ToolResult,
+        *,
+        taint_metadata: TaintMetadata,
     ) -> bool:
         """Resolve a live waiter with the executed tool result."""
         return self._resolve(
             request_id,
-            ConfirmationOutcome(kind="completed", result=result),
+            ConfirmationOutcome(
+                kind="completed",
+                result=result,
+                taint_metadata=taint_metadata,
+            ),
         )
 
     def resolve_rejected(self, request_id: str) -> bool:
@@ -71,11 +81,21 @@ class ConfirmationResultWaiterRegistry:
         """Resolve a live waiter as cancelled."""
         return self._resolve(request_id, ConfirmationOutcome(kind="cancelled"))
 
-    def resolve_failed(self, request_id: str, result: str | ToolResult) -> bool:
+    def resolve_failed(
+        self,
+        request_id: str,
+        result: str | ToolResult,
+        *,
+        taint_metadata: TaintMetadata,
+    ) -> bool:
         """Resolve a live waiter with a failed execution result."""
         return self._resolve(
             request_id,
-            ConfirmationOutcome(kind="failed", result=result),
+            ConfirmationOutcome(
+                kind="failed",
+                result=result,
+                taint_metadata=taint_metadata,
+            ),
         )
 
     def _resolve(self, request_id: str, outcome: ConfirmationOutcome) -> bool:

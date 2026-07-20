@@ -40,6 +40,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     coerce_taint_metadata,
+    merge_history_taint,
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
@@ -921,6 +922,21 @@ class MessageHistoryRepository(BaseRepository):
         taint_metadata = getattr(message, "taint_metadata", None)
         if taint_metadata is None and role == "user":
             taint_metadata = TurnTaintState.empty().to_metadata()
+        elif taint_metadata is None and role in _HISTORY_ROLES_REQUIRING_TAINT_METADATA:
+            # Regression guard: every write path for taint-applicable roles must
+            # supply runtime taint metadata. A row persisted without it is
+            # escalated to unknown_external at read time, permanently tainting
+            # the conversation, so surface the gap loudly (but keep writing).
+            logger.error(
+                "taint_metadata_missing_at_write: persisting %s-role message "
+                "history row without runtime taint metadata "
+                "(interface=%s conversation=%s tool=%s); it will be treated as "
+                "unknown_external at read time.",
+                role,
+                interface_type,
+                conversation_id,
+                getattr(message, "name", None),
+            )
 
         raw_content = getattr(message, "content", None)
         if raw_content is None or isinstance(raw_content, str):
@@ -1586,6 +1602,38 @@ class MessageHistoryRepository(BaseRepository):
 
         row = await self._db.fetch_one(stmt)
         return cast("MessageHistoryRow", dict(row)) if row else None
+
+    async def get_merged_taint_metadata_for_subconversation(
+        self,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+    ) -> TaintMetadata | None:
+        """Return merged taint metadata for every message in a scope.
+
+        Used to recover the accumulated taint of a completed (sub)conversation —
+        e.g. a delegated run that stopped after a tainted tool result but before
+        persisting a final assistant row. Returns ``None`` only when the scope has
+        no rows, so callers can fall back conservatively.
+        """
+        stmt = select(message_history_table).where(
+            message_history_table.c.interface_type == interface_type,
+            message_history_table.c.conversation_id == conversation_id,
+        )
+        if subconversation_id is None:
+            stmt = stmt.where(message_history_table.c.subconversation_id.is_(None))
+        else:
+            stmt = stmt.where(
+                message_history_table.c.subconversation_id == subconversation_id
+            )
+        stmt = stmt.order_by(message_history_table.c.internal_id.asc())
+
+        rows = await self._db.fetch_all(stmt)
+        if not rows:
+            return None
+        messages = [self._process_message_row(row) for row in rows]
+        return merge_history_taint(messages).to_metadata()
 
     async def get_user_row_by_turn_id(
         self,
