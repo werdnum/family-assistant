@@ -10,7 +10,7 @@ fingerprint helper, and this column are removed; profile drift is already caught
 by _resolve_confirmation_processing_service and argument integrity by the nested
 approved_confirmation_callback.
 
-Revision ID: drop_confirmation_approval_fingerprint
+Revision ID: drop_approval_fingerprint
 Revises: delegation_active_subconv_unique
 Create Date: 2026-07-19 00:00:00.000000+00:00
 
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "drop_confirmation_approval_fingerprint"
+revision: str = "drop_approval_fingerprint"
 down_revision: str | None = "delegation_active_subconv_unique"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
