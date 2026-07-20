@@ -369,6 +369,7 @@ async def _create_web_assistant(
                                 "names": [
                                     "add_or_update_note",
                                     "search_documents",
+                                    "list_notes",
                                     "delete_calendar_event",
                                     "attach_to_response",
                                 ]
