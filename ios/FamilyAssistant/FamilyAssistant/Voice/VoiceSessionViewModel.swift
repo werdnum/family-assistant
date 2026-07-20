@@ -79,6 +79,8 @@ final class VoiceSessionViewModel {
     private var didStart = false
     private var didPersist = false
 
+    var pendingToolCallIDs: Set<String> { Set(toolTasks.keys) }
+
     init(
         tokenProvider: VoiceTokenProviding,
         toolExecutor: VoiceToolExecuting,

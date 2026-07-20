@@ -473,6 +473,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
 
         // Cancel while the tool is in flight, then let it finish.
         session.emit(.toolCallCancellation(["c1"]))
+        try await waitUntil { model.pendingToolCallIDs.contains("c1") == false }
         gate?.resume()
         try await waitUntil { toolReturned }
         await Task.yield()
