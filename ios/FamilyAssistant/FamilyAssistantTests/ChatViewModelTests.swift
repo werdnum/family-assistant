@@ -7273,6 +7273,38 @@ final class ChatViewModelTests: XCTestCase {
         }
     }
 
+    func testAuthRequiredYieldsAuthRequiredPresentationWithoutModal() async throws {
+        // A rejected token refresh on a required request must drive the coordinator
+        // to `.authRequired` and NEVER raise the generic error modal or its
+        // `Chat.alertPresented` breadcrumb.
+        seedExpiringToken()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                return .json(#"{"detail":"expired"}"#, statusCode: 401)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-auth-required-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+
+        await model.refreshConversations()
+
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+        XCTAssertNil(model.errorMessage)
+        // Give any (erroneous) breadcrumb time to spool before asserting absence.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "an auth-required failure must not raise the generic error modal"
+        )
+    }
+
     func testMidTurnDropRecoveryEmitsNoAlertPresentedBreadcrumb() async throws {
         // Characterization: a mid-turn transport drop recovers by reloading
         // history. It WILL spool a `Chat.streamDrop` breadcrumb, but it must NOT
@@ -7610,6 +7642,17 @@ final class ChatViewModelTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "lastConversationId")
         UserDefaults.standard.removeObject(forKey: "lastConversationActiveAt")
         UserDefaults.standard.removeObject(forKey: "selectedProfileId")
+    }
+
+    /// Overwrite the fresh setUp token with one due for refresh, so the next
+    /// authorized request drives `refreshIfNeeded` through its network path.
+    private func seedExpiringToken() {
+        KeychainHelper.save(key: "fa_api_token", string: "chat-view-model-token")
+        KeychainHelper.save(key: "fa_refresh_token", string: "chat-view-model-refresh")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60)),
+            forKey: "fa_token_expiry"
+        )
     }
 
     private func storeLastConversation(_ id: String, activeSecondsAgo: TimeInterval) {

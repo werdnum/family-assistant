@@ -113,7 +113,98 @@ final class AuthManagerTests: XCTestCase {
         } catch AuthError.noCredentials {
             XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
             XCTAssertFalse(authManager.isAuthenticated)
+            XCTAssertTrue(
+                authManager.authRequired,
+                "missing credentials on the required path must latch authRequired"
+            )
         }
+    }
+
+    func testConcurrentRefreshIsSingleFlighted() async throws {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "the-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+
+        // Both callers reach `refreshIfNeeded` while the token is due: the first
+        // starts the network refresh and suspends; the second coalesces onto it.
+        async let first: Void = authManager.refreshIfNeeded()
+        async let second: Void = authManager.refreshIfNeeded()
+        _ = try await (first, second)
+
+        let refreshPosts = AuthBackendURLProtocol.requests.filter { $0.url?.path == "/api/auth/refresh" }
+        XCTAssertEqual(refreshPosts.count, 1, "two concurrent callers must share exactly one refresh POST")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+    }
+
+    func testRefreshRejectionLatchesAuthRequired() async {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json("{}", statusCode: 401)
+        }
+
+        do {
+            try await authManager.refreshIfNeeded()
+            XCTFail("Expected refreshIfNeeded to throw on rejection")
+        } catch AuthError.authRejected {
+            XCTAssertTrue(authManager.authRequired)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testAuthRequiredSignalsReachObserver() async {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        var signals: [AuthManager.AuthStateSignal] = []
+        authManager.onAuthStateChange = { signals.append($0) }
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+
+        try? await authManager.refreshIfNeeded()
+
+        XCTAssertEqual(signals, [.refreshing, .authRequired])
+    }
+
+    func testSuccessfulReAuthClearsAuthRequired() async {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+        try? await authManager.refreshIfNeeded()
+        XCTAssertTrue(authManager.authRequired)
+
+        // A successful refresh (token still valid) clears the terminal state.
+        seedStoredAuth(apiToken: "expiring-again", refreshToken: "good-refresh", expiresIn: -60)
+        var signals: [AuthManager.AuthStateSignal] = []
+        authManager.onAuthStateChange = { signals.append($0) }
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"fresh","refresh_token":"fresh-refresh","expires_in":7200}"#)
+        }
+
+        try? await authManager.refreshIfNeeded()
+
+        XCTAssertFalse(authManager.authRequired)
+        XCTAssertEqual(signals, [.refreshing, .ok])
+    }
+
+    func testLogoutEpochChangeStillSupersedesInFlightRefresh() async throws {
+        // A logout during an in-flight refresh must fence out the rotation exactly
+        // as before single-flighting: the stale owner epoch stands in for the
+        // logout that bumped the epoch while the refresh was on the wire.
+        seedStoredAuth(apiToken: "old-api-token", refreshToken: "old-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+
+        try await authManager.refreshIfNeeded(ownerEpoch: authManager.authEpoch - 1)
+
+        XCTAssertEqual(
+            KeychainHelper.readString(key: "fa_api_token"),
+            "old-api-token",
+            "a refresh superseded by a logout epoch bump must not resurrect credentials"
+        )
     }
 
     func testEstablishSessionPostsBearerTokenAndAcceptsCookieResponse() async throws {

@@ -279,6 +279,19 @@ final class ChatViewModel {
             opensGeneratedLaunchDraft = true
         }
         syncCoordinator.delegate = self
+        // Bridge auth transitions into the coordinator so a token refresh surfaces
+        // as `.syncing`-adjacent degraded state and a rejection surfaces as the
+        // dedicated `.authRequired` presentation — never the generic error modal.
+        authManager.onAuthStateChange = { [weak syncCoordinator] signal in
+            switch signal {
+            case .refreshing:
+                syncCoordinator?.apply(.authRefreshing)
+            case .ok:
+                syncCoordinator?.apply(.authOK)
+            case .authRequired:
+                syncCoordinator?.apply(.authRequired)
+            }
+        }
     }
 
     deinit {
@@ -2458,6 +2471,14 @@ final class ChatViewModel {
         reason: ChatAlertReason,
         underlyingError: Error? = nil
     ) {
+        // A terminal auth failure (`authorizedRequest` throwing `noCredentials`
+        // after a rejected refresh) already latched `AuthManager.authRequired`,
+        // which drives the coordinator's dedicated `.authRequired` presentation.
+        // It must NEVER also raise the generic error modal, so suppress it at this
+        // single choke point rather than auditing every request catch site.
+        if let underlyingError, case AuthError.noCredentials = underlyingError {
+            return
+        }
         let newlyPresented = errorMessage == nil
         errorMessage = message
         guard newlyPresented else {
