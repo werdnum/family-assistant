@@ -328,11 +328,13 @@ final class SyncCoordinator {
                         case .reconnected:
                             continue
                         case .terminalAuth:
-                            break
+                            deliberateStop = true
                         case .transientRetry:
-                            continue
+                            streamError = error
                         }
-                        break
+                        if deliberateStop {
+                            break
+                        }
                     }
                 }
 
@@ -405,6 +407,7 @@ final class SyncCoordinator {
                         await self?.delegate?.activityStreamDidSignal(generation: generation)
                     }
                 } catch {
+                    var shouldBreak = false
                     // A response-time 401/403 on connect is a terminal auth failure
                     // (see the follow loop): force one coalesced refresh.
                     if case ChatAPIError.server(let statusCode, _) = error,
@@ -418,13 +421,15 @@ final class SyncCoordinator {
                             continue
                         case .terminalAuth:
                             self?.apply(.activityDropped(generation: generation, cleanEOF: false))
-                            break
+                            shouldBreak = true
                         case .transientRetry:
-                            continue
+                            // Fall through to backoff+retry below
+                            break
                         }
-                        break
+                        if shouldBreak {
+                            break
+                        }
                     }
-                    // Any other connection failure/drop falls through to backoff+retry.
                 }
                 if Task.isCancelled {
                     break

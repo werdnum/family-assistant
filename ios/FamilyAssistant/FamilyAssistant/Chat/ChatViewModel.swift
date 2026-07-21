@@ -716,10 +716,12 @@ final class ChatViewModel {
         for turn in activeTurns {
             guard turn.status == "running",
                   turn.turnID != activeTurnSession?.turnID,
-                  !endedTurnIDs.contains(turn.turnID),
                   liveFollowBubbleByTurnID[turn.turnID] == nil
             else {
                 continue
+            }
+            if endedTurnIDs.contains(turn.turnID) {
+                endedTurnIDs.remove(turn.turnID)
             }
             _ = makeLiveFollowBubble(for: turn.turnID)
         }
