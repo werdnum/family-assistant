@@ -491,11 +491,9 @@ struct ChatAPIClient {
 
     func fetchConfirmation(requestID: String) async throws -> ChatConfirmationDetail {
         let encodedID = Self.encodedPathComponent(requestID)
-        let request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/confirmations/\(encodedID)"),
-            method: "GET"
+        let (data, response) = try await authorizedGETWithAuthRetry(
+            url: apiURL("/api/v1/chat/confirmations/\(encodedID)")
         )
-        let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatConfirmationDetail.self, from: data)
     }
