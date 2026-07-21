@@ -190,6 +190,75 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.reachability, .satisfied)
     }
 
+    func testDegradedAndOfflineAreDistinctPresentationStates() {
+        // The toolbar indicator renders distinct affordances per presentation, so
+        // degraded (a live-but-unhealthy channel) must never collapse into offline
+        // (no network). Guards the view-model-layer contract the indicator maps to
+        // separate symbols/labels/identifiers.
+        let (coordinator, _) = makeCoordinator(satisfied: true)
+
+        coordinator.apply(.followConnected(generation: coordinator.generation))
+        XCTAssertEqual(coordinator.presentation, .degraded)
+
+        coordinator.apply(.reachabilityChanged(.unsatisfied))
+        XCTAssertEqual(coordinator.presentation, .offline)
+        XCTAssertNotEqual(SyncCoordinator.Presentation.degraded, coordinator.presentation)
+    }
+
+    func testFirstUnsatisfiedObservationLeavesUnknownForReachability() {
+        // Launching offline: NWPathMonitor's first callback reports `.unsatisfied`,
+        // whose value equals the coordinator's initial (unknown-seeded) state. The
+        // path monitor must still deliver it so the coordinator leaves `.unknown`
+        // and shows offline, rather than being pinned at `.unknown` forever.
+        let (coordinator, monitor) = makeCoordinator(satisfied: false)
+        XCTAssertEqual(coordinator.reachability, .unknown)
+
+        monitor.setSatisfied(false)
+
+        XCTAssertEqual(coordinator.reachability, .unsatisfied)
+        XCTAssertEqual(coordinator.presentation, .offline)
+    }
+
+    func testStubPathMonitorDeliversFirstObservationEvenWhenSameValue() {
+        // Contract parity with the production `NetworkPathMonitor`: the first
+        // observation is always delivered; later same-value observations coalesce.
+        let monitor = StubPathMonitor(isSatisfied: false)
+        var delivered: [Bool] = []
+        monitor.onChange = { delivered.append($0) }
+
+        monitor.setSatisfied(false)
+        monitor.setSatisfied(false)
+        monitor.setSatisfied(true)
+
+        XCTAssertEqual(delivered, [false, true])
+    }
+
+    func testReachabilityRecoveryWakesReconnectLoopImmediately() async throws {
+        // A follow loop asleep at backoff after an unsatisfied path must not wait
+        // out the capped delay when the path recovers: the unsatisfied→satisfied
+        // transition resets backoff and retries now.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(
+            pathMonitor: monitor,
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        coordinator.delegate = delegate
+
+        // Bring a follow loop up so it owns a conversation, then let it drop into a
+        // long backoff sleep by failing the next connect.
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.followOpenCount >= 1 }
+        delegate.shouldFailFollowOpen = true
+        monitor.setSatisfied(false)
+        monitor.setSatisfied(true)
+
+        // The wake restarts the loop, re-entering openFollowStream well within the
+        // 60s backoff that would otherwise gate the retry.
+        try await waitUntil(timeout: 3) { delegate.followOpenCount >= 2 }
+    }
+
     func testAuthRequiredOverridesReachabilityAndSync() {
         let (coordinator, _) = makeCoordinator()
 
@@ -205,4 +274,68 @@ final class SyncCoordinatorTests: XCTestCase {
         coordinator.apply(.authOK)
         XCTAssertEqual(coordinator.presentation, .offline)
     }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        _ predicate: @escaping () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for predicate")
+    }
+}
+
+/// Minimal `SyncStreamDelegate` that records how often the coordinator's owned
+/// loops invoke it and can be told to fail the next follow connect, so a test can
+/// drive a loop into backoff and assert the reachability-recovery wake retries.
+@MainActor
+private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
+    private(set) var followOpenCount = 0
+    private(set) var activityOpenCount = 0
+    var shouldFailFollowOpen = false
+
+    struct StubError: Error {}
+
+    func openFollowStream(
+        conversationID: String,
+        generation: Int
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        followOpenCount += 1
+        if shouldFailFollowOpen {
+            throw StubError()
+        }
+        return AsyncThrowingStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func followStreamDidConnect(conversationID: String, generation: Int) async {}
+
+    func handleFollowEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        generation: Int
+    ) async -> Bool { true }
+
+    func followBufferRotated(generation: Int) {}
+
+    func reportFollowStreamDrop(conversationID: String, error: Error?, generation: Int) {}
+
+    func shouldSurfaceFollowDrop() -> Bool { true }
+
+    func catchUpFollowHistory(conversationID: String, generation: Int) async {}
+
+    func openActivityStream(
+        generation: Int
+    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+        activityOpenCount += 1
+        throw StubError()
+    }
+
+    func activityStreamDidSignal(generation: Int) async {}
 }

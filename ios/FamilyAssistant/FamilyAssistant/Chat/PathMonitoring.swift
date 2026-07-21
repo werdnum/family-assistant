@@ -16,6 +16,7 @@ final class NetworkPathMonitor: PathMonitoring {
     private var started = false
 
     private(set) var isSatisfied = false
+    private var hasDelivered = false
     var onChange: ((Bool) -> Void)?
 
     func start() {
@@ -37,7 +38,11 @@ final class NetworkPathMonitor: PathMonitoring {
     }
 
     private func update(satisfied: Bool) {
-        guard satisfied != isSatisfied else { return }
+        // Always deliver the first observation even when its value equals the
+        // initial `isSatisfied` (false): launching offline reports `.unsatisfied`
+        // first, which must reach the coordinator so it can leave `.unknown`.
+        guard !hasDelivered || satisfied != isSatisfied else { return }
+        hasDelivered = true
         isSatisfied = satisfied
         onChange?(satisfied)
     }

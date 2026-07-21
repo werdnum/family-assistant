@@ -349,6 +349,22 @@ final class SyncCoordinator {
         startActivityStream()
     }
 
+    /// Reset backoff and retry the reconnect loops immediately on a reachability
+    /// recovery, instead of leaving a loop asleep at capped backoff. Only channels
+    /// that are not currently connected are restarted (recreating their task resets
+    /// the local backoff to the initial delay and re-enters the connect attempt at
+    /// once); a healthy channel is left alone to avoid needless churn. Restarting a
+    /// loop is a retry, not a health assertion — health is only set by an actual
+    /// connect.
+    private func wakeReconnectLoops() {
+        if followHealth != .connected, let followConversationID {
+            startFollowStream(conversationID: followConversationID)
+        }
+        if activityHealth != .connected {
+            startActivityStream()
+        }
+    }
+
     @discardableResult
     func apply(_ event: SyncEvent) -> [SyncEffect] {
         switch event {
@@ -367,7 +383,17 @@ final class SyncCoordinator {
             return []
 
         case let .reachabilityChanged(reachability):
+            let wasUnsatisfied = self.reachability == .unsatisfied
             self.reachability = reachability
+            // Satisfied is only a retry hint (never marks channels healthy), but a
+            // loop sleeping at capped backoff would otherwise stay down for up to
+            // one max-delay interval, re-showing the stuck indicator. On the
+            // unsatisfied→satisfied transition, reset backoff and wake the reconnect
+            // loops now so a live path is retried immediately. Health still comes
+            // only from actual connects.
+            if reachability == .satisfied, wasUnsatisfied, lifecycle == .foreground {
+                wakeReconnectLoops()
+            }
             return []
 
         case .authRefreshing:
