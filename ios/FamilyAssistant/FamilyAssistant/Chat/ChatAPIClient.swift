@@ -614,13 +614,17 @@ struct ChatAPIClient {
     /// coordinator's `.authRequired` presentation). The view model suppresses the
     /// generic error modal for that error, so a persistent 401 never modals.
     private func authorizedGETWithAuthRetry(url: URL) async throws -> (Data, URLResponse) {
+        let epochBeforeRequest = authManager.authEpoch
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
         let (data, response) = try await urlSession.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 401 else {
             return (data, response)
         }
 
-        let epochBeforeRefresh = authManager.authEpoch
+        if authManager.authEpoch != epochBeforeRequest {
+            throw AuthError.noCredentials
+        }
+        let epochBeforeRefresh = epochBeforeRequest
         do {
             // Epoch-fence the forced refresh: a stale rotation completing after a
             // logout/new-login must not overwrite the newer session's credentials
