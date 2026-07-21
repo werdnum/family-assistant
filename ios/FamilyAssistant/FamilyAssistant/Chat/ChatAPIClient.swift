@@ -624,7 +624,10 @@ struct ChatAPIClient {
 
         let epochBeforeRefresh = authManager.authEpoch
         do {
-            try await authManager.refreshIfNeeded(force: true)
+            // Epoch-fence the forced refresh: a stale rotation completing after a
+            // logout/new-login must not overwrite the newer session's credentials
+            // (mirrors the rejection-cleanup fencing below).
+            try await authManager.refreshIfNeeded(ownerEpoch: epochBeforeRefresh, force: true)
         } catch AuthError.authRejected, AuthError.noCredentials {
             // The forced refresh was itself rejected. `performRefresh` latches
             // authRequired but, reached directly here, never runs
@@ -638,8 +641,12 @@ struct ChatAPIClient {
         let retryRequest = try await authManager.authorizedRequest(url: url, method: "GET")
         let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
         if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
-            // A freshly minted token is still rejected: terminal auth failure.
-            authManager.markAuthRequired()
+            // A freshly minted token is still rejected: terminal auth failure. Clear
+            // the epoch-fenced auth state as well as latching authRequired — the
+            // freshly saved (but rejected) token would otherwise linger in the
+            // keychain and other request paths would keep replaying it. Fenced so a
+            // concurrent re-login that bumped the epoch during the retry is untouched.
+            authManager.clearAuthStateIfCurrent(capturedEpoch: epochBeforeRefresh)
             throw AuthError.noCredentials
         }
         return (retryData, retryResponse)

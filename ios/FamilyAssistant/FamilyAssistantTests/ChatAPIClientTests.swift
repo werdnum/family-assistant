@@ -574,7 +574,58 @@ final class ChatAPIClientTests: XCTestCase {
             XCTAssertEqual(getRequests.value, 2, "the GET is retried exactly once, not repeatedly")
             XCTAssertEqual(refreshRequests.value, 1)
             XCTAssertTrue(authManager.authRequired, "a persistent 401 latches the terminal auth state")
+            // Finding 6: the freshly-saved (but still-rejected) rotated token must
+            // be cleared, not just have authRequired latched — otherwise other
+            // request paths would keep replaying it.
+            XCTAssertNil(
+                KeychainHelper.readString(key: "fa_api_token"),
+                "a rejected retry token must be cleared so other paths cannot replay it"
+            )
         }
+    }
+
+    func testForcedRefreshIsEpochFencedAgainstConcurrentReLogin() async throws {
+        // Finding 5: the response-time-401 forced refresh must pass the epoch
+        // captured before the refresh into `refreshIfNeeded(force:)`. A stale
+        // refresh that completes after a logout/new-login (which bumped the epoch)
+        // must NOT overwrite the newer session's credentials with the rotated token.
+        seedRefreshToken()
+        let authManager = makeAuthManager()
+        let getRequests = AtomicCounter()
+        let bumpedEpoch = expectation(description: "epoch bumped mid-refresh")
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path {
+            case "/api/auth/refresh":
+                // Simulate a logout/new-login landing while this refresh is on the
+                // wire: bump the auth epoch on the main actor and wait for it before
+                // returning the (now stale-owned) rotated token.
+                let gate = DispatchSemaphore(value: 0)
+                Task { @MainActor in
+                    authManager.clearAuthStateIfCurrent(capturedEpoch: authManager.authEpoch)
+                    KeychainHelper.save(key: "fa_api_token", string: "relogin-token")
+                    bumpedEpoch.fulfill()
+                    gate.signal()
+                }
+                gate.wait()
+                return .json(#"{"api_token":"stale-rotated","refresh_token":"stale-refresh","expires_in":7200}"#)
+            case "/api/v1/profiles":
+                if getRequests.increment() <= 1 {
+                    return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                }
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        _ = try? await ChatAPIClient(authManager: authManager).listProfiles()
+        await fulfillment(of: [bumpedEpoch], timeout: 4)
+
+        XCTAssertNotEqual(
+            KeychainHelper.readString(key: "fa_api_token"),
+            "stale-rotated",
+            "a forced refresh superseded by a re-login must not persist its stale rotated token"
+        )
     }
 
     func testResponse401WithNoRefreshTokenLatchesAuthRequired() async throws {
