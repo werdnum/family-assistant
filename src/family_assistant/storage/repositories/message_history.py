@@ -2595,6 +2595,35 @@ class MessageHistoryRepository(BaseRepository):
 
         return grouped_history
 
+    @staticmethod
+    def _sole_owner_condition(
+        owner_user_ids: set[str] | None,
+    ) -> ColumnElement[bool] | None:
+        """Build a WHERE condition restricting to conversations owned solely by
+        ``owner_user_ids``.
+
+        Returns ``None`` when no ownership filter is requested. Otherwise returns a
+        correlated ``NOT EXISTS`` that excludes any conversation which has a user
+        message carrying a non-null ``user_id`` outside the set. Conversations with
+        no owning user message (brand-new / empty) are kept, matching the
+        endpoint's "empty owner set counts as owned" semantics. Filtering happens
+        in the query itself so both the page contents and the count agree.
+        """
+        if owner_user_ids is None:
+            return None
+        foreign = message_history_table.alias("foreign_owner")
+        disqualifying_owner = (
+            select(foreign.c.internal_id)
+            .where(
+                foreign.c.conversation_id == message_history_table.c.conversation_id,
+                foreign.c.role == "user",
+                foreign.c.user_id.is_not(None),
+                foreign.c.user_id.notin_(owner_user_ids),
+            )
+            .exists()
+        )
+        return ~disqualifying_owner
+
     async def get_conversation_summaries(
         self,
         interface_type: str | None = None,
@@ -2604,6 +2633,7 @@ class MessageHistoryRepository(BaseRepository):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         include_subconversations: bool = True,
+        owner_user_ids: set[str] | None = None,
     ) -> tuple[list[ConversationSummaryRow], int]:
         """
         Get conversation summaries with pagination, optimized for performance.
@@ -2616,15 +2646,27 @@ class MessageHistoryRepository(BaseRepository):
             date_from: Filter conversations with messages after this date
             date_to: Filter conversations with messages before this date
             include_subconversations: Include delegated subconversation rows
+            owner_user_ids: When provided, restrict results to conversations owned
+                solely by these stored ``user_id``s. A conversation qualifies when
+                it has no user message carrying a ``user_id`` (brand-new/empty) or
+                every distinct such id is in this set. Both the page and the count
+                are filtered, so ``count`` matches what the caller can page
+                through. The caller passes the equivalence set of stored ids that
+                canonicalize to its own identity (see
+                ``UserIdentityResolver.owner_ids_canonicalizing_to``).
 
         Returns:
             Tuple of (summaries list, total count)
         """
+        ownership_condition = self._sole_owner_condition(owner_user_ids)
+
         # Build base conditions
         base_conditions = []
         base_conditions.append(_visible_message_condition())
         base_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
         base_conditions.append(message_history_table.c.content.isnot(None))
+        if ownership_condition is not None:
+            base_conditions.append(ownership_condition)
 
         if interface_type:
             base_conditions.append(
@@ -2682,6 +2724,8 @@ class MessageHistoryRepository(BaseRepository):
         count_conditions = []
         count_conditions.append(_visible_message_condition())
         count_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
+        if ownership_condition is not None:
+            count_conditions.append(ownership_condition)
 
         if interface_type:
             count_conditions.append(

@@ -716,6 +716,25 @@ def _get_shutdown_event(request: Request) -> asyncio.Event:
     return shutdown_event
 
 
+_DEFAULT_STREAM_HEARTBEAT_INTERVAL_SECONDS = 30.0
+
+
+def _get_heartbeat_interval(request: Request) -> float:
+    """Return the SSE heartbeat interval in seconds for the stream endpoints.
+
+    Defaults to 30s. ``assistant.py`` may install a different value on
+    ``app.state.stream_heartbeat_interval_seconds`` (it is also the seam tests
+    use to drive the heartbeat path deterministically with a short interval
+    instead of waiting the production cadence). The value is the ``asyncio.wait``
+    timeout that fires a ``heartbeat`` frame when no real event arrives, so it
+    doubles as the shutdown-event poll cadence.
+    """
+    interval = getattr(request.app.state, "stream_heartbeat_interval_seconds", None)
+    if isinstance(interval, (int, float)) and interval > 0:
+        return float(interval)
+    return _DEFAULT_STREAM_HEARTBEAT_INTERVAL_SECONDS
+
+
 def _serialize_active_turn(turn: TurnRecord) -> ActiveTurnInfo:
     return ActiveTurnInfo(
         turn_id=turn.turn_id,
@@ -1184,6 +1203,7 @@ async def api_chat_conversation_stream(
     hub = _get_hub(request)
     allowed_event_types = _parse_event_types(event_types)
     shutdown_event = _get_shutdown_event(request)
+    heartbeat_interval = _get_heartbeat_interval(request)
 
     try:
         handle = await hub.subscribe(
@@ -1255,7 +1275,7 @@ async def api_chat_conversation_stream(
                 try:
                     done, _pending = await asyncio.wait(
                         {queue_get, shutdown_wait},
-                        timeout=30.0,
+                        timeout=heartbeat_interval,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 finally:
@@ -1345,6 +1365,7 @@ async def api_chat_activity_stream(
 
     hub = _get_hub(request)
     shutdown_event = _get_shutdown_event(request)
+    heartbeat_interval = _get_heartbeat_interval(request)
     handle = hub.subscribe_activity(raw_user_id)
 
     async def event_generator() -> AsyncGenerator[str]:
@@ -1355,7 +1376,7 @@ async def api_chat_activity_stream(
                 try:
                     done, _pending = await asyncio.wait(
                         {queue_get, shutdown_wait},
-                        timeout=30.0,
+                        timeout=heartbeat_interval,
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                 finally:
@@ -1363,13 +1384,16 @@ async def api_chat_activity_stream(
                         queue_get.cancel()
                     shutdown_wait.cancel()
 
-                if shutdown_event.is_set():
-                    yield (
-                        'event: stream_dropped\ndata: {"reason": "server_shutdown"}\n\n'
-                    )
-                    return
-
+                # Deliver a ready activity event before honoring shutdown so a
+                # ping that landed in the same wait cycle as a shutdown signal is
+                # not dropped.
                 if queue_get not in done:
+                    if shutdown_event.is_set():
+                        yield (
+                            "event: stream_dropped\n"
+                            'data: {"reason": "server_shutdown"}\n\n'
+                        )
+                        return
                     # Heartbeat tick. If the hub dropped this subscriber (its
                     # queue overflowed), tell the client to reconnect instead of
                     # heartbeating into a discarded subscription.
@@ -2060,7 +2084,20 @@ async def get_conversations(
                 detail=f"Invalid date_to format: '{date_to}'. Expected YYYY-MM-DD format.",
             ) from e
 
-    # Use optimized query for conversation summaries with all filters
+    # Restrict to conversations the caller solely (canonically) owns *in the query
+    # itself*, so both the returned page AND ``count`` are ownership-filtered. A
+    # Python post-filter would leave ``count`` promising conversations the client
+    # can never page through, producing short/empty non-final pages that a client
+    # stopping on an empty page treats as the end of the list. The caller's
+    # equivalence set is every stored owner id that canonicalizes to its identity
+    # (its own id plus any configured Telegram/OIDC ids); a conversation qualifies
+    # when its distinct owner ids are all in that set (or it has none yet).
+    owner_user_ids = (
+        resolver.owner_ids_canonicalizing_to(raw_user_id)
+        if resolver is not None
+        else {raw_user_id}
+    )
+
     summaries, total = await db_context.message_history.get_conversation_summaries(
         interface_type=interface_type,
         limit=limit,
@@ -2069,29 +2106,18 @@ async def get_conversations(
         date_from=date_from_dt,
         date_to=date_to_dt,
         include_subconversations=False,
+        owner_user_ids=owner_user_ids,
     )
 
-    # Filter the returned page to conversations the caller solely (canonically)
-    # owns, so the UI never lists a conversation it then 404s on opening. ``count``
-    # stays the DB-level total to preserve pagination semantics (the per-page
-    # filter can only narrow a page; it does not change how many pages exist).
-    conversations: list[ConversationSummary] = []
-    for summary in summaries:
-        owners = await db_context.message_history.get_conversation_owner_ids(
-            summary["conversation_id"]
+    conversations = [
+        ConversationSummary(
+            conversation_id=summary["conversation_id"],
+            last_message=summary["last_message"],
+            last_timestamp=summary["last_timestamp"],
+            message_count=summary["message_count"],
         )
-        if owners and not _caller_is_sole_canonical_owner(
-            resolver, owners, raw_user_id
-        ):
-            continue
-        conversations.append(
-            ConversationSummary(
-                conversation_id=summary["conversation_id"],
-                last_message=summary["last_message"],
-                last_timestamp=summary["last_timestamp"],
-                message_count=summary["message_count"],
-            )
-        )
+        for summary in summaries
+    ]
 
     return ConversationListResponse(
         conversations=conversations,

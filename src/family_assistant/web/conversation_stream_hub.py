@@ -478,6 +478,14 @@ class ConversationStreamHub:
         heartbeating into a discarded subscription."""
         return queue in self._activity_subscribers
 
+    def has_activity_subscribers(self, user_id: str) -> bool:
+        """Return True if at least one activity subscriber is scoped to
+        ``user_id``. Lets a caller confirm an activity stream has attached before
+        publishing a ping (avoiding a lost-wakeup race)."""
+        return any(
+            sub.user_id == user_id for sub in self._activity_subscribers.values()
+        )
+
     async def publish_activity(
         self,
         conversation_id: str,
