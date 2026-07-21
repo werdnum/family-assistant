@@ -37,6 +37,7 @@
 		A10020 /* ChatAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* ChatAPIClient.swift */; };
 		A10021 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
 		A10047 /* PathMonitoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047 /* PathMonitoring.swift */; };
+		A10048 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048 /* SyncCoordinator.swift */; };
 		A10022 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* ChatViewModel.swift */; };
 		A10023 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* ChatViews.swift */; };
 		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
@@ -60,6 +61,7 @@
 		A20006 /* ChatAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20007 /* ChatAPIClientTests.swift */; };
 		A20007 /* SSEParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20008 /* SSEParserTests.swift */; };
 		A20021 /* StubPathMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20021 /* StubPathMonitor.swift */; };
+		A20022 /* SyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20022 /* SyncCoordinatorTests.swift */; };
 		A20008 /* ChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20009 /* ChatViewModelTests.swift */; };
 		A20009 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20010 /* MarkdownRendererTests.swift */; };
 		A20010 /* ToolRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20011 /* ToolRenderingTests.swift */; };
@@ -136,6 +138,7 @@
 		B10023 /* ChatAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAPIClient.swift; sourceTree = "<group>"; };
 		B10024 /* SSEParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParser.swift; sourceTree = "<group>"; };
 		B10047 /* PathMonitoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathMonitoring.swift; sourceTree = "<group>"; };
+		B10048 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
 		B10025 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		B10026 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
 		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
@@ -159,6 +162,7 @@
 		B20007 /* ChatAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAPIClientTests.swift; sourceTree = "<group>"; };
 		B20008 /* SSEParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParserTests.swift; sourceTree = "<group>"; };
 		B20021 /* StubPathMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubPathMonitor.swift; sourceTree = "<group>"; };
+		B20022 /* SyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinatorTests.swift; sourceTree = "<group>"; };
 		B20009 /* ChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModelTests.swift; sourceTree = "<group>"; };
 		B20010 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
 		B20011 /* ToolRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRenderingTests.swift; sourceTree = "<group>"; };
@@ -320,6 +324,7 @@
 				B10025 /* ChatViewModel.swift */,
 				B10026 /* ChatViews.swift */,
 				B10047 /* PathMonitoring.swift */,
+				B10048 /* SyncCoordinator.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -372,6 +377,7 @@
 				9D5A200966EBAD61C16887A4 /* VoiceSessionViewModelTests.swift */,
 				6A272834699FEDEC1F4899A5 /* ChatLayoutBudgetTests.swift */,
 				B20021 /* StubPathMonitor.swift */,
+				B20022 /* SyncCoordinatorTests.swift */,
 			);
 			path = FamilyAssistantTests;
 			sourceTree = "<group>";
@@ -541,6 +547,7 @@
 				A10020 /* ChatAPIClient.swift in Sources */,
 				A10021 /* SSEParser.swift in Sources */,
 				A10047 /* PathMonitoring.swift in Sources */,
+				A10048 /* SyncCoordinator.swift in Sources */,
 				A10022 /* ChatViewModel.swift in Sources */,
 				A10023 /* ChatViews.swift in Sources */,
 				A10040 /* IntentSupport.swift in Sources */,
@@ -578,6 +585,7 @@
 				A20006 /* ChatAPIClientTests.swift in Sources */,
 				A20007 /* SSEParserTests.swift in Sources */,
 				A20021 /* StubPathMonitor.swift in Sources */,
+				A20022 /* SyncCoordinatorTests.swift in Sources */,
 				A20008 /* ChatViewModelTests.swift in Sources */,
 				A20009 /* MarkdownRendererTests.swift in Sources */,
 				A20010 /* ToolRenderingTests.swift in Sources */,
