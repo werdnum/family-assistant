@@ -1094,7 +1094,11 @@ final class ChatViewModel {
                 do {
                     secured = try await requestStopWithRetry(ActiveChatTurn(turnID: turnID, conversationID: id))
                 } catch {
-                    appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
+                    appendStreamError(
+                        error.localizedDescription,
+                        assistantMessageID: assistantMessageID,
+                        reason: .stopTurnFailed
+                    )
                     finishStreaming(streamToken)
                     return
                 }
@@ -2950,7 +2954,11 @@ final class ChatViewModel {
         }
     }
 
-    private func appendStreamError(_ message: String, assistantMessageID: String) {
+    private func appendStreamError(
+        _ message: String,
+        assistantMessageID: String,
+        reason: ChatAlertReason = .streamError
+    ) {
         flushPendingTextNow()
         if let index = messages.firstIndex(where: { $0.id == assistantMessageID }) {
             messages[index].isLoading = false
@@ -2960,7 +2968,7 @@ final class ChatViewModel {
             }
             messages[index].text += "\n\n\(message)"
         }
-        presentErrorAlert(message, reason: .streamError)
+        presentErrorAlert(message, reason: reason)
         errorReporter.report(message: message, component: "Chat.stream")
     }
 

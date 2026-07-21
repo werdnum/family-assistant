@@ -1906,6 +1906,64 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.stopWarningMessage, "Stop could not be confirmed. Pending approvals from this turn may still be active.")
     }
 
+    func testStopQueuedBeforeRegistrationFailureTagsAlertAsStopTurnFailed() async throws {
+        // A stop queued before registration, applied after startTurn succeeds,
+        // whose retried cancel throws a non-retryable transport error surfaces
+        // through `appendStreamError`. That breadcrumb must be reason-tagged
+        // `stop_turn_failed`, not miscounted as a `stream_error`.
+        let postedTurnID = AtomicString()
+        let startRequests = AtomicCounter()
+        let cancelRequests = AtomicCounter()
+        let releaseStart = DispatchSemaphore(value: 0)
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                startRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                _ = releaseStart.wait(timeout: .now() + 5)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_stop_thrown","first_seq":0}"#
+                )
+            case ("POST", _)
+                where path.hasPrefix("/api/v1/chat/turns/") && path.hasSuffix("/cancel"):
+                cancelRequests.increment()
+                // A non-retryable transport error propagates out of the retry
+                // loop as a throw, driving the queued-stop failure path.
+                throw URLError(.cannotParseResponse)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-alert-stop-thrown-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_stop_thrown",
+            spoolDirectory: spoolDirectory
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && startRequests.value == 1 }
+
+        await model.stopTurn()
+        releaseStart.signal()
+        try await waitUntil { cancelRequests.value >= 1 }
+        try await waitUntil { !model.isStreaming }
+
+        let reports = try await waitForSpooledReports(
+            component: "Chat.alertPresented",
+            in: spoolDirectory
+        )
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertEqual(reports.first?.extraData?["reason"], "stop_turn_failed")
+    }
+
     func testSteerBeforeRegistrationPostsAfterStartCompletes() async throws {
         let stream = HangingStream()
         let postedTurnID = AtomicString()
