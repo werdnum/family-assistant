@@ -52,9 +52,37 @@ final class AuthManager {
         case authRequired
     }
 
-    /// Set by the owner (the chat view model) to bridge auth transitions into the
-    /// sync coordinator. Mirrors the closure-callback pattern `PathMonitoring` uses.
-    @ObservationIgnored @MainActor var onAuthStateChange: ((AuthStateSignal) -> Void)?
+    /// Live auth-state observers, keyed by an opaque token returned at
+    /// registration. Every observer receives every transition — SwiftUI can
+    /// construct a fresh `ChatViewModel` (and its coordinator) while `@State`
+    /// retains the original, so a single rebindable callback would leave the
+    /// on-screen model's coordinator without auth signals. Each view model
+    /// registers its own entry and removes it on `deinit`.
+    @ObservationIgnored @MainActor private var authStateObservers:
+        [UUID: (AuthStateSignal) -> Void] = [:]
+
+    /// Register `observer` for auth-state transitions. Returns a token the caller
+    /// passes to ``removeAuthStateObserver(_:)`` on teardown so a discarded view
+    /// model's closure does not linger and drive a dead coordinator.
+    @MainActor
+    @discardableResult
+    func addAuthStateObserver(_ observer: @escaping (AuthStateSignal) -> Void) -> UUID {
+        let token = UUID()
+        authStateObservers[token] = observer
+        return token
+    }
+
+    @MainActor
+    func removeAuthStateObserver(_ token: UUID) {
+        authStateObservers.removeValue(forKey: token)
+    }
+
+    @MainActor
+    private func emitAuthStateSignal(_ signal: AuthStateSignal) {
+        for observer in authStateObservers.values {
+            observer(signal)
+        }
+    }
 
     /// Coalesces concurrent ``refreshIfNeeded(ownerEpoch:)`` callers onto one
     /// in-flight refresh so a resume that fans out several requests cannot race
@@ -340,7 +368,7 @@ final class AuthManager {
     private func setAuthRequired(_ required: Bool) {
         guard authRequired != required else { return }
         authRequired = required
-        onAuthStateChange?(required ? .authRequired : .ok)
+        emitAuthStateSignal(required ? .authRequired : .ok)
     }
 
     /// Latch the terminal ``authRequired`` state from a caller that observed a
@@ -400,6 +428,16 @@ final class AuthManager {
     ///   token.
     @MainActor
     func refreshIfNeeded(ownerEpoch: Int? = nil, force: Bool = false) async throws {
+        // Await any in-flight refresh BEFORE the freshness short-circuit. A forced
+        // refresh (response-time 401 path) can be running while the stored expiry
+        // still looks fresh; a non-forced caller that returned at the freshness
+        // check here would send the token the server just rejected. Awaiting the
+        // in-flight refresh first ensures such callers observe the rotated token.
+        if let inFlightRefresh {
+            try await inFlightRefresh.value
+            return
+        }
+
         if !force {
             guard let expiryString = UserDefaults.standard.string(forKey: Keys.tokenExpiry),
                   let expiry = ISO8601DateFormatter().date(from: expiryString)
@@ -410,11 +448,6 @@ final class AuthManager {
             if expiry.timeIntervalSinceNow > 3600 {
                 return
             }
-        }
-
-        if let inFlightRefresh {
-            try await inFlightRefresh.value
-            return
         }
 
         let refresh = Task { @MainActor [weak self] in
@@ -436,7 +469,7 @@ final class AuthManager {
             throw AuthError.noCredentials
         }
 
-        onAuthStateChange?(.refreshing)
+        emitAuthStateSignal(.refreshing)
 
         let url = baseURL.appendingPathComponent("api/auth/refresh")
         var request = URLRequest(url: url)
