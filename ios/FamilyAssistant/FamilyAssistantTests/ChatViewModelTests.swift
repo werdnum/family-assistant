@@ -5628,8 +5628,14 @@ final class ChatViewModelTests: XCTestCase {
         // A normal iOS resume delivers TWO scene-phase firings —
         // `.background -> .inactive` then `.inactive -> .active` — which the former
         // single-transition predicate never matched. The latched gate must run
-        // exactly one resync (one follow restart + catch-up) across the sequence,
-        // and none for an `.inactive -> .active` blip that never backgrounded.
+        // exactly one resync across the sequence, and none for an
+        // `.inactive -> .active` blip that never backgrounded.
+        //
+        // With the subscribe-then-buffer resync (§4.4), ONE resync makes exactly
+        // two follow connects: the buffering subscription established before the
+        // snapshot fetch, then the loop reconnect on handover. Two resyncs would
+        // add four; a blip adds none. So the "exactly one resync" invariant is
+        // pinned as `+2` follow connects, not `+1`.
         let followConnects = AtomicCounter()
         let followController = HangingStream()
         ChatMockBackendURLProtocol.respond { request in
@@ -5637,7 +5643,8 @@ final class ChatViewModelTests: XCTestCase {
             if request.httpMethod == "GET", path.hasSuffix("/stream"), !path.contains("activity") {
                 followConnects.increment()
                 // Hang so the follow loop never spontaneously reconnects: any
-                // additional connect is attributable to a resync restart.
+                // additional connect is attributable to a resync (buffering
+                // subscribe or handover restart).
                 return .hangingStream("", controller: HangingStream())
             }
             if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
@@ -5663,19 +5670,20 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { followConnects.value == 1 }
         let baseline = followConnects.value
 
-        // Realistic resume: two firings. Only the latched foreground runs a resync.
+        // Realistic resume: two firings. Only the latched foreground runs a resync,
+        // which makes two follow connects (buffering subscribe + handover restart).
         model?.scenePhaseChanged(old: .active, new: .background)
         model?.scenePhaseChanged(old: .background, new: .inactive)
         model?.scenePhaseChanged(old: .inactive, new: .active)
-        try await waitUntil { followConnects.value == baseline + 1 }
-        XCTAssertEqual(followConnects.value, baseline + 1)
+        try await waitUntil { followConnects.value == baseline + 2 }
+        XCTAssertEqual(followConnects.value, baseline + 2)
 
         // An `.inactive -> .active` blip with no prior background triggers none.
         model?.scenePhaseChanged(old: .active, new: .inactive)
         model?.scenePhaseChanged(old: .inactive, new: .active)
         // Give any erroneous resync a chance to fire before asserting it didn't.
         try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(followConnects.value, baseline + 1)
+        XCTAssertEqual(followConnects.value, baseline + 2)
 
         followController.finish()
         model = nil

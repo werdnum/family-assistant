@@ -1,9 +1,18 @@
 import Foundation
 
+/// A stream event buffered during a resync, held without dispatch until the
+/// authoritative snapshots have been applied, then drained through the same
+/// steady-state handlers the coordinator's loops use.
+enum BufferedResyncEvent {
+    case follow(ChatStreamEvent)
+    case activitySignal
+}
+
 /// The application-side steps a foreground resync drives. Implemented by
 /// ``ChatViewModel``; factored behind a protocol so the orchestration ordering
-/// (auth gate → snapshots → restart streams) is unit-testable against a fake
-/// host without standing up the full view model and its `URLProtocol` backend.
+/// (subscribe-and-buffer → snapshots → drain → hand over) is unit-testable
+/// against a fake host without standing up the full view model and its
+/// `URLProtocol` backend.
 ///
 /// The host is the source of truth for the two values every apply guards on —
 /// the coordinator `generation` and the selected conversation — so a resync
@@ -27,6 +36,22 @@ protocol ResyncHost: AnyObject {
     /// stands, with no error modal.
     func gateAuthIfNeeded(generation: Int) async throws
 
+    /// Establish the selected conversation's follow stream: open the connection
+    /// and return the event stream once response headers are received ("the
+    /// existing connect signal"). Returns nil when no conversation is selected or
+    /// the connect fails — the resync then proceeds without a buffered follow
+    /// channel and finishes degraded.
+    func establishFollowStream(
+        conversationID: String,
+        generation: Int
+    ) async -> AsyncThrowingStream<ChatStreamEvent, Error>?
+
+    /// Establish the account-global activity stream, returning the event stream
+    /// once headers are received. Returns nil when the connect fails.
+    func establishActivityStream(
+        generation: Int
+    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>?
+
     /// Snapshot the full conversation list with full-replacement semantics, so a
     /// conversation deleted server-side while backgrounded converges (disappears)
     /// on resume rather than lingering from the held list.
@@ -37,7 +62,22 @@ protocol ResyncHost: AnyObject {
     /// server reports.
     func applyMessagesSnapshot(conversationID: String) async
 
-    /// Hand the live connections back to the coordinator's reconnect loops.
+    /// Drain one buffered follow event through the SAME steady-state handler the
+    /// coordinator's follow loop uses, so generation fencing and turn routing are
+    /// identical.
+    func drainFollowEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        generation: Int
+    ) async
+
+    /// Drain one buffered activity signal through the SAME steady-state handler
+    /// the coordinator's activity loop uses (a recent-list refresh).
+    func drainActivitySignal(generation: Int) async
+
+    /// Hand the live connections back to the coordinator's reconnect loops. The
+    /// resync's own streams are closed as this runs; the loops reconnect
+    /// immediately (health is published only by their real connect events).
     func restartStreams()
 
     /// Publish the reconciliation phase so the indicator shows `.syncing` for the
@@ -51,17 +91,35 @@ protocol ResyncHost: AnyObject {
 /// coordinator owns stream tasks + the reducer, while these app-side steps stay
 /// behind the ``SyncStreamDelegate`` boundary).
 ///
-/// Ordering shipped in this commit (snapshot-then-subscribe; the
-/// subscribe-then-buffer reorder that closes the lost-wakeup race lands in the
-/// next commit):
+/// Ordering (subscribe-then-buffer, closing the lost-wakeup race the review
+/// identified — the activity stream has no replay, so a snapshot-then-subscribe
+/// order could drop anything committed between the fetch and the subscription):
 ///
-/// 1. Generation is already bumped by the trigger (background→foreground, path
-///    recovery). The resync captures it.
+/// 1. Generation is already bumped by the trigger; the resync captures it.
 /// 2. Auth gate: single-flight refresh if near expiry. A rejection aborts.
-/// 3. Snapshots: full conversation list (full replacement) + selected
-///    conversation messages + `active_turns`, applied only while generation and
+/// 3. ESTABLISH the activity + selected-conversation follow streams first
+///    ("established" = headers received) and BUFFER their events into a bounded
+///    queue without dispatching.
+/// 4. Fetch authoritative snapshots (full conversation list + selected
+///    conversation messages + `active_turns`), applied only while generation and
 ///    selection still match.
-/// 4. Restart the streams through the coordinator.
+/// 5. DRAIN the buffer through the same steady-state handlers the loops use.
+/// 6. Hand the live connections to the coordinator's reconnect loops.
+///
+/// Buffer overflow during a resync (which should not happen during a snapshot
+/// fetch) aborts and RESTARTS the resync rather than silently dropping events;
+/// after a bounded number of restarts it finishes degraded (the loop reconnect
+/// + snapshot then reconcile).
+///
+/// Handover fallback (§4.4 acceptable fallback): rather than transferring the
+/// already-open sockets into the coordinator's loops — which own backoff / 410 /
+/// catch-up and cannot share a once-iterable `AsyncThrowingStream` — the drained
+/// resync streams are closed and the loops reconnect immediately. The activity
+/// stream has no replay, so the only residual gap is activity events between the
+/// drain and the loop's reconnect; the immediate loop start minimizes it and a
+/// final list refetch after handover closes it. Follow-stream content always
+/// comes from persisted history via the loop's connect-time catch-up, so the
+/// extra connect risks no lost follow content.
 ///
 /// Coalescing: a resync request that arrives while one is running joins the
 /// in-flight task instead of starting a second, so a burst of foreground /
@@ -71,8 +129,21 @@ final class ResyncOrchestrator {
     private weak var host: ResyncHost?
     private var currentTask: Task<Void, Never>?
 
-    init(host: ResyncHost) {
+    private let bufferCapacity: Int
+    private let maxRestarts: Int
+
+    /// Buffered stream events held (undispatched) while the snapshots are
+    /// fetched, then drained in order. Actor-isolated: appended by the buffering
+    /// tasks and read by the drain, all on the main actor.
+    private var buffer: [BufferedResyncEvent] = []
+    private var bufferOverflowed = false
+    private var followBufferingTask: Task<Void, Never>?
+    private var activityBufferingTask: Task<Void, Never>?
+
+    init(host: ResyncHost, bufferCapacity: Int = 256, maxRestarts: Int = 3) {
         self.host = host
+        self.bufferCapacity = bufferCapacity
+        self.maxRestarts = maxRestarts
     }
 
     /// Start a resync, or join the one already running. Returns the driving task
@@ -97,6 +168,35 @@ final class ResyncOrchestrator {
         host.resyncPhaseDidStart()
         defer { host.resyncPhaseDidFinish() }
 
+        var attempt = 0
+        while true {
+            let outcome = await attemptResync(host: host)
+            switch outcome {
+            case .completed, .aborted:
+                return
+            case .overflowRestart:
+                attempt += 1
+                if attempt > maxRestarts {
+                    // Bounded restarts exhausted: finish degraded. Hand the live
+                    // connections to the coordinator's reconnect loops so a healthy
+                    // channel is re-established; their reconnect + connect-time
+                    // catch-up reconcile content (the loops fence by generation),
+                    // and the indicator reflects real per-channel health.
+                    host.restartStreams()
+                    return
+                }
+            }
+        }
+    }
+
+    private enum ResyncOutcome {
+        case completed
+        case aborted
+        case overflowRestart
+    }
+
+    private func attemptResync(host: ResyncHost) async -> ResyncOutcome {
+        resetBuffer()
         let generation = host.resyncGeneration
 
         do {
@@ -105,19 +205,35 @@ final class ResyncOrchestrator {
             // The refresh was rejected (credentials gone) or otherwise failed.
             // Abort cleanly: the auth layer has already latched `authRequired`
             // where appropriate, and a resync must never raise an error modal.
-            return
+            return .aborted
         }
 
         guard !Task.isCancelled, host.resyncGeneration == generation else {
-            return
+            return .aborted
         }
 
         let selectedConversationID = host.resyncSelectedConversationID
 
+        // Step 3: establish + buffer BEFORE fetching snapshots. The buffering
+        // tasks interleave with the snapshot awaits below, so an event committed
+        // after subscribe but before the fetch completes lands in the buffer and
+        // is drained after the snapshot (closing the lost-wakeup race).
+        await startBuffering(
+            host: host,
+            selectedConversationID: selectedConversationID,
+            generation: generation
+        )
+
+        // Step 4: authoritative snapshots (full-replacement list + selected
+        // conversation messages/active_turns).
         await host.applyListSnapshot()
 
+        if bufferOverflowed {
+            return abortForOverflow()
+        }
         guard !Task.isCancelled, host.resyncGeneration == generation else {
-            return
+            stopBuffering()
+            return .aborted
         }
 
         if let selectedConversationID,
@@ -125,10 +241,140 @@ final class ResyncOrchestrator {
             await host.applyMessagesSnapshot(conversationID: selectedConversationID)
         }
 
+        if bufferOverflowed {
+            return abortForOverflow()
+        }
         guard !Task.isCancelled, host.resyncGeneration == generation else {
-            return
+            stopBuffering()
+            return .aborted
         }
 
+        // Step 5: stop buffering (the tasks that consumed events during the
+        // snapshot-fetch window into `buffer`), then drain the buffer through the
+        // steady-state handlers.
+        stopBuffering()
+        if bufferOverflowed {
+            return abortForOverflow()
+        }
+        await drainBuffer(
+            host: host,
+            selectedConversationID: selectedConversationID,
+            generation: generation
+        )
+
+        guard !Task.isCancelled, host.resyncGeneration == generation else {
+            return .aborted
+        }
+
+        // Step 6: hand the live connections to the coordinator's reconnect loops.
+        // The resync streams are already closed (stopBuffering cancelled them);
+        // the loops reconnect immediately.
         host.restartStreams()
+
+        // Fallback mitigation: the activity stream has no replay, so close the
+        // residual window between the drain and the loop's activity reconnect with
+        // one final full-replacement list refetch.
+        await host.applyListSnapshot()
+
+        return .completed
+    }
+
+    private func abortForOverflow() -> ResyncOutcome {
+        // Never silently drop events: on overflow, tear this attempt's buffering
+        // down and restart the whole resync (bounded). The restart re-establishes
+        // its own streams, so we do NOT hand off to the coordinator's loops here —
+        // that would open a second follow consumer for the same conversation
+        // alongside the restart's buffering subscription. The loops are handed the
+        // connection only on a successful completion or a degraded give-up.
+        stopBuffering()
+        return .overflowRestart
+    }
+
+    private func startBuffering(
+        host: ResyncHost,
+        selectedConversationID: String?,
+        generation: Int
+    ) async {
+        if let selectedConversationID,
+           let stream = await host.establishFollowStream(
+               conversationID: selectedConversationID,
+               generation: generation
+           ) {
+            followBufferingTask = Task { [weak self] in
+                do {
+                    // Enqueue every delivered event: a finished stream drains its
+                    // buffered tail before ending, and a cancelled iterator over an
+                    // unfinished stream simply returns nil (loop ends) — so no
+                    // yielded-but-unbuffered event is dropped on handover.
+                    for try await event in stream {
+                        self?.enqueue(.follow(event))
+                    }
+                } catch {
+                    // A drop during buffering is fine: the loop that takes over on
+                    // handover reconnects, and the snapshot already covers content.
+                }
+            }
+        }
+
+        if let stream = await host.establishActivityStream(generation: generation) {
+            activityBufferingTask = Task { [weak self] in
+                do {
+                    for try await _ in stream {
+                        self?.enqueue(.activitySignal)
+                    }
+                } catch {}
+            }
+        }
+    }
+
+    private func stopBuffering() {
+        // Cancel without awaiting: the resync must never block on a live SSE
+        // connection (blocking on the very sockets it is reconciling would defeat
+        // the point). Events the buffering tasks already consumed during the
+        // snapshot-fetch window are in `buffer` and get drained; any event still
+        // in flight is covered by the loop's connect-time catch-up (follow) and
+        // the final list refetch (activity, which has no replay).
+        followBufferingTask?.cancel()
+        activityBufferingTask?.cancel()
+        followBufferingTask = nil
+        activityBufferingTask = nil
+    }
+
+    private func drainBuffer(
+        host: ResyncHost,
+        selectedConversationID: String?,
+        generation: Int
+    ) async {
+        while !buffer.isEmpty {
+            let event = buffer.removeFirst()
+            switch event {
+            case let .follow(followEvent):
+                if let selectedConversationID {
+                    await host.drainFollowEvent(
+                        followEvent,
+                        conversationID: selectedConversationID,
+                        generation: generation
+                    )
+                }
+            case .activitySignal:
+                await host.drainActivitySignal(generation: generation)
+            }
+        }
+    }
+
+    private func enqueue(_ event: BufferedResyncEvent) {
+        guard !bufferOverflowed else {
+            return
+        }
+        if buffer.count >= bufferCapacity {
+            bufferOverflowed = true
+            return
+        }
+        buffer.append(event)
+    }
+
+    private func resetBuffer() {
+        buffer.removeAll(keepingCapacity: true)
+        bufferOverflowed = false
     }
 }

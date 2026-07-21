@@ -3527,12 +3527,42 @@ extension ChatViewModel: ResyncHost {
         try await authManager.refreshIfNeeded()
     }
 
+    func establishFollowStream(
+        conversationID: String,
+        generation: Int
+    ) async -> AsyncThrowingStream<ChatStreamEvent, Error>? {
+        // Reuse the delegate's connect (cursor-resumed, returns after headers). A
+        // failed connect leaves this channel unbuffered; the coordinator's loop
+        // reconnects it on handover.
+        try? await openFollowStream(conversationID: conversationID, generation: generation)
+    }
+
+    func establishActivityStream(
+        generation: Int
+    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
+        try? await openActivityStream(generation: generation)
+    }
+
     func applyListSnapshot() async {
         await refreshConversations()
     }
 
     func applyMessagesSnapshot(conversationID: String) async {
         await mergeNewMessages(conversationID: conversationID)
+    }
+
+    func drainFollowEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        generation: Int
+    ) async {
+        // Same steady-state handler the coordinator's follow loop uses, so
+        // generation fencing and turn routing are identical to the live path.
+        _ = await handleFollowEvent(event, conversationID: conversationID, generation: generation)
+    }
+
+    func drainActivitySignal(generation: Int) async {
+        await activityStreamDidSignal(generation: generation)
     }
 
     func restartStreams() {
