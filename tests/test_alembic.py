@@ -107,21 +107,41 @@ def _postgres_alembic_engine(
             admin_engine.dispose()
 
 
-@pytest.fixture(
-    params=[
-        "sqlite",
-        pytest.param("postgres", marks=pytest.mark.postgres),
-    ]
-)
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrize ``alembic_engine`` over the backends selected via ``--db``.
+
+    Mirrors ``tests/conftest.py``'s handling of ``db_engine`` so the alembic
+    tests honor the same backend selection: ``--db postgres`` runs only the
+    PostgreSQL variant, ``--db sqlite`` runs only SQLite (and never starts
+    ``postgres_container``), and the default runs both. The PostgreSQL parameter
+    also carries the ``postgres`` marker so ``-m 'not postgres'`` deselects it.
+    """
+    if "alembic_engine" not in metafunc.fixturenames:
+        return
+
+    db_option = metafunc.config.getoption("--db")
+    if metafunc.config.getoption("--postgres") and db_option == "all":
+        db_option = "postgres"
+
+    params = []
+    if db_option in {"sqlite", "all"}:
+        params.append(pytest.param("sqlite", id="sqlite"))
+    if db_option in {"postgres", "all"}:
+        params.append(
+            pytest.param("postgres", marks=pytest.mark.postgres, id="postgres")
+        )
+
+    metafunc.parametrize("alembic_engine", params, indirect=True)
+
+
+@pytest.fixture
 def alembic_engine(request: pytest.FixtureRequest) -> Generator[Engine]:
     """Provide an empty database engine for pytest-alembic, per backend.
 
-    Parametrized over SQLite and PostgreSQL so every pytest-alembic built-in
-    test runs against both backends. PostgreSQL reuses the session-scoped
-    ``postgres_container`` fixture (pgserver or ``TEST_DATABASE_URL``). The
-    PostgreSQL parameter carries the ``postgres`` marker so backend-scoped
-    selections (e.g. ``poe test-sqlite``'s ``-m 'not postgres'``) deselect it
-    rather than unexpectedly starting PostgreSQL.
+    The backend ("sqlite" or "postgres") is injected by ``pytest_generate_tests``
+    based on the ``--db``/``--postgres`` selection. PostgreSQL reuses the
+    session-scoped ``postgres_container`` fixture (pgserver or
+    ``TEST_DATABASE_URL``).
     """
     if request.param == "sqlite":
         yield from _sqlite_alembic_engine()
