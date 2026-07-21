@@ -690,7 +690,7 @@ final class AuthManager {
         await dataStore.removeData(ofTypes: types, for: records)
 
         isAuthenticated = false
-        setAuthRequired(false)
+        authRequired = false
     }
 
     // MARK: - Helpers
