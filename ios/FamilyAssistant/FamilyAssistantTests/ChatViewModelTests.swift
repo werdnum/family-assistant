@@ -6141,6 +6141,21 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
         XCTAssertFalse(model.messages.contains { $0.text == "Response stopped." })
 
+        // The composer keys steer/stop mode SOLELY off `isStreaming` (ChatViews:
+        // `if viewModel.isStreaming { steer/stop } else { sendDraft }`). Reattaching
+        // a still-running turn must restore it so the user can't fire a SECOND normal
+        // send into the same conversation (overlapping turns). The preserved session
+        // carries the turn identity a steer/stop targets.
+        XCTAssertTrue(
+            model.isStreaming,
+            "A reattached, still-running turn must restore the composer's steer/stop mode."
+        )
+        XCTAssertEqual(
+            model.activeTurnSessionForTesting?.turnID,
+            postedTurnID.value,
+            "The reattached session's running turn identity must drive steer/stop, not a fresh send."
+        )
+
         followTokenAfterForeground.finish()
         sendSubscription.finish()
     }
@@ -6246,6 +6261,14 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertFalse(
             model.messages.contains { $0.text == "Response stopped." },
             "A turn that finished while backgrounded must reconcile silently, never 'Response stopped.'."
+        )
+        // The turn is NOT in active_turns (finished server-side): the suspended
+        // session is reconciled away and steer/stop mode is NOT restored, so the
+        // composer returns to a normal send.
+        try await waitUntil(timeout: 8) { model.activeTurnSessionForTesting == nil }
+        XCTAssertFalse(
+            model.isStreaming,
+            "A turn that finished while backgrounded must leave the composer in normal-send mode."
         )
     }
 

@@ -110,6 +110,27 @@ final class ChatViewModel {
     // transport drop the send loop recovers from. The lightweight `ActiveChatTurn`
     // identity the steer/stop helpers use is derived via `activeTurnIdentity`.
     @ObservationIgnored private var activeTurnSession: ActiveTurnSession?
+    // The turn id of a suspended session that foreground resync confirmed is STILL
+    // running server-side (its turnID appeared in `active_turns` as running). Set
+    // during reattach and cleared when that turn ends or is reconciled away. While
+    // set, `isStreaming` is restored to `true` so the composer shows steer/stop and
+    // a second submit can't fire a normal overlapping send — but the turn no longer
+    // has a local send transport, so its live rendering flows through the passive
+    // follow-stream path. `isSendActivelyStreaming` distinguishes the two: the
+    // passive render/merge guards key off it (not raw `isStreaming`) so restoring
+    // steer/stop mode never re-suppresses the reattached turn's own follow tokens.
+    @ObservationIgnored private var reattachedRunningTurnID: String?
+
+    /// Whether a local send transport is actively rendering its own turn. True only
+    /// during a live send (`isStreaming` set with no reattached turn); false for a
+    /// turn reattached on foreground, whose rendering the follow stream owns. The
+    /// passive-render / history-merge / follow-drop suppression guards use this
+    /// rather than raw `isStreaming`, so a reattached turn (composer in steer/stop
+    /// mode, `isStreaming == true`) still streams and finalizes through the follow
+    /// path instead of being suppressed as if a send owned it.
+    private var isSendActivelyStreaming: Bool {
+        isStreaming && reattachedRunningTurnID == nil
+    }
 
     /// The lightweight turn identity for the active session, or nil when no turn
     /// is in flight. The steer/stop control dictionaries key on this identity.
@@ -704,6 +725,7 @@ final class ChatViewModel {
 
     private func resetTurnControlState() {
         activeTurnSession = nil
+        reattachedRunningTurnID = nil
         registeredTurnIDs.removeAll()
         pendingStopTurnIDs.removeAll()
         stopRequestedTurnIDs.removeAll()
@@ -773,12 +795,18 @@ final class ChatViewModel {
     /// prefix reconstruction is attempted — tail-only, matching server semantics.
     ///
     /// Deliberately narrow to avoid disturbing the pinned send/follow behavior:
-    /// - a turn THIS device is driving (`activeTurnSession`) is skipped; its send
-    ///   path owns rendering, and a follow bubble would duplicate it;
+    /// - a turn THIS device is actively sending (`isSendActivelyStreaming`) is
+    ///   skipped; its send path owns rendering, and a follow bubble would duplicate
+    ///   it;
     /// - a turn already ended, or already mapped to a live-follow bubble, is
     ///   skipped (the placeholder is idempotent, but this keeps intent clear);
     /// - only turns the server marks running are attached.
+    ///
+    /// A SUSPENDED session (its transport torn down for a background but its
+    /// `ActiveTurnSession` preserved) is reconciled here against the authoritative
+    /// snapshot before the foreign-turn loop: see `reconcileSuspendedSession`.
     private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) {
+        reconcileSuspendedSession(against: activeTurns)
         for turn in activeTurns {
             guard turn.status == "running",
                   turn.turnID != activeTurnSession?.turnID,
@@ -791,6 +819,75 @@ final class ChatViewModel {
             }
             _ = makeLiveFollowBubble(for: turn.turnID)
         }
+    }
+
+    /// Reconcile a SUSPENDED send session (transport gone, `isStreaming` false, but
+    /// `ActiveTurnSession` preserved for reattach — see `suspendActiveSend`) against
+    /// the server's authoritative `active_turns` snapshot on foreground.
+    ///
+    /// - If the session's turn is STILL running server-side, restore the composer's
+    ///   steer/stop mode (`isStreaming = true`) and mark it reattached so its live
+    ///   rendering flows through the follow stream (`isSendActivelyStreaming` stays
+    ///   false, so this restore never re-suppresses the reattach). Without this the
+    ///   composer keys off `isStreaming` alone and would let the user fire a second
+    ///   NORMAL send into the same conversation, overlapping the running turn. A
+    ///   live-follow bubble is created so the always-on follow stream tails the
+    ///   turn's remaining tokens — the send path that used to own rendering is gone.
+    /// - If the session's turn is NO LONGER in `active_turns`, it finished
+    ///   server-side while backgrounded: clear the session so the composer returns
+    ///   to a normal send. The history merge that just ran surfaces the reply.
+    ///
+    /// A no-op while a send is actively streaming (`isSendActivelyStreaming`): that
+    /// session owns its transport and must not be reconciled away mid-send.
+    private func reconcileSuspendedSession(against activeTurns: [ChatActiveTurnInfo]) {
+        guard !isSendActivelyStreaming, let session = activeTurnSession else {
+            return
+        }
+        let stillRunning = activeTurns.contains {
+            $0.turnID == session.turnID && $0.status == "running"
+        }
+        if stillRunning {
+            guard !endedTurnIDs.contains(session.turnID) else {
+                clearReattachedSession()
+                return
+            }
+            reattachedRunningTurnID = session.turnID
+            isStreaming = true
+            if liveFollowBubbleByTurnID[session.turnID] == nil {
+                _ = makeLiveFollowBubble(for: session.turnID)
+            }
+        } else if reattachedRunningTurnID == session.turnID || streamTask == nil {
+            // Not running server-side: either a turn we had reattached that has
+            // since ended, or a suspended session whose turn finished while
+            // backgrounded. Retire it so the composer leaves steer/stop mode.
+            clearReattachedSession()
+        }
+    }
+
+    /// Retire a reattached turn's end-of-turn state observed off the follow stream
+    /// (a reattached turn has no send transport, so `finishStreaming` never runs for
+    /// it). Only fires for the currently reattached turn.
+    private func reconcileReattachedTurnEnded(_ turnID: String) {
+        guard reattachedRunningTurnID == turnID else {
+            return
+        }
+        clearReattachedSession()
+    }
+
+    /// Clear the reattached-session bookkeeping: drop the marker, leave steer/stop
+    /// mode (`isStreaming = false`), and release the preserved session and its
+    /// per-turn control state so the composer returns to a normal send.
+    private func clearReattachedSession() {
+        reattachedRunningTurnID = nil
+        isStreaming = false
+        if let turnID = activeTurnSession?.turnID {
+            registeredTurnIDs.remove(turnID)
+            pendingStopTurnIDs.remove(turnID)
+            stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
+            stopRequestedTurnIDs.remove(turnID)
+            pendingSteersByTurnID[turnID] = nil
+        }
+        activeTurnSession = nil
     }
 
     /// Bubbles for live-follow turns still held — mapped in
@@ -2237,6 +2334,7 @@ final class ChatViewModel {
             }
         }
         isStreaming = false
+        reattachedRunningTurnID = nil
         currentStreamToken = nil
         activeTurnSession = nil
         registeredTurnIDs.removeAll()
@@ -2628,7 +2726,7 @@ final class ChatViewModel {
     /// Skipped while a send is actively streaming: the send path owns the ack
     /// cursor and the history merge then (see ``runSendTurn``).
     private func catchUpPersistedHistory(conversationID: String) async {
-        guard !isStreaming else {
+        guard !isSendActivelyStreaming else {
             return
         }
         await mergeNewMessages(conversationID: conversationID)
@@ -2650,13 +2748,18 @@ final class ChatViewModel {
             // `local_` bubble it can drop and replace with the persisted reply.
             if event.type == .turnEnded, let turnID = event.turnID {
                 finalizeLiveFollowBubble(turnID: turnID, status: event.status)
+                // A turn reattached on foreground has no send transport, so its end
+                // is observed HERE on the follow stream rather than by
+                // `finishStreaming`. Retire the restored steer/stop mode and its
+                // session so the composer returns to a normal send.
+                reconcileReattachedTurnEnded(turnID)
             }
             // Only surface and acknowledge while this device is NOT actively
             // streaming its own turn: during a send the send path owns the ack
             // cursor, and advancing it / acking here for a turn we don't surface
             // would let the hub treat that turn as delivered (ended_seq <=
             // ack_seq) and suppress its disconnect push.
-            if !isStreaming {
+            if !isSendActivelyStreaming {
                 if let seq = event.seq {
                     recordAppliedSeq(seq)
                 }
@@ -2673,7 +2776,7 @@ final class ChatViewModel {
             // (its persisted steering row is reconciled via history), mirroring
             // the token path's `endedTurnIDs` guard, so a lagging copy can't
             // append a duplicate local user bubble.
-            if !isStreaming, let turnID = event.turnID, !endedTurnIDs.contains(turnID) {
+            if !isSendActivelyStreaming, let turnID = event.turnID, !endedTurnIDs.contains(turnID) {
                 if let seq = event.seq {
                     recordAppliedSeq(seq)
                 }
@@ -2707,7 +2810,7 @@ final class ChatViewModel {
     /// applying them here too would double-render. Also skipped once a turn has
     /// ended, so a late out-of-step token can't resurrect a finished turn.
     private func applyLiveFollowToken(_ event: ChatStreamEvent) {
-        guard !isStreaming, let turnID = event.turnID, !endedTurnIDs.contains(turnID) else {
+        guard !isSendActivelyStreaming, let turnID = event.turnID, !endedTurnIDs.contains(turnID) else {
             return
         }
         // `makeLiveFollowBubble` is idempotent and recreates the bubble if a
@@ -3584,7 +3687,7 @@ extension ChatViewModel: SyncStreamDelegate {
         // a drop while a send is actively streaming is not a user-visible
         // disconnect (the send path owns the live connection then and resumes the
         // turn across drops on its own — see `runSendTurn`).
-        !isStreaming
+        !isSendActivelyStreaming
     }
 
     func catchUpFollowHistory(conversationID: String, generation: Int) async {
