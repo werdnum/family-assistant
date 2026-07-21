@@ -704,11 +704,18 @@ final class AuthManager {
 
     @MainActor
     func authorizedRequest(url: URL, method: String) async throws -> URLRequest {
+        let capturedEpoch = authEpoch
         do {
             try await refreshIfNeeded()
         } catch AuthError.authRejected, AuthError.noCredentials {
-            setAuthRequired(true)
-            clearLocalAuthState()
+            // Only clear state if the epoch hasn't changed since we started. If
+            // logout/relogin bumped the epoch while we were in an in-flight refresh,
+            // don't clear the new session's credentials; let the error propagate so
+            // the caller can retry with the current credentials.
+            if isCurrentAuthEpoch(capturedEpoch) {
+                setAuthRequired(true)
+                clearLocalAuthState()
+            }
             throw AuthError.noCredentials
         }
 

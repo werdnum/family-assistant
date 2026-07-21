@@ -1139,6 +1139,12 @@ final class ChatViewModel {
                 attachments: attachments
             )
             startSucceeded = true
+            // The first send of a generated launch draft makes the conversation
+            // server-backed; start following it now so the channel reaches live.
+            if opensGeneratedLaunchDraft {
+                opensGeneratedLaunchDraft = false
+                startLiveEvents()
+            }
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
                 if let stopConversationID = stopAfterRegistrationConversationID {
