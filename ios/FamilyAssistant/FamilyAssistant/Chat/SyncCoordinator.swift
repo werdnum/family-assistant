@@ -281,6 +281,7 @@ final class SyncCoordinator {
                 var deliberateStop = false
                 var connected = false
                 var streamError: Error?
+                var authRefreshAlreadyAttempted = false
                 do {
                     guard let stream = try await self?.delegate?.openFollowStream(
                         conversationID: conversationID,
@@ -320,17 +321,25 @@ final class SyncCoordinator {
                     // would spin the backoff forever. Force one coalesced refresh.
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
-                        if Task.isCancelled {
-                            break
-                        }
-                        switch result {
-                        case .reconnected:
-                            continue
-                        case .terminalAuth:
+                        if authRefreshAlreadyAttempted {
+                            // A second 401/403 after refresh means endpoint-specific auth
+                            // failure (not a token rotation issue). Treat as terminal.
                             deliberateStop = true
-                        case .transientRetry:
                             streamError = error
+                        } else {
+                            authRefreshAlreadyAttempted = true
+                            let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
+                            if Task.isCancelled {
+                                break
+                            }
+                            switch result {
+                            case .reconnected:
+                                continue
+                            case .terminalAuth:
+                                deliberateStop = true
+                            case .transientRetry:
+                                streamError = error
+                            }
                         }
                         if deliberateStop {
                             break
@@ -388,6 +397,7 @@ final class SyncCoordinator {
         activityTask = Task { [weak self] in
             var delay = initialDelay
             while !Task.isCancelled {
+                var authRefreshAlreadyAttempted = false
                 do {
                     guard let stream = try await self?.delegate?.openActivityStream(
                         generation: generation
@@ -409,22 +419,31 @@ final class SyncCoordinator {
                 } catch {
                     var shouldBreak = false
                     // A response-time 401/403 on connect is a terminal auth failure
-                    // (see the follow loop): force one coalesced refresh.
+                    // (see the follow loop): force one coalesced refresh, but only once
+                    // per connection attempt.
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
-                        if Task.isCancelled {
-                            break
-                        }
-                        switch result {
-                        case .reconnected:
-                            continue
-                        case .terminalAuth:
+                        if authRefreshAlreadyAttempted {
+                            // A second 401/403 after refresh means endpoint-specific auth
+                            // failure. Apply the drop and backoff instead of looping.
                             self?.apply(.activityDropped(generation: generation, cleanEOF: false))
-                            shouldBreak = true
-                        case .transientRetry:
-                            // Fall through to backoff+retry below
-                            break
+                            shouldBreak = false
+                        } else {
+                            authRefreshAlreadyAttempted = true
+                            let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
+                            if Task.isCancelled {
+                                break
+                            }
+                            switch result {
+                            case .reconnected:
+                                continue
+                            case .terminalAuth:
+                                self?.apply(.activityDropped(generation: generation, cleanEOF: false))
+                                shouldBreak = true
+                            case .transientRetry:
+                                // Fall through to backoff+retry below
+                                break
+                            }
                         }
                         if shouldBreak {
                             break

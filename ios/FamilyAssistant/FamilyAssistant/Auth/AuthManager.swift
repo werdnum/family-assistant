@@ -562,7 +562,15 @@ final class AuthManager {
                     return
                 }
                 saveTokens(tokenResponse)
-                setAuthRequired(false)
+                if authRequired {
+                    setAuthRequired(false)
+                } else {
+                    // `authRequired` is already false, so `setAuthRequired(false)` will
+                    // not emit a signal. Emit `.ok` explicitly so observers (including
+                    // the sync coordinator) learn the refresh completed successfully
+                    // rather than remaining in `.refreshing` state.
+                    emitAuthStateSignal(.ok)
+                }
             } catch {
                 throw AuthError.transient(underlying: error)
             }
