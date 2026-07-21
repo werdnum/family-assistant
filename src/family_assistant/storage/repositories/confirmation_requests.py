@@ -43,7 +43,6 @@ class ConfirmationRequestRow(TypedDict):
     sink_class: str | None
     static_policy_reason: str | None
     taint_policy_reason: str | None
-    approval_policy_fingerprint: str | None
     decision_only: bool
 
 
@@ -68,7 +67,6 @@ class ConfirmationRequestsRepository(BaseRepository):
         sink_class: str | None = None,
         static_policy_reason: str | None = None,
         taint_policy_reason: str | None = None,
-        approval_policy_fingerprint: str | None = None,
         decision_only: bool = False,
     ) -> ConfirmationRequestRow:
         """Create a pending confirmation request."""
@@ -94,7 +92,6 @@ class ConfirmationRequestsRepository(BaseRepository):
                 sink_class=sink_class,
                 static_policy_reason=static_policy_reason,
                 taint_policy_reason=taint_policy_reason,
-                approval_policy_fingerprint=approval_policy_fingerprint,
                 expires_at=expires_at,
                 created_at=now,
                 updated_at=now,

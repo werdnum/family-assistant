@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -54,27 +52,6 @@ class ConfirmationAlreadyResolvedError(ConfirmationError):
     """Raised when a request has already been resolved incompatibly."""
 
 
-def build_confirmation_policy_fingerprint(
-    *,
-    tool_name: str,
-    tool_call_id: str | None,
-    processing_profile_id: str | None,
-    taint_state_json: TaintMetadata | None,
-) -> str:
-    """Build a stable fingerprint for the approval context."""
-    payload = {
-        "tool_name": tool_name,
-        "tool_call_id": tool_call_id,
-        "processing_profile_id": processing_profile_id,
-        "taint_version": taint_state_json.get("version") if taint_state_json else None,
-        "taint_max_tier": (
-            taint_state_json.get("max_tier") if taint_state_json else None
-        ),
-    }
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
-
 class ConfirmationService:
     """Service that owns durable confirmation transactions and authorization."""
 
@@ -104,7 +81,6 @@ class ConfirmationService:
         sink_class: str | None = None,
         static_policy_reason: str | None = None,
         taint_policy_reason: str | None = None,
-        approval_policy_fingerprint: str | None = None,
         decision_only: bool = False,
     ) -> ConfirmationRequestRow:
         """Create a durable pending confirmation request.
@@ -131,7 +107,6 @@ class ConfirmationService:
                 sink_class=sink_class,
                 static_policy_reason=static_policy_reason,
                 taint_policy_reason=taint_policy_reason,
-                approval_policy_fingerprint=approval_policy_fingerprint,
                 decision_only=decision_only,
             )
         # Notify only after the request transaction has committed, so a recipient that immediately
@@ -394,7 +369,6 @@ async def create_durable_confirmation(
     sink_class: str | None = None,
     static_policy_reason: str | None = None,
     taint_policy_reason: str | None = None,
-    approval_policy_fingerprint: str | None = None,
 ) -> ConfirmationRequestRow:
     """Record a durable pending confirmation for a tool that needs approval.
 
@@ -428,5 +402,4 @@ async def create_durable_confirmation(
         sink_class=sink_class,
         static_policy_reason=static_policy_reason,
         taint_policy_reason=taint_policy_reason,
-        approval_policy_fingerprint=approval_policy_fingerprint,
     )

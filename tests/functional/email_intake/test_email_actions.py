@@ -819,7 +819,6 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
         assert "From your email" in request["confirmation_prompt"]
         assert request["taint_state_json"] is not None
         assert request["taint_state_json"].get("max_tier") == "unknown_external"
-        assert request["approval_policy_fingerprint"]
         note_content = request["tool_args_json"]["content"]
         assert isinstance(note_content, str)
         assert "Special instruction for agents" not in note_content

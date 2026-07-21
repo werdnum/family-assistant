@@ -25,7 +25,6 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.confirmation_service import (
     CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-    build_confirmation_policy_fingerprint,
 )
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
@@ -101,7 +100,6 @@ class RecordingConfirmationService:
         decision_only: bool = False,
         processing_profile_id: str | None = None,
         taint_state_json: dict[str, object] | None = None,
-        approval_policy_fingerprint: str | None = None,
     ) -> dict[str, object]:
         self.last_created_request = {
             "target_user_id": target_user_id,
@@ -114,7 +112,6 @@ class RecordingConfirmationService:
             "decision_only": decision_only,
             "processing_profile_id": processing_profile_id,
             "taint_state_json": taint_state_json,
-            "approval_policy_fingerprint": approval_policy_fingerprint,
         }
         return {"id": self.created_request_id}
 
@@ -363,14 +360,6 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
     assert (
         confirmation_service.last_created_request["processing_profile_id"]
         == "runtime-taint-test"
-    )
-    assert confirmation_service.last_created_request[
-        "approval_policy_fingerprint"
-    ] == build_confirmation_policy_fingerprint(
-        tool_name="record_tool",
-        tool_call_id="call-id",
-        processing_profile_id="runtime-taint-test",
-        taint_state_json=taint_state_json,
     )
 
     pending = manager.pending_confirmations[confirmation_service.created_request_id]

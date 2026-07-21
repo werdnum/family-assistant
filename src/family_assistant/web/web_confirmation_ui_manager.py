@@ -25,7 +25,6 @@ from family_assistant.services.confirmation_service import (
     ConfirmationAuthorizationError,
     ConfirmationError,
     ConfirmationNotFoundError,
-    build_confirmation_policy_fingerprint,
 )
 from family_assistant.services.confirmation_wait import (
     ConfirmationWaitStrategy,
@@ -96,12 +95,6 @@ class WebConfirmationUIManager:
             decision_only=not wait_for_durable_execution,
             processing_profile_id=processing_profile_id,
             taint_state_json=taint_state_json,
-            approval_policy_fingerprint=build_confirmation_policy_fingerprint(
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-                processing_profile_id=processing_profile_id,
-                taint_state_json=taint_state_json,
-            ),
         )
         request_id = durable_request["id"]
         if wait_for_durable_execution:
