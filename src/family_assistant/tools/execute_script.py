@@ -537,7 +537,7 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "**LLM API Functions:**\n"
                 "• llm(prompt, system=None, model=None) - One-shot LLM call, returns text\n"
                 "• llm_json(prompt, schema=None, system=None, model=None) - One-shot LLM call, returns parsed JSON\n"
-                "Default model: gemini-3.5-flash. Useful for summarisation, data extraction, classification.\n\n"
+                "Default model: gemini-3.6-flash. Useful for summarisation, data extraction, classification.\n\n"
                 "**Attachment API Functions:**\n"
                 "• attachment_get(attachment_id) - Get attachment metadata by ID\n"
                 "• attachment_create(content, filename, description, mime_type) - Create new attachment\n"

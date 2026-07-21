@@ -24,7 +24,7 @@ class TestMultimodalFunctionResponses:
     @pytest.fixture
     def client_v3(self) -> GoogleGenAIClient:
         """Create a GoogleGenAIClient instance for Gemini 3.0 (multimodal tool support)."""
-        return GoogleGenAIClient(api_key="test_key", model="gemini-3.5-flash")
+        return GoogleGenAIClient(api_key="test_key", model="gemini-3.6-flash")
 
     def test_supports_multimodal_tools(
         self, client_v2: GoogleGenAIClient, client_v3: GoogleGenAIClient
@@ -53,7 +53,7 @@ class TestMultimodalFunctionResponses:
 
         assert len(contents) == 1
         content = cast("types.Content", contents[0])
-        assert content.role == "function"
+        assert content.role == "user"
         assert content.parts is not None
         assert len(content.parts) == 1
         part = cast("types.Part", content.parts[0])
@@ -146,15 +146,13 @@ class TestMultimodalFunctionResponses:
         assert fr.parts[1].inline_data.data == b"pdf1"
         assert fr.parts[1].inline_data.mime_type == "application/pdf"
 
-    def test_mixed_parallel_tool_responses_interleave_roles_v3(
+    def test_mixed_parallel_tool_responses_use_user_role_v3(
         self, client_v3: GoogleGenAIClient
     ) -> None:
-        """Parallel tool calls with mixed results keep each response's own role.
+        """Parallel tool calls deliver every function response as a user turn.
 
-        When the model emits parallel calls and one result is text-only while
-        another carries an image, the text response uses the "function" role and
-        the image response uses the "user" role. Gemini accepts the resulting
-        ``model -> function -> user`` sequence (verified against the live API).
+        Gemini 3.6 rejects the legacy ``function`` role, including for text-only
+        tool responses, while the ``user`` role accepts text and inline media.
         """
         text_tool = ToolMessage(
             tool_call_id="c1", content="The note says HELLO.", name="get_note"
@@ -191,4 +189,4 @@ class TestMultimodalFunctionResponses:
         contents = client_v3._convert_messages_to_genai_format(messages)
 
         roles = [cast("types.Content", c).role for c in contents]
-        assert roles == ["model", "function", "user"]
+        assert roles == ["model", "user", "user"]

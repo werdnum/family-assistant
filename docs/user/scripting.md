@@ -577,7 +577,7 @@ raw = base64_decode_bytes(encoded)
 ### LLM API Functions
 
 Scripts can make one-shot LLM calls for summarisation, data extraction, classification, and similar
-tasks. The default model is `gemini-3.5-flash`.
+tasks. The default model is `gemini-3.6-flash`.
 
 #### `llm(prompt, system=None, model=None)`
 

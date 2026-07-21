@@ -1,0 +1,289 @@
+{
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_multi_turn_conversation_gemini[google-gemini-3.6-flash]/mldev",
+  "interactions": [
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "My favorite color is blue. Remember this."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "I'll remember that your favorite color is blue."
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "What's my favorite color?"
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "Content-Type": "text/event-stream",
+          "Content-Disposition": "attachment",
+          "Vary": "Origin, X-Origin, Referer",
+          "Transfer-Encoding": "chunked",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Your favorite color"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 3,
+              "totalTokenCount": 159,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 30
+                }
+              ],
+              "thoughtsTokenCount": 126,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.6-flash",
+            "responseId": "6phfaq-dAbbwnsEP0cSPuAQ"
+          },
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": " is blue!"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 6,
+              "totalTokenCount": 162,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 30
+                }
+              ],
+              "thoughtsTokenCount": 126,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.6-flash",
+            "responseId": "6phfaq-dAbbwnsEP0cSPuAQ"
+          },
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "",
+                      "thoughtSignature": "ErQFCrEFARFNMg/5pTR3nkcmCgLpLXRWwtA2XPyPZV1UV/lthhQxHVscpY+bArtmOYgNM+uI114bOrCQtpimtjYlYUZGA+Q/ozIVthjCybRsnTC8wehsIcao5426XuUzl3DL0kMB31ysZXjFH5W9k/mCanFZQkCCf3Fxyw2c24YEISJPRgd7xskkk5bqOg8BvkrnfmuQhDpzlabb3tIr1kYRVDhuXqQ+gYI8cWCg7WfQkb9PlULaFQ7wLliMqoW8jq7faB+P/9vJo2064yEmds7RuFYGgfGV06yqkscYdBcyfX1CyjssYLo42GHU1Z80Wz227zOCwmwP3LUZqjwYEPGMBpov1OO0DY4vGmyZeaYKpljQaooh7nBqou6PjoYrpxZvW1KQJhllO87xuz1+uVMT6SjACvuTkf8zdLSQTfvGwzijjYayQa/Aw9/fJql9jEH9SSwFpHW/6NWJJLYERib3O9z2gAdtVci+CR11UMcJO2Zgn2ykfDGG9LTInmeDISTDn5MvcfswM/mLM0UhZTfzFDPfRiRTh+rhv2D+CS0m6zu962UqaI0TkyqWvVeKhgSQ233HGQ9Xjm9M6AdtCFGXZdwtUxt10+PNxH9m1lxLO5fJRa+gKMZKPpl4ZqelrtZzHNDw9qmuJVJd90SJtBW00bgpajqPzhUGgpfYWpDk11w1Jv3Osh+E4txKMySjBCgxi2+xWNPYPs9TuxSUAsuJUCK1IuLviR6gM4lQ5kJo9uQmIXVuCvTl6dDwndCWiCtn6USIR6Dkfh2mXxCkBGpT7OmfyjqZXb0Zmrq5HQ5Ox2GCYeI8jClvim0ZasZwInH0y4VjspKP8n4phkw1LsLztr4YpHlE00vK98hBOP3x7WpwP75fO9XjOI2efPLUPonGUdWjwPEb3W08aKf4rgxIPwPT4GM="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 6,
+              "totalTokenCount": 162,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 30
+                }
+              ],
+              "thoughtsTokenCount": 126,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.6-flash",
+            "responseId": "6phfaq-dAbbwnsEP0cSPuAQ"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Your favorite color"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.6-flash",
+            "response_id": "6phfaq-dAbbwnsEP0cSPuAQ",
+            "usage_metadata": {
+              "candidates_token_count": 3,
+              "prompt_token_count": 30,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 30
+                }
+              ],
+              "thoughts_token_count": 126,
+              "total_token_count": 159
+            }
+          },
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": " is blue!"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.6-flash",
+            "response_id": "6phfaq-dAbbwnsEP0cSPuAQ",
+            "usage_metadata": {
+              "candidates_token_count": 6,
+              "prompt_token_count": 30,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 30
+                }
+              ],
+              "thoughts_token_count": 126,
+              "total_token_count": 162
+            }
+          },
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": "",
+                      "thought_signature": "ErQFCrEFARFNMg_5pTR3nkcmCgLpLXRWwtA2XPyPZV1UV_lthhQxHVscpY-bArtmOYgNM-uI114bOrCQtpimtjYlYUZGA-Q_ozIVthjCybRsnTC8wehsIcao5426XuUzl3DL0kMB31ysZXjFH5W9k_mCanFZQkCCf3Fxyw2c24YEISJPRgd7xskkk5bqOg8BvkrnfmuQhDpzlabb3tIr1kYRVDhuXqQ-gYI8cWCg7WfQkb9PlULaFQ7wLliMqoW8jq7faB-P_9vJo2064yEmds7RuFYGgfGV06yqkscYdBcyfX1CyjssYLo42GHU1Z80Wz227zOCwmwP3LUZqjwYEPGMBpov1OO0DY4vGmyZeaYKpljQaooh7nBqou6PjoYrpxZvW1KQJhllO87xuz1-uVMT6SjACvuTkf8zdLSQTfvGwzijjYayQa_Aw9_fJql9jEH9SSwFpHW_6NWJJLYERib3O9z2gAdtVci-CR11UMcJO2Zgn2ykfDGG9LTInmeDISTDn5MvcfswM_mLM0UhZTfzFDPfRiRTh-rhv2D-CS0m6zu962UqaI0TkyqWvVeKhgSQ233HGQ9Xjm9M6AdtCFGXZdwtUxt10-PNxH9m1lxLO5fJRa-gKMZKPpl4ZqelrtZzHNDw9qmuJVJd90SJtBW00bgpajqPzhUGgpfYWpDk11w1Jv3Osh-E4txKMySjBCgxi2-xWNPYPs9TuxSUAsuJUCK1IuLviR6gM4lQ5kJo9uQmIXVuCvTl6dDwndCWiCtn6USIR6Dkfh2mXxCkBGpT7OmfyjqZXb0Zmrq5HQ5Ox2GCYeI8jClvim0ZasZwInH0y4VjspKP8n4phkw1LsLztr4YpHlE00vK98hBOP3x7WpwP75fO9XjOI2efPLUPonGUdWjwPEb3W08aKf4rgxIPwPT4GM="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.6-flash",
+            "response_id": "6phfaq-dAbbwnsEP0cSPuAQ",
+            "usage_metadata": {
+              "candidates_token_count": 6,
+              "prompt_token_count": 30,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 30
+                }
+              ],
+              "thoughts_token_count": 126,
+              "total_token_count": 162
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

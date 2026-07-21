@@ -48,11 +48,11 @@ service_profiles:
     classifier_router:
       classifier:
         provider: "google"
-        model: "gemini-3.5-flash"
+        model: "gemini-3.6-flash"
         retry_config:
           primary:
             provider: "google"
-            model: "gemini-3.5-flash"
+            model: "gemini-3.6-flash"
           fallback:
             provider: "openai"
             model: "gpt-5.5"
@@ -75,7 +75,7 @@ service_profiles:
     internal: true
     processing_config:
       provider: "google"
-      llm_model: "gemini-3.5-flash"
+      llm_model: "gemini-3.6-flash"
 
   - id: "default_assistant_balanced"
     internal: true

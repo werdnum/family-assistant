@@ -1,10 +1,10 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_google_streaming_with_multiturns_and_tool_calls[google-gemini-3.5-flash]/mldev",
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_system_message_gemini[google-gemini-3.6-flash]/mldev",
   "interactions": [
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -17,7 +17,7 @@
               {
                 "parts": [
                   {
-                    "text": "What's the weather in Paris?"
+                    "text": "System: You are a helpful assistant that responds in a very concise manner."
                   }
                 ],
                 "role": "user"
@@ -25,74 +25,10 @@
               {
                 "parts": [
                   {
-                    "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=",
-                    "functionCall": {
-                      "id": "call_123",
-                      "args": {
-                        "location": "Paris, France",
-                        "unit": "celsius"
-                      },
-                      "name": "get_weather"
-                    }
+                    "text": "What is the capital of France? Reply in exactly one word."
                   }
                 ],
-                "role": "model"
-              },
-              {
-                "parts": [
-                  {
-                    "functionResponse": {
-                      "id": "call_123",
-                      "name": "get_weather",
-                      "response": {
-                        "result": "The weather in Paris is 18°C and sunny."
-                      }
-                    }
-                  }
-                ],
-                "role": "function"
-              }
-            ],
-            "tools": [
-              {
-                "functionDeclarations": [
-                  {
-                    "description": "Get current weather for a location",
-                    "name": "get_weather",
-                    "parameters": {
-                      "properties": {
-                        "location": {
-                          "description": "The city and country",
-                          "type": "STRING"
-                        },
-                        "unit": {
-                          "description": "Temperature unit",
-                          "type": "STRING"
-                        }
-                      },
-                      "required": [
-                        "location"
-                      ],
-                      "type": "OBJECT"
-                    }
-                  },
-                  {
-                    "description": "Perform mathematical calculations",
-                    "name": "calculate",
-                    "parameters": {
-                      "properties": {
-                        "expression": {
-                          "description": "Mathematical expression to evaluate",
-                          "type": "STRING"
-                        }
-                      },
-                      "required": [
-                        "expression"
-                      ],
-                      "type": "OBJECT"
-                    }
-                  }
-                ]
+                "role": "user"
               }
             ],
             "generationConfig": {
@@ -121,7 +57,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The weather in Paris"
+                      "text": "Paris"
                     }
                   ],
                   "role": "model"
@@ -130,18 +66,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 152,
-              "candidatesTokenCount": 4,
-              "totalTokenCount": 156,
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 150,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 152
+                  "tokenCount": 30
                 }
-              ]
+              ],
+              "thoughtsTokenCount": 119,
+              "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.5-flash",
-            "responseId": "3eguaY7vOr-exN8Pyeic4Aw"
+            "modelVersion": "gemini-3.6-flash",
+            "responseId": "65hfavnqA-makdUP4p-NiQw"
           },
           {
             "candidates": [
@@ -149,7 +87,8 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 18°C and sunny."
+                      "text": "",
+                      "thoughtSignature": "Er4ECrsEARFNMg/cQdKuKDssVclTDmXfHWKiZpwJprH0Y3v834Tg7Mrl9JySq3ABGvbR+Sgk/JUTWI9H3BZ9WRHSywf1C3MLgGc80yof1/ulrWiJW7r2aeDEkPAV3HazvnEW4cWgz/6eUqpnFM76WT4TIPALvcGjeLF1OZD4iTVvJUiX7E+J/x4MeZR+EmE2YfYsTclrNJcuKQxSntKNXndaXqwfem9ApqcXU6FJXogxR4nFFt0To7Jq7WT9IsICeJSa1ePCH4Q0EeEFE/U9XaQIUcIx3uh7rgSmPukHEdAVYT1QHLMEe2Vyg1YSX7KImUJbkCxE32nZrlmUYKB/YYMUo0FDRvRkwZnq9jUCw8b5HTqWAlPCglbFUj9GxPJloRS9BGedkpuOLVMdXClBlhIwf4uT5xQm7oi8bDD754A81yVG4Yo8zcuivv+2oaVGfOuBaYpSCsOVOqdiNUFNCuKh1+/4W5rTlUnm+lVj4WUGBd5zWxJOfxbMXzZlqG2THYCS/GMU/cmZ40xAY9IJBMUm9dj+Ei17rjafcvQe2HMd2CNj/i6XZ9X8s0rH6USbZCFAuYcGMnKmUub/XC6xl58bIE95HLhsS75an9SfnsgEBVcS+vluxEuoGnhriiPnmU3H9aiSNIU2pDwK8is/s4Lj7hch9f/Qdkvvz9AZ0CrJPYaqC6AOI/gR9P1E0gcACi3pbROLTVJ2NTrk4iLhHlUvxx9rnimzb620MJm7mlDHrIe+0ZDmdTCCAnWS0Rks4g=="
                     }
                   ],
                   "role": "model"
@@ -159,18 +98,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 152,
-              "candidatesTokenCount": 13,
-              "totalTokenCount": 165,
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 150,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 152
+                  "tokenCount": 30
                 }
-              ]
+              ],
+              "thoughtsTokenCount": 119,
+              "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.5-flash",
-            "responseId": "3eguaY7vOr-exN8Pyeic4Aw"
+            "modelVersion": "gemini-3.6-flash",
+            "responseId": "65hfavnqA-makdUP4p-NiQw"
           }
         ],
         "byte_segments": [],
@@ -194,7 +135,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "The weather in Paris"
+                      "text": "Paris"
                     }
                   ],
                   "role": "model"
@@ -202,18 +143,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.5-flash",
-            "response_id": "3eguaY7vOr-exN8Pyeic4Aw",
+            "model_version": "gemini-3.6-flash",
+            "response_id": "65hfavnqA-makdUP4p-NiQw",
             "usage_metadata": {
-              "candidates_token_count": 4,
-              "prompt_token_count": 152,
+              "candidates_token_count": 1,
+              "prompt_token_count": 30,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 152
+                  "token_count": 30
                 }
               ],
-              "total_token_count": 156
+              "thoughts_token_count": 119,
+              "total_token_count": 150
             }
           },
           {
@@ -235,7 +177,8 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " is 18°C and sunny."
+                      "text": "",
+                      "thought_signature": "Er4ECrsEARFNMg_cQdKuKDssVclTDmXfHWKiZpwJprH0Y3v834Tg7Mrl9JySq3ABGvbR-Sgk_JUTWI9H3BZ9WRHSywf1C3MLgGc80yof1_ulrWiJW7r2aeDEkPAV3HazvnEW4cWgz_6eUqpnFM76WT4TIPALvcGjeLF1OZD4iTVvJUiX7E-J_x4MeZR-EmE2YfYsTclrNJcuKQxSntKNXndaXqwfem9ApqcXU6FJXogxR4nFFt0To7Jq7WT9IsICeJSa1ePCH4Q0EeEFE_U9XaQIUcIx3uh7rgSmPukHEdAVYT1QHLMEe2Vyg1YSX7KImUJbkCxE32nZrlmUYKB_YYMUo0FDRvRkwZnq9jUCw8b5HTqWAlPCglbFUj9GxPJloRS9BGedkpuOLVMdXClBlhIwf4uT5xQm7oi8bDD754A81yVG4Yo8zcuivv-2oaVGfOuBaYpSCsOVOqdiNUFNCuKh1-_4W5rTlUnm-lVj4WUGBd5zWxJOfxbMXzZlqG2THYCS_GMU_cmZ40xAY9IJBMUm9dj-Ei17rjafcvQe2HMd2CNj_i6XZ9X8s0rH6USbZCFAuYcGMnKmUub_XC6xl58bIE95HLhsS75an9SfnsgEBVcS-vluxEuoGnhriiPnmU3H9aiSNIU2pDwK8is_s4Lj7hch9f_Qdkvvz9AZ0CrJPYaqC6AOI_gR9P1E0gcACi3pbROLTVJ2NTrk4iLhHlUvxx9rnimzb620MJm7mlDHrIe-0ZDmdTCCAnWS0Rks4g=="
                     }
                   ],
                   "role": "model"
@@ -244,18 +187,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.5-flash",
-            "response_id": "3eguaY7vOr-exN8Pyeic4Aw",
+            "model_version": "gemini-3.6-flash",
+            "response_id": "65hfavnqA-makdUP4p-NiQw",
             "usage_metadata": {
-              "candidates_token_count": 13,
-              "prompt_token_count": 152,
+              "candidates_token_count": 1,
+              "prompt_token_count": 30,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 152
+                  "token_count": 30
                 }
               ],
-              "total_token_count": 165
+              "thoughts_token_count": 119,
+              "total_token_count": 150
             }
           }
         ]

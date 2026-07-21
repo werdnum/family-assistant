@@ -895,7 +895,7 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3.5-flash"},
+                    "primary": {"provider": "google", "model": "gemini-3.6-flash"},
                     "fallback": {"provider": "openai", "model": "gpt-5.5"},
                 },
             },
@@ -917,7 +917,7 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3.5-flash"},
+                    "primary": {"provider": "google", "model": "gemini-3.6-flash"},
                 },
             },
             "tools_config": {},
@@ -939,7 +939,7 @@ class TestResolveServiceProfile:
     def test_profile_without_model_inherits_retry_config(self) -> None:
         """A profile declaring no model keeps the inherited default retry chain."""
         default_retry = {
-            "primary": {"provider": "google", "model": "gemini-3.5-flash"},
+            "primary": {"provider": "google", "model": "gemini-3.6-flash"},
         }
         default_settings: dict[str, Any] = {
             "processing_config": {"timezone": "UTC", "retry_config": default_retry},

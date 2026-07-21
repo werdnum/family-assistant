@@ -872,17 +872,10 @@ class GoogleGenAIClient(BaseLLMClient):
                 part = types.Part(
                     function_response=types.FunctionResponse(**function_response_args),
                 )
-                # A function response that carries inline media must be delivered
-                # in a "user" turn: Gemini rejects a "function"-role Content that
-                # contains multimodal parts with a generic 400 INVALID_ARGUMENT.
-                # Text-only function responses use the standard "function" role.
-                has_multimodal_parts = "parts" in function_response_args
-                contents.append(
-                    types.Content(
-                        role="user" if has_multimodal_parts else "function",
-                        parts=[part],
-                    )
-                )
+                # Function responses are user turns in the Gemini conversation
+                # schema. Gemini 3.6 rejects the legacy "function" role even for
+                # text-only responses.
+                contents.append(types.Content(role="user", parts=[part]))
 
         return contents
 
