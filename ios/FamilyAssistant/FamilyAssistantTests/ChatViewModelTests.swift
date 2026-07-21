@@ -1906,6 +1906,64 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.stopWarningMessage, "Stop could not be confirmed. Pending approvals from this turn may still be active.")
     }
 
+    func testStopQueuedBeforeRegistrationFailureTagsAlertAsStopTurnFailed() async throws {
+        // A stop queued before registration, applied after startTurn succeeds,
+        // whose retried cancel throws a non-retryable transport error surfaces
+        // through `appendStreamError`. That breadcrumb must be reason-tagged
+        // `stop_turn_failed`, not miscounted as a `stream_error`.
+        let postedTurnID = AtomicString()
+        let startRequests = AtomicCounter()
+        let cancelRequests = AtomicCounter()
+        let releaseStart = DispatchSemaphore(value: 0)
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                startRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                _ = releaseStart.wait(timeout: .now() + 5)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_stop_thrown","first_seq":0}"#
+                )
+            case ("POST", _)
+                where path.hasPrefix("/api/v1/chat/turns/") && path.hasSuffix("/cancel"):
+                cancelRequests.increment()
+                // A non-retryable transport error propagates out of the retry
+                // loop as a throw, driving the queued-stop failure path.
+                throw URLError(.cannotParseResponse)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-alert-stop-thrown-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_stop_thrown",
+            spoolDirectory: spoolDirectory
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && startRequests.value == 1 }
+
+        await model.stopTurn()
+        releaseStart.signal()
+        try await waitUntil { cancelRequests.value >= 1 }
+        try await waitUntil { !model.isStreaming }
+
+        let reports = try await waitForSpooledReports(
+            component: "Chat.alertPresented",
+            in: spoolDirectory
+        )
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertEqual(reports.first?.extraData?["reason"], "stop_turn_failed")
+    }
+
     func testSteerBeforeRegistrationPostsAfterStartCompletes() async throws {
         let stream = HangingStream()
         let postedTurnID = AtomicString()
@@ -6860,6 +6918,371 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(extra["url_error_code"], "networkConnectionLost")
     }
 
+    func testFatalStreamErrorEmitsAlertPresentedBreadcrumb() async throws {
+        // The fatal subscribe path surfaces the shared modal; it must emit exactly
+        // one reason-tagged `Chat.alertPresented` breadcrumb so the popup rate is
+        // measurable. Mirrors `testSendFatalSubscribeErrorSurfacesError`.
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-alert-401","conversation_id":"web_conv_alert_401","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-alert-stream-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_alert_401",
+            spoolDirectory: spoolDirectory
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        let reports = try await waitForSpooledReports(
+            component: "Chat.alertPresented",
+            in: spoolDirectory
+        )
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertEqual(reports.first?.extraData?["reason"], "stream_error")
+    }
+
+    func testRecentConversationsRefreshFailureEmitsAlertPresentedBreadcrumb() async throws {
+        // The bootstrap conversation load succeeds; the activity-ping-triggered
+        // recent-list refresh then fails and raises the modal. The breadcrumb must
+        // be reason-tagged `recent_conversations_refresh`.
+        let conversationsRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .text(
+                    """
+                    event: conversation_activity
+                    data: {"conversation_id":"web_conv_pinged","reason":"turn_started"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                // First fetch (bootstrap) succeeds; the refresh triggered by the
+                // activity ping fails, raising the modal.
+                if conversationsRequests.increment() <= 1 {
+                    return .json(#"{"conversations":[],"count":0}"#)
+                }
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-alert-recent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+        await model.bootstrap()
+
+        let reports = try await waitForSpooledReports(
+            component: "Chat.alertPresented",
+            in: spoolDirectory
+        )
+        XCTAssertEqual(reports.first?.extraData?["reason"], "recent_conversations_refresh")
+    }
+
+    func testPendingApprovalsPollFailureEmitsAlertPresentedBreadcrumb() async throws {
+        // The 15-second pending-approvals poll runs independently of the streams;
+        // its failure raises the shared modal and must be tagged
+        // `pending_approvals_poll`.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .text("")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-alert-approvals-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+        await model.bootstrap()
+
+        let reports = try await waitForSpooledReports(
+            component: "Chat.alertPresented",
+            in: spoolDirectory
+        )
+        XCTAssertTrue(reports.contains { $0.extraData?["reason"] == "pending_approvals_poll" })
+    }
+
+    func testAlertPresentedBreadcrumbFiresOnlyOnNewPresentation() async throws {
+        // A failure while the modal is already open replaces its text without a
+        // new presentation, so it must not add a second breadcrumb.
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-alert-replace-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+
+        model.presentErrorAlert("first failure", reason: .pendingApprovalsPoll)
+        model.presentErrorAlert("second failure", reason: .recentConversationsRefresh)
+        XCTAssertEqual(model.errorMessage, "second failure")
+
+        _ = try await waitForSpooledReports(component: "Chat.alertPresented", in: spoolDirectory)
+        try await Task.sleep(for: .milliseconds(300))
+        let reports = spooledReports(in: spoolDirectory)
+            .filter { $0.componentName == "Chat.alertPresented" }
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertEqual(reports.first?.extraData?["reason"], "pending_approvals_poll")
+    }
+
+    func testAlertPresentedBreadcrumbBypassesDedupeAcrossPresentations() async throws {
+        // Dismissing the modal and hitting the identical failure again is a real
+        // second presentation; the reporter's dedupe window must not swallow it.
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-alert-dedupe-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory,
+            dedupeWindow: 60
+        )
+
+        model.presentErrorAlert("same failure", reason: .pendingApprovalsPoll)
+        model.errorMessage = nil
+        model.presentErrorAlert("same failure", reason: .pendingApprovalsPoll)
+
+        try await waitUntil(timeout: 4) {
+            self.spooledReports(in: spoolDirectory)
+                .filter { $0.componentName == "Chat.alertPresented" }
+                .count == 2
+        }
+    }
+
+    func testMidTurnDropRecoveryEmitsNoAlertPresentedBreadcrumb() async throws {
+        // Characterization: a mid-turn transport drop recovers by reloading
+        // history. It WILL spool a `Chat.streamDrop` breadcrumb, but it must NOT
+        // present the modal, so no `Chat.alertPresented` breadcrumb is spooled.
+        var streamedTurnID = "turn-drop-silent"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_drop_silent","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_drop_silent/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_drop_silent",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Durable reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .droppedStream(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-silent-drop-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_drop_silent",
+            spoolDirectory: spoolDirectory,
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001,
+            maxConsecutiveStreamResumes: 2,
+            streamResumeLivenessSeconds: 60
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Durable reply"])
+        XCTAssertNil(model.errorMessage)
+        // A stream-drop breadcrumb is expected; a modal-alert breadcrumb is not.
+        _ = try await waitForSpooledReports(component: "Chat.streamDrop", in: spoolDirectory)
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" }
+        )
+    }
+
+    func testSend410RecoveryEmitsNoAlertPresentedBreadcrumb() async throws {
+        // Characterization: a 410 on subscribe reloads history silently — no modal,
+        // so no `Chat.alertPresented` breadcrumb.
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-410-silent","conversation_id":"web_conv_410_silent","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_410_silent/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_410_silent",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Persisted reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .json(#"{"detail":"events rotated out of buffer"}"#, statusCode: 410)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-silent-410-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_410_silent",
+            spoolDirectory: spoolDirectory
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Persisted reply"])
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" }
+        )
+    }
+
+    func testTransientServerErrorRecoveryEmitsNoAlertPresentedBreadcrumb() async throws {
+        // Characterization: a transient 5xx on subscribe resubscribes and completes
+        // silently — no modal, so no `Chat.alertPresented` breadcrumb.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-5xx-silent"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_5xx_silent","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_5xx_silent/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_5xx_silent",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Recovered reply","timestamp":"2026-06-08T12:00:01Z"}
+                      ],
+                      "count":2,
+                      "total_messages":2,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                if request.httpMethod == "GET",
+                   path == "/api/v1/chat/conversations/web_conv_5xx_silent/stream" {
+                    if streamRequests.increment() == 1 {
+                        return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+                    }
+                    return .text(
+                        """
+                        event: turn_ended
+                        data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":1}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-silent-5xx-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_5xx_silent",
+            spoolDirectory: spoolDirectory
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(streamRequests.value, 2)
+        XCTAssertEqual(model.messages.map(\.text), ["Hi", "Recovered reply"])
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" }
+        )
+    }
+
     /// Poll a reporter spool directory until a report lands, then decode it.
     private func waitForSpooledReport(
         in directory: URL,
@@ -6884,6 +7307,68 @@ final class ChatViewModelTests: XCTestCase {
         ))?.map(\.lastPathComponent) ?? ["<dir missing>"]
         XCTFail("Timed out waiting for a spooled error report. Dir contents: \(listing)")
         throw ChatAPIError.validation("no spooled report")
+    }
+
+    /// Poll a reporter spool directory until at least one report with the given
+    /// component lands, then return every matching report. Reports with other
+    /// components (e.g. `Chat.streamDrop`) are ignored so a recovery breadcrumb
+    /// doesn't satisfy an assertion about the modal-alert breadcrumb.
+    private func waitForSpooledReports(
+        component: String,
+        in directory: URL,
+        timeout: TimeInterval = 4
+    ) async throws -> [ErrorReportPayload] {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let matching = spooledReports(in: directory).filter { $0.componentName == component }
+            if !matching.isEmpty {
+                return matching
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let components = spooledReports(in: directory).map { $0.componentName ?? "<nil>" }
+        XCTFail("Timed out waiting for a spooled \(component) report. Spooled: \(components)")
+        throw ChatAPIError.validation("no spooled report")
+    }
+
+    /// Decode every report currently spooled in the directory.
+    private func spooledReports(in directory: URL) -> [ErrorReportPayload] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        return files.compactMap { file in
+            guard file.pathExtension == "json",
+                  let data = try? Data(contentsOf: file) else {
+                return nil
+            }
+            return try? JSONDecoder().decode(ErrorReportPayload.self, from: data)
+        }
+    }
+
+    /// Build a view model wired to a spool-backed reporter with no base URL, so
+    /// every breadcrumb is persisted to the spool for deterministic assertions.
+    private func makeViewModelWithSpooledReporter(
+        conversationID: String?,
+        spoolDirectory: URL,
+        dedupeWindow: TimeInterval = 0,
+        liveReconnectInitialDelaySeconds: Double = 2,
+        liveReconnectMaxDelaySeconds: Double = 30,
+        maxConsecutiveStreamResumes: Int = 5,
+        streamResumeLivenessSeconds: Double = 2
+    ) -> ChatViewModel {
+        let reporter = ErrorReporter(spoolDirectory: spoolDirectory, dedupeWindow: dedupeWindow)
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        return ChatViewModel(
+            authManager: authManager,
+            conversationID: conversationID,
+            liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
+            liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
+            maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
+            streamResumeLivenessSeconds: streamResumeLivenessSeconds,
+            errorReporter: reporter
+        )
     }
 
     private func makeViewModel(
