@@ -105,6 +105,33 @@ def test_canonicalize_owner_id_resolves_numeric_oidc_subject() -> None:
     assert resolver.canonicalize_owner_id("555") == "555"
 
 
+def test_owner_ids_inverse_respects_cross_namespace_collision_precedence() -> None:
+    # "777" is Bob's Telegram id AND Alice's OIDC subject. The canonicalizer
+    # resolves it to Bob (Telegram precedence), so the inverse equivalence set
+    # must include it only for Bob — otherwise the DB ownership filter would
+    # expose Bob's conversation summaries to Alice.
+    config = AppConfig.model_validate({
+        "users": [
+            {
+                "id": "alice@example.com",
+                "oidc": {"subjects": ["777"]},
+            },
+            {
+                "id": "bob@example.com",
+                "telegram": {"user_ids": [777]},
+            },
+        ]
+    })
+    resolver = UserIdentityResolver(config)
+
+    assert resolver.canonicalize_owner_id("777") == "bob@example.com"
+    assert "777" in resolver.owner_ids_canonicalizing_to("bob@example.com")
+    assert "777" not in resolver.owner_ids_canonicalizing_to("alice@example.com")
+    assert "alice@example.com" in resolver.owner_ids_canonicalizing_to(
+        "alice@example.com"
+    )
+
+
 def test_label_is_none_when_not_configured() -> None:
     config = AppConfig.model_validate({
         "users": [
