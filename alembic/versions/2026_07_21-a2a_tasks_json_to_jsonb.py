@@ -59,18 +59,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
-        return
-    types = _column_type_names(bind)
-    for column in _COLUMNS:
-        if types.get(column) == "json":
-            continue
-        op.alter_column(
-            "a2a_tasks",
-            column,
-            type_=postgresql.JSON(astext_type=sa.Text()),
-            existing_type=postgresql.JSONB(astext_type=sa.Text()),
-            existing_nullable=True,
-            postgresql_using=f"{column}::json",
-        )
+    """No-op by design.
+
+    The JSONB column variant is model-declared, so a database bootstrapped via
+    ``metadata.create_all()`` already stores these columns as ``jsonb``
+    independently of this migration — its upgrade skipped the conversion.
+    Because the migration cannot tell whether it performed the conversion,
+    converting back to ``json`` here would leave such databases drifted from the
+    model for no benefit. The columns are dropped anyway when the ``a2a_tasks``
+    table itself is dropped further down the downgrade chain.
+    """

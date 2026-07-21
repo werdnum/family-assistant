@@ -107,13 +107,21 @@ def _postgres_alembic_engine(
             admin_engine.dispose()
 
 
-@pytest.fixture(params=["sqlite", "postgres"])
+@pytest.fixture(
+    params=[
+        "sqlite",
+        pytest.param("postgres", marks=pytest.mark.postgres),
+    ]
+)
 def alembic_engine(request: pytest.FixtureRequest) -> Generator[Engine]:
     """Provide an empty database engine for pytest-alembic, per backend.
 
     Parametrized over SQLite and PostgreSQL so every pytest-alembic built-in
     test runs against both backends. PostgreSQL reuses the session-scoped
-    ``postgres_container`` fixture (pgserver or ``TEST_DATABASE_URL``).
+    ``postgres_container`` fixture (pgserver or ``TEST_DATABASE_URL``). The
+    PostgreSQL parameter carries the ``postgres`` marker so backend-scoped
+    selections (e.g. ``poe test-sqlite``'s ``-m 'not postgres'``) deselect it
+    rather than unexpectedly starting PostgreSQL.
     """
     if request.param == "sqlite":
         yield from _sqlite_alembic_engine()

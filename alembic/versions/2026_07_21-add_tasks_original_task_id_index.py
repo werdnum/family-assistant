@@ -47,6 +47,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    if _index_exists(bind):
-        op.drop_index(op.f(_INDEX_NAME), table_name="tasks")
+    """No-op by design.
+
+    ``ix_tasks_original_task_id`` is model-declared (``tasks.original_task_id``
+    is ``index=True``), so a database bootstrapped via ``metadata.create_all()``
+    already has it independently of this migration — its upgrade skipped
+    creation. Because the migration cannot tell whether it created the index,
+    dropping it here would leave such databases drifted from the model for no
+    benefit. The index is torn down anyway when the ``tasks`` table itself is
+    dropped further down the downgrade chain.
+    """

@@ -6,6 +6,8 @@ real error surfaces immediately instead of being masked by ~8 minutes of
 backoff.
 """
 
+from typing import TYPE_CHECKING, cast
+
 import pytest
 from sqlalchemy.exc import (
     DataError,
@@ -18,6 +20,9 @@ from sqlalchemy.exc import (
 
 import family_assistant.storage as storage_module
 from family_assistant.storage import init_db
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 def _dbapi_error(
@@ -73,7 +78,7 @@ async def test_init_db_fails_fast_on_deterministic_error(
     monkeypatch.setattr(storage_module.asyncio, "sleep", _record_sleep)
 
     with pytest.raises(DataError):
-        await init_db(object())  # type: ignore[arg-type]
+        await init_db(cast("AsyncEngine", object()))
 
     assert sleep_calls == [], "deterministic error must not trigger any retry backoff"
 
@@ -104,7 +109,7 @@ async def test_init_db_retries_transient_error(
     monkeypatch.setattr(storage_module, "_run_alembic_command", _noop)
     monkeypatch.setattr(storage_module.asyncio, "sleep", _record_sleep)
 
-    await init_db(object())  # type: ignore[arg-type]
+    await init_db(cast("AsyncEngine", object()))
 
     assert attempts["count"] == 3
     assert len(sleep_calls) == 2, "should back off once per transient failure"
