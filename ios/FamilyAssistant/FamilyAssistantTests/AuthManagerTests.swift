@@ -157,9 +157,8 @@ final class AuthManagerTests: XCTestCase {
         try await waitUntil(timeout: 2) { !AuthBackendURLProtocol.requests.isEmpty }
 
         async let concurrent: Void = authManager.refreshIfNeeded()
-        // Give the concurrent caller a chance to (wrongly) short-circuit before the
-        // forced refresh completes; it must instead be parked on the in-flight task.
-        try await Task.sleep(nanoseconds: 50_000_000)
+        // The concurrent caller must be parked on the in-flight task; signal the
+        // gate to allow the forced refresh to complete and return.
         gate.signal()
 
         _ = try await (forced, concurrent)

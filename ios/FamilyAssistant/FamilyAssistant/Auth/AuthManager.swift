@@ -395,6 +395,7 @@ final class AuthManager {
     @MainActor
     func clearAuthStateForReauthIfCurrent(capturedEpoch: Int) {
         guard isCurrentAuthEpoch(capturedEpoch) else { return }
+        bumpAuthEpoch()
         setAuthRequired(true)
         clearAuthCredentialsOnly()
     }
@@ -472,6 +473,11 @@ final class AuthManager {
     ///   token.
     @MainActor
     func refreshIfNeeded(ownerEpoch: Int? = nil, force: Bool = false) async throws {
+        // Capture the current epoch before awaiting any in-flight refresh, so we
+        // can detect if a concurrent auth-state change happened and reject adopting
+        // a stale refresh result.
+        let currentEpoch = authEpoch
+
         // Await any in-flight refresh BEFORE the freshness short-circuit. A forced
         // refresh (response-time 401 path) can be running while the stored expiry
         // still looks fresh; a non-forced caller that returned at the freshness
@@ -479,6 +485,13 @@ final class AuthManager {
         // in-flight refresh first ensures such callers observe the rotated token.
         if let inFlightRefresh {
             try await inFlightRefresh.value
+            // If the epoch changed while we were awaiting the in-flight refresh,
+            // the refresh's result is stale and we must not return success. Either
+            // the previous owner was superseded or we were, and either way adopting
+            // the stale result would corrupt the auth state.
+            if authEpoch != currentEpoch {
+                throw AuthError.noCredentials
+            }
             return
         }
 
