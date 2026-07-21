@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import (
     AppConfig,
+    OIDCUserIdentityConfig,
     TelegramUserIdentityConfig,
     ToolsConfig,
     UserIdentityConfig,
@@ -1269,6 +1270,46 @@ async def test_conversation_list_identity_maps_telegram_owner(
         params={"from_seq": 0},
     )
     assert stream_response.status_code == 200, stream_response.text
+
+
+async def test_conversation_list_attributes_unnormalized_stored_owner_ids(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A historical user message may store an un-normalized owner id (mixed case,
+    padded ``Name <email>``) that only ``canonicalize_owner_id`` can attribute —
+    it is not one of the exact configured aliases. The DB-level ownership filter
+    must still count and list that conversation, matching the old
+    canonicalize-then-compare post-filter."""
+    resolver_config = AppConfig(
+        users=[
+            UserIdentityConfig(
+                id="test_user",
+                oidc=OIDCUserIdentityConfig(emails={"owner@example.com"}),
+            )
+        ]
+    )
+    app_fixture.state.user_identity_resolver = UserIdentityResolver(resolver_config)
+
+    padded_conv = f"conv_padded_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+        await ctx.message_history.add_message(
+            UserMessage(content="stored before normalization"),
+            interface_type="web",
+            conversation_id=padded_conv,
+            timestamp=datetime.now(UTC),
+            user_id="Owner <OWNER@Example.com>",
+        )
+
+    response = await test_client.get("/api/v1/chat/conversations")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    listed = {c["conversation_id"] for c in body["conversations"]}
+    assert padded_conv in listed
+    assert body["count"] == len(listed)
 
 
 # --------------------------------------------------------------------------- #

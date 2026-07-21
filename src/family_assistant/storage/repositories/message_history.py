@@ -2624,6 +2624,29 @@ class MessageHistoryRepository(BaseRepository):
         )
         return ~disqualifying_owner
 
+    async def list_distinct_user_message_owner_ids(self) -> set[str]:
+        """Return every distinct non-null ``user_id`` stored on a user message.
+
+        The ownership filter compares stored ids against a literal set, but
+        historical rows may carry un-normalized forms (mixed case, padded
+        ``Name <email>``) that only ``canonicalize_owner_id`` can attribute.
+        Enumerating the stored ids lets the caller canonicalize each one in
+        Python and pass an exact concrete set into the query, keeping the
+        DB-level filter faithful to the canonicalizer without expressing it in
+        SQL. The result set is small in practice (one entry per distinct human
+        or interface identity that has ever sent a message).
+        """
+        stmt = (
+            select(message_history_table.c.user_id)
+            .distinct()
+            .where(
+                message_history_table.c.role == "user",
+                message_history_table.c.user_id.is_not(None),
+            )
+        )
+        rows = await self._db.fetch_all(stmt)
+        return {str(row["user_id"]) for row in rows}
+
     async def get_conversation_summaries(
         self,
         interface_type: str | None = None,

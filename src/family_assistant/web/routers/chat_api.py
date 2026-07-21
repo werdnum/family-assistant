@@ -2089,14 +2089,25 @@ async def get_conversations(
     # Python post-filter would leave ``count`` promising conversations the client
     # can never page through, producing short/empty non-final pages that a client
     # stopping on an empty page treats as the end of the list. The caller's
-    # equivalence set is every stored owner id that canonicalizes to its identity
-    # (its own id plus any configured Telegram/OIDC ids); a conversation qualifies
-    # when its distinct owner ids are all in that set (or it has none yet).
+    # equivalence set is every stored owner id that canonicalizes to its identity:
+    # the configured aliases (own id plus Telegram/OIDC ids), widened by
+    # canonicalizing every distinct stored owner id so historical un-normalized
+    # forms (mixed case, padded ``Name <email>``) attribute exactly as the old
+    # canonicalize-then-compare post-filter did.
     owner_user_ids = (
         resolver.owner_ids_canonicalizing_to(raw_user_id)
         if resolver is not None
         else {raw_user_id}
     )
+    if resolver is not None:
+        stored_owner_ids = (
+            await db_context.message_history.list_distinct_user_message_owner_ids()
+        )
+        owner_user_ids |= {
+            stored_id
+            for stored_id in stored_owner_ids
+            if resolver.canonicalize_owner_id(stored_id) == raw_user_id
+        }
 
     summaries, total = await db_context.message_history.get_conversation_summaries(
         interface_type=interface_type,
