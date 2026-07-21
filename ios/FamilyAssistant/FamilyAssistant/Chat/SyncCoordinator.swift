@@ -277,11 +277,11 @@ final class SyncCoordinator {
         let maxDelay = followReconnectMaxDelaySeconds
         followTask = Task { [weak self] in
             var delay = initialDelay
+            var authRefreshAlreadyAttempted = false
             while !Task.isCancelled {
                 var deliberateStop = false
                 var connected = false
                 var streamError: Error?
-                var authRefreshAlreadyAttempted = false
                 do {
                     guard let stream = try await self?.delegate?.openFollowStream(
                         conversationID: conversationID,
@@ -396,8 +396,8 @@ final class SyncCoordinator {
         let maxDelay = followReconnectMaxDelaySeconds
         activityTask = Task { [weak self] in
             var delay = initialDelay
+            var authRefreshAlreadyAttempted = false
             while !Task.isCancelled {
-                var authRefreshAlreadyAttempted = false
                 do {
                     guard let stream = try await self?.delegate?.openActivityStream(
                         generation: generation
