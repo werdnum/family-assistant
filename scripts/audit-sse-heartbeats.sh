@@ -149,8 +149,18 @@ if gaps:
     print(f"heartbeat gaps:     min {min(gaps):.1f}s max {max(gaps):.1f}s")
 print(f"last byte at:       {last_byte:.1f}s of {duration:.0f}s requested")
 
-if len(heartbeats) >= 2 and curl_status == 28:
-    print("VERDICT: PASS - heartbeats traverse this path and the stream survived the full window")
+# Cadence must hold across the whole window: a front door that forwards a couple
+# of heartbeats and then stalls until --max-time would otherwise still PASS.
+cadence_held = (
+    len(heartbeats) >= 2
+    and max(gaps) < 45
+    and heartbeats[0] < 45
+    and last_byte > duration - 40
+)
+if cadence_held and curl_status == 28:
+    print("VERDICT: PASS - 30s heartbeat cadence held for the full window on this path")
+elif len(heartbeats) >= 2 and curl_status == 28:
+    print("VERDICT: STALLED - heartbeats started but cadence broke before the window ended")
 elif len(heartbeats) >= 2:
     print("VERDICT: EARLY CLOSE - heartbeats traverse but the peer closed before --max-time")
 elif not events:
