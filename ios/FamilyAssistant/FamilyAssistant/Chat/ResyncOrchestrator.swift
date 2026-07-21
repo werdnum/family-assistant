@@ -154,17 +154,50 @@ final class ResyncOrchestrator {
     private var followBufferingTask: Task<Void, Never>?
     private var activityBufferingTask: Task<Void, Never>?
 
+    /// The generations + selection the currently-running attempt is reconciling. A
+    /// `request()` that arrives while a resync runs joins the in-flight task, but
+    /// if its captured target differs (generations bumped by a background /
+    /// foreground / reachability transition, or the user switched conversations)
+    /// the running attempt will abort on its guards and reconcile the WRONG target
+    /// — potentially after streams were torn down, leaving live updates dead. So a
+    /// differing request is remembered as superseding and a fresh run starts when
+    /// the stale one finishes (F2/F4).
+    private var runningTarget: ResyncTarget?
+    private var pendingSupersede = false
+
     init(host: ResyncHost, bufferCapacity: Int = 256, maxRestarts: Int = 3) {
         self.host = host
         self.bufferCapacity = bufferCapacity
         self.maxRestarts = maxRestarts
     }
 
+    /// The reconciliation target captured from the host: the per-channel
+    /// generations and the selected conversation. Two requests with the same target
+    /// coalesce; a differing target supersedes.
+    private struct ResyncTarget: Equatable {
+        let follow: Int
+        let activity: Int
+        let selectedConversationID: String?
+
+        @MainActor
+        init(host: ResyncHost) {
+            follow = host.resyncFollowGeneration
+            activity = host.resyncActivityGeneration
+            selectedConversationID = host.resyncSelectedConversationID
+        }
+    }
+
     /// Start a resync, or join the one already running. Returns the driving task
-    /// so callers (and tests) can await completion.
+    /// so callers (and tests) can await completion. When a request joins an
+    /// in-flight resync whose target no longer matches (generations bumped or the
+    /// selection changed), it is remembered as superseding so a fresh run covers
+    /// the new target once the stale attempt unwinds.
     @discardableResult
     func request() -> Task<Void, Never> {
         if let currentTask {
+            if let host, runningTarget != nil, ResyncTarget(host: host) != runningTarget {
+                pendingSupersede = true
+            }
             return currentTask
         }
         let task = Task { [weak self] in
@@ -180,14 +213,45 @@ final class ResyncOrchestrator {
             return
         }
         host.resyncPhaseDidStart()
-        defer { host.resyncPhaseDidFinish() }
+        defer {
+            runningTarget = nil
+            host.resyncPhaseDidFinish()
+        }
 
-        var attempt = 0
         while true {
-            let outcome = await attemptResync(host: host)
+            pendingSupersede = false
+            let outcome = await runOneResync(host: host)
             switch outcome {
             case .completed, .aborted:
+                // A supersede request that arrived during this run (a differing
+                // target) starts a fresh run rather than leaving the new target
+                // unreconciled with streams possibly torn down.
+                if pendingSupersede {
+                    continue
+                }
                 return
+            case .superseded:
+                // A selection switch mid-attempt aborted the stale attempt without
+                // draining its follow buffer; re-run targeting the new selection.
+                continue
+            }
+        }
+    }
+
+    /// One full resync pass INCLUDING its bounded overflow restarts. Returns the
+    /// terminal outcome for the `run()` supersede loop.
+    private func runOneResync(host: ResyncHost) async -> RunOutcome {
+        var attempt = 0
+        while true {
+            runningTarget = ResyncTarget(host: host)
+            let outcome = await attemptResync(host: host)
+            switch outcome {
+            case .completed:
+                return .completed
+            case .aborted:
+                return .aborted
+            case .superseded:
+                return .superseded
             case .overflowRestart:
                 attempt += 1
                 if attempt > maxRestarts {
@@ -197,16 +261,25 @@ final class ResyncOrchestrator {
                     // catch-up reconcile content (the loops fence by generation),
                     // and the indicator reflects real per-channel health.
                     host.restartStreams()
-                    return
+                    return .completed
                 }
             }
         }
+    }
+
+    private enum RunOutcome {
+        case completed
+        case aborted
+        case superseded
     }
 
     private enum ResyncOutcome {
         case completed
         case aborted
         case overflowRestart
+        /// The selected conversation changed mid-attempt: abort WITHOUT draining
+        /// the stale conversation's follow buffer and re-run for the new selection.
+        case superseded
     }
 
     /// The follow/activity generations captured at the start of a resync attempt,
@@ -243,10 +316,28 @@ final class ResyncOrchestrator {
 
         do {
             try await host.gateAuthIfNeeded(generation: generations.follow)
+        } catch let error as AuthError {
+            switch error {
+            case .transient:
+                // A TRANSIENT refresh failure (network error, 5xx) is NOT a
+                // rejection: `authRequired` is not latched and a re-auth trigger
+                // fires elsewhere only for real rejections. Because
+                // `awaitStreamTermination()` above already tore both loops down,
+                // returning here would strand the app with NO loops running until
+                // some later trigger. Restart the loops instead so their own
+                // backoff/retry (and near-expiry force-refresh on connect) resumes.
+                host.restartStreams()
+                return .aborted
+            case .authRejected, .noCredentials, .invalidServerURL, .exchangeFailed:
+                // A terminal rejection: the auth layer latched `authRequired`
+                // (driving the coordinator's dedicated presentation) and a re-auth
+                // recovery trigger fires. Abort cleanly with no error modal.
+                return .aborted
+            }
         } catch {
-            // The refresh was rejected (credentials gone) or otherwise failed.
-            // Abort cleanly: the auth layer has already latched `authRequired`
-            // where appropriate, and a resync must never raise an error modal.
+            // A non-`AuthError` failure from the gate is treated as transient for
+            // the same reason: don't strand the torn-down loops.
+            host.restartStreams()
             return .aborted
         }
 
@@ -278,13 +369,31 @@ final class ResyncOrchestrator {
             return .aborted
         }
 
-        if let selectedConversationID,
-           host.resyncSelectedConversationID == selectedConversationID {
+        // A selection switch mid-attempt (the list snapshot's await let the user
+        // move to another thread) SUPERSEDES this attempt: the buffered follow
+        // events belong to the OLD conversation, and the follow handler fences by
+        // generation — not conversation — so draining them here could route stale
+        // tokens at the new thread, and `restartStreams()` could reconnect the old
+        // followConversationID. Abort WITHOUT draining the stale follow buffer and
+        // re-run targeting the new selection. The buffered activity signals are
+        // account-global (they only trigger a full-replacement list refetch), so
+        // dropping them is safe — the fresh run's snapshot + final list refetch
+        // reconcile the list regardless.
+        if host.resyncSelectedConversationID != selectedConversationID {
+            stopBuffering()
+            return .superseded
+        }
+
+        if let selectedConversationID {
             await host.applyMessagesSnapshot(conversationID: selectedConversationID)
         }
 
         if bufferOverflowed {
             return abortForOverflow()
+        }
+        if host.resyncSelectedConversationID != selectedConversationID {
+            stopBuffering()
+            return .superseded
         }
         guard !Task.isCancelled, generationsStillCurrent(generations, host: host) else {
             stopBuffering()

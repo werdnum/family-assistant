@@ -22,10 +22,11 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.phaseFinishCount, 1)
     }
 
-    func testConversationSwitchMidResyncAbortsMessageApply() async {
+    func testConversationSwitchMidResyncSupersedesAndTargetsNewSelection() async {
+        // F4: a switch to another conversation during the list snapshot supersedes
+        // the attempt — the stale message snapshot is discarded AND a fresh resync
+        // targets the new selection (rather than restarting streams on the old one).
         let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-a")
-        // A switch to another conversation lands during the list snapshot, before
-        // the message snapshot is applied.
         host.onListSnapshot = { host in
             if host.listSnapshotCount == 1 {
                 host.selectedConversationID = "conv-b"
@@ -35,12 +36,51 @@ final class ResyncOrchestratorTests: XCTestCase {
 
         await orchestrator.request().value
 
-        XCTAssertTrue(
-            host.messagesSnapshotConversationIDs.isEmpty,
-            "A conversation switch mid-resync must discard the stale message snapshot."
+        XCTAssertEqual(
+            host.messagesSnapshotConversationIDs,
+            ["conv-b"],
+            "The re-run must snapshot the NEW conversation, never the stale one."
         )
-        XCTAssertEqual(host.restartStreamsCount, 1, "Stream restart still proceeds for the new selection.")
-        XCTAssertEqual(host.phaseFinishCount, 1)
+        XCTAssertEqual(
+            host.restartStreamsCount, 1,
+            "Streams restart once, for the new selection, after the supersede re-run."
+        )
+        XCTAssertEqual(host.phaseFinishCount, 1, "The syncing phase spans both attempts, closed once.")
+    }
+
+    func testConversationSwitchMidResyncDoesNotDrainStaleFollowBuffer() async {
+        // F4: buffered follow events belong to the OLD conversation. On a selection
+        // switch mid-attempt they must NOT be drained (the follow handler fences by
+        // generation, not conversation, so draining could route stale tokens at the
+        // new thread).
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-a")
+        let follow = ControllableFollowStream()
+        host.followStreamSource = follow
+        let snapshotGate = AsyncGate()
+        host.onListSnapshotAsync = { host in
+            if host.listSnapshotCount == 1 {
+                follow.emit(Self.tokenEvent(turnID: "turn-a", text: "stale"))
+                host.selectedConversationID = "conv-b"
+                await snapshotGate.wait()
+            }
+        }
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        let task = orchestrator.request()
+        try? await waitUntil { host.listSnapshotCount == 1 && follow.emittedCount == 1 }
+        snapshotGate.open()
+        follow.finish()
+        await task.value
+
+        XCTAssertTrue(
+            host.drainedFollowEvents.isEmpty,
+            "A selection switch mid-attempt must not drain the stale conversation's follow buffer."
+        )
+        XCTAssertEqual(
+            host.messagesSnapshotConversationIDs,
+            ["conv-b"],
+            "The re-run targets the new selection."
+        )
     }
 
     func testGenerationBumpMidResyncAbortsRemainingApply() async {
@@ -63,9 +103,12 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.phaseFinishCount, 1, "The syncing phase is always closed out.")
     }
 
-    func testAuthRequiredMidResyncAbortsCleanly() async {
+    func testAuthRejectedMidResyncAbortsCleanlyWithoutRestartingStreams() async {
+        // A TERMINAL rejection (401/403): the auth layer latches `authRequired` and
+        // a re-auth recovery trigger fires, so the resync aborts without touching
+        // the streams and without a modal.
         let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
-        host.authGateError = FakeAuthError.rejected
+        host.authGateError = AuthError.authRejected
         let orchestrator = ResyncOrchestrator(host: host)
 
         await orchestrator.request().value
@@ -75,6 +118,39 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertTrue(host.messagesSnapshotConversationIDs.isEmpty)
         XCTAssertEqual(host.restartStreamsCount, 0)
         XCTAssertEqual(host.phaseFinishCount, 1, "The syncing phase is still closed out on abort.")
+    }
+
+    func testTransientAuthFailureMidResyncRestartsStreams() async {
+        // F3: a TRANSIENT refresh failure (network error / 5xx) after the old loops
+        // were torn down must NOT strand the app with no loops. `authRequired` is
+        // not latched, so the resync restarts the reconnect loops (their own
+        // backoff + near-expiry force-refresh resumes) rather than aborting cold.
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.authGateError = AuthError.transient(underlying: URLError(.networkConnectionLost))
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.authGateCount, 1)
+        XCTAssertEqual(host.listSnapshotCount, 0, "The transient gate failure aborts before any snapshot.")
+        XCTAssertEqual(
+            host.restartStreamsCount, 1,
+            "The reconnect loops must be restarted so backoff/retry resumes."
+        )
+        XCTAssertEqual(host.phaseFinishCount, 1)
+    }
+
+    func testNonAuthGateFailureRestartsStreams() async {
+        // A non-`AuthError` failure from the gate is treated as transient for the
+        // same reason: never leave the torn-down loops stranded.
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.authGateError = FakeAuthError.rejected
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.restartStreamsCount, 1)
+        XCTAssertEqual(host.listSnapshotCount, 0)
     }
 
     func testSecondRequestWhileRunningCoalesces() async {
@@ -102,6 +178,72 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.authGateCount, 1, "The joined request does no duplicate work.")
         // One completed resync: authoritative list snapshot + final refetch.
         XCTAssertEqual(host.listSnapshotCount, 2)
+        XCTAssertEqual(host.restartStreamsCount, 1)
+    }
+
+    func testSupersedingRequestSchedulesFollowUpRunForNewGenerations() async {
+        // F2: a request that arrives while a resync runs and whose generations
+        // differ (bumped by a background/foreground/reachability transition) must
+        // NOT merely join the stale task — that task aborts on its generation guard
+        // and reconciles nothing. A fresh run must cover the new generations.
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        let firstSnapshotGate = AsyncGate()
+        host.onListSnapshotAsync = { host in
+            if host.listSnapshotCount == 1 {
+                // Bump generations mid-attempt, as a foreground/reachability event
+                // would, then hold the snapshot so the superseding request lands
+                // while the stale attempt is still in flight.
+                host.generation = 2
+                await firstSnapshotGate.wait()
+            }
+        }
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        let first = orchestrator.request()
+        try? await waitUntil { host.listSnapshotCount == 1 }
+        // The superseding request captures the NEW generation (2); it differs from
+        // the running attempt's (1), so it is remembered as superseding.
+        let second = orchestrator.request()
+        firstSnapshotGate.open()
+        await first.value
+        await second.value
+
+        // The stale attempt (generation 1) aborted; a fresh attempt ran to
+        // completion under generation 2 and restarted the streams.
+        XCTAssertEqual(
+            host.restartStreamsCount, 1,
+            "A fresh resync must run to completion for the new generations."
+        )
+        XCTAssertEqual(
+            host.messagesSnapshotConversationIDs, ["conv-1"],
+            "The follow-up run applies the message snapshot the aborted one skipped."
+        )
+        XCTAssertGreaterThanOrEqual(
+            host.authGateCount, 2,
+            "The follow-up run is a full second pass, not a joined no-op."
+        )
+    }
+
+    func testSameGenerationBurstStillCoalescesWithoutFollowUp() async {
+        // F2 must not over-fire: a same-generation burst (no transition) still
+        // coalesces to exactly one resync — no superseding follow-up run.
+        let host = FakeResyncHost(generation: 4, selectedConversationID: "conv-1")
+        let gate = AsyncGate()
+        host.onListSnapshotAsync = { host in
+            if host.listSnapshotCount == 1 {
+                await gate.wait()
+            }
+        }
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        let first = orchestrator.request()
+        try? await waitUntil { host.listSnapshotCount == 1 }
+        let second = orchestrator.request()
+        gate.open()
+        await first.value
+        await second.value
+
+        XCTAssertEqual(host.authGateCount, 1, "A same-generation burst does the work exactly once.")
         XCTAssertEqual(host.restartStreamsCount, 1)
     }
 
