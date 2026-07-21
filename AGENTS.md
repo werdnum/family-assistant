@@ -804,6 +804,12 @@ access, input validation, and defense-in-depth approaches.
   whether they prefer the tactical pragmatic fix or the "proper" long term fix. Look out for design
   or code smells. Refactoring is relatively cheap in this project - cheaper than leaving something
   broken.
+- **Behaviour-altitude principle:** Common/reasonable scenarios should get ideal behaviour;
+  uncommon/unusual scenarios should get reasonable (correct, non-broken) behaviour, not necessarily
+  ideal behaviour. Do not build elaborate machinery to give rare scenarios ideal behaviour when
+  reasonable behaviour suffices; that trades disproportionate complexity for negligible benefit and
+  tends to spawn the machinery-edge-case spiral (see the cost/benefit gate in
+  `REVIEW_GUIDELINES.md`).
 - IMPORTANT: You NEVER leave tests broken. We do not commit changes that cause tests to break. You
   NEVER make excuses like saying that test failures are 'unrelated' or 'separate issues'. You ALWAYS
   fix ALL test failures, even if you don't think you caused them.

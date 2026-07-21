@@ -98,10 +98,23 @@ special force to design-document reviews and to findings about races, TOCTOU win
 misuse — the categories where iterative review most easily accretes machinery whose complexity is
 not justified by the scenarios it perfects.
 
+This is the review-side expression of the behaviour-altitude principle in `AGENTS.md`: common,
+reasonable scenarios should get ideal behavior; uncommon or unusual scenarios should get reasonable
+(correct, non-broken) behavior, not necessarily ideal behavior. Do not build elaborate machinery to
+give rare scenarios ideal behavior when reasonable behavior suffices.
+
 - **Weigh exposure before demanding machinery.** Ask who can actually observe the bad outcome. A
   race in which a user can only affect their own data through their own actions (e.g. racing their
   own reconnect of an account) does not justify leases, drain barriers, or generation fencing. A
   cross-user or attacker-facing hole does — flag those regardless of how narrow the window is.
+- **Apply a cost/benefit gate before adding machinery.** Before pushing for significant new state,
+  abstraction, or defensive machinery, state the concrete user-facing requirement it serves and
+  confirm that the added complexity is proportionate to the benefit. Prefer the simplest design that
+  satisfies the requirement, and prefer centralizing a policy over distributing it across layers.
+  Reviewers must apply the same test: does the cost exceed the user-facing benefit?
+- **Treat machinery-edge-case findings as a design signal.** When review keeps finding new edge
+  cases inside defensive machinery rather than in real user-facing behavior, step back and simplify
+  or centralize the design. Do not patch each machinery edge case with more state.
 - **Machinery vs. a sentence.** When the honest resolution is to document an accepted residual
   behavior, prefer requiring that documentation over requiring new synchronization, classification,
   or plumbing. A *silent* gap is a finding; a documented, reasoned acceptance is not.
@@ -182,9 +195,17 @@ Examples:
 
 This project operates under a relaxed threat model with specific security assumptions:
 
+Any issue proposed as a security risk **must** include an explicit threat-model analysis: who is the
+attacker, what trust boundary is crossed, and why the issue is reachable and exploitable under this
+project's actual architecture. That architecture uses trusted clients, server-enforced
+authentication on every request, and a family/small-group model. If no attacker gains anything under
+that model, the issue is not a security issue; classify it at most as correctness, UX, or cleanup. A
+security label without a demonstrated threat does not make something a security issue.
+
 **API Endpoint Authentication:**
 
 - All `/api/*` endpoints require authentication (session or API token)
+- The server, not client-side state on a trusted client, is the authentication boundary
 - Authorization (user-specific access control) is relaxed between authenticated users
 - This provides security while maintaining simplicity for family/small group use
 
@@ -199,6 +220,11 @@ This project operates under a relaxed threat model with specific security assump
 - Lack of user-specific authorization checks between authenticated users
 - Shared access to attachments or other resources between authenticated users
 - Simplified permission models for family/small group scenarios
+- Client-side auth state on a trusted client when the server rejects it. For example, a rejected or
+  expired token lingering in a trusted client's keychain is not exploitable because the server
+  rejects it; it is at most correctness, UX, or cleanup debt. A still-valid token surviving logout
+  on a shared device between mutually untrusted users would be a security concern, but that is not
+  this application's personal-device model.
 
 **When TO flag as SECURITY_RISK:**
 
