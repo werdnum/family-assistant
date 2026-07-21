@@ -213,7 +213,9 @@ final class AuthManagerTests: XCTestCase {
                 authManager.authRequired,
                 "a forced refresh with no refresh token must latch the terminal auth state"
             )
-            XCTAssertEqual(signals, [.authRequired])
+            // The observer receives the current state (`.ok`) immediately on
+            // registration, then the `.authRequired` latch.
+            XCTAssertEqual(signals, [.ok, .authRequired])
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -228,7 +230,24 @@ final class AuthManagerTests: XCTestCase {
 
         try? await authManager.refreshIfNeeded()
 
-        XCTAssertEqual(signals, [.refreshing, .authRequired])
+        XCTAssertEqual(signals, [.ok, .refreshing, .authRequired])
+    }
+
+    func testObserverRegisteredAfterLatchLearnsAuthRequiredImmediately() async {
+        // SwiftUI can build a fresh ChatViewModel (and its coordinator) after
+        // `authRequired` has already latched. Its observer, registered post-latch,
+        // must be told the current state at once rather than defaulting to `.ok`
+        // and never learning re-auth is required until the next transition.
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+        try? await authManager.refreshIfNeeded()
+        XCTAssertTrue(authManager.authRequired)
+
+        var lateSignals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { lateSignals.append($0) }
+
+        XCTAssertEqual(lateSignals, [.authRequired])
     }
 
     func testSuccessfulReAuthClearsAuthRequired() async {
@@ -249,7 +268,10 @@ final class AuthManagerTests: XCTestCase {
         try? await authManager.refreshIfNeeded()
 
         XCTAssertFalse(authManager.authRequired)
-        XCTAssertEqual(signals, [.refreshing, .ok])
+        // Registered while `authRequired` was already latched, so the observer
+        // first learns the current `.authRequired` state, then the re-auth's
+        // `.refreshing`/`.ok`.
+        XCTAssertEqual(signals, [.authRequired, .refreshing, .ok])
     }
 
     func testMultipleAuthStateObserversAllReceiveSignals() async {
@@ -267,8 +289,8 @@ final class AuthManagerTests: XCTestCase {
 
         try? await authManager.refreshIfNeeded()
 
-        XCTAssertEqual(firstSignals, [.refreshing, .authRequired])
-        XCTAssertEqual(secondSignals, [.refreshing, .authRequired])
+        XCTAssertEqual(firstSignals, [.ok, .refreshing, .authRequired])
+        XCTAssertEqual(secondSignals, [.ok, .refreshing, .authRequired])
     }
 
     func testRemovedAuthStateObserverStopsReceivingSignalsWhileOthersContinue() async {
@@ -285,8 +307,10 @@ final class AuthManagerTests: XCTestCase {
 
         try? await authManager.refreshIfNeeded()
 
-        XCTAssertEqual(survivorSignals, [.refreshing, .authRequired])
-        XCTAssertTrue(removedSignals.isEmpty, "a removed observer must receive no further signals")
+        XCTAssertEqual(survivorSignals, [.ok, .refreshing, .authRequired])
+        // The removed observer still received the immediate current-state (`.ok`)
+        // delivered synchronously at registration, but nothing after removal.
+        XCTAssertEqual(removedSignals, [.ok], "a removed observer must receive no signals after removal")
     }
 
     func testLogoutEpochChangeStillSupersedesInFlightRefresh() async throws {

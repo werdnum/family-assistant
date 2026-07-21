@@ -622,11 +622,16 @@ struct ChatAPIClient {
             return (data, response)
         }
 
+        let epochBeforeRefresh = authManager.authEpoch
         do {
             try await authManager.refreshIfNeeded(force: true)
         } catch AuthError.authRejected, AuthError.noCredentials {
-            // The forced refresh was itself rejected; authRequired is already
-            // latched by the refresh path. Surface the suppressed auth error.
+            // The forced refresh was itself rejected. `performRefresh` latches
+            // authRequired but, reached directly here, never runs
+            // `authorizedRequest`'s credential cleanup — so the rejected token and
+            // its still-fresh expiry would linger and later requests would replay
+            // it. Clear them (epoch-fenced so a concurrent re-login is untouched).
+            authManager.clearAuthStateIfCurrent(capturedEpoch: epochBeforeRefresh)
             throw AuthError.noCredentials
         }
 

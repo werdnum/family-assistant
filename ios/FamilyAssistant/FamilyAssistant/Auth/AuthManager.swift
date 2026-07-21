@@ -69,6 +69,11 @@ final class AuthManager {
     func addAuthStateObserver(_ observer: @escaping (AuthStateSignal) -> Void) -> UUID {
         let token = UUID()
         authStateObservers[token] = observer
+        // Deliver the current stable state immediately: an observer registered
+        // after `authRequired` latched (a fresh ChatViewModel whose coordinator
+        // is built post-rejection) would otherwise stay at its default `.ok` and
+        // never learn re-auth is required until the next transition.
+        observer(authRequired ? .authRequired : .ok)
         return token
     }
 
@@ -378,6 +383,21 @@ final class AuthManager {
     @MainActor
     func markAuthRequired() {
         setAuthRequired(true)
+    }
+
+    /// Latch ``authRequired`` and clear the stored credentials, but only if
+    /// `capturedEpoch` still owns the current auth state. The ChatAPIClient
+    /// forced-refresh retry path reaches ``performRefresh`` directly (bypassing
+    /// ``authorizedRequest``'s cleanup), so a rejection there latches the state
+    /// but leaves the rejected token and its still-fresh expiry in the keychain —
+    /// later requests would keep replaying it. This mirrors that cleanup while
+    /// honoring the epoch fence: a logout/re-login that bumped the epoch during
+    /// the refresh must not have a stale rejection clear the newer login's state.
+    @MainActor
+    func clearAuthStateIfCurrent(capturedEpoch: Int) {
+        guard isCurrentAuthEpoch(capturedEpoch) else { return }
+        setAuthRequired(true)
+        clearLocalAuthState()
     }
 
     /// Whether the bridge that captured `epoch` still owns the current auth state.
