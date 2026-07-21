@@ -78,7 +78,24 @@ fi
 
 resolve_args=()
 case "$path_mode" in
-    lan | default) ;;
+    default) ;;
+    lan)
+        # The lan artifact must actually traverse the local ingress. On a
+        # runner whose system DNS is public (hotspot, CI), the host resolves
+        # to Cloudflare and the run would silently audit the wrong path.
+        lan_ip="$(dig +short "$HOST" | grep -E '^[0-9]+\.' | head -1)"
+        case "$lan_ip" in
+            10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[0-1].*)
+                echo "LAN path confirmed: $HOST resolves to $lan_ip"
+                ;;
+            *)
+                echo "Refusing --path lan: $HOST resolves to '${lan_ip:-nothing}'," >&2
+                echo "which is not a private address - this run would traverse the" >&2
+                echo "public front door. Run from the home network (split-horizon DNS)." >&2
+                exit 1
+                ;;
+        esac
+        ;;
     cloudflare)
         public_ip="$(dig +short "$HOST" @1.1.1.1 | head -1)"
         if [[ -z "$public_ip" ]]; then
@@ -150,12 +167,14 @@ if gaps:
 print(f"last byte at:       {last_byte:.1f}s of {duration:.0f}s requested")
 
 # Cadence must hold across the whole window: a front door that forwards a couple
-# of heartbeats and then stalls until --max-time would otherwise still PASS.
+# of heartbeats and then stalls until --max-time would otherwise still PASS. The
+# end-of-window anchor is the last HEARTBEAT, not the last byte - on a non-idle
+# account a late activity frame must not vouch for heartbeat delivery.
 cadence_held = (
     len(heartbeats) >= 2
     and max(gaps) < 45
     and heartbeats[0] < 45
-    and last_byte > duration - 40
+    and heartbeats[-1] > duration - 40
 )
 if cadence_held and curl_status == 28:
     print("VERDICT: PASS - 30s heartbeat cadence held for the full window on this path")
