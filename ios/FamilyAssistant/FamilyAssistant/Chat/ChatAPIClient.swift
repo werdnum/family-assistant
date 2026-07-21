@@ -37,11 +37,9 @@ struct ChatAPIClient {
     }
 
     private func listConversationPage(limit: Int, offset: Int) async throws -> ChatConversationListResponse {
-        let request = try await authManager.authorizedRequest(
-            url: conversationListURL(limit: limit, offset: offset),
-            method: "GET"
+        let (data, response) = try await authorizedGETWithAuthRetry(
+            url: conversationListURL(limit: limit, offset: offset)
         )
-        let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatConversationListResponse.self, from: data)
     }
@@ -76,15 +74,13 @@ struct ChatAPIClient {
         guard let url = components?.url else {
             throw ChatAPIError.invalidServerURL
         }
-        let request = try await authManager.authorizedRequest(url: url, method: "GET")
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await authorizedGETWithAuthRetry(url: url)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatConversationMessagesResponse.self, from: data)
     }
 
     func listProfiles() async throws -> ChatProfilesResponse {
-        let request = try await authManager.authorizedRequest(url: apiURL("/api/v1/profiles"), method: "GET")
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await authorizedGETWithAuthRetry(url: apiURL("/api/v1/profiles"))
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatProfilesResponse.self, from: data)
     }
@@ -484,11 +480,9 @@ struct ChatAPIClient {
     }
 
     func listPendingConfirmations() async throws -> [ChatPendingConfirmation] {
-        let request = try await authManager.authorizedRequest(
-            url: apiURL("/api/v1/chat/confirmations/pending"),
-            method: "GET"
+        let (data, response) = try await authorizedGETWithAuthRetry(
+            url: apiURL("/api/v1/chat/confirmations/pending")
         )
-        let (data, response) = try await urlSession.data(for: request)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatPendingConfirmationsResponse.self, from: data).confirmations
     }
@@ -601,6 +595,47 @@ struct ChatAPIClient {
             throw ChatAPIError.invalidServerURL
         }
         return url
+    }
+
+    /// Perform an IDEMPOTENT GET, transparently refreshing-and-retrying exactly
+    /// once on a response-time 401.
+    ///
+    /// A token can pass the client's clock-based freshness check yet still be
+    /// rejected at request time (server-side rotation, revocation, clock skew). For
+    /// a GET that only reads — no turn is started, no state mutated — it is safe to
+    /// force a single coalesced refresh and replay the request with the new token.
+    /// The retry wraps the conversation list, the messages page, the profile list,
+    /// and the pending-confirmations poll. It must only ever wrap idempotent reads:
+    /// a POST/DELETE (startTurn, steer, stop, ack, confirm, attachment mutations) is
+    /// NEVER routed here, so this path cannot double-send a turn.
+    ///
+    /// Propagation: a rejection surfaces as ``AuthError/noCredentials`` and the
+    /// terminal ``AuthManager/authRequired`` state is latched (which drives the
+    /// coordinator's `.authRequired` presentation). The view model suppresses the
+    /// generic error modal for that error, so a persistent 401 never modals.
+    private func authorizedGETWithAuthRetry(url: URL) async throws -> (Data, URLResponse) {
+        let request = try await authManager.authorizedRequest(url: url, method: "GET")
+        let (data, response) = try await urlSession.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 401 else {
+            return (data, response)
+        }
+
+        do {
+            try await authManager.refreshIfNeeded(force: true)
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            // The forced refresh was itself rejected; authRequired is already
+            // latched by the refresh path. Surface the suppressed auth error.
+            throw AuthError.noCredentials
+        }
+
+        let retryRequest = try await authManager.authorizedRequest(url: url, method: "GET")
+        let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
+        if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
+            // A freshly minted token is still rejected: terminal auth failure.
+            authManager.markAuthRequired()
+            throw AuthError.noCredentials
+        }
+        return (retryData, retryResponse)
     }
 
     private func validate(response: URLResponse, data: Data) throws {

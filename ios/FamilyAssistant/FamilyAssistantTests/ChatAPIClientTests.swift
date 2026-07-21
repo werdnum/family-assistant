@@ -521,10 +521,108 @@ final class ChatAPIClientTests: XCTestCase {
         try await makeClient().deleteAttachment(attachmentID: upload.attachmentID)
     }
 
+    func testResponse401OnIdempotentGETRefreshesAndRetriesOnce() async throws {
+        seedRefreshToken()
+        let getRequests = AtomicCounter()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path {
+            case "/api/auth/refresh":
+                _ = refreshRequests.increment()
+                return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+            case "/api/v1/profiles":
+                // First attempt is rejected; the retry (with the rotated token)
+                // succeeds. The client must replay exactly once.
+                if getRequests.increment() <= 1 {
+                    return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                }
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let response = try await makeClient().listProfiles()
+
+        XCTAssertEqual(response.defaultProfileID, "default_assistant")
+        XCTAssertEqual(getRequests.value, 2, "the GET is retried exactly once after refresh")
+        XCTAssertEqual(refreshRequests.value, 1, "exactly one coalesced refresh")
+    }
+
+    func testResponse401TwiceLatchesAuthRequiredWithoutFurtherRetry() async throws {
+        seedRefreshToken()
+        let getRequests = AtomicCounter()
+        let refreshRequests = AtomicCounter()
+        let authManager = makeAuthManager()
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path {
+            case "/api/auth/refresh":
+                _ = refreshRequests.increment()
+                return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+            case "/api/v1/profiles":
+                _ = getRequests.increment()
+                return .json(#"{"detail":"still expired"}"#, statusCode: 401)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager).listProfiles()
+            XCTFail("Expected a persistent 401 to throw")
+        } catch AuthError.noCredentials {
+            XCTAssertEqual(getRequests.value, 2, "the GET is retried exactly once, not repeatedly")
+            XCTAssertEqual(refreshRequests.value, 1)
+            XCTAssertTrue(authManager.authRequired, "a persistent 401 latches the terminal auth state")
+        }
+    }
+
+    func testResponse401OnNonIdempotentPOSTIsNotRetried() async throws {
+        seedRefreshToken()
+        let postRequests = AtomicCounter()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                _ = refreshRequests.increment()
+                return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+            }
+            if request.httpMethod == "POST", request.url?.path == "/api/v1/chat/turns" {
+                _ = postRequests.increment()
+                return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        do {
+            _ = try await makeClient().startTurn(
+                turnID: "turn-401",
+                prompt: "Hi",
+                conversationID: "web_conv_401",
+                profileID: "default_assistant",
+                attachments: []
+            )
+            XCTFail("Expected the non-idempotent turn start to throw on 401")
+        } catch ChatAPIError.server(let statusCode, _) {
+            XCTAssertEqual(statusCode, 401)
+            XCTAssertEqual(postRequests.value, 1, "a turn start must never be refreshed-and-replayed")
+            XCTAssertEqual(refreshRequests.value, 0)
+        }
+    }
+
     private func makeClient() -> ChatAPIClient {
+        ChatAPIClient(authManager: makeAuthManager())
+    }
+
+    private func makeAuthManager() -> AuthManager {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
-        return ChatAPIClient(authManager: authManager)
+        return authManager
+    }
+
+    /// The base setUp seeds an api token + fresh expiry but no refresh token; the
+    /// forced-refresh retry path needs one.
+    private func seedRefreshToken() {
+        KeychainHelper.save(key: "fa_refresh_token", string: "chat-refresh-token")
     }
 
     private func resetStoredAuth() {
@@ -543,6 +641,24 @@ final class ChatAPIClientTests: XCTestCase {
         return Dictionary(uniqueKeysWithValues: items.compactMap { item in
             item.value.map { (item.name, $0) }
         })
+    }
+}
+
+/// Lock-guarded counter for tallying requests off the URLProtocol loading thread.
+private final class AtomicCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    @discardableResult
+    func increment() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+
+    var value: Int {
+        lock.withLock { count }
     }
 }
 

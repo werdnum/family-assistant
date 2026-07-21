@@ -343,6 +343,15 @@ final class AuthManager {
         onAuthStateChange?(required ? .authRequired : .ok)
     }
 
+    /// Latch the terminal ``authRequired`` state from a caller that observed a
+    /// response-time rejection the refresh path itself did not surface — namely
+    /// the ChatAPIClient retry helper, when a request still 401s after a forced
+    /// refresh minted a fresh token. Idempotent; emits the transition once.
+    @MainActor
+    func markAuthRequired() {
+        setAuthRequired(true)
+    }
+
     /// Whether the bridge that captured `epoch` still owns the current auth state.
     /// False once an auth-invalidating transition (logout / credential clear / new
     /// login) has bumped ``authEpoch``. A watchdog-abandoned bridge that resumes
@@ -383,16 +392,24 @@ final class AuthManager {
     /// awaits that same in-flight `Task` rather than issuing its own refresh POST,
     /// so a resume that fans out several requests cannot race token rotation. Each
     /// caller awaits the shared task (never blocks the main actor).
+    ///
+    /// - Parameter force: skip the clock-based freshness check and always refresh
+    ///   (still single-flighted). The response-time-401 retry path uses this: the
+    ///   server rejected a token the client still believes is unexpired, so a
+    ///   freshness check would no-op and the retry would resend the same rejected
+    ///   token.
     @MainActor
-    func refreshIfNeeded(ownerEpoch: Int? = nil) async throws {
-        guard let expiryString = UserDefaults.standard.string(forKey: Keys.tokenExpiry),
-              let expiry = ISO8601DateFormatter().date(from: expiryString)
-        else {
-            throw AuthError.noCredentials
-        }
+    func refreshIfNeeded(ownerEpoch: Int? = nil, force: Bool = false) async throws {
+        if !force {
+            guard let expiryString = UserDefaults.standard.string(forKey: Keys.tokenExpiry),
+                  let expiry = ISO8601DateFormatter().date(from: expiryString)
+            else {
+                throw AuthError.noCredentials
+            }
 
-        if expiry.timeIntervalSinceNow > 3600 {
-            return
+            if expiry.timeIntervalSinceNow > 3600 {
+                return
+            }
         }
 
         if let inFlightRefresh {
