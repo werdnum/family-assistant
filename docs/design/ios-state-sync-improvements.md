@@ -123,7 +123,28 @@ exactly when the radio and sockets are still waking up, so transient `timedOut` 
 `pendingApprovals`) are this pathway directly; the send path, by contrast, already recovers most
 transport errors silently.
 
-### 3.2 Stuck "no connection" icon — a laggy single boolean
+### 3.2 The foreground reconnect hook is likely inert on normal resume
+
+`shouldReconnectOnForeground(cameFromBackground:isNowActive:)` (`ChatViewModel.swift:2174`) returns
+true only when a **single** scene-phase `onChange` firing goes directly `.background → .active`. A
+normal iOS resume delivers two firings — `.background → .inactive` (fails `isNowActive`), then
+`.inactive → .active` (fails `cameFromBackground`) — so `reconnectLiveUpdates()` never runs on the
+common resume path. The gate was written to ignore Control-Center/app-switcher blips, but as a pure
+function of one transition pair it cannot distinguish "blip" from "real resume that passed through
+background"; that needs a latched came-from-background bit. The only other trigger is the
+indicator's manual tap-to-reconnect (`ChatViews.swift:875`).
+
+Consequences on resume-into-a-conversation: the thread does not resume live updates until the
+suspended stream tasks' dead sockets error out on their own (URLSession idle timeout ≈ 60 s —
+matching cluster A's `timedOut` drops) and the backoff loop reconnects; or until the user forces
+fresh connections by navigating out and re-selecting the conversation (`selectConversation` restarts
+the follow stream; list pull-to-refresh itself only refetches the list via REST). This matches the
+reported experience directly: "foreground into a conversation → it doesn't resume updating →
+refreshing/re-entering fixes it." The dimension model in §4.1 fixes this structurally: lifecycle is
+**latched state** owned by the coordinator (background observed → resync on next active), not a
+predicate over a single transition.
+
+### 3.3 Stuck "no connection" icon — a laggy single boolean
 
 The indicator is one boolean owned by the follow stream:
 
@@ -141,7 +162,7 @@ The indicator is one boolean owned by the follow stream:
 and its replacement. Review found current cancellation checks make that unproven; generation fencing
 is retained in the design as defense-in-depth, not as the established root cause.)
 
-### 3.3 Stale conversation list — refresh gated behind connections
+### 3.4 Stale conversation list — refresh gated behind connections
 
 List refresh is not solely activity-stream-dependent (follow connect/fail paths also refresh), but
 every refresh trigger is **contingent on a stream attempt completing**: foreground refresh happens
@@ -150,7 +171,7 @@ only as a side effect of the follow/activity loops progressing, follow catch-up 
 backoff interval. There is no unconditional "foreground ⇒ refetch" step and no push-receipt refresh
 hint.
 
-### 3.4 Cross-cutting structural issues
+### 3.5 Cross-cutting structural issues
 
 - No single owner of sync state: three loops + N REST paths each decide error surfacing and refresh
   independently.
@@ -347,6 +368,9 @@ tests retry ×3, so lifecycle regressions need a deterministic non-retried unit 
   assertions need it).
 - Indicator: `false` on clean EOF drop; back to `true` after successful reconnect; unaffected by
   stale-generation callbacks.
+- Latched foreground detection (regression for §3.2): the realistic scene-phase sequence
+  `.background → .inactive → .active` (two firings) triggers exactly one resync; an
+  `.inactive → .active` blip with no prior background does not.
 - Auth: concurrent refresh single-flight, expiry mid-resync, response-time 401 retry-once, refresh
   rejection → `authRequired`, logout epoch change.
 
