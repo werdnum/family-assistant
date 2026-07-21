@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import os
+import SwiftUI
 
 @MainActor
 @Observable
@@ -2191,14 +2192,23 @@ final class ChatViewModel {
         highestAppliedSeq = nil
     }
 
-    /// Whether a scene-phase transition should trigger a live-updates reconnect.
-    /// Only a real return from the BACKGROUND should: a transient
-    /// `.inactive → .active` blip (Control Center, the app switcher, a
-    /// notification banner) must not tear down and restart a healthy follow
-    /// connection. Kept SwiftUI-agnostic (booleans) so the gating is unit-testable
-    /// without importing the scene-phase type into the view model.
-    func shouldReconnectOnForeground(cameFromBackground: Bool, isNowActive: Bool) -> Bool {
-        cameFromBackground && isNowActive
+    /// Feed a raw scene-phase transition to the coordinator's latched lifecycle.
+    ///
+    /// A normal iOS resume delivers two `onChange` firings —
+    /// `.background → .inactive` then `.inactive → .active` — so the former
+    /// single-transition predicate (`.background → .active`) never matched and the
+    /// resync never ran on the common resume path. The coordinator latches
+    /// `cameFromBackground` when it observes a background, then runs the resync on
+    /// the next active, so every real resume is caught while transient
+    /// `.inactive → .active` blips (never having backgrounded) are ignored.
+    func scenePhaseChanged(old: ScenePhase, new: ScenePhase) {
+        let effects = syncCoordinator.scenePhaseChanged(
+            didBackground: new == .background,
+            isActive: new == .active
+        )
+        for case .runResync in effects {
+            Task { await reconnectLiveUpdates() }
+        }
     }
 
     /// Whether the chat thread's message list should be realized into the view

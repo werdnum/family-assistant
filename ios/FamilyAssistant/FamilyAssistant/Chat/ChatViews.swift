@@ -282,15 +282,12 @@ private struct ChatScenePhaseMountGate<Content: View>: View {
                     hasMountedContent = true
                 }
 
-                // A turn can finish while the app is suspended. Reconnect and
-                // catch up only after a real background → active transition;
-                // transient inactive states keep the healthy stream intact.
-                if viewModel.shouldReconnectOnForeground(
-                    cameFromBackground: oldPhase == .background,
-                    isNowActive: newPhase == .active
-                ) {
-                    Task { await viewModel.reconnectLiveUpdates() }
-                }
+                // A turn can finish while the app is suspended. The coordinator
+                // latches the observed background and runs the resync on the next
+                // real resume — catching the two-firing `.background → .inactive →
+                // .active` sequence a single-transition predicate used to miss —
+                // while transient `.inactive → .active` blips are ignored.
+                viewModel.scenePhaseChanged(old: oldPhase, new: newPhase)
             }
         }
     }

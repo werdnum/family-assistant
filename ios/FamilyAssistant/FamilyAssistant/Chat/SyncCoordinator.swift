@@ -191,13 +191,16 @@ final class SyncCoordinator {
 
     /// Maps a raw scene-phase observation onto the coordinator's lifecycle events. The
     /// `didBackground`/`isActive` split lets callers distinguish a real background (which must latch
-    /// `cameFromBackground`) from an `.inactive` blip that never backgrounded.
-    func scenePhaseChanged(didBackground: Bool, isActive: Bool) {
+    /// `cameFromBackground`) from an `.inactive` blip that never backgrounded. Returns the effects
+    /// the transition produced (a latched foreground emits `.runResync`).
+    @discardableResult
+    func scenePhaseChanged(didBackground: Bool, isActive: Bool) -> [SyncEffect] {
         if didBackground {
-            apply(.backgrounded)
+            return apply(.backgrounded)
         } else if isActive {
-            apply(.foregrounded)
+            return apply(.foregrounded)
         }
+        return []
     }
 
     // MARK: - Stream ownership

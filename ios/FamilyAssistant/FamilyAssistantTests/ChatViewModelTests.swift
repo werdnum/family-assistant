@@ -5180,14 +5180,61 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
-    func testShouldReconnectOnForegroundOnlyFromBackground() {
-        // The scene-phase reconnect must fire only on a real return from the
-        // background, not on a transient .inactive -> .active blip (which would
-        // tear down a healthy follow connection).
-        let model = makeViewModel(conversationID: "web_conv_scene")
-        XCTAssertTrue(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: true))
-        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: false, isNowActive: true))
-        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: false))
+    func testRealResumeSceneSequenceRestartsStreamsExactlyOnce() async throws {
+        // A normal iOS resume delivers TWO scene-phase firings —
+        // `.background -> .inactive` then `.inactive -> .active` — which the former
+        // single-transition predicate never matched. The latched gate must run
+        // exactly one resync (one follow restart + catch-up) across the sequence,
+        // and none for an `.inactive -> .active` blip that never backgrounded.
+        let followConnects = AtomicCounter()
+        let followController = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/stream"), !path.contains("activity") {
+                followConnects.increment()
+                // Hang so the follow loop never spontaneously reconnects: any
+                // additional connect is attributable to a resync restart.
+                return .hangingStream("", controller: HangingStream())
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: followController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_scene","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_scene",
+            liveReconnectInitialDelaySeconds: 10,
+            liveReconnectMaxDelaySeconds: 10
+        )
+        await model?.selectConversation("web_conv_scene")
+        try await waitUntil { followConnects.value == 1 }
+        let baseline = followConnects.value
+
+        // Realistic resume: two firings. Only the latched foreground runs a resync.
+        model?.scenePhaseChanged(old: .active, new: .background)
+        model?.scenePhaseChanged(old: .background, new: .inactive)
+        model?.scenePhaseChanged(old: .inactive, new: .active)
+        try await waitUntil { followConnects.value == baseline + 1 }
+        XCTAssertEqual(followConnects.value, baseline + 1)
+
+        // An `.inactive -> .active` blip with no prior background triggers none.
+        model?.scenePhaseChanged(old: .active, new: .inactive)
+        model?.scenePhaseChanged(old: .inactive, new: .active)
+        // Give any erroneous resync a chance to fire before asserting it didn't.
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(followConnects.value, baseline + 1)
+
+        followController.finish()
+        model = nil
     }
 
     func testShouldRenderThreadKeepsListMountedOnceActive() {
