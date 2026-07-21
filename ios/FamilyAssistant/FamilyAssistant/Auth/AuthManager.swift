@@ -466,6 +466,11 @@ final class AuthManager {
         guard let refreshToken = KeychainHelper.readString(key: Keys.refreshToken),
               let baseURL = validatedServerURL()
         else {
+            // No refresh token to present (or no server URL): re-auth is required.
+            // Latch it here so EVERY no-credential refresh attempt is terminal,
+            // including the forced response-time-401 retry path that reaches
+            // `performRefresh` directly rather than through `authorizedRequest`.
+            setAuthRequired(true)
             throw AuthError.noCredentials
         }
 

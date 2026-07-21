@@ -194,6 +194,31 @@ final class AuthManagerTests: XCTestCase {
         }
     }
 
+    func testForcedRefreshWithNoRefreshTokenLatchesAuthRequired() async {
+        // An api token exists but no refresh token: the forced response-time-401
+        // retry path reaches `performRefresh` directly (bypassing
+        // `authorizedRequest`) and hits the no-credentials branch. That branch
+        // must latch the terminal auth state and emit the `.authRequired` signal so
+        // the coordinator surfaces the re-auth affordance rather than nothing.
+        KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
+        let authManager = makeAuthManager()
+        var signals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { signals.append($0) }
+
+        do {
+            try await authManager.refreshIfNeeded(force: true)
+            XCTFail("Expected refreshIfNeeded to throw with no refresh token")
+        } catch AuthError.noCredentials {
+            XCTAssertTrue(
+                authManager.authRequired,
+                "a forced refresh with no refresh token must latch the terminal auth state"
+            )
+            XCTAssertEqual(signals, [.authRequired])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testAuthRequiredSignalsReachObserver() async {
         seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
         let authManager = makeAuthManager()

@@ -577,6 +577,35 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testResponse401WithNoRefreshTokenLatchesAuthRequired() async throws {
+        // No refresh token is seeded (only the base setUp's api token). A
+        // response-time 401 forces a refresh that immediately hits
+        // `performRefresh`'s no-credentials branch — the terminal auth state must
+        // still latch so the user gets the re-auth affordance, not silence.
+        let getRequests = AtomicCounter()
+        let authManager = makeAuthManager()
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path {
+            case "/api/v1/profiles":
+                _ = getRequests.increment()
+                return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager).listProfiles()
+            XCTFail("Expected a 401 with no refresh token to throw")
+        } catch AuthError.noCredentials {
+            XCTAssertEqual(getRequests.value, 1, "no retry is possible without a refresh token")
+            XCTAssertTrue(
+                authManager.authRequired,
+                "a 401 with no stored refresh token must latch the terminal auth state"
+            )
+        }
+    }
+
     func testResponse401OnNonIdempotentPOSTIsNotRetried() async throws {
         seedRefreshToken()
         let postRequests = AtomicCounter()
