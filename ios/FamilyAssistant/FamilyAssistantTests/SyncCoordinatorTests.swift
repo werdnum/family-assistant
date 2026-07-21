@@ -756,6 +756,7 @@ final class SyncCoordinatorTests: XCTestCase {
 private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     private(set) var followOpenCount = 0
     private(set) var activityOpenCount = 0
+    private(set) var suspendActiveSendCount = 0
     var shouldFailFollowOpen = false
     /// When set, the follow/activity open throws this specific error instead of the
     /// generic `StubError` (e.g. a `ChatAPIError.server(401)` to exercise the
@@ -855,5 +856,9 @@ private final class AtomicCounter: @unchecked Sendable {
 
     var value: Int {
         lock.withLock { count }
+    }
+
+    func suspendActiveSend() {
+        suspendActiveSendCount += 1
     }
 }

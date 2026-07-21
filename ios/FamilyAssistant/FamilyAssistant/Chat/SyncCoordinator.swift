@@ -59,6 +59,12 @@ protocol SyncStreamDelegate: AnyObject {
     /// Refresh the recent-conversation list (on activity connect and each ping).
     func activityStreamDidSignal(generation: Int) async
 
+    /// Tear down the in-flight send's transport task WITHOUT running the
+    /// user-facing `cancelStream()` semantics ("Response stopped", control
+    /// discard, queued stop-cancel POST). The `ActiveTurnSession` (state, cursors,
+    /// retry payload) survives so foreground resync can reattach to the turn. The
+    /// dedicated background-suspend path in §4.3.
+    func suspendActiveSend()
 }
 
 @MainActor

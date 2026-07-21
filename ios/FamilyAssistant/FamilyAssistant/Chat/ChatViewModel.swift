@@ -238,6 +238,28 @@ final class ChatViewModel {
     var activeTurnSessionForTesting: ActiveTurnSession? {
         activeTurnSession
     }
+
+    /// Test-only: a snapshot of the per-turn control state that
+    /// `cancelStream()` clears but `suspendActiveSend()` must preserve. Lets a
+    /// background-suspend test assert the dictionaries/sets are intact without an
+    /// observable side effect to key on.
+    struct TurnControlStateSnapshot: Equatable {
+        var registeredTurnIDs: Set<String>
+        var pendingStopTurnIDs: Set<String>
+        var stopAfterRegistrationByTurnID: [String: String]
+        var stopRequestedTurnIDs: Set<String>
+        var pendingSteersByTurnID: [String: [String]]
+    }
+
+    var turnControlStateForTesting: TurnControlStateSnapshot {
+        TurnControlStateSnapshot(
+            registeredTurnIDs: registeredTurnIDs,
+            pendingStopTurnIDs: pendingStopTurnIDs,
+            stopAfterRegistrationByTurnID: stopAfterRegistrationByTurnID,
+            stopRequestedTurnIDs: stopRequestedTurnIDs,
+            pendingSteersByTurnID: pendingSteersByTurnID
+        )
+    }
     #endif
 
     init(
@@ -2101,6 +2123,22 @@ final class ChatViewModel {
         draftText = preservedDraftText
         draftAttachments = preservedDraftAttachments
         queuedFollowUpSteers = remainingQueuedFollowUps + queuedFollowUpSteers
+    }
+
+    /// Tear down the in-flight send's transport task for a real background
+    /// transition, deliberately WITHOUT the user-facing `cancelStream()`
+    /// semantics: no "Response stopped." bubble text, no discard of
+    /// `activeTurnSession` / `currentStreamToken` / the per-turn control
+    /// dictionaries, and no queued stop-cancel POST. `runSendTurn`'s cancellation
+    /// guards bail without side effects and `session.lastAppliedSeq` is durably
+    /// mirrored, so the turn can be reattached on foreground resync (§4.3).
+    ///
+    /// `isStreaming = false` is required so `shouldSurfaceFollowDrop()` and
+    /// `catchUpPersistedHistory` behave correctly once the follow stream resumes.
+    func suspendActiveSend() {
+        streamTask?.cancel()
+        streamTask = nil
+        isStreaming = false
     }
 
     func cancelStream(sendQueuedStopCancel: Bool = true) {

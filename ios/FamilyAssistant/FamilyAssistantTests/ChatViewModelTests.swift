@@ -1202,6 +1202,110 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.map(\.text), ["Hi", "Response stopped."])
     }
 
+    func testSuspendActiveSendCancelsTransportButPreservesTurnState() async throws {
+        let stream = HangingStream()
+        let postedTurnID = AtomicString()
+        let cancelRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_suspend","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_suspend/stream"):
+                return .hangingStream(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(postedTurnID.value ?? "turn-suspend")","seq":0}
+
+                    event: token
+                    data: {"turn_id":"\(postedTurnID.value ?? "turn-suspend")","text":"partial","seq":1}
+
+                    """,
+                    controller: stream
+                )
+            case ("POST", _)
+                where path.hasPrefix("/api/v1/chat/turns/") && path.hasSuffix("/cancel"):
+                cancelRequests.increment()
+                return .json(
+                    #"{"turn_id":"\#(postedTurnID.value ?? "")","conversation_id":"web_conv_suspend","status":"cancelling","already_complete":false}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_suspend")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && postedTurnID.value != nil }
+        // Wait for turn_started so the per-turn control state is populated (the
+        // registered-turn id we then assert survives the suspend).
+        try await waitUntil {
+            model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? "")
+        }
+
+        let sessionBefore = try XCTUnwrap(model.activeTurnSessionForTesting)
+        let controlBefore = model.turnControlStateForTesting
+        let bubbleTextBefore = model.messages.last(where: { $0.role == .assistant })?.text
+
+        model.suspendActiveSend()
+
+        // Transport task is cancelled: streaming stops and no further stream
+        // events are applied even though the hanging stream is finished below.
+        XCTAssertFalse(model.isStreaming)
+
+        let sessionAfter = try XCTUnwrap(model.activeTurnSessionForTesting)
+        XCTAssertTrue(
+            sessionBefore === sessionAfter,
+            "suspendActiveSend must preserve the SAME ActiveTurnSession instance."
+        )
+        XCTAssertEqual(sessionAfter.turnID, postedTurnID.value)
+        XCTAssertEqual(sessionAfter.prompt, "Hi")
+        XCTAssertEqual(
+            sessionAfter.lastAppliedSeq,
+            sessionBefore.lastAppliedSeq,
+            "The durable ack/resume cursor must survive the suspend."
+        )
+
+        XCTAssertEqual(
+            model.turnControlStateForTesting,
+            controlBefore,
+            "The per-turn control dictionaries must be preserved, not discarded."
+        )
+        XCTAssertFalse(
+            model.turnControlStateForTesting.registeredTurnIDs.isEmpty,
+            "The registered-turn control state should be non-empty and intact."
+        )
+
+        let bubbleTextAfter = model.messages.last(where: { $0.role == .assistant })?.text
+        XCTAssertEqual(
+            bubbleTextAfter,
+            bubbleTextBefore,
+            "suspendActiveSend must not write 'Response stopped.' into the bubble."
+        )
+        XCTAssertNotEqual(bubbleTextAfter, "Response stopped.")
+
+        XCTAssertEqual(
+            cancelRequests.value,
+            0,
+            "suspendActiveSend must not fire a queued stop-cancel POST."
+        )
+
+        stream.finish()
+        // Give any still-live transport tail a chance to (incorrectly) mutate
+        // state before asserting the session is still intact.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.activeTurnSessionForTesting === sessionAfter)
+        XCTAssertEqual(cancelRequests.value, 0)
+    }
+
     func testSteerDraftPostsToRunningTurnAndClearsAfterUserInputEcho() async throws {
         let stream = HangingStream()
         let postedTurnID = AtomicString()
