@@ -79,6 +79,15 @@ final class ChatViewModel {
     // across an await must not clobber the turn that replaced it, so its tail
     // work is gated on this token still matching.
     @ObservationIgnored private var currentStreamToken: UUID?
+    // Stream tokens whose transport task was cancelled by `suspendActiveSend()`
+    // (a real-background teardown), NOT by the user-facing `cancelStream()`. The
+    // cancellation propagates asynchronously, so `runSendTurn`'s cancellation and
+    // rollback paths check this set to distinguish a suspend from a user cancel:
+    // a suspended token exits WITHOUT any user-cancel semantics (no bubble
+    // mutation, no error surfacing, no optimistic rollback) and WITHOUT clearing
+    // the `ActiveTurnSession`, so foreground resync can reattach to the turn
+    // (§4.3). The entry is cleared as the suspended task terminates.
+    @ObservationIgnored private var suspendedStreamTokens: Set<UUID> = []
     // Owns the follow + activity stream tasks and their reconnect loops. This
     // view model retains all per-event application (history merges, ack cursor,
     // live-token rendering) as the coordinator's stream delegate; the coordinator
@@ -241,6 +250,14 @@ final class ChatViewModel {
     /// rather than being reconstructed each subscription attempt.
     var activeTurnSessionForTesting: ActiveTurnSession? {
         activeTurnSession
+    }
+
+    /// Test-only: the in-flight send transport task, captured BEFORE
+    /// `suspendActiveSend()` nils `streamTask`. Lets a suspend test drive the
+    /// cancelled `runSendTurn` to completion and assert the session survives its
+    /// asynchronous cancellation aftermath.
+    var sendTaskForTesting: Task<Void, Never>? {
+        streamTask
     }
 
     /// Test-only: a snapshot of the per-turn control state that
@@ -427,17 +444,24 @@ final class ChatViewModel {
         }
     }
 
-    func refreshConversations() async {
+    /// Refresh the full conversation list. `surfaceErrors: false` is the advisory
+    /// mode used by the foreground resync (§4.4/§4.6): a failure feeds the
+    /// breadcrumb and lets presentation degrade from per-channel health, but never
+    /// raises a modal — an advisory resume-time transient is exactly the popup this
+    /// design removes. User-initiated refresh and bootstrap keep the modal.
+    func refreshConversations(surfaceErrors: Bool = true) async {
         isLoadingConversations = true
         do {
             conversations = try await apiClient.listConversations()
             errorMessage = nil
         } catch {
-            presentErrorAlert(
-                error.localizedDescription,
-                reason: .conversationsRefresh,
-                underlyingError: error
-            )
+            if surfaceErrors {
+                presentErrorAlert(
+                    error.localizedDescription,
+                    reason: .conversationsRefresh,
+                    underlyingError: error
+                )
+            }
             errorReporter.report(error, component: "Chat.conversations")
         }
         isLoadingConversations = false
@@ -459,7 +483,7 @@ final class ChatViewModel {
     /// which a skewed clock could keep "newer" forever), after which the server
     /// row is authoritative. The whole list is sorted most-recent-first so a kept
     /// optimistic row stays at the top.
-    private func refreshRecentConversations() async {
+    private func refreshRecentConversations(surfaceErrors: Bool = true) async {
         do {
             let recent = try await apiClient.listRecentConversations()
             let recentIDs = Set(recent.map(\.conversationID))
@@ -480,11 +504,13 @@ final class ChatViewModel {
             conversations = (merged + untouched).sorted { $0.lastTimestamp > $1.lastTimestamp }
             errorMessage = nil
         } catch {
-            presentErrorAlert(
-                error.localizedDescription,
-                reason: .recentConversationsRefresh,
-                underlyingError: error
-            )
+            if surfaceErrors {
+                presentErrorAlert(
+                    error.localizedDescription,
+                    reason: .recentConversationsRefresh,
+                    underlyingError: error
+                )
+            }
             errorReporter.report(error, component: "Chat.recentConversations")
         }
     }
@@ -705,7 +731,7 @@ final class ChatViewModel {
         startNewConversation()
     }
 
-    func loadMessages(conversationID: String? = nil) async {
+    func loadMessages(conversationID: String? = nil, surfaceErrors: Bool = true) async {
         guard let id = conversationID ?? self.conversationID else {
             return
         }
@@ -725,11 +751,13 @@ final class ChatViewModel {
             guard self.conversationID == id else {
                 return
             }
-            presentErrorAlert(
-                error.localizedDescription,
-                reason: .messagesLoad,
-                underlyingError: error
-            )
+            if surfaceErrors {
+                presentErrorAlert(
+                    error.localizedDescription,
+                    reason: .messagesLoad,
+                    underlyingError: error
+                )
+            }
             errorReporter.report(error, component: "Chat.messages")
         }
         isLoadingMessages = false
@@ -890,9 +918,12 @@ final class ChatViewModel {
     /// one held, drops any local optimistic placeholders, then appends the delta
     /// de-duped by id. Falls back to a full load when nothing persisted is held
     /// yet (e.g. the very first turn in a conversation).
-    private func mergeNewMessages(conversationID id: String) async {
+    private func mergeNewMessages(
+        conversationID id: String,
+        surfaceErrors: Bool = true
+    ) async {
         guard let after = latestPersistedTimestamp() else {
-            await loadMessages(conversationID: id)
+            await loadMessages(conversationID: id, surfaceErrors: surfaceErrors)
             return
         }
         do {
@@ -925,11 +956,13 @@ final class ChatViewModel {
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(merged))
             errorMessage = nil
         } catch {
-            presentErrorAlert(
-                error.localizedDescription,
-                reason: .messagesMerge,
-                underlyingError: error
-            )
+            if surfaceErrors {
+                presentErrorAlert(
+                    error.localizedDescription,
+                    reason: .messagesMerge,
+                    underlyingError: error
+                )
+            }
             errorReporter.report(error, component: "Chat.mergeMessages")
         }
     }
@@ -1224,6 +1257,11 @@ final class ChatViewModel {
         // recovered paths run earlier so their refresh already uses the server;
         // this is the catch-all and is idempotent.
         defer { optimisticPendingByTurnID.removeValue(forKey: turnID) }
+        // Retire this send's suspend marker on EVERY exit — including the
+        // superseded early returns that bypass `finishStreaming` — so a stale
+        // token can never linger and make a later transport for a reattached
+        // session look suspended.
+        defer { clearSuspendedToken(streamToken) }
         // The send's resume/ack cursor. Threaded `inout` through the subscription
         // consumers as the working value, then mirrored into the session
         // (`session.lastAppliedSeq`) after each subscription so the cursor
@@ -1474,6 +1512,15 @@ final class ChatViewModel {
                 appendStreamError(message, assistantMessageID: assistantMessageID)
             }
         } catch is CancellationError {
+            // A suspend-cancel (real background) must preserve the turn for
+            // foreground reattach: no queued stop-cancel POST, no optimistic
+            // rollback, no "Response stopped." bubble text, and — via the
+            // suspend-aware `finishStreaming` below — the `ActiveTurnSession`
+            // survives. Bail before any user-cancel side effect.
+            if isSuspendCancelled(streamToken) {
+                finishStreaming(streamToken)
+                return
+            }
             _ = await cancelStopQueuedBeforeRegistration(for: turnID)
             // A kickoff cancelled before startTurn returned (switch/new chat right
             // after sending) persisted nothing, so roll back its optimistic row —
@@ -1697,6 +1744,14 @@ final class ChatViewModel {
     /// Reset shared streaming state, but only for the still-current send: a
     /// superseded task must not nil out the new turn's streamTask.
     private func finishStreaming(_ streamToken: UUID) {
+        // A suspended send's transport task is terminating for a real-background
+        // teardown, not a completion: the `ActiveTurnSession`, cursors, and
+        // streaming flags are deliberately preserved for foreground reattach
+        // (§4.3). `suspendActiveSend()` already cleared `streamTask`/`isStreaming`;
+        // the suspend marker itself is retired by `runSendTurn`'s exit `defer`.
+        if isSuspendCancelled(streamToken) {
+            return
+        }
         if currentStreamToken == streamToken {
             isStreaming = false
             streamTask = nil
@@ -2141,9 +2196,31 @@ final class ChatViewModel {
     /// `isStreaming = false` is required so `shouldSurfaceFollowDrop()` and
     /// `catchUpPersistedHistory` behave correctly once the follow stream resumes.
     func suspendActiveSend() {
+        // Record the token BEFORE cancelling so `runSendTurn`'s cancellation
+        // aftermath — which runs asynchronously after `cancel()` returns — sees the
+        // suspend and takes the no-op exit paths instead of the user-cancel ones.
+        if let currentStreamToken {
+            suspendedStreamTokens.insert(currentStreamToken)
+        }
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
+    }
+
+    /// Whether this send's transport task was cancelled by `suspendActiveSend()`
+    /// (a real-background teardown) rather than by the user. A suspended send must
+    /// preserve its `ActiveTurnSession` for foreground reattach, so every
+    /// cancellation/rollback exit path in `runSendTurn` checks this before running
+    /// user-cancel semantics.
+    private func isSuspendCancelled(_ streamToken: UUID) -> Bool {
+        suspendedStreamTokens.contains(streamToken)
+    }
+
+    /// Drop a suspended token once its transport task has terminated, so a later
+    /// send that happens to reuse the value (tokens are UUIDs, so this is
+    /// defensive) is never mistaken for a suspended one.
+    private func clearSuspendedToken(_ streamToken: UUID) {
+        suspendedStreamTokens.remove(streamToken)
     }
 
     func cancelStream(sendQueuedStopCancel: Bool = true) {
@@ -2484,10 +2561,12 @@ final class ChatViewModel {
     /// converges. Advisory: failures feed the coordinator/breadcrumb path (via the
     /// merge/list refresh helpers), never a modal.
     private func targetedRefresh(conversationID: String?) async {
+        // A push hint is advisory: its refresh feeds breadcrumbs and health, never
+        // a modal (§4.6). The user did not initiate this refresh.
         if let conversationID, conversationID == self.conversationID {
-            await mergeNewMessages(conversationID: conversationID)
+            await mergeNewMessages(conversationID: conversationID, surfaceErrors: false)
         }
-        await refreshRecentConversations()
+        await refreshRecentConversations(surfaceErrors: false)
     }
 
     /// Whether the chat thread's message list should be realized into the view
@@ -3593,11 +3672,13 @@ extension ChatViewModel: ResyncHost {
     }
 
     func applyListSnapshot() async {
-        await refreshConversations()
+        // Advisory (§4.4 step 4): a failed resume-time snapshot degrades from
+        // per-channel health and breadcrumbs, but must never modal.
+        await refreshConversations(surfaceErrors: false)
     }
 
     func applyMessagesSnapshot(conversationID: String) async {
-        await mergeNewMessages(conversationID: conversationID)
+        await mergeNewMessages(conversationID: conversationID, surfaceErrors: false)
     }
 
     func drainFollowEvent(

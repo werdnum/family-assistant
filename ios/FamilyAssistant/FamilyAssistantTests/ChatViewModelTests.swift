@@ -5752,6 +5752,9 @@ final class ChatViewModelTests: XCTestCase {
         let activityBaseline = activityConnects.value
 
         model.scenePhaseChanged(old: .active, new: .background)
+        // Capture the transport task before the suspend nils `streamTask`, so we can
+        // drive its ASYNCHRONOUS cancellation aftermath to completion (F1).
+        let sendTask = model.sendTaskForTesting
 
         try assertBackgroundSuspendedSend(
             model: model,
@@ -5765,7 +5768,18 @@ final class ChatViewModelTests: XCTestCase {
             cancelRequests: cancelRequests,
             spoolDirectory: spoolDirectory
         )
+        // Release the held POST and drive the cancelled task to completion: its
+        // `startTurn` throws CancellationError (POST in flight when backgrounded),
+        // so the aftermath runs the CancellationError catch. It must NOT roll back,
+        // mark the bubble stopped, surface an error, or clear the session.
         postBody.finish()
+        await sendTask?.value
+        try assertSuspendedSendSurvivesAftermath(
+            model: model,
+            sessionBefore: sessionBefore,
+            cancelRequests: cancelRequests,
+            spoolDirectory: spoolDirectory
+        )
     }
 
     func testBackgroundAfterAcceptBeforeFirstStreamEventSuspendsSend() async throws {
@@ -5836,6 +5850,7 @@ final class ChatViewModelTests: XCTestCase {
         let activityBaseline = activityConnects.value
 
         model.scenePhaseChanged(old: .active, new: .background)
+        let sendTask = model.sendTaskForTesting
 
         try assertBackgroundSuspendedSend(
             model: model,
@@ -5849,7 +5864,17 @@ final class ChatViewModelTests: XCTestCase {
             cancelRequests: cancelRequests,
             spoolDirectory: spoolDirectory
         )
+        // Drive the aftermath: the turn was accepted, so the cancelled subscription
+        // returns `.interrupted` and the resume/tail guards `return` early — the
+        // session must survive intact.
         followStream.finish()
+        await sendTask?.value
+        try assertSuspendedSendSurvivesAftermath(
+            model: model,
+            sessionBefore: sessionBefore,
+            cancelRequests: cancelRequests,
+            spoolDirectory: spoolDirectory
+        )
     }
 
     func testBackgroundMidStreamSuspendsSendAndPreservesCursor() async throws {
@@ -5936,6 +5961,7 @@ final class ChatViewModelTests: XCTestCase {
         let activityBaseline = activityConnects.value
 
         model.scenePhaseChanged(old: .active, new: .background)
+        let sendTask = model.sendTaskForTesting
 
         try assertBackgroundSuspendedSend(
             model: model,
@@ -5960,7 +5986,25 @@ final class ChatViewModelTests: XCTestCase {
             model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? ""),
             "The registered-turn control state must survive the background suspend."
         )
+        // Drive the mid-stream cancellation aftermath to completion and verify the
+        // session (and its cursor / registered-turn control state) still survives.
         followStream.finish()
+        await sendTask?.value
+        try assertSuspendedSendSurvivesAftermath(
+            model: model,
+            sessionBefore: sessionBefore,
+            cancelRequests: cancelRequests,
+            spoolDirectory: spoolDirectory
+        )
+        XCTAssertEqual(
+            model.activeTurnSessionForTesting?.lastAppliedSeq,
+            cursorBefore,
+            "The resume cursor must survive the asynchronous suspend aftermath."
+        )
+        XCTAssertTrue(
+            model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? ""),
+            "The registered-turn control state must survive the asynchronous suspend aftermath."
+        )
     }
 
     func testForegroundReattachContinuesRenderingRunningTurn() async throws {
@@ -6411,6 +6455,155 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testPushHintRefreshFailureIsSilent() async throws {
+        // F5: a push-hint targeted refresh is advisory. When its selected-conversation
+        // message merge fails, the failure must feed breadcrumbs and coordinator
+        // health but NEVER raise a modal Chat Error — no errorMessage, no
+        // Chat.alertPresented. The merge failure is armed only AFTER the advisory
+        // follow-connect catch-up merge (a separate M3-scoped path) has completed,
+        // so it is not a confound.
+        let mergeArmed = AtomicCounter()
+        let mergeFetches = AtomicCounter()
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-push-silent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_pushfail/stream" {
+                    return .hangingStream("", controller: HangingStream())
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    if Self.queryItems(from: request)["after"] == nil {
+                        return .json(
+                            #"{"conversation_id":"web_conv_pushfail","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                        )
+                    }
+                    mergeFetches.increment()
+                    // The push-hint selected-conversation merge fetch fails once armed.
+                    if mergeArmed.value > 0 {
+                        return .json(#"{"detail":"boom"}"#, statusCode: 500)
+                    }
+                    return .json(
+                        #"{"conversation_id":"web_conv_pushfail","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_pushfail",
+            spoolDirectory: spoolDirectory
+        )
+        await model.selectConversation("web_conv_pushfail")
+        try await waitUntil { model.messages.map(\.text) == ["Earlier"] }
+        // Wait for the advisory follow-connect catch-up merge to complete, then arm.
+        try await waitUntil { mergeFetches.value >= 1 }
+        XCTAssertNil(model.errorMessage)
+        mergeArmed.increment()
+
+        model.pushHintReceived(conversationID: "web_conv_pushfail")
+        // Wait for the (failing) merge breadcrumb, then assert no modal was raised.
+        try await waitUntil {
+            self.spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.mergeMessages" }
+        }
+
+        XCTAssertNil(
+            model.errorMessage,
+            "A push-hint refresh failure must not surface a modal Chat Error."
+        )
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "A push-hint refresh failure must not spool a Chat.alertPresented breadcrumb."
+        )
+    }
+
+    func testResyncSnapshotFailureIsSilent() async throws {
+        // F5: the foreground resync's snapshot helpers must be silent — a failed
+        // resume-time list/message snapshot degrades from per-channel health and
+        // breadcrumbs, but never modals.
+        let mergeArmed = AtomicCounter()
+        let mergeFetches = AtomicCounter()
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-resync-silent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_resyncfail/stream" {
+                    return .hangingStream("", controller: HangingStream())
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    if Self.queryItems(from: request)["after"] == nil {
+                        return .json(
+                            #"{"conversation_id":"web_conv_resyncfail","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                        )
+                    }
+                    let fetch = mergeFetches.increment()
+                    // Fail ONLY the resync's own message snapshot (the first fetch
+                    // once armed). A later post-handover follow-reconnect catch-up (a
+                    // separate steady-state path, out of F5's scope) succeeds, so it
+                    // is not a confound for the resync-silence assertion.
+                    if mergeArmed.value > 0, fetch == mergeArmed.value {
+                        return .json(#"{"detail":"boom"}"#, statusCode: 500)
+                    }
+                    return .json(
+                        #"{"conversation_id":"web_conv_resyncfail","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_resyncfail",
+            spoolDirectory: spoolDirectory
+        )
+        await model.selectConversation("web_conv_resyncfail")
+        try await waitUntil { model.messages.map(\.text) == ["Earlier"] }
+        // Wait for the advisory follow-connect catch-up merge, then arm the NEXT
+        // fetch (the resync's own message snapshot) to fail.
+        try await waitUntil { mergeFetches.value >= 1 }
+        model.errorMessage = nil
+        mergeArmed.set(mergeFetches.value + 1)
+
+        // Drive the coalesced foreground resync directly; its message snapshot fails.
+        await model.reconnectLiveUpdates()
+        try await waitUntil {
+            self.spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.mergeMessages" }
+        }
+
+        XCTAssertNil(
+            model.errorMessage,
+            "A resync snapshot failure must not surface a modal Chat Error."
+        )
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "A resync snapshot failure must not spool a Chat.alertPresented breadcrumb."
+        )
+    }
+
     func testReachabilityRecoveryRunsFullCoalescedResync() async throws {
         // §4.4: an unsatisfied→satisfied recovery runs the SAME coalesced resync as
         // foreground — a full list snapshot fetch — not just a bare loop restart.
@@ -6541,6 +6734,47 @@ final class ChatViewModelTests: XCTestCase {
             activityConnects.value,
             activityFloor,
             "Backgrounding must not open a new activity stream (advisory teardown)."
+        )
+    }
+
+    /// F1: after the suspended `runSendTurn` task has run its ASYNCHRONOUS
+    /// cancellation aftermath to completion (POST-in-flight throw, or a mid-stream
+    /// interrupted return), the `ActiveTurnSession` must still be the same
+    /// preserved instance, with no user-cancel side effects: no error surfaced, no
+    /// "Response stopped." bubble, no queued stop-cancel POST, no alert breadcrumb.
+    private func assertSuspendedSendSurvivesAftermath(
+        model: ChatViewModel,
+        sessionBefore: ActiveTurnSession,
+        cancelRequests: AtomicCounter,
+        spoolDirectory: URL
+    ) throws {
+        let sessionAfter = try XCTUnwrap(
+            model.activeTurnSessionForTesting,
+            "The ActiveTurnSession must survive the asynchronous suspend aftermath."
+        )
+        XCTAssertTrue(
+            sessionBefore === sessionAfter,
+            "The suspend aftermath must not replace the preserved ActiveTurnSession."
+        )
+        XCTAssertNil(
+            model.errorMessage,
+            "The suspend aftermath must not surface an error modal."
+        )
+        XCTAssertFalse(
+            model.messages.contains { $0.text == "Response stopped." },
+            "The suspend aftermath must not run cancelStream's 'Response stopped.' semantics."
+        )
+        XCTAssertFalse(
+            model.messages.contains { $0.status == .failed },
+            "The suspend aftermath must not mark the bubble failed."
+        )
+        XCTAssertEqual(
+            cancelRequests.value, 0,
+            "The suspend aftermath must not fire a queued stop-cancel POST."
+        )
+        XCTAssertTrue(
+            spooledReports(in: spoolDirectory).allSatisfy { $0.componentName != "Chat.alertPresented" },
+            "The suspend aftermath must not spool a Chat.alertPresented breadcrumb."
         )
     }
 
@@ -9116,6 +9350,10 @@ private final class AtomicCounter: @unchecked Sendable {
             count += 1
             return count
         }
+    }
+
+    func set(_ newValue: Int) {
+        lock.withLock { count = newValue }
     }
 
     var value: Int {
