@@ -80,13 +80,16 @@ final class ErrorReporter: @unchecked Sendable {
         }
     }
 
-    /// Report a free-form message. Fire-and-forget.
+    /// Report a free-form message. Fire-and-forget. `bypassDedupe` is for events that count
+    /// discrete occurrences (e.g. alert presentations), where dropping repeats inside the dedupe
+    /// window would undercount.
     func report(
         message: String,
         component: String,
         errorType: ErrorType = .handled,
         stack: String? = nil,
-        extraData: [String: String] = [:]
+        extraData: [String: String] = [:],
+        bypassDedupe: Bool = false
     ) {
         Task { [weak self] in
             await self?.deliver(
@@ -94,7 +97,8 @@ final class ErrorReporter: @unchecked Sendable {
                 component: component,
                 errorType: errorType,
                 stack: stack,
-                extraData: extraData
+                extraData: extraData,
+                bypassDedupe: bypassDedupe
             )
         }
     }
@@ -106,9 +110,11 @@ final class ErrorReporter: @unchecked Sendable {
         component: String,
         errorType: ErrorType,
         stack: String?,
-        extraData: [String: String]
+        extraData: [String: String],
+        bypassDedupe: Bool = false
     ) async {
-        guard !shouldDedupe(message: message, component: component, errorType: errorType) else {
+        guard bypassDedupe || !shouldDedupe(message: message, component: component, errorType: errorType)
+        else {
             return
         }
         let payload = makePayload(

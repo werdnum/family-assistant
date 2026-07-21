@@ -341,7 +341,11 @@ final class ChatViewModel {
             conversations = try await apiClient.listConversations()
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            presentErrorAlert(
+                error.localizedDescription,
+                reason: .conversationsRefresh,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.conversations")
         }
         isLoadingConversations = false
@@ -384,7 +388,11 @@ final class ChatViewModel {
             conversations = (merged + untouched).sorted { $0.lastTimestamp > $1.lastTimestamp }
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            presentErrorAlert(
+                error.localizedDescription,
+                reason: .recentConversationsRefresh,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.recentConversations")
         }
     }
@@ -621,7 +629,11 @@ final class ChatViewModel {
             guard self.conversationID == id else {
                 return
             }
-            errorMessage = error.localizedDescription
+            presentErrorAlert(
+                error.localizedDescription,
+                reason: .messagesLoad,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.messages")
         }
         isLoadingMessages = false
@@ -781,7 +793,11 @@ final class ChatViewModel {
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(merged))
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            presentErrorAlert(
+                error.localizedDescription,
+                reason: .messagesMerge,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.mergeMessages")
         }
     }
@@ -838,7 +854,11 @@ final class ChatViewModel {
             // possibly-stale selection is safe. Matches the web frontend.
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            presentErrorAlert(
+                error.localizedDescription,
+                reason: .profilesLoad,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.profiles")
         }
         isLoadingProfiles = false
@@ -855,11 +875,17 @@ final class ChatViewModel {
             return
         }
         guard draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
-            errorMessage = "Wait for attachments to finish uploading before sending."
+            presentErrorAlert(
+                "Wait for attachments to finish uploading before sending.",
+                reason: .sendAttachmentsUploading
+            )
             return
         }
         guard draftAttachments.allSatisfy({ $0.uploadState == .uploaded }) else {
-            errorMessage = "Remove failed attachments before sending."
+            presentErrorAlert(
+                "Remove failed attachments before sending.",
+                reason: .sendAttachmentFailed
+            )
             return
         }
         guard let id = conversationID else {
@@ -1021,7 +1047,11 @@ final class ChatViewModel {
                         do {
                             _ = try await self.requestStopWithRetry(turnToCancel)
                         } catch {
-                            self.errorMessage = error.localizedDescription
+                            self.presentErrorAlert(
+                                error.localizedDescription,
+                                reason: .stopTurnFailed,
+                                underlyingError: error
+                            )
                             self.errorReporter.report(error, component: "Chat.stopTurn")
                         }
                     }
@@ -1470,7 +1500,11 @@ final class ChatViewModel {
             guard shouldSurfaceStopWarning(for: activeTurn) else {
                 return
             }
-            errorMessage = error.localizedDescription
+            presentErrorAlert(
+                error.localizedDescription,
+                reason: .stopTurnFailed,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.stopTurn")
             return
         }
@@ -1624,7 +1658,11 @@ final class ChatViewModel {
             do {
                 return try await self.requestStopWithRetry(turnToCancel)
             } catch {
-                self.errorMessage = error.localizedDescription
+                self.presentErrorAlert(
+                    error.localizedDescription,
+                    reason: .cancelStopFailed,
+                    underlyingError: error
+                )
                 self.errorReporter.report(error, component: "Chat.stopTurn")
                 return false
             }
@@ -1899,13 +1937,17 @@ final class ChatViewModel {
             try data.write(to: url)
             await addAttachment(fileURL: url, mimeType: mimeType, displayName: filename)
         } catch {
-            errorMessage = error.localizedDescription
+            presentErrorAlert(
+                error.localizedDescription,
+                reason: .attachmentImportFailed,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.importAttachment")
         }
     }
 
     func reportAttachmentImportError(_ message: String) {
-        errorMessage = message
+        presentErrorAlert(message, reason: .attachmentImportFailed)
     }
 
     func addAttachment(fileURL: URL) async {
@@ -1930,7 +1972,10 @@ final class ChatViewModel {
 
     func addSharedAttachments(_ batch: SharedAttachmentBatch) async {
         if !batch.importErrors.isEmpty {
-            errorMessage = (["Some shared files could not be imported."] + batch.importErrors).joined(separator: "\n")
+            presentErrorAlert(
+                (["Some shared files could not be imported."] + batch.importErrors).joined(separator: "\n"),
+                reason: .attachmentImportFailed
+            )
         }
         let targetConversationID = conversationID
         for (index, fileURL) in batch.fileURLs.enumerated() {
@@ -1948,14 +1993,21 @@ final class ChatViewModel {
 
     func removeDraftAttachment(_ attachment: ChatAttachment) async {
         guard attachment.uploadState != .uploading else {
-            errorMessage = "Wait for attachment upload to finish before removing."
+            presentErrorAlert(
+                "Wait for attachment upload to finish before removing.",
+                reason: .attachmentRemoveFailed
+            )
             return
         }
         if let attachmentID = attachment.attachmentID {
             do {
                 try await apiClient.deleteAttachment(attachmentID: attachmentID)
             } catch {
-                errorMessage = "Could not remove attachment. \(error.localizedDescription)"
+                presentErrorAlert(
+                    "Could not remove attachment. \(error.localizedDescription)",
+                    reason: .attachmentRemoveFailed,
+                    underlyingError: error
+                )
                 errorReporter.report(error, component: "Chat.removeAttachment")
                 return
             }
@@ -1995,7 +2047,11 @@ final class ChatViewModel {
         do {
             return try await downloadAttachment(attachment)
         } catch {
-            errorMessage = "Could not download attachment. \(error.localizedDescription)"
+            presentErrorAlert(
+                "Could not download attachment. \(error.localizedDescription)",
+                reason: .attachmentDownloadFailed,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.downloadAttachment")
             return nil
         }
@@ -2089,7 +2145,11 @@ final class ChatViewModel {
             pendingConfirmations = try await apiClient.listPendingConfirmations()
             errorMessage = nil
         } catch {
-            errorMessage = "Could not load pending approvals. \(error.localizedDescription)"
+            presentErrorAlert(
+                "Could not load pending approvals. \(error.localizedDescription)",
+                reason: .pendingApprovalsPoll,
+                underlyingError: error
+            )
             errorReporter.report(error, component: "Chat.pendingApprovals")
         }
     }
@@ -2493,6 +2553,61 @@ final class ChatViewModel {
         }
     }
 
+    /// The operation whose failure raised the shared "Chat Error" modal. Each
+    /// case tags a `Chat.alertPresented` breadcrumb so the popup rate is directly
+    /// measurable in production rather than inferred from transport breadcrumbs.
+    enum ChatAlertReason: String {
+        case conversationsRefresh = "conversations_refresh"
+        case recentConversationsRefresh = "recent_conversations_refresh"
+        case messagesLoad = "messages_load"
+        case messagesMerge = "messages_merge"
+        case profilesLoad = "profiles_load"
+        case sendAttachmentsUploading = "send_attachments_uploading"
+        case sendAttachmentFailed = "send_attachment_failed"
+        case stopTurnFailed = "stop_turn_failed"
+        case cancelStopFailed = "cancel_stop_failed"
+        case attachmentImportFailed = "attachment_import_failed"
+        case attachmentRemoveFailed = "attachment_remove_failed"
+        case attachmentDownloadFailed = "attachment_download_failed"
+        case pendingApprovalsPoll = "pending_approvals_poll"
+        case streamError = "stream_error"
+    }
+
+    /// The single choke point that raises the shared "Chat Error" modal. Setting
+    /// `errorMessage` here — rather than at each failure site — guarantees exactly
+    /// one reason-tagged `Chat.alertPresented` breadcrumb per modal presentation,
+    /// so the popup rate is measurable from the backend error log. The breadcrumb
+    /// fires only on the nil→non-nil transition (a failure while the modal is
+    /// already open replaces its text without a new presentation) and bypasses
+    /// the reporter's dedupe window (repeat presentations are the very thing
+    /// being counted). When the caller holds the underlying `Error`, its domain
+    /// and URL error code are attached the same way ``reportStreamOutcome``
+    /// records them.
+    func presentErrorAlert(
+        _ message: String,
+        reason: ChatAlertReason,
+        underlyingError: Error? = nil
+    ) {
+        let newlyPresented = errorMessage == nil
+        errorMessage = message
+        guard newlyPresented else {
+            return
+        }
+        var extra: [String: String] = ["reason": reason.rawValue]
+        if let underlyingError {
+            let (errorCode, errorDomain) = Self.describeStreamError(underlyingError)
+            extra["url_error_code"] = errorCode
+            extra["error_domain"] = errorDomain
+        }
+        errorReporter.report(
+            message: message,
+            component: "Chat.alertPresented",
+            errorType: .component,
+            extraData: extra,
+            bypassDedupe: true
+        )
+    }
+
     /// Emit a breadcrumb when a send-and-watch subscription ends without a clean
     /// `turn_ended`. Routed to both os.Logger (live, when tethered) and
     /// ErrorReporter (persisted to the backend error log / diagnostics export,
@@ -2845,7 +2960,7 @@ final class ChatViewModel {
             }
             messages[index].text += "\n\n\(message)"
         }
-        errorMessage = message
+        presentErrorAlert(message, reason: .streamError)
         errorReporter.report(message: message, component: "Chat.stream")
     }
 
