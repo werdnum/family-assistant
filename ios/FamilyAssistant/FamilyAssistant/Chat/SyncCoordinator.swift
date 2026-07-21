@@ -126,6 +126,7 @@ final class SyncCoordinator {
         case startFollowStream(generation: Int)
         case startActivityStream(generation: Int)
         case cancelStreams
+        case suspendSend
         case runResync
     }
 
@@ -553,7 +554,15 @@ final class SyncCoordinator {
         case .backgrounded:
             lifecycle = .background
             cameFromBackground = true
-            return []
+            // On a real background: stop scheduling advisory work (bump BOTH channel
+            // generations so the per-channel fences reject any late events from the
+            // streams we tear down), suspend the in-flight send through the
+            // dedicated path (preserving its ActiveTurnSession), and cancel the
+            // advisory follow/activity streams (push notifications take over
+            // delivery). See design 4.3.
+            bumpFollowGeneration()
+            bumpActivityGeneration()
+            return [.suspendSend, .cancelStreams]
 
         case let .reachabilityChanged(reachability):
             let wasUnsatisfied = self.reachability == .unsatisfied

@@ -2441,8 +2441,17 @@ final class ChatViewModel {
             didBackground: new == .background,
             isActive: new == .active
         )
-        for case .runResync in effects {
-            Task { await reconnectLiveUpdates() }
+        for effect in effects {
+            switch effect {
+            case .suspendSend:
+                suspendActiveSend()
+            case .cancelStreams:
+                syncCoordinator.cancelStreams()
+            case .runResync:
+                Task { await reconnectLiveUpdates() }
+            case .startFollowStream, .startActivityStream:
+                break
+            }
         }
     }
 

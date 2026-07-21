@@ -233,11 +233,18 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testLatchedForegroundEmitsExactlyOneResync() {
         let (coordinator, _, _) = makeCoordinator()
+        let followGenerationBeforeBackground = coordinator.followGeneration
+        let activityGenerationBeforeBackground = coordinator.activityGeneration
 
-        coordinator.scenePhaseChanged(didBackground: true, isActive: false)
+        let backgroundEffects = coordinator.scenePhaseChanged(didBackground: true, isActive: false)
         XCTAssertEqual(coordinator.lifecycle, .background)
         XCTAssertTrue(coordinator.cameFromBackground)
         XCTAssertEqual(coordinator.presentation, .suspended)
+        // Background bumps BOTH channel generations (fencing the torn-down streams'
+        // late events) and asks for a send suspend + stream teardown (design 4.3).
+        XCTAssertEqual(backgroundEffects, [.suspendSend, .cancelStreams])
+        XCTAssertGreaterThan(coordinator.followGeneration, followGenerationBeforeBackground)
+        XCTAssertGreaterThan(coordinator.activityGeneration, activityGenerationBeforeBackground)
 
         let effects = coordinator.apply(.foregrounded)
 
@@ -254,7 +261,9 @@ final class SyncCoordinatorTests: XCTestCase {
         allEffects += coordinator.scenePhaseChanged(didBackground: false, isActive: false)
         allEffects += coordinator.scenePhaseChanged(didBackground: false, isActive: true)
 
-        XCTAssertEqual(allEffects, [.runResync])
+        // A full resume emits the background suspend + teardown, then exactly one
+        // latched-foreground resync.
+        XCTAssertEqual(allEffects, [.suspendSend, .cancelStreams, .runResync])
         XCTAssertFalse(coordinator.cameFromBackground)
 
         let repeated = coordinator.apply(.foregrounded)
