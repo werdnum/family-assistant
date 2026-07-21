@@ -170,7 +170,7 @@ dev = [
     "types-PyYAML",
     "types-pytz",
     "types-vobject",
-    "psycopg-binary>=3.1.0",
+    "psycopg[binary]>=3.1.0",
     "pylint>=4.0.6",
     "poethepoet>=0.11.0",
     "mcp-proxy>=0.3.0", # Added for testing SSE transport
