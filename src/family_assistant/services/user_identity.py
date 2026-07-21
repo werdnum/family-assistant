@@ -200,6 +200,39 @@ class UserIdentityResolver:
         except UserIdentityResolutionError:
             return raw_owner_id
 
+    def owner_ids_canonicalizing_to(self, user_id: str) -> set[str]:
+        """Return every stored ``user_id`` that ``canonicalize_owner_id`` maps to
+        ``user_id`` via a configured mapping.
+
+        This is the inverse of :meth:`canonicalize_owner_id`, used to push the
+        sole-canonical-owner ownership check into a database query: a conversation
+        is owned by ``user_id`` iff every distinct stored owner id on it belongs to
+        this equivalence set. Candidates come from the configured mappings for this
+        user (Telegram numeric ids, OIDC subjects and OIDC emails — the real
+        storage paths through which a conversation's owner id can differ from the
+        canonical id) plus ``user_id`` itself, but membership is decided by
+        round-tripping each candidate through :meth:`canonicalize_owner_id`. The
+        round trip preserves the canonicalizer's namespace precedence: an id that
+        is both one user's Telegram id and another user's OIDC subject resolves to
+        the Telegram user, so it must appear only in that user's set.
+        """
+        candidates = {user_id}
+        if self._users_configured:
+            for telegram_user_id, mapped in self._telegram_user_id_to_user_id.items():
+                if mapped == user_id:
+                    candidates.add(str(telegram_user_id))
+            for subject, mapped in self._oidc_subject_to_user_id.items():
+                if mapped == user_id:
+                    candidates.add(subject)
+            for email, mapped in self._oidc_email_to_user_id.items():
+                if mapped == user_id:
+                    candidates.add(email)
+        return {
+            candidate
+            for candidate in candidates
+            if self.canonicalize_owner_id(candidate) == user_id
+        }
+
     def is_telegram_user_allowed(self, telegram_user_id: int) -> bool:
         try:
             self.resolve_telegram_user(telegram_user_id)

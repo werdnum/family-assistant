@@ -19,9 +19,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import tempfile
 import uuid
-from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from collections.abc import AsyncGenerator, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -34,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import (
     AppConfig,
+    OIDCUserIdentityConfig,
     TelegramUserIdentityConfig,
     ToolsConfig,
     UserIdentityConfig,
@@ -50,6 +52,7 @@ from family_assistant.llm import (
 )
 from family_assistant.llm.messages import MessageReasoningInfo, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
@@ -73,6 +76,7 @@ from family_assistant.web.conversation_stream_hub import (
     SubscriptionHandle,
 )
 from family_assistant.web.web_chat_interface import WebChatInterface
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 logger = logging.getLogger(__name__)
@@ -272,6 +276,9 @@ async def app_fixture(
     app.state.debug_mode = False
     app.state.web_chat_interface = WebChatInterface(db_engine)
     app.state.conversation_stream_hub = ConversationStreamHub()
+    app.state.attachment_registry = AttachmentRegistry(
+        storage_path=tempfile.mkdtemp(), db_engine=db_engine, config=None
+    )
 
     async with get_db_context(engine=db_engine) as temp_db_ctx:
         await init_db(db_engine)
@@ -1263,3 +1270,460 @@ async def test_conversation_list_identity_maps_telegram_owner(
         params={"from_seq": 0},
     )
     assert stream_response.status_code == 200, stream_response.text
+
+
+async def test_conversation_list_attributes_unnormalized_stored_owner_ids(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A historical user message may store an un-normalized owner id (mixed case,
+    padded ``Name <email>``) that only ``canonicalize_owner_id`` can attribute —
+    it is not one of the exact configured aliases. The DB-level ownership filter
+    must still count and list that conversation, matching the old
+    canonicalize-then-compare post-filter."""
+    resolver_config = AppConfig(
+        users=[
+            UserIdentityConfig(
+                id="test_user",
+                oidc=OIDCUserIdentityConfig(emails={"owner@example.com"}),
+            )
+        ]
+    )
+    app_fixture.state.user_identity_resolver = UserIdentityResolver(resolver_config)
+
+    padded_conv = f"conv_padded_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+        await ctx.message_history.add_message(
+            UserMessage(content="stored before normalization"),
+            interface_type="web",
+            conversation_id=padded_conv,
+            timestamp=datetime.now(UTC),
+            user_id="Owner <OWNER@Example.com>",
+        )
+
+    response = await test_client.get("/api/v1/chat/conversations")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    listed = {c["conversation_id"] for c in body["conversations"]}
+    assert padded_conv in listed
+    assert body["count"] == len(listed)
+
+
+# --------------------------------------------------------------------------- #
+# Pagination-ownership correctness (M4 / finding §2.2)
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_owned_conversations(
+    db_engine: AsyncEngine,
+    *,
+    owner_id: str,
+    count: int,
+    prefix: str,
+) -> list[str]:
+    """Persist ``count`` single-owner conversations and return their ids in the
+    order they were written (oldest first)."""
+    conversation_ids: list[str] = []
+    base = datetime.now(UTC)
+    async with get_db_context(engine=db_engine) as ctx:
+        await init_db(db_engine)
+        await ctx.init_vector_db()
+        for index in range(count):
+            conversation_id = f"{prefix}_{index}_{uuid.uuid4().hex[:8]}"
+            await ctx.message_history.add_message(
+                UserMessage(content=f"message {index}"),
+                interface_type="web",
+                conversation_id=conversation_id,
+                # Distinct increasing timestamps give a deterministic order.
+                timestamp=base + timedelta(seconds=index),
+                user_id=owner_id,
+            )
+            conversation_ids.append(conversation_id)
+    return conversation_ids
+
+
+async def _page_all_conversations(
+    test_client: AsyncClient, *, page_size: int
+) -> tuple[list[str], list[int], int]:
+    """Page through GET /conversations to exhaustion.
+
+    A client stops when a page returns fewer than ``page_size`` rows (the last
+    page), mirroring the iOS pager. Returns the accumulated conversation ids,
+    the per-page row counts, and the reported ``count`` (which must be stable
+    and ownership-filtered on every page)."""
+    collected: list[str] = []
+    page_sizes: list[int] = []
+    reported_count = -1
+    offset = 0
+    while True:
+        response = await test_client.get(
+            "/api/v1/chat/conversations",
+            params={"limit": page_size, "offset": offset},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        reported_count = body["count"]
+        page = [c["conversation_id"] for c in body["conversations"]]
+        page_sizes.append(len(page))
+        collected.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return collected, page_sizes, reported_count
+
+
+async def test_conversation_list_count_is_ownership_filtered(
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """The reported ``count`` reflects only conversations the caller owns, not the
+    unfiltered table total. With foreign conversations interleaved among owned
+    ones, ``count`` must equal the number of owned conversations so the client's
+    pager terminates correctly instead of chasing pages that never materialize."""
+    owned = await _seed_owned_conversations(
+        db_engine, owner_id="test_user", count=3, prefix="conv_owned"
+    )
+    # Interleave conversations owned solely by another user.
+    async with get_db_context(engine=db_engine) as ctx:
+        for index in range(4):
+            await ctx.message_history.add_message(
+                UserMessage(content="theirs"),
+                interface_type="web",
+                conversation_id=f"conv_foreign_{index}_{uuid.uuid4().hex[:8]}",
+                timestamp=datetime.now(UTC) + timedelta(seconds=100 + index),
+                user_id="someone_else",
+            )
+
+    response = await test_client.get("/api/v1/chat/conversations")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["count"] == len(owned)
+    listed = {c["conversation_id"] for c in body["conversations"]}
+    assert listed == set(owned)
+
+
+async def test_conversation_list_pagination_has_no_empty_nonfinal_pages(
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """Paging through an interleaved owned/foreign dataset yields full non-final
+    pages and returns every owned conversation exactly once. A Python post-filter
+    would let a page come back short (or empty) even though owned conversations
+    remain on later pages — a client that stops on a short page would then miss
+    them. With DB-level filtering every non-final page is full."""
+    owned = await _seed_owned_conversations(
+        db_engine, owner_id="test_user", count=5, prefix="conv_mine"
+    )
+    # Heavily interleave foreign conversations so a naive post-filter would
+    # produce short/empty pages.
+    async with get_db_context(engine=db_engine) as ctx:
+        for index in range(10):
+            await ctx.message_history.add_message(
+                UserMessage(content="theirs"),
+                interface_type="web",
+                conversation_id=f"conv_other_{index}_{uuid.uuid4().hex[:8]}",
+                timestamp=datetime.now(UTC) + timedelta(seconds=200 + index),
+                user_id="someone_else",
+            )
+
+    collected, page_sizes, reported_count = await _page_all_conversations(
+        test_client, page_size=2
+    )
+
+    assert reported_count == len(owned)
+    # Every owned conversation appears exactly once, none is lost to a short page.
+    assert sorted(collected) == sorted(owned)
+    assert len(collected) == len(set(collected))
+    # Only the final page may be short; every earlier page is full.
+    for size in page_sizes[:-1]:
+        assert size == 2, f"non-final page was short: {page_sizes}"
+
+
+async def test_conversation_list_multi_owner_excluded_from_count(
+    test_client: AsyncClient,
+    db_engine: AsyncEngine,
+) -> None:
+    """A conversation with a co-owner (which /stream refuses) is excluded from
+    both the page and the ownership-filtered ``count`` — the DB-level NOT EXISTS
+    disqualifies any conversation carrying a foreign owner id, keeping the list
+    and the count consistent with what the caller can actually open."""
+    owned = await _seed_owned_conversations(
+        db_engine, owner_id="test_user", count=2, prefix="conv_solo"
+    )
+    multi = f"conv_shared_{uuid.uuid4().hex[:8]}"
+    async with get_db_context(engine=db_engine) as ctx:
+        await ctx.message_history.add_message(
+            UserMessage(content="mine in group"),
+            interface_type="web",
+            conversation_id=multi,
+            timestamp=datetime.now(UTC) + timedelta(seconds=300),
+            user_id="test_user",
+        )
+        await ctx.message_history.add_message(
+            UserMessage(content="theirs in group"),
+            interface_type="web",
+            conversation_id=multi,
+            timestamp=datetime.now(UTC) + timedelta(seconds=301),
+            user_id="someone_else",
+        )
+
+    response = await test_client.get("/api/v1/chat/conversations")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["count"] == len(owned)
+    listed = {c["conversation_id"] for c in body["conversations"]}
+    assert listed == set(owned)
+    assert multi not in listed
+
+
+# --------------------------------------------------------------------------- #
+# active_turns wire-shape contract (M4)
+# --------------------------------------------------------------------------- #
+
+
+async def test_active_turns_contract_shape_in_messages(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+) -> None:
+    """Pin the exact ``active_turns`` wire shape surfaced by GET /messages so the
+    iOS ``ChatConversationMessagesResponse`` decoder stays in sync: each entry has
+    ``turn_id`` (str), ``started_at`` (ISO-8601 timestamp), ``latest_seq`` (int)
+    and ``status`` (str), and nothing else."""
+    conversation_id = f"conv_turns_{uuid.uuid4().hex[:8]}"
+    turn_id = str(uuid.uuid4())
+    started_at = datetime(2026, 7, 21, 12, 34, 56, tzinfo=UTC)
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await hub.start_turn(
+        conversation_id,
+        turn_id=turn_id,
+        user_id="test_user",
+        started_at=started_at,
+    )
+    # Publish an event so latest_seq advances past the turn_started seq.
+    await hub.publish(
+        conversation_id, "text", turn_id=turn_id, payload={"content": "hi"}
+    )
+
+    response = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages",
+        params={"limit": 1},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    active_turns = body["active_turns"]
+    assert len(active_turns) == 1, active_turns
+    turn = active_turns[0]
+
+    assert set(turn.keys()) == {"turn_id", "started_at", "latest_seq", "status"}
+    assert turn["turn_id"] == turn_id
+    assert isinstance(turn["turn_id"], str)
+    assert isinstance(turn["latest_seq"], int)
+    assert turn["latest_seq"] >= 1
+    assert turn["status"] == "running"
+    assert isinstance(turn["status"], str)
+    # started_at is an ISO-8601 timestamp that round-trips to the seeded value.
+    parsed = datetime.fromisoformat(turn["started_at"])
+    assert parsed == started_at
+
+
+# --------------------------------------------------------------------------- #
+# Activity stream over HTTP (M4)
+# --------------------------------------------------------------------------- #
+
+
+async def test_activity_stream_delivers_ping_then_disconnects_cleanly(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+) -> None:
+    """HTTP-level activity-stream test: connect, receive the advisory
+    ``conversation_activity`` ping published for the caller, then disconnect
+    cleanly (the generator's finally-block unsubscribes so the hub is left with
+    no dangling activity subscriber).
+
+    ``httpx``'s ``ASGITransport`` buffers the whole response, so the stream must
+    close before any frame is observable. A background task publishes the ping
+    once the subscriber attaches (proving subscribe-then-publish ordering with no
+    lost wakeup), then signals shutdown so the generator emits its terminal
+    ``stream_dropped`` and returns. The buffered body then carries the ping."""
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    shutdown_event = asyncio.Event()
+    app_fixture.state.shutdown_event = shutdown_event
+    conversation_id = f"conv_activity_{uuid.uuid4().hex[:8]}"
+
+    async def publish_then_shutdown() -> None:
+        await wait_for_condition(
+            lambda: hub.has_activity_subscribers("test_user"),
+            timeout=5.0,
+            description="activity subscriber attaches",
+        )
+        await hub.publish_activity(
+            conversation_id, user_id="test_user", reason="turn_started"
+        )
+        shutdown_event.set()
+
+    publisher = asyncio.ensure_future(publish_then_shutdown())
+
+    received: list[SSEEvent] = []
+    try:
+        async with test_client.stream(
+            "GET", "/api/v1/chat/activity/stream"
+        ) as response:
+            assert response.status_code == 200, response.text
+            current_type: str | None = None
+            async for chunk in response.aiter_text():
+                for line in chunk.split("\n"):
+                    if line.startswith("event:"):
+                        current_type = line.split(":", 1)[1].strip()
+                    elif line.startswith("data:") and current_type is not None:
+                        data_str = line.split(":", 1)[1].strip()
+                        if not data_str:
+                            continue
+                        received.append(
+                            SSEEvent(type=current_type, data=json.loads(data_str))
+                        )
+                        current_type = None
+                if any(e["type"] == "stream_dropped" for e in received):
+                    break
+    finally:
+        await asyncio.wait_for(publisher, timeout=5.0)
+
+    # The advisory ping arrived with the compact payload shape.
+    activity = next(e for e in received if e["type"] == "conversation_activity")
+    assert activity["data"]["conversation_id"] == conversation_id
+    assert activity["data"]["reason"] == "turn_started"
+    datetime.fromisoformat(activity["data"]["timestamp"])
+
+    # Clean disconnect: the generator's finally-block unsubscribed the queue.
+    await wait_for_condition(
+        lambda: not hub.has_activity_subscribers("test_user"),
+        timeout=5.0,
+        description="activity subscriber unsubscribes on disconnect",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Heartbeat emission with an injectable interval (M4)
+# --------------------------------------------------------------------------- #
+
+
+_HEARTBEAT_INTERVAL_SECONDS = 0.02
+
+
+class _EmissionCounter:
+    """Counts heartbeat-observer callbacks (single event loop, no lock needed)."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def increment(self) -> None:
+        self.count += 1
+
+    def value(self) -> int:
+        return self.count
+
+
+async def _assert_heartbeat_then_shutdown(
+    test_client: AsyncClient,
+    shutdown_event: asyncio.Event,
+    subscribed: Callable[[], bool],
+    heartbeats_emitted: Callable[[], int],
+    *,
+    url: str,
+    # ast-grep-ignore: no-dict-any - passthrough of httpx query params (int/str), matching stream() signature
+    params: dict[str, Any] | None = None,
+) -> None:
+    """Assert an always-on SSE stream emits ``heartbeat`` frames on the injected
+    interval.
+
+    ``httpx``'s ``ASGITransport`` buffers the whole response and only yields the
+    body once the app finishes, so an infinite stream must close itself before
+    any frame is observable. A background task waits for the subscriber to
+    attach, then waits on the server-side heartbeat-observer seam
+    (``app.state.stream_heartbeat_observer``) until the generator has actually
+    emitted heartbeats, then signals shutdown; the generator then emits a
+    terminal ``stream_dropped`` and returns. The buffered body therefore
+    contains the heartbeat frames followed by ``stream_dropped``."""
+
+    async def drive_shutdown() -> None:
+        await wait_for_condition(
+            subscribed,
+            timeout=5.0,
+            interval=_HEARTBEAT_INTERVAL_SECONDS,
+            description="stream subscriber attaches",
+        )
+        await wait_for_condition(
+            lambda: heartbeats_emitted() >= 2,
+            timeout=5.0,
+            interval=_HEARTBEAT_INTERVAL_SECONDS,
+            description="server-side generator emits heartbeat frames",
+        )
+        shutdown_event.set()
+
+    shutdown_driver = asyncio.ensure_future(drive_shutdown())
+
+    seen: list[str] = []
+    try:
+        async with test_client.stream("GET", url, params=params) as response:
+            assert response.status_code == 200, response.text
+            async for chunk in response.aiter_text():
+                for line in chunk.split("\n"):
+                    if line.startswith("event:"):
+                        seen.append(line.split(":", 1)[1].strip())
+                if "stream_dropped" in seen:
+                    break
+    finally:
+        await asyncio.wait_for(shutdown_driver, timeout=5.0)
+
+    assert "heartbeat" in seen, f"no heartbeat frame emitted: {seen}"
+
+
+async def test_conversation_stream_emits_heartbeat_with_injected_interval(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+) -> None:
+    """The conversation stream emits ``event: heartbeat`` on the injectable
+    interval. Driving the interval down to a few milliseconds makes the heartbeat
+    path fire deterministically without waiting the production 30s cadence."""
+    app_fixture.state.stream_heartbeat_interval_seconds = _HEARTBEAT_INTERVAL_SECONDS
+    heartbeat_count = _EmissionCounter()
+    app_fixture.state.stream_heartbeat_observer = heartbeat_count.increment
+    shutdown_event = asyncio.Event()
+    app_fixture.state.shutdown_event = shutdown_event
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    conversation_id = f"conv_hb_{uuid.uuid4().hex[:8]}"
+
+    await _assert_heartbeat_then_shutdown(
+        test_client,
+        shutdown_event,
+        lambda: hub.subscriber_count(conversation_id) > 0,
+        heartbeat_count.value,
+        url=f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0, "follow": "true"},
+    )
+
+
+async def test_activity_stream_emits_heartbeat_with_injected_interval(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+) -> None:
+    """The account-global activity stream also emits ``event: heartbeat`` on the
+    injectable interval, so an idle activity connection is kept alive rather than
+    being torn down by an idle-timeout front door."""
+    app_fixture.state.stream_heartbeat_interval_seconds = _HEARTBEAT_INTERVAL_SECONDS
+    heartbeat_count = _EmissionCounter()
+    app_fixture.state.stream_heartbeat_observer = heartbeat_count.increment
+    shutdown_event = asyncio.Event()
+    app_fixture.state.shutdown_event = shutdown_event
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+
+    await _assert_heartbeat_then_shutdown(
+        test_client,
+        shutdown_event,
+        lambda: hub.has_activity_subscribers("test_user"),
+        heartbeat_count.value,
+        url="/api/v1/chat/activity/stream",
+    )
