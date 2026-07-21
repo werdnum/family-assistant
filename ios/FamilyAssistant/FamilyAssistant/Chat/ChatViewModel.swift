@@ -662,14 +662,15 @@ final class ChatViewModel {
         }
         isLoadingMessages = true
         do {
-            let backendMessages = try await apiClient.getMessages(conversationID: id)
+            let response = try await apiClient.getMessages(conversationID: id)
             // The user may have switched conversations during the network await;
             // applying this thread's rows now would clobber the one they moved to.
             // (`self.` is required: the `conversationID` parameter shadows it.)
             guard self.conversationID == id else {
                 return
             }
-            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: backendMessages)))
+            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
+            attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
         } catch {
             guard self.conversationID == id else {
@@ -683,6 +684,34 @@ final class ChatViewModel {
             errorReporter.report(error, component: "Chat.messages")
         }
         isLoadingMessages = false
+    }
+
+    /// Tail-attach to a turn the server reports as still running in `active_turns`
+    /// for the SELECTED conversation but for which this client holds no local
+    /// session — e.g. a turn started on another device, or one whose own send task
+    /// gave up before it finished. Renders a progressive placeholder so the
+    /// always-on follow stream tails its remaining tokens live; the missed prefix
+    /// is supplied by the canonical history replacement at `turn_ended` (see
+    /// `finalizeLiveFollowBubble` / `reconcileLiveFollowBubbles`). No mid-turn
+    /// prefix reconstruction is attempted — tail-only, matching server semantics.
+    ///
+    /// Deliberately narrow to avoid disturbing the pinned send/follow behavior:
+    /// - a turn THIS device is driving (`activeTurnSession`) is skipped; its send
+    ///   path owns rendering, and a follow bubble would duplicate it;
+    /// - a turn already ended, or already mapped to a live-follow bubble, is
+    ///   skipped (the placeholder is idempotent, but this keeps intent clear);
+    /// - only turns the server marks running are attached.
+    private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) {
+        for turn in activeTurns {
+            guard turn.status == "running",
+                  turn.turnID != activeTurnSession?.turnID,
+                  !endedTurnIDs.contains(turn.turnID),
+                  liveFollowBubbleByTurnID[turn.turnID] == nil
+            else {
+                continue
+            }
+            _ = makeLiveFollowBubble(for: turn.turnID)
+        }
     }
 
     /// Bubbles for live-follow turns still held — mapped in

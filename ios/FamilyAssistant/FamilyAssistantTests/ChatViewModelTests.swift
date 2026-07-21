@@ -3447,6 +3447,99 @@ final class ChatViewModelTests: XCTestCase {
         model.cancelStream()
     }
 
+    func testDiscoveredActiveTurnTailAttachesAndReconcilesAtTurnEnded() async throws {
+        // A turn the server reports in /messages active_turns for the selected
+        // conversation, for which this client holds NO local session (e.g. started
+        // on another device), must render progressively from the follow-stream
+        // tail — a placeholder that streams the remaining tokens — and then be
+        // reconciled by the canonical history replacement at turn_ended. No
+        // mid-turn prefix reconstruction: the prefix arrives only via history.
+        let streamConnects = AtomicCounter()
+        let turnEnded = AtomicCounter()
+        var tailFromSeq: String?
+        let leg1 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_discover/messages") {
+                // While the turn runs, history holds only its earlier (persisted)
+                // rows and reports the running turn in active_turns — the reply's
+                // prefix is NOT included. Only once the turn has ended does the
+                // canonical reply appear, supplying the missed prefix + tail.
+                if turnEnded.value == 0 {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_discover",
+                          "messages":[{"internal_id":1,"role":"user","content":"Kick off","timestamp":"2026-06-08T12:00:00Z"}],
+                          "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false,
+                          "active_turns":[{"turn_id":"turn-remote","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                        }
+                        """
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_discover",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Kick off","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Full remote reply","timestamp":"2026-06-08T12:00:05Z","turn_id":"turn-remote"}
+                      ],
+                      "count":2,"total_messages":2,"has_more_before":false,"has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_discover/stream") {
+                let n = streamConnects.increment()
+                if n == 1 {
+                    // Tail-only attach: the discovered turn has no local cursor, so
+                    // the follow stream subscribes from the head (-1) and streams a
+                    // tail token live, then holds open (the turn is still running).
+                    tailFromSeq = Self.queryItems(from: request)["from_seq"]
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-remote\",\"content\":\" tail\",\"seq\":8}\n\n",
+                        controller: leg1
+                    )
+                }
+                // The reconnect after the first leg is finished delivers turn_ended.
+                turnEnded.increment()
+                return .text(
+                    """
+                    event: turn_ended
+                    data: {"turn_id":"turn-remote","status":"complete","seq":9}
+
+                    """
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(
+            conversationID: nil,
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model.selectConversation("web_conv_discover")
+
+        // The discovered turn renders progressively: its tail token appears in a
+        // placeholder even though no local send is driving it.
+        try await waitUntil { model.messages.contains { $0.text == " tail" } }
+        XCTAssertEqual(tailFromSeq, "-1")
+
+        // End the first leg; the reconnect delivers turn_ended, which triggers the
+        // canonical history replacement supplying the full reply (prefix + tail)
+        // the tail-only attach never reconstructed.
+        leg1.finish()
+        try await waitUntil { model.messages.contains { $0.text == "Full remote reply" } }
+        XCTAssertFalse(model.messages.contains { $0.text == " tail" })
+        XCTAssertEqual(model.messages.map(\.text), ["Kick off", "Full remote reply"])
+        XCTAssertNil(model.errorMessage)
+    }
+
     func testSendResumesTokenStreamAfterMidTurnInterruption() async throws {
         // The proxy severs the send-and-watch stream mid-turn — a CLEAN EOF with
         // no turn_ended (e.g. an Envoy 15s request timeout) right after the first

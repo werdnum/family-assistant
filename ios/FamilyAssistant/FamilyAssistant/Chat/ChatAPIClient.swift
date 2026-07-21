@@ -44,9 +44,11 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatConversationListResponse.self, from: data)
     }
 
-    /// Load a conversation's full persisted history (oldest → newest).
-    func getMessages(conversationID: String) async throws -> [ChatBackendMessage] {
-        try await getMessagesPage(conversationID: conversationID, after: nil, limit: 0).messages
+    /// Load a conversation's full persisted history (oldest → newest) together
+    /// with the server-reported `active_turns`, so the caller can tail-attach to a
+    /// turn already running server-side (e.g. started on another device).
+    func getMessages(conversationID: String) async throws -> ChatConversationMessagesResponse {
+        try await getMessagesPage(conversationID: conversationID, after: nil, limit: 0)
     }
 
     /// Load only messages newer than `after` (ISO-8601 timestamp).
