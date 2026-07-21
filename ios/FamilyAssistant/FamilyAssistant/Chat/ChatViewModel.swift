@@ -3519,6 +3519,13 @@ extension ChatViewModel: ResyncHost {
         conversationID
     }
 
+    func awaitStreamTermination() async {
+        // Forward to the coordinator, which owns the follow/activity tasks: cancel
+        // and await them (bounded) so the old consumer is gone before the resync
+        // establishes fresh streams (§4.3).
+        await syncCoordinator.awaitStreamTermination()
+    }
+
     func gateAuthIfNeeded(generation _: Int) async throws {
         // Reuse the existing single-flight near-expiry refresh: concurrent callers
         // (resync, in-flight requests) coalesce onto one refresh Task. A rejection

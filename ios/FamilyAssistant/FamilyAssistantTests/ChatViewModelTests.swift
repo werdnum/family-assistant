@@ -5957,6 +5957,333 @@ final class ChatViewModelTests: XCTestCase {
         followStream.finish()
     }
 
+    func testForegroundReattachContinuesRenderingRunningTurn() async throws {
+        // §4.3 scenario (a): background mid-stream, then foreground while the turn is
+        // STILL running server-side. The foreground resync awaits the old consumer,
+        // snapshots (active_turns still reports the turn running), and the new follow
+        // stream tails its remaining tokens into the live bubble — rendering
+        // continues, the session instance is preserved, and no alert fires.
+        let sendSubscription = HangingStream()
+        let advisoryFollow = HangingStream()
+        let postedTurnID = AtomicString()
+        let foregrounded = AtomicCounter()
+        let followTokenAfterForeground = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"web_conv_reattach","first_seq":0}"#)
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_reattach/stream" {
+                    let isSend = Self.queryItems(from: request)["follow"] == "false"
+                    if isSend {
+                        return .hangingStream(
+                            """
+                            event: turn_started
+                            data: {"turn_id":"\(postedTurnID.value ?? "turn-reattach")","seq":0}
+
+                            """,
+                            controller: sendSubscription
+                        )
+                    }
+                    // The advisory follow stream: before foreground it hangs with no
+                    // events; the post-foreground reconnect tails a live token for
+                    // the still-running turn.
+                    if foregrounded.value == 0 {
+                        return .hangingStream("", controller: advisoryFollow)
+                    }
+                    // Model the server's ring-buffer replay: every post-foreground
+                    // follow connect resumes from the client's cursor (`from_seq`) and
+                    // replays `seq >= from_seq`. The tail token (seq 8) is delivered on
+                    // any connect whose cursor has not yet passed it — so whether the
+                    // token lands in the resync's buffering connect or the steady-state
+                    // reconnect after it, it is delivered exactly once (the client
+                    // resumes from seq 9 after applying it, and this branch then hangs).
+                    // Keying on `from_seq` rather than the connect ordinal removes the
+                    // buffering-window race that an ordinal gate would introduce.
+                    let fromSeq = Int(Self.queryItems(from: request)["from_seq"] ?? "") ?? -1
+                    guard fromSeq <= 8 else {
+                        return .hangingStream("", controller: HangingStream())
+                    }
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"\(postedTurnID.value ?? "turn-reattach")\",\"content\":\"tail token\",\"seq\":8}\n\n",
+                        controller: followTokenAfterForeground
+                    )
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    // The turn is still running: history holds no reply yet, and
+                    // active_turns reports it as running (only once the turn has been
+                    // posted, so a pre-send bootstrap load doesn't report a phantom).
+                    guard let turnID = postedTurnID.value else {
+                        return .json(
+                            #"{"conversation_id":"web_conv_reattach","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                        )
+                    }
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_reattach",
+                          "messages":[],"count":0,"total_messages":0,
+                          "has_more_before":false,"has_more_after":false,
+                          "active_turns":[{"turn_id":"\(turnID)","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_reattach",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model.bootstrap()
+
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil {
+            model.isStreaming
+                && model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? "")
+        }
+        let sessionBefore = try XCTUnwrap(model.activeTurnSessionForTesting)
+
+        model.scenePhaseChanged(old: .active, new: .background)
+        XCTAssertFalse(model.isStreaming)
+        // Finish only the advisory follow so the old advisory consumer terminates
+        // promptly. The send subscription is left hanging so the send loop exits
+        // ONLY via the suspend's cancellation (a clean `Task.isCancelled` break):
+        // delivering a clean EOF instead would let the send loop's resume streak
+        // exhaust and `markTurnEnded` the still-running turn, which would then
+        // suppress the reattach follow token under test.
+        advisoryFollow.finish()
+
+        foregrounded.increment()
+        model.scenePhaseChanged(old: .background, new: .active)
+
+        // The still-running turn's tail token streams into a live bubble via the
+        // reattach follow path — rendered exactly once for the posted turn.
+        try await waitUntil(timeout: 8) {
+            model.messages.contains { $0.text == "tail token" && $0.turnID == postedTurnID.value }
+        }
+        XCTAssertEqual(
+            model.messages.filter { $0.turnID == postedTurnID.value }.count,
+            1,
+            "The reattached turn must render into exactly one bubble."
+        )
+        XCTAssertTrue(
+            model.activeTurnSessionForTesting === sessionBefore,
+            "The ActiveTurnSession instance must be preserved across the reattach."
+        )
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.messages.contains { $0.text == "Response stopped." })
+
+        followTokenAfterForeground.finish()
+        sendSubscription.finish()
+    }
+
+    func testForegroundReattachReconcilesTurnThatFinishedWhileBackgrounded() async throws {
+        // §4.3 scenario (b): background mid-stream, then foreground after the turn
+        // FINISHED server-side. History reconciliation surfaces the completed
+        // message; no alert and no "Response stopped." (regression for prod clusters
+        // C–E).
+        let sendSubscription = HangingStream()
+        let advisoryFollow = HangingStream()
+        let postedTurnID = AtomicString()
+        let foregrounded = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"web_conv_reattach_done","first_seq":0}"#)
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_reattach_done/stream" {
+                    let isSend = Self.queryItems(from: request)["follow"] == "false"
+                    if isSend {
+                        return .hangingStream(
+                            """
+                            event: turn_started
+                            data: {"turn_id":"\(postedTurnID.value ?? "turn-done")","seq":0}
+
+                            """,
+                            controller: sendSubscription
+                        )
+                    }
+                    // The advisory follow before foreground hangs; the reconnect
+                    // after foreground finds the turn already ended (no active_turns)
+                    // and simply holds open with nothing to stream.
+                    return .hangingStream("", controller: advisoryFollow)
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    if foregrounded.value == 0 {
+                        return .json(
+                            """
+                            {
+                              "conversation_id":"web_conv_reattach_done",
+                              "messages":[],"count":0,"total_messages":0,
+                              "has_more_before":false,"has_more_after":false,
+                              "active_turns":[{"turn_id":"\(postedTurnID.value ?? "turn-done")","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                            }
+                            """
+                        )
+                    }
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_reattach_done",
+                          "messages":[
+                            {"internal_id":2,"role":"assistant","content":"Completed while backgrounded","timestamp":"2026-06-08T12:05:00Z","turn_id":"\(postedTurnID.value ?? "turn-done")"}
+                          ],
+                          "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_reattach_done",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model.bootstrap()
+
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil {
+            model.isStreaming
+                && model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? "")
+        }
+
+        model.scenePhaseChanged(old: .active, new: .background)
+        advisoryFollow.finish()
+        sendSubscription.finish()
+
+        foregrounded.increment()
+        model.scenePhaseChanged(old: .background, new: .active)
+
+        try await waitUntil(timeout: 8) {
+            model.messages.contains { $0.text == "Completed while backgrounded" }
+        }
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(
+            model.messages.contains { $0.text == "Response stopped." },
+            "A turn that finished while backgrounded must reconcile silently, never 'Response stopped.'."
+        )
+    }
+
+    func testDeadSendTransportReconcilesCompletedMessageWithoutAlert() async throws {
+        // §4.3 scenario (c): a send whose transport died while the turn kept running
+        // (a mid-turn drop the send loop couldn't resume). The next resync's history
+        // snapshot surfaces the completed reply with no alert — not a fabricated
+        // "Response stopped." or a Chat Error modal.
+        let sendSubscription = HangingStream()
+        let advisoryFollow = HangingStream()
+        let postedTurnID = AtomicString()
+        let reconnected = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"web_conv_deadsend","first_seq":0}"#)
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_deadsend/stream" {
+                    let isSend = Self.queryItems(from: request)["follow"] == "false"
+                    if isSend {
+                        // The send subscription: deliver turn_started then a clean EOF
+                        // (empty stream that finishes) so the send loop's resume streak
+                        // exhausts and it falls back to a history reload — the
+                        // transport is dead but the turn kept running server-side.
+                        return .text(
+                            """
+                            event: turn_started
+                            data: {"turn_id":"\(postedTurnID.value ?? "turn-dead")","seq":0}
+
+                            """
+                        )
+                    }
+                    reconnected.increment()
+                    return .hangingStream("", controller: advisoryFollow)
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_deadsend",
+                          "messages":[
+                            {"internal_id":2,"role":"assistant","content":"Reply after dead transport","timestamp":"2026-06-08T12:05:00Z","turn_id":"\(postedTurnID.value ?? "turn-dead")"}
+                          ],
+                          "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_deadsend",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01,
+            maxConsecutiveStreamResumes: 1,
+            streamResumeLivenessSeconds: 100
+        )
+        await model.bootstrap()
+
+        model.draftText = "Hi"
+        await model.sendDraft()
+
+        // The dead transport falls back to a history reload, which surfaces the
+        // completed reply — with no alert and no "Response stopped."
+        try await waitUntil(timeout: 8) {
+            model.messages.contains { $0.text == "Reply after dead transport" }
+        }
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.messages.contains { $0.text == "Response stopped." })
+
+        advisoryFollow.finish()
+    }
+
     /// Shared assertions for the §4.3 background-suspend traces: the send's
     /// transport task is cancelled, the ActiveTurnSession (instance + cursor) is
     /// preserved, the generation bumped, the advisory follow/activity tasks were

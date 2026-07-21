@@ -122,7 +122,47 @@ final class ResyncOrchestratorTests: XCTestCase {
         )
     }
 
-    // MARK: - Subscribe-then-buffer ordering (§4.4 steps 3/5/6)
+    // MARK: - Await old-consumer termination (§4.3)
+
+    func testResyncAwaitsOldConsumerTerminationBeforeEstablishingNewFollowStream() async {
+        // §4.3: the old follow/activity consumer must be fully torn down before the
+        // resync opens the new follow stream, so the two never briefly overlap.
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.followStreamSource = ControllableFollowStream()
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.awaitTerminationCount, 1)
+        let terminationIndex = host.stepLog.firstIndex(of: "awaitTermination")
+        let establishIndex = host.stepLog.firstIndex(of: "establishFollow")
+        XCTAssertNotNil(terminationIndex)
+        XCTAssertNotNil(establishIndex)
+        XCTAssertLessThan(
+            terminationIndex ?? .max,
+            establishIndex ?? .min,
+            "Old-consumer termination must complete before the new follow stream is established."
+        )
+    }
+
+    func testWedgedOldConsumerDoesNotHangResync() async {
+        // A socket-wedged old task can't be waited on forever: the host's bounded
+        // termination await returns, and the resync proceeds to establish + snapshot
+        // rather than hanging. Modeled with a short bounded sleep in the hook.
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.onAwaitTermination = {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.awaitTerminationCount, 1)
+        XCTAssertEqual(host.restartStreamsCount, 1, "The resync still completes past a wedged old consumer.")
+        XCTAssertEqual(host.listSnapshotCount, 2)
+    }
+
+    // MARK: - Subscribe-then-buffer ordering (§4.4 steps 4/6/7)
 
     func testLostWakeupActivityEventBeforeSnapshotIsAppliedAfterSnapshot() async {
         // The lost-wakeup race: an activity event committed AFTER subscribe but
@@ -375,8 +415,13 @@ private final class FakeResyncHost: ResyncHost {
     var selectedConversationID: String?
 
     var authGateError: Error?
+    private(set) var awaitTerminationCount = 0
     private(set) var authGateCount = 0
     private(set) var listSnapshotCount = 0
+
+    /// Ordered log of the resync steps, so a test can assert the old-consumer
+    /// termination completes before the new follow stream is established.
+    private(set) var stepLog: [String] = []
     private(set) var messagesSnapshotConversationIDs: [String] = []
     private(set) var restartStreamsCount = 0
     private(set) var phaseStartCount = 0
@@ -385,6 +430,10 @@ private final class FakeResyncHost: ResyncHost {
     private(set) var activityEstablishCount = 0
     private(set) var drainedFollowEvents: [ChatStreamEvent] = []
     private(set) var activitySignalDrainCount = 0
+
+    /// Async hook run inside `awaitStreamTermination` (e.g. to model a
+    /// bounded-timeout wedged old task via a bounded sleep).
+    var onAwaitTermination: (() async -> Void)?
 
     /// Synchronous mutation applied inside the list snapshot.
     var onListSnapshot: ((FakeResyncHost) -> Void)?
@@ -407,6 +456,12 @@ private final class FakeResyncHost: ResyncHost {
     var resyncGeneration: Int { generation }
     var resyncSelectedConversationID: String? { selectedConversationID }
 
+    func awaitStreamTermination() async {
+        awaitTerminationCount += 1
+        stepLog.append("awaitTermination")
+        await onAwaitTermination?()
+    }
+
     func gateAuthIfNeeded(generation _: Int) async throws {
         authGateCount += 1
         if let authGateError {
@@ -419,6 +474,7 @@ private final class FakeResyncHost: ResyncHost {
         generation _: Int
     ) async -> AsyncThrowingStream<ChatStreamEvent, Error>? {
         followEstablishCount += 1
+        stepLog.append("establishFollow")
         return followStreamSource?.makeStream()
     }
 

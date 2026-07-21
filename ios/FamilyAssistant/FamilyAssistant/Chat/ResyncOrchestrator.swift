@@ -29,6 +29,12 @@ protocol ResyncHost: AnyObject {
     /// changes this, so the message snapshot is discarded on a mismatch.
     var resyncSelectedConversationID: String? { get }
 
+    /// Await termination of the old follow/activity consumer tasks torn down on
+    /// background before this resync establishes fresh streams (§4.3). Bounded so a
+    /// socket-wedged old task can't wedge the resync; the generation fence still
+    /// rejects any late event it emits.
+    func awaitStreamTermination() async
+
     /// Complete one auth gate before touching the network: a single-flight token
     /// refresh when the stored token is near expiry. Throws when the refresh is
     /// rejected (the credentials are gone); the resync then aborts cleanly and
@@ -96,15 +102,18 @@ protocol ResyncHost: AnyObject {
 /// order could drop anything committed between the fetch and the subscription):
 ///
 /// 1. Generation is already bumped by the trigger; the resync captures it.
-/// 2. Auth gate: single-flight refresh if near expiry. A rejection aborts.
-/// 3. ESTABLISH the activity + selected-conversation follow streams first
+/// 2. AWAIT termination of the old follow/activity consumer tasks torn down on
+///    background (§4.3), before any new stream is established, so the old and new
+///    consumers never briefly overlap on the same conversation.
+/// 3. Auth gate: single-flight refresh if near expiry. A rejection aborts.
+/// 4. ESTABLISH the activity + selected-conversation follow streams first
 ///    ("established" = headers received) and BUFFER their events into a bounded
 ///    queue without dispatching.
-/// 4. Fetch authoritative snapshots (full conversation list + selected
+/// 5. Fetch authoritative snapshots (full conversation list + selected
 ///    conversation messages + `active_turns`), applied only while generation and
 ///    selection still match.
-/// 5. DRAIN the buffer through the same steady-state handlers the loops use.
-/// 6. Hand the live connections to the coordinator's reconnect loops.
+/// 6. DRAIN the buffer through the same steady-state handlers the loops use.
+/// 7. Hand the live connections to the coordinator's reconnect loops.
 ///
 /// Buffer overflow during a resync (which should not happen during a snapshot
 /// fetch) aborts and RESTARTS the resync rather than silently dropping events;
@@ -199,6 +208,12 @@ final class ResyncOrchestrator {
         resetBuffer()
         let generation = host.resyncGeneration
 
+        // Step 2: await termination of the old consumer tasks (§4.3) before any new
+        // stream is established below. Idempotent across overflow restarts: the
+        // coordinator's tasks are cleared on the first await, so a restart's call
+        // returns at once.
+        await host.awaitStreamTermination()
+
         do {
             try await host.gateAuthIfNeeded(generation: generation)
         } catch {
@@ -214,7 +229,7 @@ final class ResyncOrchestrator {
 
         let selectedConversationID = host.resyncSelectedConversationID
 
-        // Step 3: establish + buffer BEFORE fetching snapshots. The buffering
+        // Step 4: establish + buffer BEFORE fetching snapshots. The buffering
         // tasks interleave with the snapshot awaits below, so an event committed
         // after subscribe but before the fetch completes lands in the buffer and
         // is drained after the snapshot (closing the lost-wakeup race).
@@ -224,7 +239,7 @@ final class ResyncOrchestrator {
             generation: generation
         )
 
-        // Step 4: authoritative snapshots (full-replacement list + selected
+        // Step 5: authoritative snapshots (full-replacement list + selected
         // conversation messages/active_turns).
         await host.applyListSnapshot()
 
@@ -249,7 +264,7 @@ final class ResyncOrchestrator {
             return .aborted
         }
 
-        // Step 5: stop buffering (the tasks that consumed events during the
+        // Step 6: stop buffering (the tasks that consumed events during the
         // snapshot-fetch window into `buffer`), then drain the buffer through the
         // steady-state handlers.
         stopBuffering()
@@ -266,7 +281,7 @@ final class ResyncOrchestrator {
             return .aborted
         }
 
-        // Step 6: hand the live connections to the coordinator's reconnect loops.
+        // Step 7: hand the live connections to the coordinator's reconnect loops.
         // The resync streams are already closed (stopBuffering cancelled them);
         // the loops reconnect immediately.
         host.restartStreams()

@@ -164,6 +164,7 @@ final class SyncCoordinator {
     private let followReconnectMaxDelaySeconds: Double
     private let authManager: AuthManager
     private let reconnectDelay: @MainActor (Double) async -> Void
+    private let streamTerminationTimeoutSeconds: Double
 
     weak var delegate: SyncStreamDelegate?
 
@@ -180,13 +181,15 @@ final class SyncCoordinator {
         followReconnectMaxDelaySeconds: Double = 30,
         reconnectDelay: @escaping @MainActor (Double) async -> Void = { seconds in
             try? await Task.sleep(for: .seconds(seconds))
-        }
+        },
+        streamTerminationTimeoutSeconds: Double = 5
     ) {
         self.authManager = authManager
         self.pathMonitor = pathMonitor
         self.followReconnectInitialDelaySeconds = followReconnectInitialDelaySeconds
         self.followReconnectMaxDelaySeconds = followReconnectMaxDelaySeconds
         self.reconnectDelay = reconnectDelay
+        self.streamTerminationTimeoutSeconds = streamTerminationTimeoutSeconds
         pathMonitor.onChange = { [weak self] satisfied in
             self?.apply(.reachabilityChanged(satisfied ? .satisfied : .unsatisfied))
         }
@@ -515,6 +518,61 @@ final class SyncCoordinator {
         activityTask?.cancel()
     }
 
+    /// Cancel the follow/activity tasks torn down on background AND await their
+    /// completion before the caller (the foreground resync) establishes fresh
+    /// streams. §4.3 requires the await, beyond the generation fence: a late event
+    /// from the old consumer is already dropped by the fence, but an old task still
+    /// iterating its socket could otherwise race the new follow connect and the
+    /// two would briefly both consume the same conversation.
+    ///
+    /// Cancellation propagates through each `AsyncThrowingStream`'s `onTermination`,
+    /// so a live iteration throws promptly and the task returns. A task whose socket
+    /// read is wedged (a proxy that neither delivers nor closes) can't be waited on
+    /// forever, so each await is bounded by `streamTerminationTimeoutSeconds`; the
+    /// generation fence still protects against any event it emits after the timeout.
+    func awaitStreamTermination() async {
+        let follow = followTask
+        let activity = activityTask
+        followTask = nil
+        activityTask = nil
+        follow?.cancel()
+        activity?.cancel()
+        await awaitTaskWithTimeout(follow)
+        await awaitTaskWithTimeout(activity)
+    }
+
+    private func awaitTaskWithTimeout(_ task: Task<Void, Never>?) async {
+        guard let task else {
+            return
+        }
+        let timeout = streamTerminationTimeoutSeconds
+        // Race the task's completion against a timeout. `Task.value` is not
+        // cancellable, so a wedged task (parked in a non-cancellable await after
+        // ignoring cancellation) never resolves; this method's return must NOT
+        // depend on it. A waiter resumes the continuation on task completion and a
+        // sleep resumes it on timeout — whichever fires first wins and the method
+        // returns. The loser is orphaned: on the timeout path the waiter is left
+        // awaiting `task.value` (harmless — the generation fence already rejects
+        // anything the wedged task might emit); on the completion path the sleep is
+        // cancelled.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumed = ResumeOnce()
+            let waiter = Task {
+                await task.value
+                if resumed.tryResume() {
+                    continuation.resume()
+                }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(timeout))
+                if resumed.tryResume() {
+                    waiter.cancel()
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     /// Run the foreground resync: restart the follow stream for the active
     /// conversation and the activity stream, matching the former
     /// `reconnectLiveUpdates()`. The follow stream target is derived from the
@@ -670,5 +728,21 @@ final class SyncCoordinator {
             phase = .idle
             return []
         }
+    }
+}
+
+/// One-shot latch guarding a `CheckedContinuation` against a double resume when
+/// two racing tasks (a task-completion waiter and a timeout) may each try to
+/// resume it. Only the first `tryResume` wins.
+@MainActor
+private final class ResumeOnce {
+    private var resumed = false
+
+    func tryResume() -> Bool {
+        guard !resumed else {
+            return false
+        }
+        resumed = true
+        return true
     }
 }
