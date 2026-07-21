@@ -72,6 +72,7 @@
 		A20012 /* AppIntentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* AppIntentsTests.swift */; };
 		A20020 /* ErrorReporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* ErrorReporterTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
+		A30010 /* ChatSceneWiringUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30010 /* ChatSceneWiringUITests.swift */; };
 		B3D6F3BE9BB984B403AEE52E /* PCMConverterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34957746CE7E5DA61AC5149A /* PCMConverterTests.swift */; };
 		B7AAF73E52D328506FAA7F4F /* GeminiLiveCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */; };
 		B7F030F107C950AD8C2BA887 /* VoiceSessionViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D5A200966EBAD61C16887A4 /* VoiceSessionViewModelTests.swift */; };
@@ -177,6 +178,7 @@
 		B20020 /* ErrorReporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporterTests.swift; sourceTree = "<group>"; };
 		B30001 /* FamilyAssistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30002 /* FamilyAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantUITests.swift; sourceTree = "<group>"; };
+		B30010 /* ChatSceneWiringUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSceneWiringUITests.swift; sourceTree = "<group>"; };
 		5D6E7F8091A2B3C4D5E6F708 /* SimulatorVoiceAudioIOTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SimulatorVoiceAudioIOTests.swift; sourceTree = "<group>"; };
 		BAFF01F579AC57F9B68D2E5D /* VoiceSessionViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceSessionViewModel.swift; sourceTree = "<group>"; };
 		D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveModels.swift; sourceTree = "<group>"; };
@@ -395,6 +397,7 @@
 			isa = PBXGroup;
 			children = (
 				B30002 /* FamilyAssistantUITests.swift */,
+				B30010 /* ChatSceneWiringUITests.swift */,
 			);
 			path = FamilyAssistantUITests;
 			sourceTree = "<group>";
@@ -621,6 +624,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A30001 /* FamilyAssistantUITests.swift in Sources */,
+				A30010 /* ChatSceneWiringUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -104,6 +104,57 @@ enum UITestConfiguration {
     }
 }
 
+/// Scriptable stream behavior for the always-on live-updates endpoints (the
+/// per-conversation follow stream and the account-global activity stream),
+/// selected via `FAMILY_ASSISTANT_UITEST_STREAM_BEHAVIOR`. Absent the env var the
+/// backend keeps its default whole-body-then-finish delivery, so the existing
+/// send/history flows are unaffected.
+private enum UITestStreamBehavior {
+    /// Deliver the initial SSE frames, then hold the connection open (never
+    /// finish) so both live channels stay `connected` — the presentation reaches
+    /// `.live` and the indicator disappears.
+    case hang
+    /// Deliver `count` SSE frames on the FIRST follow connect, then inject a
+    /// connection-loss error mid-stream. Subsequent connects hang open, so the
+    /// coordinator's reconnect loop recovers to `.live`.
+    case dropAfterN(count: Int)
+    /// Return 503 for the first `count` requests to the target streaming
+    /// endpoint, then hang open — exercising the reconnect-backoff recovery.
+    case burst503(count: Int)
+
+    static func fromEnvironment() -> UITestStreamBehavior? {
+        let environment = ProcessInfo.processInfo.environment
+        switch environment["FAMILY_ASSISTANT_UITEST_STREAM_BEHAVIOR"] {
+        case "hang":
+            return .hang
+        case "dropAfterN":
+            let count = environment["FAMILY_ASSISTANT_UITEST_STREAM_DROP_AFTER"].flatMap(Int.init) ?? 2
+            return .dropAfterN(count: count)
+        case "503burst":
+            let count = environment["FAMILY_ASSISTANT_UITEST_503_BURST_COUNT"].flatMap(Int.init) ?? 2
+            return .burst503(count: count)
+        default:
+            return nil
+        }
+    }
+}
+
+/// Holds a request open on a background thread until `stopLoading` cancels it,
+/// mirroring the unit backend's `HangingStream` but self-contained in the app
+/// target. A generous bound frees the worker if a test tears down without the
+/// runner cancelling the request.
+private final class UITestHangingStream: @unchecked Sendable {
+    private let semaphore = DispatchSemaphore(value: 0)
+
+    func cancel() {
+        semaphore.signal()
+    }
+
+    func awaitCancellation() {
+        _ = semaphore.wait(timeout: .now() + 60)
+    }
+}
+
 private final class UITestBackendURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var notes: [String: UITestNote] = [:]
@@ -114,8 +165,25 @@ private final class UITestBackendURLProtocol: URLProtocol {
     private static var pendingChatReplies: [String: String] = [:]
     private static var pendingChatTurnIDs: [String: String] = [:]
 
+    // Scriptable-stream bookkeeping (all lock-guarded): the selected behavior,
+    // per-endpoint request tallies for `503burst` and `dropAfterN`, and the
+    // activity-stream connect count that gates the "row added while backgrounded"
+    // reveal (the second connect is the foreground resync's, after bootstrap's).
+    private static var streamBehavior: UITestStreamBehavior?
+    private static var followConnectCount = 0
+    private static var activityConnectCount = 0
+    private static var burst503Count = 0
+
+    private let stopLock = NSLock()
+    private var stopped = false
+    private var activeHangingStream: UITestHangingStream?
+
     static func reset() {
         lock.withLock {
+            streamBehavior = UITestStreamBehavior.fromEnvironment()
+            followConnectCount = 0
+            activityConnectCount = 0
+            burst503Count = 0
             notes = [
                 "Shopping": UITestNote(
                     title: "Shopping",
@@ -192,11 +260,37 @@ private final class UITestBackendURLProtocol: URLProtocol {
     override func startLoading() {
         let response = Self.response(for: request)
         client?.urlProtocol(self, didReceive: response.httpResponse(for: request), cacheStoragePolicy: .notAllowed)
+
+        if response.holdsConnectionOpen {
+            if !response.data.isEmpty {
+                client?.urlProtocol(self, didLoad: response.data)
+            }
+            let controller = UITestHangingStream()
+            stopLock.withLock { activeHangingStream = controller }
+            // Resolve on a background thread (not the loader thread) so other
+            // concurrent mock requests aren't starved while this stream is held.
+            DispatchQueue.global().async { [weak self] in
+                controller.awaitCancellation()
+                guard let self, !self.stopLock.withLock({ self.stopped }) else {
+                    return
+                }
+                self.client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            }
+            return
+        }
+
         client?.urlProtocol(self, didLoad: response.data)
-        client?.urlProtocolDidFinishLoading(self)
+        if response.dropsConnectionAfterData {
+            client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+        } else {
+            client?.urlProtocolDidFinishLoading(self)
+        }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        stopLock.withLock { stopped = true }
+        activeHangingStream?.cancel()
+    }
 
     private static func response(for request: URLRequest) -> UITestResponse {
         guard request.value(forHTTPHeaderField: "Authorization") == "Bearer ui-test-api-token"
@@ -247,6 +341,8 @@ private final class UITestBackendURLProtocol: URLProtocol {
             ))
         case ("GET", "/api/v1/chat/confirmations/pending"):
             return .json(#"{"confirmations":[]}"#)
+        case ("GET", "/api/v1/chat/activity/stream"):
+            return activityStreamResponse()
         case ("POST", "/api/v1/chat/turns"):
             return startChatTurn(from: request)
         case ("POST", "/api/attachments/upload"):
@@ -369,6 +465,63 @@ private final class UITestBackendURLProtocol: URLProtocol {
     }
 
     private static func chatStreamResponse(conversationID: String) -> UITestResponse {
+        if let behavior = lock.withLock({ streamBehavior }) {
+            return scriptedFollowStreamResponse(behavior: behavior)
+        }
+        return defaultChatStreamResponse(conversationID: conversationID)
+    }
+
+    /// The always-on follow stream under a scripted behavior. `hang` connects and
+    /// stays open (follow health `connected`); `dropAfterN` drops the FIRST
+    /// connect after delivering N heartbeat frames, then hangs subsequent connects
+    /// so the reconnect loop recovers; `503burst` fails the first K connects.
+    private static func scriptedFollowStreamResponse(behavior: UITestStreamBehavior) -> UITestResponse {
+        let connectIndex = lock.withLock { () -> Int in
+            followConnectCount += 1
+            return followConnectCount
+        }
+        switch behavior {
+        case .hang:
+            return .hangingStream(sseHeartbeats(1))
+        case let .dropAfterN(count):
+            if connectIndex == 1 {
+                return .droppedStream(sseHeartbeats(count))
+            }
+            return .hangingStream(sseHeartbeats(1))
+        case let .burst503(count):
+            if connectIndex <= count {
+                return .json(#"{"detail":"temporarily unavailable"}"#, statusCode: 503)
+            }
+            return .hangingStream(sseHeartbeats(1))
+        }
+    }
+
+    /// The account-global activity stream. Default (no scripted behavior) keeps
+    /// the connection open with no events; under a scripted behavior it obeys the
+    /// same hang / 503-burst shape so the activity channel reaches `connected`
+    /// (needed for `.live`).
+    private static func activityStreamResponse() -> UITestResponse {
+        let connectIndex = lock.withLock { () -> Int in
+            activityConnectCount += 1
+            return activityConnectCount
+        }
+        if case let .burst503(count) = lock.withLock({ streamBehavior }), connectIndex <= count {
+            return .json(#"{"detail":"temporarily unavailable"}"#, statusCode: 503)
+        }
+        return .hangingStream("")
+    }
+
+    /// One or more SSE comment frames — valid heartbeats the client parses and
+    /// ignores, letting a scripted stream deliver a bounded number of frames
+    /// before it hangs or drops without emitting spurious turn content.
+    private static func sseHeartbeats(_ count: Int) -> String {
+        guard count > 0 else {
+            return ""
+        }
+        return String(repeating: ": heartbeat\n\n", count: count)
+    }
+
+    private static func defaultChatStreamResponse(conversationID: String) -> UITestResponse {
         let (reply, turnID) = lock.withLock {
             (pendingChatReplies[conversationID] ?? "Native reply",
              pendingChatTurnIDs[conversationID] ?? "mock-turn")
@@ -611,7 +764,7 @@ private final class UITestBackendURLProtocol: URLProtocol {
     }
 
     private static func chatConversationSummaries() -> [UITestConversationSummary] {
-        lock.withLock {
+        var summaries = lock.withLock {
             chatMessages.map { conversationID, messages in
                 UITestConversationSummary(
                     conversationID: conversationID,
@@ -620,8 +773,34 @@ private final class UITestBackendURLProtocol: URLProtocol {
                     messageCount: messages.count
                 )
             }
-            .sorted { $0.lastTimestamp > $1.lastTimestamp }
         }
+        if let added = backgroundedConversationSummaryIfRevealed() {
+            summaries.append(added)
+        }
+        return summaries.sorted { $0.lastTimestamp > $1.lastTimestamp }
+    }
+
+    /// The conversation named by `FAMILY_ASSISTANT_UITEST_BACKGROUNDED_CONVERSATION`,
+    /// revealed only once the activity stream has reconnected at least twice —
+    /// bootstrap connects it once, and the foreground resync re-establishes it
+    /// after a background/foreground cycle. Modelling a row created server-side
+    /// while the app was backgrounded that must surface on resume without a manual
+    /// refresh (design §6.2).
+    private static func backgroundedConversationSummaryIfRevealed() -> UITestConversationSummary? {
+        guard let conversationID =
+            ProcessInfo.processInfo.environment["FAMILY_ASSISTANT_UITEST_BACKGROUNDED_CONVERSATION"]
+        else {
+            return nil
+        }
+        guard lock.withLock({ activityConnectCount }) >= 2 else {
+            return nil
+        }
+        return UITestConversationSummary(
+            conversationID: conversationID,
+            lastMessage: "Added while backgrounded",
+            lastTimestamp: "2026-06-08T13:00:00Z",
+            messageCount: 1
+        )
     }
 
     private static func encode<T: Encodable>(_ value: T) -> UITestResponse {
@@ -805,6 +984,14 @@ private struct UITestResponse {
     let statusCode: Int
     let data: Data
     let headers: [String: String]
+    /// When true, the loader delivers `data` and then fails the request with a
+    /// network error instead of finishing cleanly — modelling a stream that
+    /// dropped mid-turn (`dropAfterN`).
+    var dropsConnectionAfterData = false
+    /// When true, the loader delivers `data` and then holds the request open
+    /// until it is cancelled — modelling a live stream that stays connected
+    /// (`hang`).
+    var holdsConnectionOpen = false
 
     static func json(
         _ json: String,
@@ -812,6 +999,24 @@ private struct UITestResponse {
         headers: [String: String] = ["Content-Type": "application/json"]
     ) -> UITestResponse {
         UITestResponse(statusCode: statusCode, data: Data(json.utf8), headers: headers)
+    }
+
+    static func hangingStream(_ initial: String) -> UITestResponse {
+        UITestResponse(
+            statusCode: 200,
+            data: Data(initial.utf8),
+            headers: ["Content-Type": "text/event-stream"],
+            holdsConnectionOpen: true
+        )
+    }
+
+    static func droppedStream(_ initial: String) -> UITestResponse {
+        UITestResponse(
+            statusCode: 200,
+            data: Data(initial.utf8),
+            headers: ["Content-Type": "text/event-stream"],
+            dropsConnectionAfterData: true
+        )
     }
 
     func httpResponse(for request: URLRequest) -> HTTPURLResponse {
