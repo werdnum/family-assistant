@@ -3265,6 +3265,10 @@ final class ChatViewModel {
 /// the coordinator generation that owned the attempt, and events from a
 /// superseded generation are dropped (`syncCoordinator.isCurrent`).
 extension ChatViewModel: SyncStreamDelegate {
+    func currentConversationID() -> String? {
+        conversationID
+    }
+
     func openFollowStream(
         conversationID: String,
         generation _: Int
@@ -3346,24 +3350,25 @@ extension ChatViewModel: SyncStreamDelegate {
         await refreshRecentConversations()
     }
 
-    func forceAuthRefreshForStreamConnect() async -> Bool {
+    func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult {
         // A stream connect 401/403'd: the token the client believed fresh was
         // rejected. Force one coalesced refresh, epoch-fenced so a stale refresh
         // completing after logout/new-login can't overwrite the newer session
-        // (mirrors the ChatAPIClient response-time-401 path). On rejection/no
-        // credentials clear the epoch-fenced auth state — the rejected token would
-        // otherwise linger for other request paths to replay — and let the latched
-        // `authRequired` drive presentation; return false so the loop stops.
+        // (mirrors the ChatAPIClient response-time-401 path). Terminal auth failures
+        // (rejection/no credentials) latch authRequired and halt the loop; transient
+        // failures keep the session intact and signal a retry with backoff.
         let epochBeforeRefresh = authManager.authEpoch
         do {
             try await authManager.refreshIfNeeded(ownerEpoch: epochBeforeRefresh, force: true)
         } catch AuthError.authRejected, AuthError.noCredentials {
-            authManager.clearAuthStateIfCurrent(capturedEpoch: epochBeforeRefresh)
-            return false
+            authManager.clearAuthStateForReauthIfCurrent(capturedEpoch: epochBeforeRefresh)
+            return .terminalAuth
+        } catch AuthError.transient {
+            return .transientRetry
         } catch {
-            return false
+            return .transientRetry
         }
-        return true
+        return .reconnected
     }
 }
 

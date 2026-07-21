@@ -543,7 +543,7 @@ final class SyncCoordinatorTests: XCTestCase {
         )
         let delegate = RecordingSyncStreamDelegate()
         delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
-        delegate.forceAuthRefreshResult = false
+        delegate.forceAuthRefreshResult = .terminalAuth
         coordinator.delegate = delegate
 
         coordinator.startFollowStream(conversationID: "conv-1")
@@ -569,7 +569,7 @@ final class SyncCoordinatorTests: XCTestCase {
         let delegate = RecordingSyncStreamDelegate()
         delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
         delegate.followOpenErrorLimit = 1
-        delegate.forceAuthRefreshResult = true
+        delegate.forceAuthRefreshResult = .reconnected
         // After the refresh succeeds, the retried (second) connect hangs (a live
         // stream) so the loop settles rather than spinning open→401→refresh forever.
         delegate.hangFollowOpen = true
@@ -592,7 +592,7 @@ final class SyncCoordinatorTests: XCTestCase {
         )
         let delegate = RecordingSyncStreamDelegate()
         delegate.activityOpenError = ChatAPIError.server(statusCode: 403, detail: nil)
-        delegate.forceAuthRefreshResult = false
+        delegate.forceAuthRefreshResult = .terminalAuth
         coordinator.delegate = delegate
 
         coordinator.startActivityStream()
@@ -642,6 +642,10 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     /// stale-generation rejection deterministically instead of racing the loop.
     var hangFollowOpen = false
     var hangActivityOpen = false
+    /// The conversation ID from the most recent openFollowStream call, returned by
+    /// currentConversationID so wakeReconnectLoops can restart the loop for the
+    /// active conversation.
+    private var activeConversationID: String?
 
     struct StubError: Error {}
 
@@ -650,6 +654,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         generation: Int
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
         followOpenCount += 1
+        activeConversationID = conversationID
         if let followOpenError, followOpenErrorLimit == 0 || followOpenCount <= followOpenErrorLimit {
             throw followOpenError
         }
@@ -695,13 +700,17 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
 
     func activityStreamDidSignal(generation: Int) async {}
 
-    /// Records how often a stream connect asked for a forced auth refresh and what
-    /// to answer. `forceAuthRefreshResult` decides whether the loop retries the
-    /// connect (`true`) or stops (`false`, the terminal-auth path).
-    private(set) var forceAuthRefreshCount = 0
-    var forceAuthRefreshResult = false
+    func currentConversationID() -> String? {
+        activeConversationID
+    }
 
-    func forceAuthRefreshForStreamConnect() async -> Bool {
+    /// Records how often a stream connect asked for a forced auth refresh and what
+    /// to answer. `forceAuthRefreshResult` decides the outcome: `.reconnected` to
+    /// retry the connect, `.terminalAuth` to stop, or `.transientRetry` to retry with backoff.
+    private(set) var forceAuthRefreshCount = 0
+    var forceAuthRefreshResult: StreamConnectAuthResult = .terminalAuth
+
+    func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult {
         forceAuthRefreshCount += 1
         return forceAuthRefreshResult
     }

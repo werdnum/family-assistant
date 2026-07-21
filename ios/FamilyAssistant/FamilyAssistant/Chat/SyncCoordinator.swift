@@ -1,5 +1,15 @@
 import Foundation
 
+/// Outcome of a forced auth refresh on stream-connect 401/403.
+enum StreamConnectAuthResult {
+    /// A fresh token was minted; the connect is worth retrying at once.
+    case reconnected
+    /// The refresh was rejected or there were no credentials; authRequired is latched.
+    case terminalAuth
+    /// The refresh failed transiently (network/5xx); retry with backoff, no authRequired.
+    case transientRetry
+}
+
 /// The application-side operations the coordinator's owned stream loops invoke.
 ///
 /// The coordinator owns the follow/activity `Task`s and their reconnect loops
@@ -40,6 +50,12 @@ protocol SyncStreamDelegate: AnyObject {
     /// is actively streaming must not degrade presentation.
     func shouldSurfaceFollowDrop() -> Bool
 
+    /// Return the ID of the conversation currently displayed in the UI, or nil if
+    /// none is selected. Used by resync to derive the authoritative follow target
+    /// so a stale cached ID doesn't restart the old stream on conversation switch
+    /// or foreground resync after launch.
+    func currentConversationID() -> String?
+
     /// Catch up persisted history over plain HTTP after a *failed* connect (the
     /// `!connected` branch), so a turn that finished while SSE is unusable still
     /// surfaces within one backoff interval.
@@ -54,12 +70,14 @@ protocol SyncStreamDelegate: AnyObject {
     func activityStreamDidSignal(generation: Int) async
 
     /// A stream connect was rejected with a response-time 401/403. Force one
-    /// coalesced auth refresh and report whether it succeeded. `false` means the
-    /// refresh was itself rejected or there were no credentials — the delegate has
-    /// already latched `authRequired`, so the loop must stop rather than spin the
-    /// backoff replaying the rejected token. `true` means a fresh token was minted
-    /// and the connect is worth retrying at once.
-    func forceAuthRefreshForStreamConnect() async -> Bool
+    /// coalesced auth refresh and report the outcome: `.reconnected` means a fresh
+    /// token was minted and the connect is worth retrying at once; `.terminalAuth`
+    /// means the refresh was itself rejected or there were no credentials — the
+    /// delegate has already latched `authRequired`, so the loop must stop rather
+    /// than spin the backoff replaying the rejected token; `.transientRetry` means
+    /// the refresh failed transiently (network/5xx) and the loop should retry with
+    /// backoff but keep the current session intact (no authRequired latch).
+    func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult
 }
 
 @MainActor
@@ -153,7 +171,6 @@ final class SyncCoordinator {
     // Task is Sendable and all mutation otherwise happens on the main actor.
     private nonisolated(unsafe) var followTask: Task<Void, Never>?
     private nonisolated(unsafe) var activityTask: Task<Void, Never>?
-    private var followConversationID: String?
 
     init(
         pathMonitor: PathMonitoring,
@@ -255,7 +272,6 @@ final class SyncCoordinator {
             }
         }
         followTask?.cancel()
-        followConversationID = conversationID
         let generation = followGeneration
         let initialDelay = followReconnectInitialDelaySeconds
         let maxDelay = followReconnectMaxDelaySeconds
@@ -301,17 +317,19 @@ final class SyncCoordinator {
                     }
                     // A response-time 401/403 on connect is a terminal auth failure,
                     // not an ordinary transient drop: replaying the rejected token
-                    // would spin the backoff forever. Force one coalesced refresh; if
-                    // it succeeds retry the connect at once (skip the backoff sleep),
-                    // otherwise the delegate has latched `authRequired` and the loop
-                    // must stop.
+                    // would spin the backoff forever. Force one coalesced refresh.
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        let refreshed = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? false
+                        let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
                         if Task.isCancelled {
                             break
                         }
-                        if refreshed {
+                        switch result {
+                        case .reconnected:
+                            continue
+                        case .terminalAuth:
+                            break
+                        case .transientRetry:
                             continue
                         }
                         break
@@ -388,20 +406,22 @@ final class SyncCoordinator {
                     }
                 } catch {
                     // A response-time 401/403 on connect is a terminal auth failure
-                    // (see the follow loop): force one coalesced refresh and retry at
-                    // once on success, otherwise stop — the delegate has latched
-                    // `authRequired` and replaying the rejected token would spin the
-                    // backoff forever.
+                    // (see the follow loop): force one coalesced refresh.
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        let refreshed = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? false
+                        let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
                         if Task.isCancelled {
                             break
                         }
-                        if refreshed {
+                        switch result {
+                        case .reconnected:
+                            continue
+                        case .terminalAuth:
+                            self?.apply(.activityDropped(generation: generation, cleanEOF: false))
+                            break
+                        case .transientRetry:
                             continue
                         }
-                        self?.apply(.activityDropped(generation: generation, cleanEOF: false))
                         break
                     }
                     // Any other connection failure/drop falls through to backoff+retry.
@@ -456,11 +476,11 @@ final class SyncCoordinator {
 
     /// Run the foreground resync: restart the follow stream for the active
     /// conversation and the activity stream, matching the former
-    /// `reconnectLiveUpdates()`. The follow stream is restarted only when a
-    /// conversation is selected.
+    /// `reconnectLiveUpdates()`. The follow stream target is derived from the
+    /// current conversation to avoid stale cached IDs from launch or switch.
     func runResync() {
-        if let followConversationID {
-            startFollowStream(conversationID: followConversationID)
+        if let conversationID = delegate?.currentConversationID() {
+            startFollowStream(conversationID: conversationID)
         }
         startActivityStream()
     }
@@ -471,10 +491,11 @@ final class SyncCoordinator {
     /// the local backoff to the initial delay and re-enters the connect attempt at
     /// once); a healthy channel is left alone to avoid needless churn. Restarting a
     /// loop is a retry, not a health assertion — health is only set by an actual
-    /// connect.
+    /// connect. The follow target is derived from the current conversation so a
+    /// stale cached ID doesn't restart the old stream.
     private func wakeReconnectLoops() {
-        if followHealth != .connected, let followConversationID {
-            startFollowStream(conversationID: followConversationID)
+        if followHealth != .connected, let conversationID = delegate?.currentConversationID() {
+            startFollowStream(conversationID: conversationID)
         }
         if activityHealth != .connected {
             startActivityStream()

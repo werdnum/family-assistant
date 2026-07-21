@@ -385,19 +385,43 @@ final class AuthManager {
         setAuthRequired(true)
     }
 
-    /// Latch ``authRequired`` and clear the stored credentials, but only if
-    /// `capturedEpoch` still owns the current auth state. The ChatAPIClient
-    /// forced-refresh retry path reaches ``performRefresh`` directly (bypassing
-    /// ``authorizedRequest``'s cleanup), so a rejection there latches the state
-    /// but leaves the rejected token and its still-fresh expiry in the keychain —
-    /// later requests would keep replaying it. This mirrors that cleanup while
-    /// honoring the epoch fence: a logout/re-login that bumped the epoch during
-    /// the refresh must not have a stale rejection clear the newer login's state.
+    /// Clear the stored credentials and latch authRequired for in-place re-auth,
+    /// but only if `capturedEpoch` still owns the current auth state. The response-time
+    /// 401 on stream connect or request paths reach here to clear the rejected token
+    /// while preserving the authenticated shell (isAuthenticated stays true) so the
+    /// in-place re-auth affordance stays mounted and can recover without a full logout.
+    /// Honoring the epoch fence: a logout/re-login that bumped the epoch during the
+    /// refresh must not have a stale rejection clear the newer login's state.
+    @MainActor
+    func clearAuthStateForReauthIfCurrent(capturedEpoch: Int) {
+        guard isCurrentAuthEpoch(capturedEpoch) else { return }
+        setAuthRequired(true)
+        clearAuthCredentialsOnly()
+    }
+
+    /// Clear only the stored credentials (keychain/defaults) without flipping
+    /// isAuthenticated. Used for in-place re-auth where the shell stays mounted.
+    @MainActor
+    private func clearAuthCredentialsOnly() {
+        KeychainHelper.delete(key: Keys.apiToken)
+        KeychainHelper.delete(key: Keys.refreshToken)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+    }
+
+    /// Latch terminal auth state, clear credentials, and bump epoch with fencing.
+    /// Used when a request is rejected both initially AND after a forced refresh
+    /// (terminal auth failure), and by tests simulating concurrent auth-state
+    /// changes (logout/relogin while a refresh is in flight). Only clears if the
+    /// captured epoch is still current; a stale call (from a superseded operation)
+    /// is dropped so it doesn't undo a fresh login/re-auth. Bumps the epoch to
+    /// invalidate any in-flight operations using the old epoch.
+    /// Preserves isAuthenticated=true (shell stays mounted for in-place re-auth).
     @MainActor
     func clearAuthStateIfCurrent(capturedEpoch: Int) {
         guard isCurrentAuthEpoch(capturedEpoch) else { return }
+        bumpAuthEpoch()
         setAuthRequired(true)
-        clearLocalAuthState()
+        clearAuthCredentialsOnly()
     }
 
     /// Whether the bridge that captured `epoch` still owns the current auth state.
@@ -530,6 +554,13 @@ final class AuthManager {
                 throw AuthError.transient(underlying: error)
             }
         case 401, 403:
+            // Only latch authRequired if this refresh still owns the current auth state.
+            // A stale rejection from a superseded epoch (logout/re-login happened while
+            // the refresh was in flight) must not mark a freshly re-authenticated session
+            // as needing sign-in, and must not clear the new credentials.
+            if let ownerEpoch, !isCurrentAuthEpoch(ownerEpoch) {
+                throw AuthError.authRejected
+            }
             setAuthRequired(true)
             throw AuthError.authRejected
         default:
