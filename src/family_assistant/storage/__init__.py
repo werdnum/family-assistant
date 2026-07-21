@@ -13,8 +13,8 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import (
     DBAPIError,
+    InterfaceError,
     OperationalError,
-    SQLAlchemyError,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -253,12 +253,34 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
 # --- Main Initialization Function ---
 
 
+def _is_transient_db_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` is worth retrying during initialization.
+
+    Only connection-level failures are transient: the database may still be
+    starting up or briefly unreachable, so backing off and retrying can succeed.
+    Deterministic errors — bad DDL/DML (``ProgrammingError``), constraint or
+    value-truncation failures (``IntegrityError``/``DataError``), or
+    misconfiguration — will fail identically on every attempt, so they are
+    treated as fatal and surfaced immediately rather than being masked by ~8
+    minutes of pointless backoff (which previously turned a clear
+    ``StringDataRightTruncation`` into a misleading downstream cascade).
+    """
+    if isinstance(exc, (OperationalError, InterfaceError)):
+        return True
+    if isinstance(exc, DBAPIError):
+        return bool(exc.connection_invalidated)
+    return False
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """
     Initializes the database with robust retry logic.
 
     - Checks for Alembic management and runs upgrades if needed.
     - Otherwise, creates schema, stamps with Alembic head, and initializes vector storage.
+
+    Only transient (connection-level) failures are retried; deterministic errors
+    fail fast. See :func:`_is_transient_db_error`.
     """
     max_retries = 10
     base_delay = 2.0  # Increased base delay
@@ -285,23 +307,17 @@ async def init_db(engine: AsyncEngine) -> None:
             logger.info("Database initialization successful.")
             return
 
-        except (DBAPIError, OperationalError) as e:
-            last_exception = e
-            logger.warning(
-                f"DB connection error on attempt {attempt + 1}: {e!r}. Retrying..."
-            )
-        except SQLAlchemyError as e:
-            last_exception = e
-            logger.warning(
-                f"SQLAlchemy error on attempt {attempt + 1}: {e!r}. Retrying..."
-            )
-        except FileNotFoundError as e:
-            logger.error(f"Configuration error: {e}")
-            raise
         except Exception as e:
             last_exception = e
-            logger.error(
-                f"Unexpected error on attempt {attempt + 1}: {e!r}", exc_info=True
+            if not _is_transient_db_error(e):
+                logger.error(
+                    f"Non-transient error during database initialization; not "
+                    f"retrying: {e!r}",
+                    exc_info=True,
+                )
+                raise
+            logger.warning(
+                f"Transient DB error on attempt {attempt + 1}: {e!r}. Retrying..."
             )
 
         if attempt < max_retries - 1:
