@@ -1133,7 +1133,7 @@ final class ChatViewModel {
                 turnID: turnID,
                 prompt: prompt,
                 conversationID: id,
-                profileID: selectedProfileID,
+                profileID: session.profileID,
                 attachments: attachments
             )
             startSucceeded = true
@@ -3276,7 +3276,7 @@ extension ChatViewModel: SyncStreamDelegate {
     }
 
     func followStreamDidConnect(conversationID: String, generation: Int) async {
-        guard syncCoordinator.isCurrent(generation) else {
+        guard syncCoordinator.isCurrentFollow(generation) else {
             return
         }
         await handleLiveReconnect(conversationID: conversationID)
@@ -3287,7 +3287,7 @@ extension ChatViewModel: SyncStreamDelegate {
         conversationID: String,
         generation: Int
     ) async -> Bool {
-        guard syncCoordinator.isCurrent(generation) else {
+        guard syncCoordinator.isCurrentFollow(generation) else {
             // A superseded generation's event: drop it (don't apply, don't stop
             // the loop — the loop is already being torn down by cancellation).
             return true
@@ -3296,14 +3296,14 @@ extension ChatViewModel: SyncStreamDelegate {
     }
 
     func followBufferRotated(generation: Int) {
-        guard syncCoordinator.isCurrent(generation) else {
+        guard syncCoordinator.isCurrentFollow(generation) else {
             return
         }
         markFollowBufferRotated()
     }
 
     func reportFollowStreamDrop(conversationID: String, error: Error?, generation: Int) {
-        guard syncCoordinator.isCurrent(generation) else {
+        guard syncCoordinator.isCurrentFollow(generation) else {
             return
         }
         reportLiveStreamDrop(conversationID: conversationID, error: error)
@@ -3318,7 +3318,7 @@ extension ChatViewModel: SyncStreamDelegate {
     }
 
     func catchUpFollowHistory(conversationID: String, generation: Int) async {
-        guard syncCoordinator.isCurrent(generation) else {
+        guard syncCoordinator.isCurrentFollow(generation) else {
             return
         }
         await catchUpPersistedHistory(conversationID: conversationID)
@@ -3331,7 +3331,7 @@ extension ChatViewModel: SyncStreamDelegate {
     }
 
     func activityStreamDidSignal(generation: Int) async {
-        guard syncCoordinator.isCurrent(generation) else {
+        guard syncCoordinator.isCurrentActivity(generation) else {
             return
         }
         await refreshRecentConversations()

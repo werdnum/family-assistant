@@ -26,12 +26,15 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testChannelConnectionTraceReachesLive() {
         let (coordinator, _) = makeCoordinator()
-        let generation = coordinator.generation
 
-        XCTAssertTrue(coordinator.apply(.followConnected(generation: generation)).isEmpty)
+        XCTAssertTrue(
+            coordinator.apply(.followConnected(generation: coordinator.followGeneration)).isEmpty
+        )
         XCTAssertEqual(coordinator.presentation, .degraded)
 
-        XCTAssertTrue(coordinator.apply(.activityConnected(generation: generation)).isEmpty)
+        XCTAssertTrue(
+            coordinator.apply(.activityConnected(generation: coordinator.activityGeneration)).isEmpty
+        )
         XCTAssertEqual(coordinator.followHealth, .connected)
         XCTAssertEqual(coordinator.activityHealth, .connected)
         XCTAssertEqual(coordinator.presentation, .live)
@@ -39,12 +42,11 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testCleanEOFFollowDropLeavesDegraded() {
         let (coordinator, _) = makeCoordinator()
-        let generation = coordinator.generation
-        coordinator.apply(.followConnected(generation: generation))
-        coordinator.apply(.activityConnected(generation: generation))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(coordinator.presentation, .live)
 
-        coordinator.apply(.followDropped(generation: generation, cleanEOF: true))
+        coordinator.apply(.followDropped(generation: coordinator.followGeneration, cleanEOF: true))
 
         XCTAssertEqual(coordinator.followHealth, .down)
         XCTAssertEqual(coordinator.presentation, .degraded)
@@ -52,9 +54,8 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testSyncPhaseTakesPrecedenceOverChannelHealth() {
         let (coordinator, _) = makeCoordinator()
-        let generation = coordinator.generation
-        coordinator.apply(.followConnected(generation: generation))
-        coordinator.apply(.activityConnected(generation: generation))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
 
         coordinator.apply(.syncStarted)
         XCTAssertEqual(coordinator.presentation, .syncing)
@@ -65,11 +66,11 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testStaleGenerationEventsAreRejected() {
         let (coordinator, _) = makeCoordinator()
-        let staleGeneration = coordinator.generation
+        let staleGeneration = coordinator.followGeneration
         coordinator.apply(.followConnected(generation: staleGeneration))
         XCTAssertEqual(coordinator.followHealth, .connected)
 
-        let newGeneration = coordinator.bumpGeneration()
+        let newGeneration = coordinator.bumpFollowGeneration()
         XCTAssertNotEqual(staleGeneration, newGeneration)
 
         let effects = coordinator.apply(.followDropped(generation: staleGeneration, cleanEOF: false))
@@ -80,8 +81,8 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testStaleGenerationConnectIsRejected() {
         let (coordinator, _) = makeCoordinator()
-        let staleGeneration = coordinator.generation
-        coordinator.bumpGeneration()
+        let staleGeneration = coordinator.activityGeneration
+        coordinator.bumpActivityGeneration()
 
         let effects = coordinator.apply(.activityConnected(generation: staleGeneration))
 
@@ -89,11 +90,87 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.activityHealth, .down)
     }
 
+    func testReplacingFollowStreamBumpsGenerationSoStaleEventsAreRejected() async throws {
+        // Replacing a live follow task (manual reconnect / wake / conversation
+        // switch) must run under a fresh follow generation: the cancelled task's
+        // in-flight delegate callbacks would otherwise still pass the generation
+        // check and merge/ack stale events into the new stream's state.
+        let (coordinator, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangFollowOpen = true
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.followOpenCount >= 1 }
+        let replacedGeneration = coordinator.followGeneration
+        coordinator.apply(.followConnected(generation: replacedGeneration))
+        XCTAssertEqual(coordinator.followHealth, .connected)
+
+        // Restart the stream (replacement). The follow generation must advance so
+        // the replaced task's generation no longer owns the follow channel.
+        coordinator.startFollowStream(conversationID: "conv-1")
+        XCTAssertNotEqual(coordinator.followGeneration, replacedGeneration)
+
+        // A late drop from the replaced task's generation is rejected: it neither
+        // changes health nor produces effects.
+        let effects = coordinator.apply(
+            .followDropped(generation: replacedGeneration, cleanEOF: false)
+        )
+        XCTAssertTrue(effects.isEmpty)
+        XCTAssertEqual(coordinator.followHealth, .connected)
+    }
+
+    func testReplacingFollowStreamLeavesActivityGenerationUntouched() async throws {
+        // The two channels are counted separately: replacing the follow stream must
+        // NOT invalidate a concurrent, still-valid activity connect. A shared
+        // counter would reject the activity connect the moment follow bumped.
+        let (coordinator, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangFollowOpen = true
+        delegate.hangActivityOpen = true
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        try await waitUntil { delegate.activityOpenCount >= 1 }
+        let activityGenerationBeforeSwitch = coordinator.activityGeneration
+
+        // Switch conversations: only the follow stream is replaced.
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.followOpenCount >= 1 }
+
+        // The activity connect (captured before the follow switch) is still current.
+        XCTAssertEqual(coordinator.activityGeneration, activityGenerationBeforeSwitch)
+        coordinator.apply(.activityConnected(generation: activityGenerationBeforeSwitch))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        XCTAssertEqual(coordinator.presentation, .live)
+    }
+
+    func testReplacingActivityStreamBumpsGenerationSoStaleEventsAreRejected() async throws {
+        let (coordinator, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangActivityOpen = true
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        try await waitUntil { delegate.activityOpenCount >= 1 }
+        let replacedGeneration = coordinator.activityGeneration
+        coordinator.apply(.activityConnected(generation: replacedGeneration))
+        XCTAssertEqual(coordinator.activityHealth, .connected)
+
+        coordinator.startActivityStream()
+        XCTAssertNotEqual(coordinator.activityGeneration, replacedGeneration)
+
+        let effects = coordinator.apply(
+            .activityDropped(generation: replacedGeneration, cleanEOF: false)
+        )
+        XCTAssertTrue(effects.isEmpty)
+        XCTAssertEqual(coordinator.activityHealth, .connected)
+    }
+
     func testPresentationDerivationPriorityTable() {
         let (coordinator, _) = makeCoordinator()
-        let generation = coordinator.generation
-        coordinator.apply(.followConnected(generation: generation))
-        coordinator.apply(.activityConnected(generation: generation))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(coordinator.presentation, .live)
 
         coordinator.apply(.syncStarted)
@@ -111,16 +188,14 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testDegradedWhenOnlyOneChannelConnected() {
         let (coordinator, _) = makeCoordinator()
-        let generation = coordinator.generation
 
-        coordinator.apply(.followConnected(generation: generation))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
 
         XCTAssertEqual(coordinator.presentation, .degraded)
     }
 
     func testLatchedForegroundEmitsExactlyOneResync() {
         let (coordinator, _) = makeCoordinator()
-        let startingGeneration = coordinator.generation
 
         coordinator.scenePhaseChanged(didBackground: true, isActive: false)
         XCTAssertEqual(coordinator.lifecycle, .background)
@@ -129,21 +204,20 @@ final class SyncCoordinatorTests: XCTestCase {
 
         let effects = coordinator.apply(.foregrounded)
 
-        XCTAssertEqual(effects, [.runResync(generation: startingGeneration + 1)])
-        XCTAssertEqual(coordinator.generation, startingGeneration + 1)
+        XCTAssertEqual(effects, [.runResync])
         XCTAssertFalse(coordinator.cameFromBackground)
         XCTAssertEqual(coordinator.lifecycle, .foreground)
     }
 
     func testRealResumeSceneSequenceTriggersExactlyOneResync() {
         let (coordinator, _) = makeCoordinator()
-        let startingGeneration = coordinator.generation
 
-        coordinator.scenePhaseChanged(didBackground: true, isActive: false)
-        coordinator.scenePhaseChanged(didBackground: false, isActive: false)
-        coordinator.scenePhaseChanged(didBackground: false, isActive: true)
+        var allEffects: [SyncCoordinator.SyncEffect] = []
+        allEffects += coordinator.scenePhaseChanged(didBackground: true, isActive: false)
+        allEffects += coordinator.scenePhaseChanged(didBackground: false, isActive: false)
+        allEffects += coordinator.scenePhaseChanged(didBackground: false, isActive: true)
 
-        XCTAssertEqual(coordinator.generation, startingGeneration + 1)
+        XCTAssertEqual(allEffects, [.runResync])
         XCTAssertFalse(coordinator.cameFromBackground)
 
         let repeated = coordinator.apply(.foregrounded)
@@ -157,7 +231,6 @@ final class SyncCoordinatorTests: XCTestCase {
         let effects = coordinator.apply(.foregrounded)
 
         XCTAssertTrue(effects.isEmpty)
-        XCTAssertEqual(coordinator.generation, 0)
         XCTAssertFalse(coordinator.cameFromBackground)
     }
 
@@ -197,7 +270,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // separate symbols/labels/identifiers.
         let (coordinator, _) = makeCoordinator(satisfied: true)
 
-        coordinator.apply(.followConnected(generation: coordinator.generation))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
         XCTAssertEqual(coordinator.presentation, .degraded)
 
         coordinator.apply(.reachabilityChanged(.unsatisfied))
@@ -280,8 +353,8 @@ final class SyncCoordinatorTests: XCTestCase {
         // its health is asserted via the coordinator event, not a real connect.
         coordinator.startFollowStream(conversationID: "conv-1")
         try await waitUntil { delegate.followOpenCount >= 1 }
-        coordinator.apply(.followConnected(generation: coordinator.generation))
-        coordinator.apply(.activityConnected(generation: coordinator.generation))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(coordinator.presentation, .live)
         let followOpensBeforeDrop = delegate.followOpenCount
 
@@ -321,6 +394,40 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.presentation, .offline)
     }
 
+    func testReauthSuccessWakesReconnectLoopsImmediately() async throws {
+        // While `authRequired` is latched the streams cannot connect, so their
+        // loops sit at capped backoff. On the authRequired→ok transition (re-auth
+        // success) the loops must be woken immediately instead of waiting out the
+        // (here 60s) backoff, mirroring the reachability-recovery wake.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(
+            pathMonitor: monitor,
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        coordinator.delegate = delegate
+
+        // Bring both loops up (activity's open always throws, so it drops into
+        // backoff), then fail every connect so they stay down deterministically.
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.followOpenCount >= 1 }
+        delegate.shouldFailFollowOpen = true
+        coordinator.startActivityStream()
+        try await waitUntil { delegate.activityOpenCount >= 1 }
+        let followOpensBeforeReauth = delegate.followOpenCount
+        let activityOpensBeforeReauth = delegate.activityOpenCount
+
+        coordinator.apply(.authRequired)
+        XCTAssertEqual(coordinator.authState, .authRequired)
+
+        coordinator.apply(.authOK)
+        try await waitUntil(timeout: 3) {
+            delegate.followOpenCount > followOpensBeforeReauth
+                && delegate.activityOpenCount > activityOpensBeforeReauth
+        }
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 2,
         _ predicate: @escaping () -> Bool
@@ -344,6 +451,11 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     private(set) var followOpenCount = 0
     private(set) var activityOpenCount = 0
     var shouldFailFollowOpen = false
+    /// When set, the opened stream never finishes on its own, so the loop stays
+    /// connected without emitting a competing drop event — letting a test assert
+    /// stale-generation rejection deterministically instead of racing the loop.
+    var hangFollowOpen = false
+    var hangActivityOpen = false
 
     struct StubError: Error {}
 
@@ -355,8 +467,11 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         if shouldFailFollowOpen {
             throw StubError()
         }
+        let hang = hangFollowOpen
         return AsyncThrowingStream { continuation in
-            continuation.finish()
+            if !hang {
+                continuation.finish()
+            }
         }
     }
 
@@ -380,6 +495,9 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         generation: Int
     ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
         activityOpenCount += 1
+        if hangActivityOpen {
+            return AsyncThrowingStream { _ in }
+        }
         throw StubError()
     }
 

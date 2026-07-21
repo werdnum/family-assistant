@@ -113,7 +113,7 @@ final class SyncCoordinator {
         case startFollowStream(generation: Int)
         case startActivityStream(generation: Int)
         case cancelStreams
-        case runResync(generation: Int)
+        case runResync
     }
 
     private(set) var lifecycle: Lifecycle = .foreground
@@ -123,7 +123,16 @@ final class SyncCoordinator {
     private(set) var activityHealth: ChannelHealth = .down
     private(set) var phase: ReconciliationPhase = .idle
     private(set) var cameFromBackground = false
-    private(set) var generation = 0
+
+    // Per-channel generations. Each stream task captures its channel's generation
+    // at start and stamps every delegate callback and health event with it; the
+    // reducer/delegate reject any callback whose generation no longer matches. The
+    // two channels are counted SEPARATELY so replacing one stream (a conversation
+    // switch restarts only follow) cannot invalidate the sibling's still-valid
+    // in-flight callbacks — a single shared counter would reject a concurrent
+    // activity connect the moment a follow replacement bumped it.
+    private(set) var followGeneration = 0
+    private(set) var activityGeneration = 0
 
     private let pathMonitor: PathMonitoring
     private let followReconnectInitialDelaySeconds: Double
@@ -179,14 +188,24 @@ final class SyncCoordinator {
         return .degraded
     }
 
-    func isCurrent(_ generation: Int) -> Bool {
-        generation == self.generation
+    func isCurrentFollow(_ generation: Int) -> Bool {
+        generation == followGeneration
+    }
+
+    func isCurrentActivity(_ generation: Int) -> Bool {
+        generation == activityGeneration
     }
 
     @discardableResult
-    func bumpGeneration() -> Int {
-        generation += 1
-        return generation
+    func bumpFollowGeneration() -> Int {
+        followGeneration += 1
+        return followGeneration
+    }
+
+    @discardableResult
+    func bumpActivityGeneration() -> Int {
+        activityGeneration += 1
+        return activityGeneration
     }
 
     /// Maps a raw scene-phase observation onto the coordinator's lifecycle events. The
@@ -211,9 +230,17 @@ final class SyncCoordinator {
     /// delegated to the view model. Cancelling the previous task before starting a
     /// new one is the single-owner cancellation the design requires.
     func startFollowStream(conversationID: String) {
+        // Replacing a live task: cancelling it does not stop its in-flight delegate
+        // callbacks synchronously, so they would still pass the generation check and
+        // merge/ack stale events into the new stream's state. Bump the follow
+        // generation so the replacement runs under a fresh one and the cancelled
+        // task's late callbacks are rejected.
+        if followTask != nil {
+            bumpFollowGeneration()
+        }
         followTask?.cancel()
         followConversationID = conversationID
-        let generation = self.generation
+        let generation = followGeneration
         let initialDelay = followReconnectInitialDelaySeconds
         let maxDelay = followReconnectMaxDelaySeconds
         followTask = Task { [weak self] in
@@ -288,8 +315,15 @@ final class SyncCoordinator {
     /// (Re)start the account-global activity stream. Owns the same capped-backoff
     /// reconnect loop; list refresh on connect and on every ping is delegated.
     func startActivityStream() {
+        // Same generation hole as `startFollowStream`: a replaced activity task's
+        // in-flight callbacks would still pass the check and let a stale signal ack
+        // into the new stream. Bump the activity generation so the replacement owns
+        // a fresh one.
+        if activityTask != nil {
+            bumpActivityGeneration()
+        }
         activityTask?.cancel()
-        let generation = self.generation
+        let generation = activityGeneration
         let initialDelay = followReconnectInitialDelaySeconds
         let maxDelay = followReconnectMaxDelaySeconds
         activityTask = Task { [weak self] in
@@ -374,8 +408,10 @@ final class SyncCoordinator {
                 return []
             }
             cameFromBackground = false
-            let newGeneration = bumpGeneration()
-            return [.runResync(generation: newGeneration)]
+            // `runResync` restarts both streams, and each `startX` bumps its own
+            // channel generation as it replaces the (backgrounded) task, so the
+            // reattached loops run under fresh generations without a shared bump here.
+            return [.runResync]
 
         case .backgrounded:
             lifecycle = .background
@@ -413,7 +449,17 @@ final class SyncCoordinator {
             return []
 
         case .authOK:
+            let wasAuthRequired = authState == .authRequired
             authState = .ok
+            // Re-auth just succeeded. While `authRequired` was latched the streams
+            // could not connect (their requests 401'd), so any loop is now asleep
+            // at capped backoff and would otherwise stay down for up to one
+            // max-delay interval, keeping the stuck indicator up after sign-in.
+            // Mirror the reachability-recovery wake: reset backoff and retry the
+            // non-connected loops now. Health still comes only from real connects.
+            if wasAuthRequired, lifecycle == .foreground {
+                wakeReconnectLoops()
+            }
             return []
 
         case .authRequired:
@@ -421,28 +467,28 @@ final class SyncCoordinator {
             return []
 
         case let .followConnected(generation):
-            guard isCurrent(generation) else {
+            guard isCurrentFollow(generation) else {
                 return []
             }
             followHealth = .connected
             return []
 
         case let .followDropped(generation, _):
-            guard isCurrent(generation) else {
+            guard isCurrentFollow(generation) else {
                 return []
             }
             followHealth = .down
             return []
 
         case let .activityConnected(generation):
-            guard isCurrent(generation) else {
+            guard isCurrentActivity(generation) else {
                 return []
             }
             activityHealth = .connected
             return []
 
         case let .activityDropped(generation, _):
-            guard isCurrent(generation) else {
+            guard isCurrentActivity(generation) else {
                 return []
             }
             activityHealth = .down

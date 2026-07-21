@@ -673,6 +673,54 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testSendCapturesProfileAtSendTimeNotStartTurnTime() async throws {
+        // The turn must POST under the profile selected when the send was issued,
+        // not a later `selectedProfileID`. `sendDraft` captures the profile into the
+        // ActiveTurnSession and only then spawns the transport task, so a profile
+        // switch made before that task suspends into its `startTurn` POST (here,
+        // synchronously on the main actor right after `sendDraft` returns, before
+        // any await lets the task run) must not retarget the in-flight turn.
+        let startProfileID = AtomicString()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                startProfileID.set(payload["profile_id"] as? String ?? "<nil>")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_profile_capture","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_profile_capture/stream"):
+                return .droppedStream("")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_profile_capture/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_profile_capture","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_profile_capture")
+        model.selectedProfileID = "complex_tasks"
+        model.draftText = "Hi"
+        await model.sendDraft()
+        // No await between here and the switch: the just-spawned transport task
+        // (also main-actor-isolated) cannot have reached its startTurn POST yet.
+        model.selectedProfileID = "engineer"
+
+        try await waitUntil { startProfileID.value != nil }
+
+        XCTAssertEqual(
+            startProfileID.value,
+            "complex_tasks",
+            "The turn POST must carry the profile captured at send time, not the later switch."
+        )
+    }
+
     func testCannotSendWhileConversationMessagesAreLoading() {
         let model = makeViewModel(conversationID: "web_conv_loading")
         model.draftText = "follow up"
@@ -6462,15 +6510,34 @@ final class ChatViewModelTests: XCTestCase {
         // generation events. Drive the coordinator directly for determinism.
         let (model, coordinator) = makeCoordinatorBackedModel()
 
-        let generation = coordinator.generation
-        coordinator.apply(.followConnected(generation: generation))
-        coordinator.apply(.activityConnected(generation: generation))
+        let followGeneration = coordinator.followGeneration
+        coordinator.apply(.followConnected(generation: followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(model.syncPresentation, .live)
 
-        coordinator.bumpGeneration()
-        // A late drop from the old generation is rejected; presentation holds.
-        coordinator.apply(.followDropped(generation: generation, cleanEOF: true))
+        coordinator.bumpFollowGeneration()
+        // A late drop from the old follow generation is rejected; presentation holds.
+        coordinator.apply(.followDropped(generation: followGeneration, cleanEOF: true))
         XCTAssertEqual(model.syncPresentation, .live)
+    }
+
+    func testFreshViewModelAdoptsLatchedAuthRequiredPresentation() {
+        // A ChatViewModel built AFTER `authRequired` latched (a rebuild while the
+        // stored credentials are already rejected) must present `.authRequired`
+        // immediately: its coordinator learns the state through the observer's
+        // synchronous current-state delivery at registration, not only on the
+        // next transition.
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        authManager.markAuthRequired()
+
+        let model = ChatViewModel(
+            authManager: authManager,
+            conversationID: "web_conv_latched_auth",
+            pathMonitor: StubPathMonitor(isSatisfied: true)
+        )
+
+        XCTAssertEqual(model.syncPresentation, .authRequired)
     }
 
     /// A view model whose coordinator is seeded with a satisfied stub monitor, so
