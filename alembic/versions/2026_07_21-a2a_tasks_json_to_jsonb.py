@@ -10,6 +10,11 @@ table-creation migration made them plain ``JSON``. On PostgreSQL that left the
 columns as ``json`` rather than ``jsonb``, drifting from the model. This
 migration aligns them. It is a no-op on SQLite, where ``JSON`` and the JSONB
 variant are stored identically.
+
+Each column conversion is guarded on its current type: databases bootstrapped via
+``init_db``'s ``metadata.create_all()`` path already have ``jsonb`` (the model
+declares the variant), so this only rewrites the ``json`` columns of
+migration-built databases and avoids a needless table rewrite otherwise.
 """
 
 from collections.abc import Sequence
@@ -27,11 +32,22 @@ depends_on: str | Sequence[str] | None = None
 _COLUMNS = ("artifacts_json", "history_json", "metadata_json")
 
 
+def _column_type_names(bind: sa.Connection) -> dict[str, str]:
+    inspector = sa.inspect(bind)
+    return {
+        col["name"]: type(col["type"]).__name__.lower()
+        for col in inspector.get_columns("a2a_tasks")
+    }
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
         return
+    types = _column_type_names(bind)
     for column in _COLUMNS:
+        if types.get(column) == "jsonb":
+            continue
         op.alter_column(
             "a2a_tasks",
             column,
@@ -46,7 +62,10 @@ def downgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
         return
+    types = _column_type_names(bind)
     for column in _COLUMNS:
+        if types.get(column) == "json":
+            continue
         op.alter_column(
             "a2a_tasks",
             column,
