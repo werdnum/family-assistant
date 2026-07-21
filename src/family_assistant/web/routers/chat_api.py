@@ -735,6 +735,20 @@ def _get_heartbeat_interval(request: Request) -> float:
     return _DEFAULT_STREAM_HEARTBEAT_INTERVAL_SECONDS
 
 
+def _notify_heartbeat_observer(request: Request) -> None:
+    """Invoke the heartbeat-emission observer seam, if installed.
+
+    ``app.state.stream_heartbeat_observer`` is a zero-argument callable invoked
+    every time a stream endpoint emits a ``heartbeat`` frame; absent in
+    production. Buffered ASGI test transports cannot observe frames before the
+    stream closes, so tests install a counter here and wait on actual emissions
+    instead of sleeping a wall-clock multiple of the interval.
+    """
+    observer = getattr(request.app.state, "stream_heartbeat_observer", None)
+    if observer is not None:
+        observer()
+
+
 def _serialize_active_turn(turn: TurnRecord) -> ActiveTurnInfo:
     return ActiveTurnInfo(
         turn_id=turn.turn_id,
@@ -1302,6 +1316,7 @@ async def api_chat_conversation_stream(
                             'data: {"reason": "queue_overflow"}\n\n'
                         )
                         return
+                    _notify_heartbeat_observer(request)
                     yield "event: heartbeat\ndata: {}\n\n"
                     if not follow and not _has_running_turn():
                         for drained in _drain_queue():
@@ -1403,6 +1418,7 @@ async def api_chat_activity_stream(
                             'data: {"reason": "queue_overflow"}\n\n'
                         )
                         return
+                    _notify_heartbeat_observer(request)
                     yield "event: heartbeat\ndata: {}\n\n"
                     continue
 

@@ -1613,10 +1613,24 @@ async def test_activity_stream_delivers_ping_then_disconnects_cleanly(
 _HEARTBEAT_INTERVAL_SECONDS = 0.02
 
 
+class _EmissionCounter:
+    """Counts heartbeat-observer callbacks (single event loop, no lock needed)."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def increment(self) -> None:
+        self.count += 1
+
+    def value(self) -> int:
+        return self.count
+
+
 async def _assert_heartbeat_then_shutdown(
     test_client: AsyncClient,
     shutdown_event: asyncio.Event,
     subscribed: Callable[[], bool],
+    heartbeats_emitted: Callable[[], int],
     *,
     url: str,
     # ast-grep-ignore: no-dict-any - passthrough of httpx query params (int/str), matching stream() signature
@@ -1628,10 +1642,11 @@ async def _assert_heartbeat_then_shutdown(
     ``httpx``'s ``ASGITransport`` buffers the whole response and only yields the
     body once the app finishes, so an infinite stream must close itself before
     any frame is observable. A background task waits for the subscriber to
-    attach, lets several heartbeat intervals elapse so the generator buffers at
-    least one ``heartbeat``, then signals shutdown; the generator then emits a
-    terminal ``stream_dropped`` and returns. The buffered body therefore contains
-    the heartbeat frames followed by ``stream_dropped``."""
+    attach, then waits on the server-side heartbeat-observer seam
+    (``app.state.stream_heartbeat_observer``) until the generator has actually
+    emitted heartbeats, then signals shutdown; the generator then emits a
+    terminal ``stream_dropped`` and returns. The buffered body therefore
+    contains the heartbeat frames followed by ``stream_dropped``."""
 
     async def drive_shutdown() -> None:
         await wait_for_condition(
@@ -1640,17 +1655,12 @@ async def _assert_heartbeat_then_shutdown(
             interval=_HEARTBEAT_INTERVAL_SECONDS,
             description="stream subscriber attaches",
         )
-        # Let several heartbeat intervals elapse so the SSE generator buffers at
-        # least one heartbeat frame before we ask it to close. The heartbeat
-        # cadence is a server-side timer with no client-observable signal until
-        # the stream closes (httpx ASGITransport buffers the body), so there is
-        # no condition to wait on — this is a deterministic multiple of the
-        # injected interval, not a flaky "hope it's done" wait.
-        remaining_intervals = 5
-        while remaining_intervals > 0:
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - deterministic wait for N server-side heartbeat ticks; no client-observable condition exists before the stream closes
-            await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
-            remaining_intervals -= 1
+        await wait_for_condition(
+            lambda: heartbeats_emitted() >= 2,
+            timeout=5.0,
+            interval=_HEARTBEAT_INTERVAL_SECONDS,
+            description="server-side generator emits heartbeat frames",
+        )
         shutdown_event.set()
 
     shutdown_driver = asyncio.ensure_future(drive_shutdown())
@@ -1679,6 +1689,8 @@ async def test_conversation_stream_emits_heartbeat_with_injected_interval(
     interval. Driving the interval down to a few milliseconds makes the heartbeat
     path fire deterministically without waiting the production 30s cadence."""
     app_fixture.state.stream_heartbeat_interval_seconds = _HEARTBEAT_INTERVAL_SECONDS
+    heartbeat_count = _EmissionCounter()
+    app_fixture.state.stream_heartbeat_observer = heartbeat_count.increment
     shutdown_event = asyncio.Event()
     app_fixture.state.shutdown_event = shutdown_event
     hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
@@ -1688,6 +1700,7 @@ async def test_conversation_stream_emits_heartbeat_with_injected_interval(
         test_client,
         shutdown_event,
         lambda: hub.subscriber_count(conversation_id) > 0,
+        heartbeat_count.value,
         url=f"/api/v1/chat/conversations/{conversation_id}/stream",
         params={"from_seq": 0, "follow": "true"},
     )
@@ -1701,6 +1714,8 @@ async def test_activity_stream_emits_heartbeat_with_injected_interval(
     injectable interval, so an idle activity connection is kept alive rather than
     being torn down by an idle-timeout front door."""
     app_fixture.state.stream_heartbeat_interval_seconds = _HEARTBEAT_INTERVAL_SECONDS
+    heartbeat_count = _EmissionCounter()
+    app_fixture.state.stream_heartbeat_observer = heartbeat_count.increment
     shutdown_event = asyncio.Event()
     app_fixture.state.shutdown_event = shutdown_event
     hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
@@ -1709,5 +1724,6 @@ async def test_activity_stream_emits_heartbeat_with_injected_interval(
         test_client,
         shutdown_event,
         lambda: hub.has_activity_subscribers("test_user"),
+        heartbeat_count.value,
         url="/api/v1/chat/activity/stream",
     )
