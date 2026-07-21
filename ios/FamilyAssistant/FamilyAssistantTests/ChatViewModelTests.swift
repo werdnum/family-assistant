@@ -5106,6 +5106,39 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testManualReconnectBumpsBothGenerations() async throws {
+        // Finding 12: the toolbar's manual reconnect has no lifecycle transition to
+        // bump generations for it (unlike foreground/reachability/re-auth, which bump
+        // in the reducer). Without a bump the resync's replacement streams reuse the
+        // cancelled consumers' generation and a late old-consumer event would pass
+        // the fence. `requestManualReconnect` must bump both generations first.
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: HangingStream())
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                return .hangingStream("", controller: HangingStream())
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(#"{"conversation_id":"web_conv_manual","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_manual")
+        let followGenerationBefore = model.syncCoordinator.followGeneration
+        let activityGenerationBefore = model.syncCoordinator.activityGeneration
+
+        await model.requestManualReconnect()
+
+        XCTAssertGreaterThan(model.syncCoordinator.followGeneration, followGenerationBefore)
+        XCTAssertGreaterThan(model.syncCoordinator.activityGeneration, activityGenerationBefore)
+    }
+
     func testReconnectLiveUpdatesCatchesUpHistoryAfterForegrounding() async throws {
         // The foreground hook (scenePhase -> .active) calls reconnectLiveUpdates().
         // While the app is backgrounded the follow stream is held open but the
@@ -6157,6 +6190,110 @@ final class ChatViewModelTests: XCTestCase {
         )
 
         followTokenAfterForeground.finish()
+        sendSubscription.finish()
+    }
+
+    func testStopReachesServerForReattachedRunningTurn() async throws {
+        // Finding 8: a turn reattached on foreground has NO live send task (the
+        // suspend tore its transport down). Stop branches on `registeredTurnIDs`; if
+        // the reattached turn is left unregistered, Stop enqueues into
+        // `stopAfterRegistrationByTurnID` — but the send task that would flush that
+        // queue is dead, so the cancel silently never reaches the server. The
+        // reattach must mark the turn registered so Stop takes the normal request
+        // path and actually issues the cancel.
+        let sendSubscription = HangingStream()
+        let advisoryFollow = HangingStream()
+        let postedTurnID = AtomicString()
+        let foregrounded = AtomicCounter()
+        let cancelRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(#"{"turn_id":"\#(turnID)","conversation_id":"web_conv_reattach_stop","first_seq":0}"#)
+            case ("POST", _) where path.hasPrefix("/api/v1/chat/turns/") && path.hasSuffix("/cancel"):
+                cancelRequests.increment()
+                return .json(#"{"turn_id":"","conversation_id":"web_conv_reattach_stop","status":"cancelled","already_complete":false}"#)
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_reattach_stop/stream" {
+                    let isSend = Self.queryItems(from: request)["follow"] == "false"
+                    if isSend {
+                        return .hangingStream(
+                            """
+                            event: turn_started
+                            data: {"turn_id":"\(postedTurnID.value ?? "turn-reattach")","seq":0}
+
+                            """,
+                            controller: sendSubscription
+                        )
+                    }
+                    return .hangingStream("", controller: advisoryFollow)
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    guard let turnID = postedTurnID.value else {
+                        return .json(
+                            #"{"conversation_id":"web_conv_reattach_stop","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                        )
+                    }
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_reattach_stop",
+                          "messages":[],"count":0,"total_messages":0,
+                          "has_more_before":false,"has_more_after":false,
+                          "active_turns":[{"turn_id":"\(turnID)","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_reattach_stop",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model.bootstrap()
+
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil {
+            model.isStreaming
+                && model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? "")
+        }
+
+        model.scenePhaseChanged(old: .active, new: .background)
+        XCTAssertFalse(model.isStreaming)
+        advisoryFollow.finish()
+
+        foregrounded.increment()
+        model.scenePhaseChanged(old: .background, new: .active)
+
+        // Reattach restores steer/stop mode and re-registers the turn.
+        try await waitUntil(timeout: 8) {
+            model.isStreaming
+                && model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? "")
+        }
+
+        // Stop now takes the normal request path and issues the cancel to the server.
+        await model.stopTurn()
+        try await waitUntil(timeout: 4) { cancelRequests.value >= 1 }
+        XCTAssertGreaterThanOrEqual(cancelRequests.value, 1)
+
         sendSubscription.finish()
     }
 
@@ -8962,6 +9099,62 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertFalse(
             spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
             "a pre-turn noCredentials send must not raise the generic error modal"
+        )
+    }
+
+    func testBufferedResyncDrainDoesNotModalOnFailingFollowUpRefresh() async throws {
+        // Finding 10: a buffered turn_ended drained during a resync routes through
+        // the steady-state handler, whose follow-up list/message refresh defaults to
+        // modal-raising. The drain must use the silent (`surfaceErrors: false`)
+        // variant, so a failing follow-up refresh degrades silently — no modal.
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            // Every follow-up refresh the drain triggers fails.
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"detail":"boom"}"#, statusCode: 500)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(#"{"detail":"boom"}"#, statusCode: 500)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-drain-silent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_drain_silent",
+            spoolDirectory: spoolDirectory
+        )
+
+        let turnEnded = ChatStreamEvent(
+            type: .turnEnded,
+            turnID: "turn-drain",
+            seq: 5,
+            text: nil,
+            toolCall: nil,
+            toolCallID: nil,
+            toolResult: nil,
+            attachments: [],
+            attachmentSource: .response,
+            confirmation: nil,
+            confirmationResult: nil,
+            errorMessage: nil,
+            status: "completed"
+        )
+
+        await model.drainFollowEvent(
+            turnEnded,
+            conversationID: "web_conv_drain_silent",
+            generation: model.syncCoordinator.followGeneration
+        )
+        await model.drainActivitySignal(generation: model.syncCoordinator.activityGeneration)
+
+        XCTAssertNil(model.errorMessage)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "a buffered resync drain's failing follow-up refresh must not raise the modal"
         )
     }
 

@@ -767,7 +767,7 @@ final class ChatViewModel {
                 return
             }
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
-            attachDiscoveredActiveTurns(response.activeTurns)
+            await attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
         } catch {
             guard self.conversationID == id else {
@@ -805,8 +805,8 @@ final class ChatViewModel {
     /// A SUSPENDED session (its transport torn down for a background but its
     /// `ActiveTurnSession` preserved) is reconciled here against the authoritative
     /// snapshot before the foreign-turn loop: see `reconcileSuspendedSession`.
-    private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) {
-        reconcileSuspendedSession(against: activeTurns)
+    private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) async {
+        await reconcileSuspendedSession(against: activeTurns)
         for turn in activeTurns {
             guard turn.status == "running",
                   turn.turnID != activeTurnSession?.turnID,
@@ -839,7 +839,7 @@ final class ChatViewModel {
     ///
     /// A no-op while a send is actively streaming (`isSendActivelyStreaming`): that
     /// session owns its transport and must not be reconciled away mid-send.
-    private func reconcileSuspendedSession(against activeTurns: [ChatActiveTurnInfo]) {
+    private func reconcileSuspendedSession(against activeTurns: [ChatActiveTurnInfo]) async {
         guard !isSendActivelyStreaming, let session = activeTurnSession else {
             return
         }
@@ -856,11 +856,68 @@ final class ChatViewModel {
             if liveFollowBubbleByTurnID[session.turnID] == nil {
                 _ = makeLiveFollowBubble(for: session.turnID)
             }
+            // The reattached turn has NO live send task: the suspended session's
+            // transport was torn down, and the follow stream (not a send task) now
+            // renders it. Stop/steer branch on `registeredTurnIDs`, and the send
+            // task that used to flush the pre-registration queues is gone — so a
+            // turn left unregistered would silently swallow Stop/steer into
+            // `stopAfterRegistrationByTurnID`/`pendingSteersByTurnID` forever. Mark
+            // it registered so the controls take the normal request path, and flush
+            // anything queued before this reattach through that same path.
+            registeredTurnIDs.insert(session.turnID)
+            await flushQueuedControlsForReattachedTurn(session.turnID)
         } else if reattachedRunningTurnID == session.turnID || streamTask == nil {
             // Not running server-side: either a turn we had reattached that has
             // since ended, or a suspended session whose turn finished while
             // backgrounded. Retire it so the composer leaves steer/stop mode.
             clearReattachedSession()
+        }
+    }
+
+    /// Flush stop/steer requests that were queued before a suspended turn was
+    /// reattached, now that it is registered. Mirrors the send task's
+    /// post-registration flush: a queued stop wins over queued steers (a stopped
+    /// turn takes no further steers); otherwise each queued steer is submitted in
+    /// order. The reattached turn owns no send task, so this is the only place the
+    /// queues get drained for it.
+    private func flushQueuedControlsForReattachedTurn(_ turnID: String) async {
+        let conversationID = activeTurnSession?.conversationID ?? self.conversationID
+        guard let conversationID else {
+            return
+        }
+        let activeTurn = ActiveChatTurn(turnID: turnID, conversationID: conversationID)
+        let pendingSteers = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
+        let hadPendingStop = pendingStopTurnIDs.remove(turnID) != nil
+        if hadPendingStop {
+            detachPendingSteers(pendingSteers, requeue: false)
+            do {
+                let secured = try await requestStopWithRetry(activeTurn)
+                if !secured, shouldSurfaceStopWarning(for: activeTurn) {
+                    stopWarningMessage =
+                        "Stop could not be confirmed. Pending approvals from this turn may still be active."
+                }
+            } catch {
+                if shouldSurfaceStopWarning(for: activeTurn) {
+                    presentErrorAlert(
+                        error.localizedDescription,
+                        reason: .stopTurnFailed,
+                        underlyingError: error
+                    )
+                }
+                errorReporter.report(error, component: "Chat.stopTurn")
+            }
+            return
+        }
+        for prompt in pendingSteers {
+            do {
+                let result = try await requestSteerWithRetry(activeTurn, prompt: prompt)
+                await handleSteerSubmissionResult(result, prompt: prompt, activeTurn: activeTurn)
+            } catch {
+                removeInFlightSteer(prompt)
+                removeAwaitingEchoSteer(prompt)
+                steerErrorMessage = error.localizedDescription
+                errorReporter.report(error, component: "Chat.steerTurn")
+            }
         }
     }
 
@@ -1035,7 +1092,7 @@ final class ChatViewModel {
             // turn discovered during the PRIMARY reconnect path must render a
             // progressive placeholder before any token arrives. Same narrow guards
             // as the full-load path (selected, not locally owned, not ended).
-            attachDiscoveredActiveTurns(activeTurns)
+            await attachDiscoveredActiveTurns(activeTurns)
             guard !delta.isEmpty else {
                 errorMessage = nil
                 return
@@ -2591,6 +2648,19 @@ final class ChatViewModel {
         await resyncOrchestrator.request().value
     }
 
+    /// The toolbar's manual "reconnect" affordance. Unlike the foreground,
+    /// reachability-recovery, and re-auth triggers — which bump BOTH channel
+    /// generations in the reducer before requesting the resync — a direct manual
+    /// reconnect has no lifecycle transition to bump for it. Without a bump the
+    /// resync's replacement streams reuse the cancelled consumers' generation, so a
+    /// late event from an old consumer would pass the fence. Bump both generations
+    /// first so the fence rejects those stragglers, matching the other triggers.
+    func requestManualReconnect() async {
+        syncCoordinator.bumpFollowGeneration()
+        syncCoordinator.bumpActivityGeneration()
+        await reconnectLiveUpdates()
+    }
+
     /// Drive the app's existing sign-in flow from the toolbar's `.authRequired`
     /// affordance. The stored credentials were rejected; re-running `login()`
     /// presents the authentication session so the user can re-authenticate without
@@ -2737,7 +2807,8 @@ final class ChatViewModel {
     private func handleLiveEvent(
         _ event: ChatStreamEvent,
         conversationID: String,
-        client: ChatAPIClient
+        client: ChatAPIClient,
+        surfaceErrors: Bool = true
     ) async -> Bool {
         switch event.type {
         case .turnEnded, .message:
@@ -2763,8 +2834,8 @@ final class ChatViewModel {
                 if let seq = event.seq {
                     recordAppliedSeq(seq)
                 }
-                await mergeNewMessages(conversationID: conversationID)
-                await refreshRecentConversations()
+                await mergeNewMessages(conversationID: conversationID, surfaceErrors: surfaceErrors)
+                await refreshRecentConversations(surfaceErrors: surfaceErrors)
                 // Acknowledge the turn_ended seq so the server marks the reply
                 // delivered and suppresses the disconnect push. Fire-and-forget.
                 if event.type == .turnEnded, let seq = event.seq {
@@ -3660,12 +3731,31 @@ extension ChatViewModel: SyncStreamDelegate {
         conversationID: String,
         generation: Int
     ) async -> Bool {
+        await handleFollowEvent(
+            event,
+            conversationID: conversationID,
+            generation: generation,
+            surfaceErrors: true
+        )
+    }
+
+    private func handleFollowEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        generation: Int,
+        surfaceErrors: Bool
+    ) async -> Bool {
         guard syncCoordinator.isCurrentFollow(generation) else {
             // A superseded generation's event: drop it (don't apply, don't stop
             // the loop — the loop is already being torn down by cancellation).
             return true
         }
-        return await handleLiveEvent(event, conversationID: conversationID, client: apiClient)
+        return await handleLiveEvent(
+            event,
+            conversationID: conversationID,
+            client: apiClient,
+            surfaceErrors: surfaceErrors
+        )
     }
 
     func followBufferRotated(generation: Int) {
@@ -3704,16 +3794,14 @@ extension ChatViewModel: SyncStreamDelegate {
     }
 
     func activityStreamDidSignal(generation: Int) async {
+        await activityStreamDidSignal(generation: generation, surfaceErrors: true)
+    }
+
+    private func activityStreamDidSignal(generation: Int, surfaceErrors: Bool) async {
         guard syncCoordinator.isCurrentActivity(generation) else {
             return
         }
-        await refreshRecentConversations()
-    }
-
-    func suspendActiveSend() {
-        streamTask?.cancel()
-        streamTask = nil
-        isStreaming = false
+        await refreshRecentConversations(surfaceErrors: surfaceErrors)
     }
 
     func runCoalescedResync() {
@@ -3791,15 +3879,27 @@ extension ChatViewModel: ResyncHost {
     ) async {
         // Same steady-state handler the coordinator's follow loop uses, so
         // generation fencing and turn routing are identical to the live path.
-        _ = await handleFollowEvent(event, conversationID: conversationID, generation: generation)
+        // Advisory: the resync's own snapshots are authoritative, so a drained
+        // turn_ended's follow-up list/message refresh must never modal — pass
+        // surfaceErrors: false (a failed refresh degrades silently).
+        _ = await handleFollowEvent(
+            event,
+            conversationID: conversationID,
+            generation: generation,
+            surfaceErrors: false
+        )
     }
 
     func drainActivitySignal(generation: Int) async {
-        await activityStreamDidSignal(generation: generation)
+        await activityStreamDidSignal(generation: generation, surfaceErrors: false)
     }
 
     func restartStreams() {
-        syncCoordinator.runResync()
+        // Target the CURRENT selection at handover time, not the coordinator's
+        // possibly-stale `followConversationID` (which only advances when
+        // `startLiveEvents` runs, lagging a mid-resync selection switch). Reopening
+        // the old conversation's follow stream here would strand the new thread.
+        syncCoordinator.runResync(conversationID: conversationID)
     }
 
     func resyncPhaseDidStart() {

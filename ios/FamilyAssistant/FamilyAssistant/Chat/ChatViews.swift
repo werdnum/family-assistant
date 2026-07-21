@@ -900,7 +900,7 @@ private struct LiveUpdatesIndicator: View {
                 tint: .secondary,
                 label: "Syncing live updates.",
                 identifier: "chat-live-updates-syncing",
-                action: { model in Task { await model.reconnectLiveUpdates() } }
+                action: { model in Task { await model.requestManualReconnect() } }
             )
         case .degraded:
             return Style(
@@ -908,7 +908,7 @@ private struct LiveUpdatesIndicator: View {
                 tint: .orange,
                 label: "Live updates degraded. Tap to reconnect.",
                 identifier: "chat-live-updates-degraded",
-                action: { model in Task { await model.reconnectLiveUpdates() } }
+                action: { model in Task { await model.requestManualReconnect() } }
             )
         case .offline:
             return Style(
@@ -916,7 +916,7 @@ private struct LiveUpdatesIndicator: View {
                 tint: .orange,
                 label: "No connection. Tap to reconnect.",
                 identifier: "chat-live-updates-offline",
-                action: { model in Task { await model.reconnectLiveUpdates() } }
+                action: { model in Task { await model.requestManualReconnect() } }
             )
         case .authRequired:
             return Style(

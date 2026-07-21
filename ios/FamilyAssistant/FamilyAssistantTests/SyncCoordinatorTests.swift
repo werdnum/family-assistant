@@ -417,15 +417,9 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.presentation, .offline)
 
         coordinator.apply(.reachabilityChanged(.satisfied))
-<<<<<<< HEAD
-        try await waitUntil {
-            delegate.followOpenCount > followOpensBeforeDrop && delegate.activityOpenCount >= 1
-        }
-        XCTAssertEqual(coordinator.followHealth, .down)
-=======
+
         XCTAssertEqual(delegate.runCoalescedResyncCount, 1, "Recovery reconciles through the coalesced resync.")
         XCTAssertEqual(coordinator.followHealth, .down, "Health stays down until an actual connect republishes it.")
->>>>>>> d74448c3 (iOS sync M2: reachability recovery + push-hint refresh (§4.4/§4.6))
         XCTAssertEqual(coordinator.activityHealth, .down)
     }
 
@@ -553,16 +547,11 @@ final class SyncCoordinatorTests: XCTestCase {
     func testAuthRequiredCancelsConnectedStreamsAndMarksHealthsDown() async throws {
         // Finding 1: when authRequired latches while both channels read connected,
         // the old-session sockets keep applying events (the backend authorizes once
-        // at connect) and a later authOK would skip the restart because health is
-        // still `.connected`. The transition must cancel the streams and mark both
-        // channels down so the authOK wake reconnects under fresh credentials.
-        let monitor = StubPathMonitor(isSatisfied: true)
-        let coordinator = SyncCoordinator(
-            authManager: AuthManager(),
-            pathMonitor: monitor,
-            followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
-        )
+        // at connect). The transition must cancel the streams and mark both channels
+        // down; combined with the generation bump (via cancelStreams), the later
+        // re-auth resync then reconnects under fresh credentials without any old
+        // socket lingering as `.connected`.
+        let (coordinator, _, _) = makeCoordinator()
         let delegate = RecordingSyncStreamDelegate()
         delegate.hangFollowOpen = true
         delegate.hangActivityOpen = true
@@ -574,22 +563,23 @@ final class SyncCoordinatorTests: XCTestCase {
         coordinator.apply(.followConnected(generation: coordinator.followGeneration))
         coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(coordinator.presentation, .live)
-        let followOpensBeforeAuthRequired = delegate.followOpenCount
-        let activityOpensBeforeAuthRequired = delegate.activityOpenCount
+        let followGenerationBefore = coordinator.followGeneration
+        let activityGenerationBefore = coordinator.activityGeneration
 
         coordinator.apply(.authRequired)
+
         XCTAssertEqual(coordinator.followHealth, .down)
         XCTAssertEqual(coordinator.activityHealth, .down)
         XCTAssertEqual(coordinator.presentation, .authRequired)
-
-        // authOK's wake now restarts both loops because their healths are down.
-        delegate.hangFollowOpen = false
-        delegate.hangActivityOpen = false
-        coordinator.apply(.authOK)
-        try await waitUntil {
-            delegate.followOpenCount > followOpensBeforeAuthRequired
-                && delegate.activityOpenCount > activityOpensBeforeAuthRequired
-        }
+        // Cancelling both streams bumps both generations, so any in-flight callback
+        // from the old-session tasks is now fenced.
+        XCTAssertGreaterThan(coordinator.followGeneration, followGenerationBefore)
+        XCTAssertGreaterThan(coordinator.activityGeneration, activityGenerationBefore)
+        let followConnectAfterCancel = coordinator.apply(
+            .followConnected(generation: followGenerationBefore)
+        )
+        XCTAssertTrue(followConnectAfterCancel.isEmpty)
+        XCTAssertEqual(coordinator.followHealth, .down)
     }
 
     func testCancelFollowStreamBumpsGenerationSoInFlightCallbacksAreFenced() async throws {
@@ -840,6 +830,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     private(set) var activityOpenCount = 0
     private(set) var suspendActiveSendCount = 0
     private(set) var runCoalescedResyncCount = 0
+    private(set) var lastFollowConversationID: String?
     var shouldFailFollowOpen = false
     /// When set, the follow/activity open throws this specific error instead of the
     /// generic `StubError` (e.g. a `ChatAPIError.server(401)` to exercise the
@@ -874,6 +865,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         followOpenCount += 1
         onFollowOpen?()
         activeConversationID = conversationID
+        lastFollowConversationID = conversationID
         if let followOpenError, followOpenErrorLimit == 0 || followOpenCount <= followOpenErrorLimit {
             throw followOpenError
         }
@@ -994,6 +986,8 @@ private final class WedgingSyncStreamDelegate: SyncStreamDelegate {
     }
 
     func activityStreamDidSignal(generation: Int) async {}
+
+    func forceAuthRefreshForStreamConnect() async -> Bool { false }
 
     func suspendActiveSend() {}
 

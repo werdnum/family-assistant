@@ -153,6 +153,40 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.listSnapshotCount, 0)
     }
 
+    func testTransientAuthFailureAfterBackgroundBumpDoesNotRestartStreams() async {
+        // Finding 11: a transient auth-gate failure normally restarts the loops so
+        // they don't strand torn-down. But if the app backgrounded mid-gate (which
+        // bumps both generations and cancels the streams by policy), restarting here
+        // would reopen the very advisory streams the background policy just
+        // cancelled. The restart must be guarded on the captured generations still
+        // being current — otherwise skip it and let the next foreground resync own
+        // reconnection.
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.authGateError = AuthError.transient(underlying: URLError(.networkConnectionLost))
+        // Model the background bump landing during the gate.
+        host.onAuthGate = { $0.generation += 1 }
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.authGateCount, 1)
+        XCTAssertEqual(
+            host.restartStreamsCount, 0,
+            "A background bump mid-gate must leave reconnection to the next foreground resync."
+        )
+    }
+
+    func testNonAuthGateFailureAfterBackgroundBumpDoesNotRestartStreams() async {
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.authGateError = FakeAuthError.rejected
+        host.onAuthGate = { $0.generation += 1 }
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.restartStreamsCount, 0)
+    }
+
     func testSecondRequestWhileRunningCoalesces() async {
         let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
         // Hold the first list snapshot open so the resync cannot complete before
@@ -557,6 +591,9 @@ private final class FakeResyncHost: ResyncHost {
     var selectedConversationID: String?
 
     var authGateError: Error?
+    /// Async hook run inside `gateAuthIfNeeded` before it throws `authGateError`
+    /// (e.g. to model the app backgrounding mid-gate by bumping `generation`).
+    var onAuthGate: ((FakeResyncHost) async -> Void)?
     private(set) var awaitTerminationCount = 0
     private(set) var authGateCount = 0
     private(set) var listSnapshotCount = 0
@@ -610,6 +647,7 @@ private final class FakeResyncHost: ResyncHost {
 
     func gateAuthIfNeeded(generation _: Int) async throws {
         authGateCount += 1
+        await onAuthGate?(self)
         if let authGateError {
             throw authGateError
         }

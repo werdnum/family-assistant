@@ -325,8 +325,15 @@ final class ResyncOrchestrator {
                 // `awaitStreamTermination()` above already tore both loops down,
                 // returning here would strand the app with NO loops running until
                 // some later trigger. Restart the loops instead so their own
-                // backoff/retry (and near-expiry force-refresh on connect) resumes.
-                host.restartStreams()
+                // backoff/retry (and near-expiry force-refresh on connect) resumes —
+                // but ONLY while the captured generations are still current. If the
+                // app backgrounded mid-gate (bumping both generations and cancelling
+                // the streams by policy), restarting here would reopen the advisory
+                // streams the background policy just cancelled; leave reconnection to
+                // the next foreground resync instead.
+                if generationsStillCurrent(generations, host: host) {
+                    host.restartStreams()
+                }
                 return .aborted
             case .authRejected, .noCredentials, .invalidServerURL, .exchangeFailed:
                 // A terminal rejection: the auth layer latched `authRequired`
@@ -336,8 +343,12 @@ final class ResyncOrchestrator {
             }
         } catch {
             // A non-`AuthError` failure from the gate is treated as transient for
-            // the same reason: don't strand the torn-down loops.
-            host.restartStreams()
+            // the same reason: don't strand the torn-down loops. Same generation
+            // guard as the transient case — don't reopen streams a background policy
+            // cancelled mid-gate.
+            if generationsStillCurrent(generations, host: host) {
+                host.restartStreams()
+            }
             return .aborted
         }
 
