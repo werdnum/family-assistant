@@ -48,7 +48,7 @@ struct ChatRootView: View {
                 .navigationTitle("Chat")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    if !viewModel.liveUpdatesConnected {
+                    if viewModel.syncPresentation != .live {
                         ToolbarItem(placement: .topBarLeading) {
                             LiveUpdatesIndicator(viewModel: viewModel)
                         }

@@ -4654,8 +4654,9 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(streamConnects.value, 1)
         XCTAssertGreaterThanOrEqual(incrementalMerges.value, 1)
         // Content recovery is decoupled from connection health: the disconnected
-        // indicator is still surfaced, but the thread is no longer stranded.
-        XCTAssertEqual(model?.liveUpdatesConnected, false)
+        // indicator is still surfaced (presentation is not `.live` while the follow
+        // stream can't connect), but the thread is no longer stranded.
+        XCTAssertNotEqual(model?.syncPresentation, .live)
 
         // Release so deinit cancels the fast reconnect loop before teardown.
         model = nil
@@ -6051,6 +6052,145 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testIndicatorBackToLiveAfterSuccessfulReconnect() async throws {
+        // Both channels connect and stay open (hanging), so the coordinator's
+        // derived presentation reaches `.live`. The follow stream then drops
+        // cleanly; presentation leaves `.live`, and the auto-reconnect brings a
+        // fresh follow connect back to `.live`.
+        let followController = HangingStream()
+        let activityController = HangingStream()
+        let followConnects = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: activityController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = followConnects.increment()
+                if n == 1 {
+                    // First connect drops cleanly (empty event stream).
+                    return .text("")
+                }
+                return .hangingStream("", controller: followController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_live","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/profiles" {
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/confirmations/pending" {
+                return .json(#"{"confirmations":[]}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_live",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.bootstrap()
+        await model?.selectConversation("web_conv_live")
+
+        // The first follow connect dropped cleanly; the auto-reconnect eventually
+        // establishes a held follow stream and, with the held activity stream,
+        // drives presentation to `.live`.
+        try await waitUntil(timeout: 6) { model?.syncPresentation == .live }
+        XCTAssertEqual(model?.syncPresentation, .live)
+
+        followController.finish()
+        activityController.finish()
+        model = nil
+    }
+
+    func testIndicatorNotLiveAfterCleanEOFDrop() async throws {
+        // A held (connected) follow stream that then closes cleanly (empty EOF)
+        // must leave the derived presentation off `.live`: a clean EOF is still an
+        // involuntary drop.
+        let followController = HangingStream()
+        let activityController = HangingStream()
+        let followConnects = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: activityController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = followConnects.increment()
+                if n == 1 {
+                    return .hangingStream("", controller: followController)
+                }
+                // Later reconnects hang so the drop below is observable before a
+                // fresh connect flips the indicator back.
+                return .hangingStream("", controller: HangingStream())
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_eof","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/profiles" {
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/confirmations/pending" {
+                return .json(#"{"confirmations":[]}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_eof",
+            liveReconnectInitialDelaySeconds: 10,
+            liveReconnectMaxDelaySeconds: 10
+        )
+        await model?.bootstrap()
+        await model?.selectConversation("web_conv_eof")
+
+        try await waitUntil(timeout: 6) { model?.syncPresentation == .live }
+
+        // Close the held follow stream cleanly (empty EOF). The reconnect backoff
+        // is long, so the indicator stays off `.live` while we observe.
+        followController.finish()
+        try await waitUntil(timeout: 4) { model?.syncPresentation != .live }
+        XCTAssertNotEqual(model?.syncPresentation, .live)
+
+        activityController.finish()
+        model = nil
+    }
+
+    func testPresentationUnaffectedByStaleGenerationFollowCallback() async throws {
+        // A follow callback tagged with a superseded generation must not degrade
+        // the derived presentation: the coordinator's reducer rejects stale-
+        // generation events. Drive the coordinator directly for determinism.
+        let (model, coordinator) = makeCoordinatorBackedModel()
+
+        let generation = coordinator.generation
+        coordinator.apply(.followConnected(generation: generation))
+        coordinator.apply(.activityConnected(generation: generation))
+        XCTAssertEqual(model.syncPresentation, .live)
+
+        coordinator.bumpGeneration()
+        // A late drop from the old generation is rejected; presentation holds.
+        coordinator.apply(.followDropped(generation: generation, cleanEOF: true))
+        XCTAssertEqual(model.syncPresentation, .live)
+    }
+
+    /// A view model whose coordinator is seeded with a satisfied stub monitor, so
+    /// reducer-driven presentation assertions are deterministic.
+    private func makeCoordinatorBackedModel() -> (ChatViewModel, SyncCoordinator) {
+        let model = makeViewModel(conversationID: "web_conv_stale")
+        return (model, model.syncCoordinator)
+    }
+
     func testPendingConfirmationsPollAndApprove() async throws {
         var approvalPayload: [String: Any]?
         ChatMockBackendURLProtocol.respond { request in
@@ -7355,7 +7495,8 @@ final class ChatViewModelTests: XCTestCase {
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
-        streamResumeLivenessSeconds: Double = 2
+        streamResumeLivenessSeconds: Double = 2,
+        pathMonitor: PathMonitoring? = nil
     ) -> ChatViewModel {
         let reporter = ErrorReporter(spoolDirectory: spoolDirectory, dedupeWindow: dedupeWindow)
         let authManager = AuthManager()
@@ -7367,7 +7508,8 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
             streamResumeLivenessSeconds: streamResumeLivenessSeconds,
-            errorReporter: reporter
+            errorReporter: reporter,
+            pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true)
         )
     }
 
@@ -7379,7 +7521,8 @@ final class ChatViewModelTests: XCTestCase {
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
         streamResumeLivenessSeconds: Double = 2,
-        streamTextFlushInterval: Duration = .milliseconds(50)
+        streamTextFlushInterval: Duration = .milliseconds(50),
+        pathMonitor: PathMonitoring? = nil
     ) -> ChatViewModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -7392,7 +7535,8 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
             streamResumeLivenessSeconds: streamResumeLivenessSeconds,
-            streamTextFlushInterval: streamTextFlushInterval
+            streamTextFlushInterval: streamTextFlushInterval,
+            pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true)
         )
     }
 

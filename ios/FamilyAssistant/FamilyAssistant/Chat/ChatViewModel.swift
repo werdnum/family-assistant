@@ -38,7 +38,6 @@ final class ChatViewModel {
     var isLoadingProfiles = false
     var isStreaming = false
     var errorMessage: String?
-    var liveUpdatesConnected = true
     var mobileShowsConversationList = false
     var steerErrorMessage: String?
     var stopWarningMessage: String?
@@ -53,6 +52,13 @@ final class ChatViewModel {
         // so a send would post under the previous profile and the backend would
         // filter this thread's history out of the turn's context.
         return hasContent && attachmentsReady && !isLoadingMessages
+    }
+
+    /// Derived connection state for the toolbar indicator. Forwards the
+    /// coordinator's presentation so the view renders one derived value instead of
+    /// the former single `liveUpdatesConnected` boolean.
+    var syncPresentation: SyncCoordinator.Presentation {
+        syncCoordinator.presentation
     }
 
     @ObservationIgnored private let apiClient: ChatAPIClient
@@ -72,8 +78,11 @@ final class ChatViewModel {
     // across an await must not clobber the turn that replaced it, so its tail
     // work is gated on this token still matching.
     @ObservationIgnored private var currentStreamToken: UUID?
-    @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
-    @ObservationIgnored private var activityStreamTask: Task<Void, Never>?
+    // Owns the follow + activity stream tasks and their reconnect loops. This
+    // view model retains all per-event application (history merges, ack cursor,
+    // live-token rendering) as the coordinator's stream delegate; the coordinator
+    // owns cancellation/restart and derives the connection presentation state.
+    @ObservationIgnored let syncCoordinator: SyncCoordinator
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     @ObservationIgnored private var activeTurn: ActiveChatTurn?
     // In-flight optimistic summaries, keyed by the owning turn id (value is the
@@ -216,7 +225,8 @@ final class ChatViewModel {
         maxConsecutiveStreamResumes: Int = 5,
         streamResumeLivenessSeconds: Double = 2,
         streamTextFlushInterval: Duration = .milliseconds(50),
-        errorReporter: ErrorReporter = .shared
+        errorReporter: ErrorReporter = .shared,
+        pathMonitor: PathMonitoring? = nil
     ) {
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
@@ -225,6 +235,11 @@ final class ChatViewModel {
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
         apiClient = ChatAPIClient(authManager: authManager)
+        syncCoordinator = SyncCoordinator(
+            pathMonitor: pathMonitor ?? NetworkPathMonitor(),
+            followReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
+            followReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds
+        )
         let storedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
         preferredProfileID = storedProfileID
         // Starts at the preferred profile; if launch restores a conversation,
@@ -262,12 +277,11 @@ final class ChatViewModel {
             composerFocusRequestID = UUID()
             opensGeneratedLaunchDraft = true
         }
+        syncCoordinator.delegate = self
     }
 
     deinit {
         streamTask?.cancel()
-        liveEventsTask?.cancel()
-        activityStreamTask?.cancel()
         pendingConfirmationsTask?.cancel()
         textFlushTask?.cancel()
     }
@@ -283,7 +297,7 @@ final class ChatViewModel {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
-        startActivityStream()
+        syncCoordinator.startActivityStream()
         if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
             lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt
@@ -490,7 +504,7 @@ final class ChatViewModel {
         // would keep delivering events across the suspension and mutate the new
         // conversation's shared state (merging its rows, polluting the ack cursor,
         // appending stray bubbles). `startLiveEvents` re-cancels and restarts it.
-        liveEventsTask?.cancel()
+        syncCoordinator.cancelFollowStream()
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
@@ -552,7 +566,7 @@ final class ChatViewModel {
 
     func startNewConversation() {
         cancelStream()
-        liveEventsTask?.cancel()
+        syncCoordinator.cancelFollowStream()
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
@@ -2159,67 +2173,15 @@ final class ChatViewModel {
     }
 
     func reconnectLiveUpdates() async {
-        // Don't optimistically flip the indicator to connected: `startLiveEvents`
-        // only schedules the connect, so a fresh connect that immediately fails
-        // (the hostile front door) would flash "connected" before the loop sets it
-        // back to disconnected. A successful connect sets it true in
-        // `handleLiveReconnect`; a failing one leaves the honest disconnected state.
-        startLiveEvents()
-        // The account-global activity stream is torn down with the scene on
-        // background (its Task is suspended/killed by the OS); restart it on the
-        // same foreground transition so list updates for OTHER conversations
-        // resume, and refresh once to close any gap missed while backgrounded.
-        startActivityStream()
-    }
-
-    /// Subscribe to the account-global conversation-activity stream and refresh
-    /// the conversation list whenever any owned conversation changes.
-    ///
-    /// This is what keeps the list fresh for activity OUTSIDE the open thread —
-    /// a brand-new chat, or a delegated/scheduled/background reply landing in a
-    /// conversation the user isn't currently viewing — none of which the
-    /// per-conversation follow stream (`startLiveEvents`) observes. The stream is
-    /// advisory: every ping just triggers an authoritative
-    /// `refreshRecentConversations`, and a (re)connect refreshes once to close
-    /// any gap missed while disconnected. Mirrors `startLiveEvents`' capped
-    /// exponential-backoff reconnect loop and weak-`self` discipline so logout/
-    /// deinit tears the connection down.
-    private func startActivityStream() {
-        activityStreamTask?.cancel()
-        let client = apiClient
-        let initialDelay = liveReconnectInitialDelaySeconds
-        let maxDelay = liveReconnectMaxDelaySeconds
-        activityStreamTask = Task { [weak self] in
-            var delay = initialDelay
-            while !Task.isCancelled {
-                do {
-                    let stream = try await client.connectActivityStream()
-                    // A successful (re)connect resets the backoff and refreshes
-                    // once: pings are ephemeral, so anything that changed while
-                    // we were disconnected is caught by this single pull.
-                    delay = initialDelay
-                    await self?.refreshRecentConversations()
-                    for try await _ in stream {
-                        if Task.isCancelled {
-                            break
-                        }
-                        // `self` deallocated -> deinit already cancelled this
-                        // task; stop instead of spinning reconnects.
-                        guard self != nil else {
-                            return
-                        }
-                        await self?.refreshRecentConversations()
-                    }
-                } catch {
-                    // Connection failed or dropped; fall through to backoff+retry.
-                }
-                if Task.isCancelled {
-                    break
-                }
-                try? await Task.sleep(for: .seconds(delay))
-                delay = min(delay * 2, maxDelay)
-            }
-        }
+        // Restart both streams through the coordinator (the single owner). The
+        // account-global activity stream is torn down with the scene on background
+        // (its Task is suspended/killed by the OS); restarting it on the same
+        // foreground transition resumes list updates for OTHER conversations and
+        // refreshes once to close any gap missed while backgrounded. The follow
+        // connect is not optimistically flipped to connected — the coordinator's
+        // reducer only reports `followConnected` once the connect actually
+        // succeeds, so a failing connect leaves the honest disconnected state.
+        syncCoordinator.runResync()
     }
 
     /// The hub buffer rotated past this client's resume cursor (a 410). Clear it so
@@ -2270,120 +2232,23 @@ final class ChatViewModel {
         highestAppliedSeq.map { $0 + 1 } ?? -1
     }
 
+    /// Start (or restart) the per-conversation follow stream through the
+    /// coordinator, which owns the task and its reconnect loop. All per-event
+    /// application stays in this view model behind ``SyncStreamDelegate``.
     private func startLiveEvents() {
-        liveEventsTask?.cancel()
         guard let conversationID else {
+            syncCoordinator.cancelFollowStream()
             return
         }
-        // Capture the API client (a value type whose only reference is the
-        // AuthManager, never the view model) and the backoff bounds up front.
-        // The follow loop below never binds a strong `self` across its awaits —
-        // every mutation goes through a weak `self?` hop — so releasing the view
-        // model (e.g. on logout) lets `deinit` run, which cancels this task and
-        // tears down the open SSE connection instead of stranding it.
-        let client = apiClient
-        let initialDelay = liveReconnectInitialDelaySeconds
-        let maxDelay = liveReconnectMaxDelaySeconds
-        liveEventsTask = Task { [weak self] in
-            // Reconnect loop: a dropped follow stream self-heals with capped
-            // exponential backoff instead of stranding the disconnected
-            // indicator until a manual tap. The loop exits only on cancellation
-            // (conversation change, logout/deinit) or a deliberate stop.
-            var delay = initialDelay
-            while !Task.isCancelled {
-                // Re-read the cursor each attempt: `ackSeq` marks everything applied
-                // as delivered (push suppression); `fromSeq` resumes the replay just
-                // past it so a mid-turn reconnect doesn't skip frames produced during
-                // the drop. A prior 410 cleared the cursor, so this tails the head
-                // until a fresh frame advances it (no re-request of the gone seq).
-                let ackSeq = self?.highestAppliedSeq ?? -1
-                let fromSeq = self?.followResumeFromSeq() ?? -1
-                var deliberateStop = false
-                var connected = false
-                var streamError: Error?
-                do {
-                    let stream = try await client.connectEvents(
-                        conversationID: conversationID,
-                        fromSeq: fromSeq,
-                        ackSeq: ackSeq
-                        // No `event_types` filter: the always-on follow stream now
-                        // carries token frames too, so a turn started elsewhere (or
-                        // after our own send task gave up) streams live into a
-                        // bubble via `handleLiveEvent`, not just a history reload on
-                        // completion.
-                    )
-                    // Call through the weak `self?` at each suspension point
-                    // instead of binding a strong `self`: a binding would keep
-                    // the view model (and its open SSE connection) alive across
-                    // the indefinite follow loop, so logout/deinit could never
-                    // tear it down.
-                    connected = true
-                    await self?.handleLiveReconnect(conversationID: conversationID)
-                    // A successful (re)connect resets the backoff.
-                    delay = initialDelay
-                    for try await event in stream {
-                        if Task.isCancelled {
-                            break
-                        }
-                        let shouldContinue = await self?.handleLiveEvent(
-                            event,
-                            conversationID: conversationID,
-                            client: client
-                        )
-                        // `self` deallocated mid-loop -> nil -> stop following.
-                        guard let shouldContinue else { return }
-                        if !shouldContinue {
-                            deliberateStop = true
-                            break
-                        }
-                    }
-                } catch {
-                    // Connection failed or dropped mid-stream; fall through to
-                    // surface the disconnected state and retry after a backoff.
-                    streamError = error
-                    // A 410 means the resume cursor rotated out of the hub buffer.
-                    // Clear it so the next attempt (and every one after, until a
-                    // fresh frame) tails the head instead of re-requesting the gone
-                    // seq; the catch-up reload below fills the gap.
-                    if case ChatAPIError.server(let statusCode, _) = error, statusCode == 410 {
-                        self?.markFollowBufferRotated()
-                    }
-                }
-
-                if Task.isCancelled || deliberateStop {
-                    break
-                }
-                // Breadcrumb every involuntary disconnect (the disconnected-
-                // indicator cause), whether the stream threw or was closed cleanly
-                // by an idle proxy / server shutdown (a clean EOF finishes the loop
-                // without throwing). The error — or its absence — tells an idle
-                // timeout from a connection loss from a clean server-side close.
-                self?.reportLiveStreamDrop(conversationID: conversationID, error: streamError)
-                self?.markLiveUpdatesDisconnectedIfActive()
-                // Catch up persisted history over plain HTTP, but ONLY when the
-                // connect itself failed. When the front door makes SSE unusable
-                // (buffered/severed framing) the connect keeps throwing and
-                // `handleLiveReconnect` never runs, so without this a finished turn
-                // would strand until a manual refresh — a short GET succeeds where
-                // the long-lived SSE doesn't. When the connect SUCCEEDED,
-                // `handleLiveReconnect` already caught up and the next reconnect
-                // will again, so catching up here too just doubles the GETs on a
-                // healthy-but-flapping link.
-                if !connected {
-                    await self?.catchUpPersistedHistory(conversationID: conversationID)
-                }
-                try? await Task.sleep(for: .seconds(delay))
-                delay = min(delay * 2, maxDelay)
-            }
-        }
+        syncCoordinator.startFollowStream(conversationID: conversationID)
     }
 
     private func handleLiveReconnect(conversationID: String) async {
-        liveUpdatesConnected = true
         // Reload on (re)connect: the stream tails from the live head, so a
         // reconnect after a drop resumes at the new head and misses events
         // published while offline. Message content always comes from persisted
-        // history, so a reload closes that gap.
+        // history, so a reload closes that gap. Connection health is now published
+        // by the coordinator's `followConnected` event, not a local boolean.
         await catchUpPersistedHistory(conversationID: conversationID)
     }
 
@@ -2455,10 +2320,11 @@ final class ChatViewModel {
             // stream (started on another device or by a schedule). A failed
             // follow turn still surfaces via its `turn_ended` + history reload.
             applyLiveFollowToken(event)
-        case .connected:
-            liveUpdatesConnected = true
-        case .heartbeat, .turnStarted, .streamDropped, .error,
+        case .connected, .heartbeat, .turnStarted, .streamDropped, .error,
              .toolConfirmationRequest, .toolConfirmationResult:
+            // `.connected` is dead against this backend (the server never emits
+            // it); connect health is inferred from the connect call succeeding and
+            // published by the coordinator's `followConnected` event.
             break
         }
         return true
@@ -2544,16 +2410,6 @@ final class ChatViewModel {
         // marker the send-stream path uses rather than an empty bubble.
         if status == "cancelled", messages[index].text.isEmpty {
             messages[index].text = "Response stopped."
-        }
-    }
-
-    private func markLiveUpdatesDisconnectedIfActive() {
-        // Don't surface the disconnected indicator while a send is actively
-        // streaming: the send path owns the live connection then and resumes the
-        // turn across drops on its own (see `runSendTurn`), so a transient
-        // follow-stream drop here is not a user-visible disconnect.
-        if !Task.isCancelled, !isStreaming {
-            liveUpdatesConnected = false
         }
     }
 
@@ -3275,6 +3131,95 @@ final class ChatViewModel {
             }
             return backend.chatAttachment
         }
+    }
+}
+
+// MARK: - SyncStreamDelegate
+
+/// The coordinator owns the follow/activity `Task`s and their reconnect loops;
+/// this conformance keeps every per-event application here. Each callback carries
+/// the coordinator generation that owned the attempt, and events from a
+/// superseded generation are dropped (`syncCoordinator.isCurrent`).
+extension ChatViewModel: SyncStreamDelegate {
+    func openFollowStream(
+        conversationID: String,
+        generation _: Int
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        // Re-read the cursor at each connect: `ackSeq` marks everything applied as
+        // delivered (push suppression); `fromSeq` resumes the replay just past it
+        // so a mid-turn reconnect doesn't skip frames produced during the drop. A
+        // prior 410 cleared the cursor, so this tails the head until a fresh frame
+        // advances it (no re-request of the gone seq).
+        try await apiClient.connectEvents(
+            conversationID: conversationID,
+            fromSeq: followResumeFromSeq(),
+            ackSeq: highestAppliedSeq ?? -1
+            // No `event_types` filter: the always-on follow stream carries token
+            // frames too, so a turn started elsewhere (or after our own send task
+            // gave up) streams live into a bubble via `handleLiveEvent`.
+        )
+    }
+
+    func followStreamDidConnect(conversationID: String, generation: Int) async {
+        guard syncCoordinator.isCurrent(generation) else {
+            return
+        }
+        await handleLiveReconnect(conversationID: conversationID)
+    }
+
+    func handleFollowEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        generation: Int
+    ) async -> Bool {
+        guard syncCoordinator.isCurrent(generation) else {
+            // A superseded generation's event: drop it (don't apply, don't stop
+            // the loop — the loop is already being torn down by cancellation).
+            return true
+        }
+        return await handleLiveEvent(event, conversationID: conversationID, client: apiClient)
+    }
+
+    func followBufferRotated(generation: Int) {
+        guard syncCoordinator.isCurrent(generation) else {
+            return
+        }
+        markFollowBufferRotated()
+    }
+
+    func reportFollowStreamDrop(conversationID: String, error: Error?, generation: Int) {
+        guard syncCoordinator.isCurrent(generation) else {
+            return
+        }
+        reportLiveStreamDrop(conversationID: conversationID, error: error)
+    }
+
+    func shouldSurfaceFollowDrop() -> Bool {
+        // Suppression parity with the former `markLiveUpdatesDisconnectedIfActive`:
+        // a drop while a send is actively streaming is not a user-visible
+        // disconnect (the send path owns the live connection then and resumes the
+        // turn across drops on its own — see `runSendTurn`).
+        !isStreaming
+    }
+
+    func catchUpFollowHistory(conversationID: String, generation: Int) async {
+        guard syncCoordinator.isCurrent(generation) else {
+            return
+        }
+        await catchUpPersistedHistory(conversationID: conversationID)
+    }
+
+    func openActivityStream(
+        generation _: Int
+    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+        try await apiClient.connectActivityStream()
+    }
+
+    func activityStreamDidSignal(generation: Int) async {
+        guard syncCoordinator.isCurrent(generation) else {
+            return
+        }
+        await refreshRecentConversations()
     }
 }
 
