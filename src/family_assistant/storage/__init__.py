@@ -269,7 +269,11 @@ def _is_transient_db_error(exc: BaseException) -> bool:
         return True
     if isinstance(exc, DBAPIError):
         return bool(exc.connection_invalidated)
-    return False
+    # While PostgreSQL is still coming up, asyncpg can surface a bare connection
+    # timeout or OS-level connection error that never gets wrapped in a
+    # DBAPIError. These are connection-level and transient. (In Python 3.11+
+    # ``asyncio.TimeoutError`` is an alias of the builtin ``TimeoutError``.)
+    return isinstance(exc, (TimeoutError, ConnectionError))
 
 
 async def init_db(engine: AsyncEngine) -> None:

@@ -39,6 +39,10 @@ def _dbapi_error(
         _dbapi_error(OperationalError),
         _dbapi_error(InterfaceError),
         _dbapi_error(ProgrammingError, connection_invalidated=True),
+        # asyncpg can surface these bare (unwrapped) while PostgreSQL starts up.
+        TimeoutError("connection attempt timed out"),
+        ConnectionRefusedError("connection refused"),
+        ConnectionResetError("connection reset by peer"),
     ],
 )
 def test_transient_errors_are_retryable(exc: BaseException) -> None:
