@@ -259,6 +259,52 @@ final class SyncCoordinatorTests: XCTestCase {
         try await waitUntil(timeout: 3) { delegate.followOpenCount >= 2 }
     }
 
+    func testUnsatisfiedMarksConnectedChannelsDownSoRecoveryRestartsBoth() async throws {
+        // Both channels are live when the path drops. The SSE tasks have not yet
+        // seen their sockets die, so without marking health down here both healths
+        // would stay `.connected`; the recovery wake (which only restarts
+        // non-connected channels) would then skip both loops and presentation would
+        // flip back to `.live` over dead sockets. Marking both down on `.unsatisfied`
+        // makes the following `.satisfied` wake restart both loops.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(
+            pathMonitor: monitor,
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        coordinator.delegate = delegate
+
+        // Bring the follow loop up and mark both channels connected (the live state
+        // just before the path drops). The activity loop's open always throws, so
+        // its health is asserted via the coordinator event, not a real connect.
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.followOpenCount >= 1 }
+        coordinator.apply(.followConnected(generation: coordinator.generation))
+        coordinator.apply(.activityConnected(generation: coordinator.generation))
+        XCTAssertEqual(coordinator.presentation, .live)
+        let followOpensBeforeDrop = delegate.followOpenCount
+
+        // Path drops: both healths must go down even though no drop event fired.
+        coordinator.apply(.reachabilityChanged(.unsatisfied))
+        XCTAssertEqual(coordinator.followHealth, .down)
+        XCTAssertEqual(coordinator.activityHealth, .down)
+        XCTAssertEqual(coordinator.presentation, .offline)
+
+        // Fail the next connects so the restarted loops stay down deterministically;
+        // the point under test is that recovery *restarts* both loops (re-invokes
+        // openFollow/openActivity), not that they reconnect. Health only ever becomes
+        // connected again via a real follow/activity connect.
+        delegate.shouldFailFollowOpen = true
+
+        coordinator.apply(.reachabilityChanged(.satisfied))
+        try await waitUntil(timeout: 3) {
+            delegate.followOpenCount > followOpensBeforeDrop && delegate.activityOpenCount >= 1
+        }
+        XCTAssertEqual(coordinator.followHealth, .down)
+        XCTAssertEqual(coordinator.activityHealth, .down)
+    }
+
     func testAuthRequiredOverridesReachabilityAndSync() {
         let (coordinator, _) = makeCoordinator()
 

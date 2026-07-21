@@ -385,6 +385,18 @@ final class SyncCoordinator {
         case let .reachabilityChanged(reachability):
             let wasUnsatisfied = self.reachability == .unsatisfied
             self.reachability = reachability
+            if reachability == .unsatisfied {
+                // The path just went down. The SSE tasks have not yet observed their
+                // sockets die, so both healths still read `.connected`; leaving them
+                // there would make the recovery wake (which only restarts
+                // non-connected channels) skip both loops and flip presentation back
+                // to `.live` over dead sockets. Offline presentation already wins
+                // while unsatisfied, so marking both healths down here is invisible
+                // now and makes the recovery wake actually restart both loops. Health
+                // becomes connected again only via a real follow/activity connect.
+                followHealth = .down
+                activityHealth = .down
+            }
             // Satisfied is only a retry hint (never marks channels healthy), but a
             // loop sleeping at capped backoff would otherwise stay down for up to
             // one max-delay interval, re-showing the stuck indicator. On the
