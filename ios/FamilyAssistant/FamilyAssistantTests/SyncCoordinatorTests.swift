@@ -515,39 +515,39 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.presentation, .offline)
     }
 
-    func testReauthSuccessWakesReconnectLoopsImmediately() async throws {
-        // While `authRequired` is latched the streams cannot connect, so their
-        // loops sit at capped backoff. On the authRequired→ok transition (re-auth
-        // success) the loops must be woken immediately instead of waiting out the
-        // (here 60s) backoff, mirroring the reachability-recovery wake.
-        let monitor = StubPathMonitor(isSatisfied: true)
-        let coordinator = SyncCoordinator(
-            authManager: AuthManager(),
-            pathMonitor: monitor,
-            followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
-        )
+    func testReauthSuccessRunsCoalescedResync() async throws {
+        // While `authRequired` is latched the streams cannot connect (their
+        // requests 401), so their loops sit at capped backoff. On the
+        // authRequired→ok transition (re-auth success) recovery must route like the
+        // reachability recovery on M2: bump both channel generations (fencing the
+        // down streams' late events) and request the coalesced resync, rather than
+        // leaving the loops asleep for up to one max-delay interval.
+        let (coordinator, _, _) = makeCoordinator(satisfied: true)
         let delegate = RecordingSyncStreamDelegate()
         coordinator.delegate = delegate
 
-        // Bring both loops up (activity's open always throws, so it drops into
-        // backoff), then fail every connect so they stay down deterministically.
-        coordinator.startFollowStream(conversationID: "conv-1")
-        try await waitUntil { delegate.followOpenCount >= 1 }
-        delegate.shouldFailFollowOpen = true
-        coordinator.startActivityStream()
-        try await waitUntil { delegate.activityOpenCount >= 1 }
-        let followOpensBeforeReauth = delegate.followOpenCount
-        let activityOpensBeforeReauth = delegate.activityOpenCount
-
         coordinator.apply(.authRequired)
         XCTAssertEqual(coordinator.authState, .authRequired)
+        let followGenerationBefore = coordinator.followGeneration
+        let activityGenerationBefore = coordinator.activityGeneration
 
         coordinator.apply(.authOK)
-        try await waitUntil {
-            delegate.followOpenCount > followOpensBeforeReauth
-                && delegate.activityOpenCount > activityOpensBeforeReauth
-        }
+
+        XCTAssertEqual(
+            delegate.runCoalescedResyncCount,
+            1,
+            "Re-auth success must request the coalesced resync exactly once."
+        )
+        XCTAssertGreaterThan(
+            coordinator.followGeneration,
+            followGenerationBefore,
+            "Re-auth must bump the follow generation to fence late events from the down stream."
+        )
+        XCTAssertGreaterThan(
+            coordinator.activityGeneration,
+            activityGenerationBefore,
+            "Re-auth must bump the activity generation to fence late events from the down stream."
+        )
     }
 
     func testAuthRequiredCancelsConnectedStreamsAndMarksHealthsDown() async throws {

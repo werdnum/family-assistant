@@ -671,9 +671,11 @@ final class SyncCoordinator {
             // intervening `.refreshing` signal has already moved `authState` off
             // `.authRequired`. A routine near-expiry refresh (which never latched
             // `authRequired`) leaves the flag false and does not churn healthy
-            // streams. When backgrounded, leave the flag set so the foreground
-            // resync owns the restart.
-            if pendingReauthRestart, lifecycle == .foreground {
+            // streams. Also gate on a satisfied path so a re-auth over a down
+            // network doesn't kick a futile resync (the reachability recovery runs
+            // it once the path returns). When backgrounded, leave the flag set so
+            // the foreground resync owns the restart.
+            if pendingReauthRestart, lifecycle == .foreground, reachability != .unsatisfied {
                 pendingReauthRestart = false
                 bumpFollowGeneration()
                 bumpActivityGeneration()
