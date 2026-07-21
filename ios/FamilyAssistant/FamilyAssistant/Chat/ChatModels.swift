@@ -340,6 +340,20 @@ struct ChatConfirmationDetail: Decodable, Equatable {
     }
 }
 
+struct ChatActiveTurnInfo: Decodable, Equatable {
+    let turnID: String
+    let startedAt: Date
+    let latestSeq: Int
+    let status: String
+
+    enum CodingKeys: String, CodingKey {
+        case turnID = "turn_id"
+        case startedAt = "started_at"
+        case latestSeq = "latest_seq"
+        case status
+    }
+}
+
 struct ChatConversationMessagesResponse: Decodable {
     let conversationID: String
     let messages: [ChatBackendMessage]
@@ -347,6 +361,7 @@ struct ChatConversationMessagesResponse: Decodable {
     let totalMessages: Int
     let hasMoreBefore: Bool
     let hasMoreAfter: Bool
+    let activeTurns: [ChatActiveTurnInfo]
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
@@ -355,6 +370,18 @@ struct ChatConversationMessagesResponse: Decodable {
         case totalMessages = "total_messages"
         case hasMoreBefore = "has_more_before"
         case hasMoreAfter = "has_more_after"
+        case activeTurns = "active_turns"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        conversationID = try container.decode(String.self, forKey: .conversationID)
+        messages = try container.decode([ChatBackendMessage].self, forKey: .messages)
+        count = try container.decode(Int.self, forKey: .count)
+        totalMessages = try container.decode(Int.self, forKey: .totalMessages)
+        hasMoreBefore = try container.decodeIfPresent(Bool.self, forKey: .hasMoreBefore) ?? false
+        hasMoreAfter = try container.decodeIfPresent(Bool.self, forKey: .hasMoreAfter) ?? false
+        activeTurns = try container.decodeIfPresent([ChatActiveTurnInfo].self, forKey: .activeTurns) ?? []
     }
 }
 

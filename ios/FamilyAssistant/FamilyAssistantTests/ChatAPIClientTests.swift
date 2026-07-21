@@ -407,6 +407,61 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertTrue(queryItems["after"]?.hasPrefix("2023-11-14T") == true)
     }
 
+    func testGetMessagesDecodesActiveTurns() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {
+                  "conversation_id":"web_conv_turns",
+                  "messages":[],
+                  "count":0,
+                  "total_messages":0,
+                  "has_more_before":false,
+                  "has_more_after":false,
+                  "active_turns":[
+                    {
+                      "turn_id":"turn-1",
+                      "started_at":"2026-06-08T12:00:00Z",
+                      "latest_seq":7,
+                      "status":"running"
+                    }
+                  ]
+                }
+                """
+            )
+        }
+
+        let response = try await makeClient().getMessagesPage(conversationID: "web_conv_turns", after: nil, limit: 100)
+
+        XCTAssertEqual(response.activeTurns.count, 1)
+        let turn = try XCTUnwrap(response.activeTurns.first)
+        XCTAssertEqual(turn.turnID, "turn-1")
+        XCTAssertEqual(turn.latestSeq, 7)
+        XCTAssertEqual(turn.status, "running")
+        XCTAssertEqual(turn.startedAt, Date(timeIntervalSince1970: 1_780_920_000))
+    }
+
+    func testGetMessagesWithoutActiveTurnsDecodesEmpty() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {
+                  "conversation_id":"web_conv_no_turns",
+                  "messages":[],
+                  "count":0,
+                  "total_messages":0,
+                  "has_more_before":false,
+                  "has_more_after":false
+                }
+                """
+            )
+        }
+
+        let response = try await makeClient().getMessagesPage(conversationID: "web_conv_no_turns", after: nil, limit: 100)
+
+        XCTAssertTrue(response.activeTurns.isEmpty)
+    }
+
     func testConfirmToolIncludesApprovingInterfaceIOS() async throws {
         var sawConfirmRequest = false
         ChatMockBackendURLProtocol.respond { request in
