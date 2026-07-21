@@ -8,6 +8,7 @@ Create Date: 2025-08-25 12:28:30.984821+10:00
 
 from collections.abc import Sequence
 
+import pgvector.sqlalchemy
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
@@ -424,8 +425,6 @@ def upgrade() -> None:
         # Create pgvector extension before creating tables that use VECTOR type
         op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-        import pgvector.sqlalchemy
-
         op.create_table(
             "document_embeddings",
             sa.Column("id", sa.Integer(), nullable=False),
@@ -549,3 +548,12 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_api_tokens_hashed_token"), table_name="api_tokens")
     op.drop_table("api_tokens")
     # ### end Alembic commands ###
+
+    # PostgreSQL creates named ENUM types for the columns above; dropping the
+    # tables leaves those types behind, so a subsequent upgrade would fail with
+    # "type already exists". Drop them explicitly to keep downgrade/upgrade
+    # cycles idempotent. (SQLite has no separate enum types.)
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        for enum_name in ("eventsourcetype", "eventactiontype", "interfacetype"):
+            postgresql.ENUM(name=enum_name).drop(bind, checkfirst=True)
