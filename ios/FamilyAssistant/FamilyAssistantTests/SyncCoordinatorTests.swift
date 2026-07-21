@@ -870,4 +870,6 @@ private final class AtomicCounter: @unchecked Sendable {
     func suspendActiveSend() {
         suspendActiveSendCount += 1
     }
+
+    func gateAuthIfNeeded(generation: Int) async throws {}
 }

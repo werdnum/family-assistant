@@ -65,6 +65,12 @@ protocol SyncStreamDelegate: AnyObject {
     /// retry payload) survives so foreground resync can reattach to the turn. The
     /// dedicated background-suspend path in §4.3.
     func suspendActiveSend()
+
+    /// Complete the foreground resync's auth gate: a single-flight token refresh
+    /// when the stored token is near expiry (§4.4 step 2). Throws on a rejected
+    /// refresh so the resync aborts cleanly (the auth layer latches
+    /// `authRequired`; no error modal is raised).
+    func gateAuthIfNeeded(generation: Int) async throws
 }
 
 @MainActor

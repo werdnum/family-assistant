@@ -84,6 +84,10 @@ final class ChatViewModel {
     // live-token rendering) as the coordinator's stream delegate; the coordinator
     // owns cancellation/restart and derives the connection presentation state.
     @ObservationIgnored let syncCoordinator: SyncCoordinator
+    // Drives the foreground reconciliation (auth gate → snapshots → restart
+    // streams) as one coalesced unit. Owned here (not by the coordinator) so the
+    // app-side snapshot steps stay behind the SyncStreamDelegate boundary.
+    @ObservationIgnored private var resyncOrchestrator: ResyncOrchestrator!
     // Retained so the toolbar's `.authRequired` affordance can drive the existing
     // re-auth flow, and so `deinit` can unregister this model's auth observer.
     @ObservationIgnored private let authManager: AuthManager
@@ -327,6 +331,7 @@ final class ChatViewModel {
             opensGeneratedLaunchDraft = true
         }
         syncCoordinator.delegate = self
+        resyncOrchestrator = ResyncOrchestrator(host: self)
         // Bridge auth transitions into the coordinator so a token refresh surfaces
         // as `.syncing`-adjacent degraded state and a rejection surfaces as the
         // dedicated `.authRequired` presentation — never the generic error modal.
@@ -2400,15 +2405,15 @@ final class ChatViewModel {
     }
 
     func reconnectLiveUpdates() async {
-        // Restart both streams through the coordinator (the single owner). The
-        // account-global activity stream is torn down with the scene on background
-        // (its Task is suspended/killed by the OS); restarting it on the same
-        // foreground transition resumes list updates for OTHER conversations and
-        // refreshes once to close any gap missed while backgrounded. The follow
-        // connect is not optimistically flipped to connected — the coordinator's
-        // reducer only reports `followConnected` once the connect actually
-        // succeeds, so a failing connect leaves the honest disconnected state.
-        syncCoordinator.runResync()
+        // Drive the coalesced foreground resync (auth gate → authoritative
+        // snapshots → restart streams). Snapshots reconcile the list (full
+        // replacement) and the selected conversation's history + running turns —
+        // closing any gap missed while backgrounded — before the streams are
+        // handed back to the coordinator's reconnect loops. The follow connect is
+        // not optimistically flipped to connected: the coordinator's reducer only
+        // reports `followConnected` once the connect actually succeeds, so a
+        // failing connect leaves the honest disconnected state.
+        await resyncOrchestrator.request().value
     }
 
     /// Drive the app's existing sign-in flow from the toolbar's `.authRequired`
@@ -3491,6 +3496,55 @@ extension ChatViewModel: SyncStreamDelegate {
             return
         }
         await refreshRecentConversations()
+    }
+
+    func suspendActiveSend() {
+        streamTask?.cancel()
+        streamTask = nil
+        isStreaming = false
+    }
+}
+
+// MARK: - ResyncHost
+
+/// The foreground resync's app-side steps. Every apply guards on
+/// `resyncGeneration` and `resyncSelectedConversationID` so a snapshot captured
+/// before a background bump or a conversation switch is discarded.
+extension ChatViewModel: ResyncHost {
+    var resyncGeneration: Int {
+        syncCoordinator.generation
+    }
+
+    var resyncSelectedConversationID: String? {
+        conversationID
+    }
+
+    func gateAuthIfNeeded(generation _: Int) async throws {
+        // Reuse the existing single-flight near-expiry refresh: concurrent callers
+        // (resync, in-flight requests) coalesce onto one refresh Task. A rejection
+        // throws `AuthError.authRejected` after the auth layer latches
+        // `authRequired`, which the orchestrator turns into a clean abort.
+        try await authManager.refreshIfNeeded()
+    }
+
+    func applyListSnapshot() async {
+        await refreshConversations()
+    }
+
+    func applyMessagesSnapshot(conversationID: String) async {
+        await mergeNewMessages(conversationID: conversationID)
+    }
+
+    func restartStreams() {
+        syncCoordinator.runResync()
+    }
+
+    func resyncPhaseDidStart() {
+        syncCoordinator.apply(.syncStarted)
+    }
+
+    func resyncPhaseDidFinish() {
+        syncCoordinator.apply(.syncFinished)
     }
 }
 
