@@ -38,6 +38,7 @@
 		A10021 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
 		A10047 /* PathMonitoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047 /* PathMonitoring.swift */; };
 		A10048 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048 /* SyncCoordinator.swift */; };
+		A10049 /* ActiveTurnSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10049 /* ActiveTurnSession.swift */; };
 		A10022 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* ChatViewModel.swift */; };
 		A10023 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* ChatViews.swift */; };
 		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
@@ -139,6 +140,7 @@
 		B10024 /* SSEParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParser.swift; sourceTree = "<group>"; };
 		B10047 /* PathMonitoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathMonitoring.swift; sourceTree = "<group>"; };
 		B10048 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
+		B10049 /* ActiveTurnSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTurnSession.swift; sourceTree = "<group>"; };
 		B10025 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		B10026 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
 		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
@@ -325,6 +327,7 @@
 				B10026 /* ChatViews.swift */,
 				B10047 /* PathMonitoring.swift */,
 				B10048 /* SyncCoordinator.swift */,
+				B10049 /* ActiveTurnSession.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -548,6 +551,7 @@
 				A10021 /* SSEParser.swift in Sources */,
 				A10047 /* PathMonitoring.swift in Sources */,
 				A10048 /* SyncCoordinator.swift in Sources */,
+				A10049 /* ActiveTurnSession.swift in Sources */,
 				A10022 /* ChatViewModel.swift in Sources */,
 				A10023 /* ChatViews.swift in Sources */,
 				A10040 /* IntentSupport.swift in Sources */,

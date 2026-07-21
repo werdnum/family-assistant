@@ -3368,6 +3368,85 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testActiveTurnSessionSurvivesTransportDropRetainingPayloadAndCursor() async throws {
+        // The durable ActiveTurnSession must OUTLIVE its transport task: after a
+        // mid-turn drop the send resumes from the SAME session instance (not a
+        // reconstructed one), and that session still carries its original payload
+        // and the cursor it had applied before the drop. This is the M2
+        // reattachment precondition — assert it directly, not just observationally.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-survive"
+        var resumeFromSeq: String?
+        let leg1 = HangingStream()
+        let leg2 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_survive","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_survive/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_survive","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_survive/stream" {
+                    if streamRequests.increment() == 1 {
+                        // First leg: apply a token at seq 2, then hold the socket
+                        // open until the test finishes it (a clean mid-turn EOF).
+                        return .hangingStream(
+                            "event: text\ndata: {\"turn_id\":\"\(streamedTurnID)\",\"content\":\"Partial\",\"seq\":2}\n\n",
+                            controller: leg1
+                        )
+                    }
+                    // Resume leg: hold open so the turn stays in flight while the
+                    // test inspects the surviving session.
+                    resumeFromSeq = Self.queryItems(from: request)["from_seq"]
+                    return .hangingStream("", controller: leg2)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_survive",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001
+        )
+        model.draftText = "Ask something"
+        await model.sendDraft()
+
+        // Capture the session while the first transport leg is live.
+        try await waitUntil { model.messages.last?.text == "Partial" }
+        let session = try XCTUnwrap(model.activeTurnSessionForTesting)
+        XCTAssertEqual(session.prompt, "Ask something")
+        XCTAssertEqual(session.conversationID, "web_conv_survive")
+
+        // Sever the first leg: the send loop resubscribes on the SAME session.
+        leg1.finish()
+        try await waitUntil { streamRequests.value >= 2 }
+
+        // The session survived the transport task's drop: same instance, same
+        // payload, and the cursor it applied before the drop (seq 2).
+        let resumed = try XCTUnwrap(model.activeTurnSessionForTesting)
+        XCTAssertTrue(resumed === session)
+        XCTAssertEqual(resumed.prompt, "Ask something")
+        XCTAssertEqual(resumed.lastAppliedSeq, 2)
+        // The resume resumes from just past the applied seq (server replays
+        // seq >= from_seq), matching the send cursor now held by the session.
+        XCTAssertEqual(resumeFromSeq, "3")
+
+        leg2.finish()
+        model.cancelStream()
+    }
+
     func testSendResumesTokenStreamAfterMidTurnInterruption() async throws {
         // The proxy severs the send-and-watch stream mid-turn — a CLEAN EOF with
         // no turn_ended (e.g. an Envoy 15s request timeout) right after the first

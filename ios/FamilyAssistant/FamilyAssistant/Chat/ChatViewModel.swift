@@ -85,7 +85,18 @@ final class ChatViewModel {
     // owns cancellation/restart and derives the connection presentation state.
     @ObservationIgnored let syncCoordinator: SyncCoordinator
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
-    @ObservationIgnored private var activeTurn: ActiveChatTurn?
+    // The durable state of the one in-flight send turn (see `ActiveTurnSession`).
+    // Survives its transport task: cleared only on turn completion/reconciliation
+    // (`finishStreaming` / `cancelStream` / conversation switch), never on a
+    // transport drop the send loop recovers from. The lightweight `ActiveChatTurn`
+    // identity the steer/stop helpers use is derived via `activeTurnIdentity`.
+    @ObservationIgnored private var activeTurnSession: ActiveTurnSession?
+
+    /// The lightweight turn identity for the active session, or nil when no turn
+    /// is in flight. The steer/stop control dictionaries key on this identity.
+    private var activeTurnIdentity: ActiveChatTurn? {
+        activeTurnSession.map { ActiveChatTurn(turnID: $0.turnID, conversationID: $0.conversationID) }
+    }
     // In-flight optimistic summaries, keyed by the owning turn id (value is the
     // conversation id). While a conversation has any pending turn,
     // `refreshRecentConversations` keeps its held optimistic row over a stale
@@ -213,6 +224,13 @@ final class ChatViewModel {
     /// instead of racing on a fixed delay.
     var bufferedStreamTextForTesting: String {
         pendingTextByMessageID.values.joined()
+    }
+
+    /// Test-only: the durable active-turn session. Lets tests assert the session
+    /// SURVIVES a transport drop (same instance, retained payload and cursor)
+    /// rather than being reconstructed each subscription attempt.
+    var activeTurnSessionForTesting: ActiveTurnSession? {
+        activeTurnSession
     }
     #endif
 
@@ -508,8 +526,8 @@ final class ChatViewModel {
         // selected thread. Restoring the current conversation (id unchanged) keeps
         // any draft the user is typing.
         let isSwitchingConversation = id != conversationID
-        let queuedStopTurnID = activeTurn.flatMap { activeTurn in
-            stopAfterRegistrationByTurnID[activeTurn.turnID] == nil ? nil : activeTurn.turnID
+        let queuedStopTurnID = activeTurnSession.flatMap { session in
+            stopAfterRegistrationByTurnID[session.turnID] == nil ? nil : session.turnID
         }
         cancelStream(sendQueuedStopCancel: false)
         // Tear down the previous conversation's follow loop NOW, before the
@@ -610,7 +628,7 @@ final class ChatViewModel {
     }
 
     private func resetTurnControlState() {
-        activeTurn = nil
+        activeTurnSession = nil
         registeredTurnIDs.removeAll()
         pendingStopTurnIDs.removeAll()
         stopRequestedTurnIDs.removeAll()
@@ -982,23 +1000,22 @@ final class ChatViewModel {
 
         let streamToken = UUID()
         currentStreamToken = streamToken
-        activeTurn = ActiveChatTurn(
+        let session = ActiveTurnSession(
             turnID: turnID,
-            conversationID: id
+            conversationID: id,
+            assistantMessageID: assistantMessageID,
+            prompt: prompt,
+            attachments: uploadedAttachments,
+            profileID: selectedProfileID,
+            previousSummary: previousSummary,
+            streamToken: streamToken
         )
+        activeTurnSession = session
         steerErrorMessage = nil
         stopWarningMessage = nil
         streamTask = Task { [weak self] in
             guard let self else { return }
-            await runSendTurn(
-                turnID: turnID,
-                prompt: prompt,
-                conversationID: id,
-                attachments: uploadedAttachments,
-                assistantMessageID: assistantMessageID,
-                streamToken: streamToken,
-                previousSummary: previousSummary
-            )
+            await runSendTurn(session)
         }
     }
 
@@ -1033,15 +1050,14 @@ final class ChatViewModel {
         }
     }
 
-    private func runSendTurn(
-        turnID: String,
-        prompt: String,
-        conversationID id: String,
-        attachments: [ChatAttachment],
-        assistantMessageID: String,
-        streamToken: UUID,
-        previousSummary: ChatConversationSummary?
-    ) async {
+    private func runSendTurn(_ session: ActiveTurnSession) async {
+        let turnID = session.turnID
+        let prompt = session.prompt
+        let id = session.conversationID
+        let attachments = session.attachments
+        let assistantMessageID = session.assistantMessageID
+        let streamToken = session.streamToken
+        let previousSummary = session.previousSummary
         // Retire this turn's optimistic pending mark on EVERY return path —
         // completion, recovery, failure, cancellation, and the superseded early
         // returns below — so a row can never stay pending (and pinned over the
@@ -1049,7 +1065,12 @@ final class ChatViewModel {
         // recovered paths run earlier so their refresh already uses the server;
         // this is the catch-all and is idempotent.
         defer { optimisticPendingByTurnID.removeValue(forKey: turnID) }
-        var lastSeq: Int?
+        // The send's resume/ack cursor. Threaded `inout` through the subscription
+        // consumers as the working value, then mirrored into the session
+        // (`session.lastAppliedSeq`) after each subscription so the cursor
+        // SURVIVES this transport task — a resync/retry reattaching to the session
+        // resumes from just past it (see `ActiveTurnSession`).
+        var lastSeq: Int? = session.lastAppliedSeq
         // Becomes true once startTurn returns: the backend persists the user
         // message inside start_turn, so a successful return means the
         // conversation is now server-backed and its optimistic row must NOT be
@@ -1169,6 +1190,7 @@ final class ChatViewModel {
                 assistantMessageID: assistantMessageID,
                 lastSeq: &lastSeq
             )
+            session.lastAppliedSeq = lastSeq
             // Resume the live token stream across mid-turn drops instead of
             // stranding on the disconnected indicator. The turn keeps running
             // durably on the server and the hub replays events with
@@ -1213,6 +1235,7 @@ final class ChatViewModel {
                     assistantMessageID: assistantMessageID,
                     lastSeq: &lastSeq
                 )
+                session.lastAppliedSeq = lastSeq
                 let heldOpen = Date().timeIntervalSince(resumeStartedAt) >= streamResumeLivenessSeconds
                 if lastSeq != seqBeforeResume || heldOpen {
                     noProgressResumes = 0
@@ -1499,14 +1522,14 @@ final class ChatViewModel {
             isStreaming = false
             streamTask = nil
             currentStreamToken = nil
-            if let turnID = activeTurn?.turnID {
+            if let turnID = activeTurnSession?.turnID {
                 registeredTurnIDs.remove(turnID)
                 pendingStopTurnIDs.remove(turnID)
                 stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
                 stopRequestedTurnIDs.remove(turnID)
                 pendingSteersByTurnID[turnID] = nil
             }
-            activeTurn = nil
+            activeTurnSession = nil
             Task { [weak self] in
                 await self?.sendNextQueuedFollowUpSteerIfReady()
             }
@@ -1514,7 +1537,7 @@ final class ChatViewModel {
     }
 
     func stopTurn() async {
-        guard let activeTurn else {
+        guard let activeTurn = activeTurnIdentity else {
             cancelStream()
             return
         }
@@ -1557,7 +1580,7 @@ final class ChatViewModel {
         // No turn is running, so there is nothing to steer: the composer text is
         // just a normal message. Send it as one (sendDraft consumes and clears
         // the composer).
-        guard let activeTurn else {
+        guard let activeTurn = activeTurnIdentity else {
             await sendDraft()
             return
         }
@@ -1585,7 +1608,7 @@ final class ChatViewModel {
         prompt: String,
         activeTurn: ActiveChatTurn
     ) async {
-        let isCurrentTurn = self.activeTurn == activeTurn
+        let isCurrentTurn = activeTurnIdentity == activeTurn
         let isSameConversation = conversationID == activeTurn.conversationID
         let originalTurnEnded = endedTurnIDs.contains(activeTurn.turnID)
         let originalTurnEndedCleanly = canRecoverSteerAfterTurnEnded(activeTurn.turnID)
@@ -1820,8 +1843,8 @@ final class ChatViewModel {
     }
 
     private func shouldSurfaceStopWarning(for stoppedTurn: ActiveChatTurn) -> Bool {
-        activeTurn == stoppedTurn
-            || (activeTurn == nil && conversationID == stoppedTurn.conversationID)
+        activeTurnIdentity == stoppedTurn
+            || (activeTurnSession == nil && conversationID == stoppedTurn.conversationID)
     }
 
     /// Tear down steers that were queued before their turn registered: drop their
@@ -1934,7 +1957,7 @@ final class ChatViewModel {
         }
         streamTask?.cancel()
         streamTask = nil
-        if sendQueuedStopCancel, let activeTurn,
+        if sendQueuedStopCancel, let activeTurn = activeTurnIdentity,
            stopAfterRegistrationByTurnID[activeTurn.turnID] != nil {
             let turnID = activeTurn.turnID
             Task { [weak self] in
@@ -1943,7 +1966,7 @@ final class ChatViewModel {
         }
         isStreaming = false
         currentStreamToken = nil
-        activeTurn = nil
+        activeTurnSession = nil
         registeredTurnIDs.removeAll()
         pendingStopTurnIDs.removeAll()
         stopRequestedTurnIDs.removeAll()
