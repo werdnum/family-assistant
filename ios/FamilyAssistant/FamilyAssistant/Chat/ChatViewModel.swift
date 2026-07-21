@@ -84,6 +84,12 @@ final class ChatViewModel {
     // live-token rendering) as the coordinator's stream delegate; the coordinator
     // owns cancellation/restart and derives the connection presentation state.
     @ObservationIgnored let syncCoordinator: SyncCoordinator
+    // Retained so the toolbar's `.authRequired` affordance can drive the existing
+    // re-auth flow, and so `deinit` can unregister this model's auth observer.
+    @ObservationIgnored private let authManager: AuthManager
+    // Token for this model's entry in `AuthManager`'s observer registry; removed on
+    // `deinit` so a discarded model's closure stops driving its dead coordinator.
+    @ObservationIgnored private var authObserverToken: UUID?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
     // The durable state of the one in-flight send turn (see `ActiveTurnSession`).
     // Survives its transport task: cleared only on turn completion/reconciliation
@@ -253,6 +259,7 @@ final class ChatViewModel {
         self.streamResumeLivenessSeconds = streamResumeLivenessSeconds
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
+        self.authManager = authManager
         apiClient = ChatAPIClient(authManager: authManager)
         syncCoordinator = SyncCoordinator(
             pathMonitor: pathMonitor ?? NetworkPathMonitor(),
@@ -300,7 +307,7 @@ final class ChatViewModel {
         // Bridge auth transitions into the coordinator so a token refresh surfaces
         // as `.syncing`-adjacent degraded state and a rejection surfaces as the
         // dedicated `.authRequired` presentation — never the generic error modal.
-        authManager.onAuthStateChange = { [weak syncCoordinator] signal in
+        authObserverToken = authManager.addAuthStateObserver { [weak syncCoordinator] signal in
             switch signal {
             case .refreshing:
                 syncCoordinator?.apply(.authRefreshing)
@@ -316,6 +323,10 @@ final class ChatViewModel {
         streamTask?.cancel()
         pendingConfirmationsTask?.cancel()
         textFlushTask?.cancel()
+        if let authObserverToken {
+            let authManager = authManager
+            Task { @MainActor in authManager.removeAuthStateObserver(authObserverToken) }
+        }
     }
 
     func bootstrap(initialPrompt: String? = nil) async {
@@ -845,12 +856,18 @@ final class ChatViewModel {
             return
         }
         do {
-            let delta = try await fetchMessages(conversationID: id, after: after)
+            let (delta, activeTurns) = try await fetchMessages(conversationID: id, after: after)
             // A conversation switch during the await would otherwise merge this
             // thread's delta into the one the user moved to.
             guard conversationID == id else {
                 return
             }
+            // Surface running turns the server reports on the incremental path too:
+            // reconnect / 410 catch-up flow through here (not `loadMessages`), so a
+            // turn discovered during the PRIMARY reconnect path must render a
+            // progressive placeholder before any token arrives. Same narrow guards
+            // as the full-load path (selected, not locally owned, not ended).
+            attachDiscoveredActiveTurns(activeTurns)
             guard !delta.isEmpty else {
                 errorMessage = nil
                 return
@@ -877,8 +894,14 @@ final class ChatViewModel {
         }
     }
 
-    /// Page through all persisted messages newer than `after`.
-    private func fetchMessages(conversationID id: String, after: Date) async throws -> [ChatBackendMessage] {
+    /// Page through all persisted messages newer than `after`. Also surfaces the
+    /// server's `active_turns` from the last page so the incremental path can
+    /// reattach to a turn discovered mid-reconnect. `active_turns` reflects current
+    /// server state, so the final page's list is the authoritative snapshot.
+    private func fetchMessages(
+        conversationID id: String,
+        after: Date
+    ) async throws -> (messages: [ChatBackendMessage], activeTurns: [ChatActiveTurnInfo]) {
         var collected: [ChatBackendMessage] = []
         var cursor = after
         while true {
@@ -889,7 +912,7 @@ final class ChatViewModel {
             )
             collected.append(contentsOf: page.messages)
             guard page.hasMoreAfter, let last = page.messages.last else {
-                return collected
+                return (collected, page.activeTurns)
             }
             cursor = last.timestamp
         }
@@ -2248,6 +2271,15 @@ final class ChatViewModel {
         // reducer only reports `followConnected` once the connect actually
         // succeeds, so a failing connect leaves the honest disconnected state.
         syncCoordinator.runResync()
+    }
+
+    /// Drive the app's existing sign-in flow from the toolbar's `.authRequired`
+    /// affordance. The stored credentials were rejected; re-running `login()`
+    /// presents the authentication session so the user can re-authenticate without
+    /// a full logout. On success `AuthManager` clears `authRequired`, which the
+    /// coordinator observes and returns the indicator to a connected state.
+    func requestReauthentication() {
+        authManager.login()
     }
 
     /// The hub buffer rotated past this client's resume cursor (a 410). Clear it so

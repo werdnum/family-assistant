@@ -864,18 +864,76 @@ private struct DraftAttachmentStrip: View {
     }
 }
 
+/// Presentation-driven connection affordance. Each non-`.live` sync state renders
+/// a distinct symbol/label/identifier and its own tap action, instead of
+/// collapsing degraded/offline/authRequired into one false "no connection" icon.
+/// `.live` and `.suspended` (background) render nothing.
 private struct LiveUpdatesIndicator: View {
     var viewModel: ChatViewModel
 
-    var body: some View {
-        Button {
-            Task { await viewModel.reconnectLiveUpdates() }
-        } label: {
-            Image(systemName: "wifi.slash")
-                .foregroundStyle(.orange)
+    private struct Style {
+        let systemImage: String
+        let tint: Color
+        let label: String
+        let identifier: String
+        let action: (ChatViewModel) -> Void
+    }
+
+    private var style: Style? {
+        switch viewModel.syncPresentation {
+        case .live, .suspended:
+            return nil
+        case .syncing:
+            return Style(
+                systemImage: "arrow.triangle.2.circlepath",
+                tint: .secondary,
+                label: "Syncing live updates.",
+                identifier: "chat-live-updates-syncing",
+                action: { model in Task { await model.reconnectLiveUpdates() } }
+            )
+        case .degraded:
+            return Style(
+                systemImage: "wifi.exclamationmark",
+                tint: .orange,
+                label: "Live updates degraded. Tap to reconnect.",
+                identifier: "chat-live-updates-degraded",
+                action: { model in Task { await model.reconnectLiveUpdates() } }
+            )
+        case .offline:
+            return Style(
+                systemImage: "wifi.slash",
+                tint: .orange,
+                label: "No connection. Tap to reconnect.",
+                identifier: "chat-live-updates-offline",
+                action: { model in Task { await model.reconnectLiveUpdates() } }
+            )
+        case .authRequired:
+            return Style(
+                systemImage: "person.crop.circle.badge.exclamationmark",
+                tint: .red,
+                label: "Sign-in required. Tap to sign in.",
+                identifier: "chat-live-updates-auth-required",
+                action: { model in model.requestReauthentication() }
+            )
         }
-        .accessibilityLabel("Live updates disconnected. Tap to reconnect.")
-        .accessibilityIdentifier("chat-live-updates-disconnected")
+    }
+
+    var body: some View {
+        if let style {
+            Button {
+                style.action(viewModel)
+            } label: {
+                if viewModel.syncPresentation == .syncing {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: style.systemImage)
+                        .foregroundStyle(style.tint)
+                }
+            }
+            .accessibilityLabel(style.label)
+            .accessibilityIdentifier(style.identifier)
+        }
     }
 }
 

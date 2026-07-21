@@ -3540,6 +3540,76 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testReconnectCatchUpDiscoversActiveTurnBeforeAnyToken() async throws {
+        // The incremental catch-up path (mergeNewMessages / fetchMessages) — the
+        // PRIMARY reconnect / 410 flow — must consume each page's active_turns and
+        // attach a discovered running turn, rendering its progressive placeholder
+        // before any token arrives. Previously only the full loadMessages path did
+        // this, so a turn discovered during a reconnect showed nothing until a
+        // token landed.
+        let messagesFetches = AtomicCounter()
+        let stream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_catchup/messages") {
+                // The FULL load (no `after`) reports no active_turns, so any
+                // discovered placeholder can only come from the incremental
+                // catch-up page below — the path under test.
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_catchup",
+                          "messages":[{"internal_id":1,"role":"user","content":"Kick off","timestamp":"2026-06-08T12:00:00Z"}],
+                          "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false
+                        }
+                        """
+                    )
+                }
+                // The incremental page (the reconnect catch-up) reports the running
+                // turn in active_turns with an empty message delta, so the only way
+                // a placeholder can appear is by consuming active_turns here.
+                messagesFetches.increment()
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_catchup",
+                      "messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false,
+                      "active_turns":[{"turn_id":"turn-remote","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_catchup/stream") {
+                // The follow stream connects (which drives the catch-up merge) but
+                // delivers NO token for the running turn — so the placeholder must
+                // originate from the active_turns discovery, not a streamed token.
+                return .hangingStream("", controller: stream)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: nil,
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_catchup")
+
+        // The catch-up merge ran and surfaced the discovered turn as a progressive
+        // placeholder even though no token has arrived.
+        try await waitUntil {
+            model?.messages.contains { $0.id == "local_follow_turn-remote" && $0.status == .running } == true
+        }
+        XCTAssertGreaterThanOrEqual(messagesFetches.value, 1)
+
+        stream.finish()
+        model = nil
+    }
+
     func testSendResumesTokenStreamAfterMidTurnInterruption() async throws {
         // The proxy severs the send-and-watch stream mid-turn — a CLEAN EOF with
         // no turn_ended (e.g. an Envoy 15s request timeout) right after the first
