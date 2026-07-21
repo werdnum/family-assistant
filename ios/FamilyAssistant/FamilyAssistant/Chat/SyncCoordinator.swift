@@ -52,6 +52,14 @@ protocol SyncStreamDelegate: AnyObject {
 
     /// Refresh the recent-conversation list (on activity connect and each ping).
     func activityStreamDidSignal(generation: Int) async
+
+    /// A stream connect was rejected with a response-time 401/403. Force one
+    /// coalesced auth refresh and report whether it succeeded. `false` means the
+    /// refresh was itself rejected or there were no credentials — the delegate has
+    /// already latched `authRequired`, so the loop must stop rather than spin the
+    /// backoff replaying the rejected token. `true` means a fresh token was minted
+    /// and the connect is worth retrying at once.
+    func forceAuthRefreshForStreamConnect() async -> Bool
 }
 
 @MainActor
@@ -237,6 +245,14 @@ final class SyncCoordinator {
         // task's late callbacks are rejected.
         if followTask != nil {
             bumpFollowGeneration()
+            // The old task's socket is being torn down; until the replacement task
+            // reports a real `followConnected`, the channel is not live. Leaving it
+            // `.connected` here would let presentation claim `.live` with no
+            // connected follow stream. Demote to `.reconnecting`; only a real
+            // connect promotes it back.
+            if followHealth == .connected {
+                followHealth = .reconnecting
+            }
         }
         followTask?.cancel()
         followConversationID = conversationID
@@ -283,6 +299,23 @@ final class SyncCoordinator {
                     if case ChatAPIError.server(let statusCode, _) = error, statusCode == 410 {
                         self?.delegate?.followBufferRotated(generation: generation)
                     }
+                    // A response-time 401/403 on connect is a terminal auth failure,
+                    // not an ordinary transient drop: replaying the rejected token
+                    // would spin the backoff forever. Force one coalesced refresh; if
+                    // it succeeds retry the connect at once (skip the backoff sleep),
+                    // otherwise the delegate has latched `authRequired` and the loop
+                    // must stop.
+                    if case ChatAPIError.server(let statusCode, _) = error,
+                       statusCode == 401 || statusCode == 403 {
+                        let refreshed = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? false
+                        if Task.isCancelled {
+                            break
+                        }
+                        if refreshed {
+                            continue
+                        }
+                        break
+                    }
                 }
 
                 if Task.isCancelled || deliberateStop {
@@ -321,6 +354,12 @@ final class SyncCoordinator {
         // a fresh one.
         if activityTask != nil {
             bumpActivityGeneration()
+            // Same as the follow channel: a replaced activity task is no longer a
+            // live connection, so demote a `.connected` health to `.reconnecting`
+            // until the replacement reports a real `activityConnected`.
+            if activityHealth == .connected {
+                activityHealth = .reconnecting
+            }
         }
         activityTask?.cancel()
         let generation = activityGeneration
@@ -348,7 +387,24 @@ final class SyncCoordinator {
                         await self?.delegate?.activityStreamDidSignal(generation: generation)
                     }
                 } catch {
-                    // Connection failed or dropped; fall through to backoff+retry.
+                    // A response-time 401/403 on connect is a terminal auth failure
+                    // (see the follow loop): force one coalesced refresh and retry at
+                    // once on success, otherwise stop — the delegate has latched
+                    // `authRequired` and replaying the rejected token would spin the
+                    // backoff forever.
+                    if case ChatAPIError.server(let statusCode, _) = error,
+                       statusCode == 401 || statusCode == 403 {
+                        let refreshed = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? false
+                        if Task.isCancelled {
+                            break
+                        }
+                        if refreshed {
+                            continue
+                        }
+                        self?.apply(.activityDropped(generation: generation, cleanEOF: false))
+                        break
+                    }
+                    // Any other connection failure/drop falls through to backoff+retry.
                 }
                 if Task.isCancelled {
                     break
@@ -362,12 +418,38 @@ final class SyncCoordinator {
 
     /// Cancel the follow stream only (e.g. a conversation switch cancels it before
     /// the caller restarts it for the new conversation).
+    ///
+    /// Bumps the follow generation at cancellation time, not just at the later
+    /// restart. A conversation switch cancels here, then `await`s `loadMessages`
+    /// before `startLiveEvents` restarts the stream; during that window the
+    /// cancelled task's in-flight callbacks would otherwise still pass
+    /// `isCurrentFollow` and merge/ack into the NEW conversation's state. Bumping
+    /// now fences those late callbacks immediately. Also demote a `.connected`
+    /// health so presentation cannot claim `.live` over the cancelled stream.
     func cancelFollowStream() {
+        if followTask != nil {
+            bumpFollowGeneration()
+            if followHealth == .connected {
+                followHealth = .reconnecting
+            }
+        }
         followTask?.cancel()
     }
 
     /// Cancel both owned streams (deinit / logout).
     func cancelStreams() {
+        if followTask != nil {
+            bumpFollowGeneration()
+            if followHealth == .connected {
+                followHealth = .reconnecting
+            }
+        }
+        if activityTask != nil {
+            bumpActivityGeneration()
+            if activityHealth == .connected {
+                activityHealth = .reconnecting
+            }
+        }
         followTask?.cancel()
         activityTask?.cancel()
     }
@@ -464,6 +546,18 @@ final class SyncCoordinator {
 
         case .authRequired:
             authState = .authRequired
+            // The backend authorizes an SSE stream once, at connect. A follow or
+            // activity socket opened under the now-rejected session keeps applying
+            // events even after `authRequired` latches — and because its health
+            // still reads `.connected`, the later `.authOK` wake (which only
+            // restarts non-connected channels) would skip the restart, so events
+            // would keep flowing under stale credentials. Cancel both streams and
+            // mark their healths down so the `.authOK` wake actually reconnects
+            // under fresh credentials. Bumping the generations (via cancelStreams)
+            // also fences any in-flight callbacks from the old-session tasks.
+            cancelStreams()
+            followHealth = .down
+            activityHealth = .down
             return []
 
         case let .followConnected(generation):

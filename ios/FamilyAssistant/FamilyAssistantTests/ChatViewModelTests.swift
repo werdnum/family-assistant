@@ -7614,6 +7614,43 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testPreTurnNoCredentialsSendDoesNotModal() async throws {
+        // Finding 7: a send whose `startTurn` fails pre-turn with
+        // `AuthError.noCredentials` (a rejected session) routes through
+        // `appendStreamError`, not the underlyingError-carrying `presentErrorAlert`.
+        // The underlying error must be threaded through so the auth failure is
+        // suppressed: the `.authRequired` presentation covers the UX, and no generic
+        // modal (`errorMessage` / `Chat.alertPresented` breadcrumb) may appear.
+        seedExpiringToken()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                return .json(#"{"detail":"expired"}"#, statusCode: 401)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-preturn-nocreds-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_preturn_nocreds",
+            spoolDirectory: spoolDirectory
+        )
+
+        model.draftText = "Hello"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+        // Give any (erroneous) modal breadcrumb time to spool before asserting absence.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "a pre-turn noCredentials send must not raise the generic error modal"
+        )
+    }
+
     func testMidTurnDropRecoveryEmitsNoAlertPresentedBreadcrumb() async throws {
         // Characterization: a mid-turn transport drop recovers by reloading
         // history. It WILL spool a `Chat.streamDrop` breadcrumb, but it must NOT

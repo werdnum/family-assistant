@@ -1385,7 +1385,11 @@ final class ChatViewModel {
                     conversationID: id, turnID: turnID, to: previousSummary
                 )
             }
-            appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
+            appendStreamError(
+                error.localizedDescription,
+                assistantMessageID: assistantMessageID,
+                underlyingError: error
+            )
         }
         finishStreaming(streamToken)
     }
@@ -2928,7 +2932,8 @@ final class ChatViewModel {
     private func appendStreamError(
         _ message: String,
         assistantMessageID: String,
-        reason: ChatAlertReason = .streamError
+        reason: ChatAlertReason = .streamError,
+        underlyingError: Error? = nil
     ) {
         flushPendingTextNow()
         if let index = messages.firstIndex(where: { $0.id == assistantMessageID }) {
@@ -2939,7 +2944,11 @@ final class ChatViewModel {
             }
             messages[index].text += "\n\n\(message)"
         }
-        presentErrorAlert(message, reason: reason)
+        // Thread the underlying error through so a pre-turn terminal auth failure
+        // (`AuthError.noCredentials`, e.g. startTurn failing on a rejected session)
+        // is suppressed by `presentErrorAlert` — the dedicated `authRequired`
+        // presentation already covers that UX; a generic error modal would be spurious.
+        presentErrorAlert(message, reason: reason, underlyingError: underlyingError)
         errorReporter.report(message: message, component: "Chat.stream")
     }
 
@@ -3335,6 +3344,26 @@ extension ChatViewModel: SyncStreamDelegate {
             return
         }
         await refreshRecentConversations()
+    }
+
+    func forceAuthRefreshForStreamConnect() async -> Bool {
+        // A stream connect 401/403'd: the token the client believed fresh was
+        // rejected. Force one coalesced refresh, epoch-fenced so a stale refresh
+        // completing after logout/new-login can't overwrite the newer session
+        // (mirrors the ChatAPIClient response-time-401 path). On rejection/no
+        // credentials clear the epoch-fenced auth state — the rejected token would
+        // otherwise linger for other request paths to replay — and let the latched
+        // `authRequired` drive presentation; return false so the loop stops.
+        let epochBeforeRefresh = authManager.authEpoch
+        do {
+            try await authManager.refreshIfNeeded(ownerEpoch: epochBeforeRefresh, force: true)
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            authManager.clearAuthStateIfCurrent(capturedEpoch: epochBeforeRefresh)
+            return false
+        } catch {
+            return false
+        }
+        return true
     }
 }
 
