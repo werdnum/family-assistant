@@ -262,6 +262,7 @@ final class ChatViewModel {
         self.authManager = authManager
         apiClient = ChatAPIClient(authManager: authManager)
         syncCoordinator = SyncCoordinator(
+            authManager: authManager,
             pathMonitor: pathMonitor ?? NetworkPathMonitor(),
             followReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
             followReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds
@@ -1393,10 +1394,19 @@ final class ChatViewModel {
                     conversationID: id, turnID: turnID, to: previousSummary
                 )
             }
+            // A 401/403 on turn-start (revoked token) routes through the central
+            // signInRequired path: latch it with no generic modal.
+            let underlyingError: Error?
+            if case ChatAPIError.server(let statusCode, _) = error, statusCode == 401 || statusCode == 403 {
+                authManager.markAuthRequired()
+                underlyingError = AuthError.noCredentials
+            } else {
+                underlyingError = error
+            }
             appendStreamError(
                 error.localizedDescription,
                 assistantMessageID: assistantMessageID,
-                underlyingError: error
+                underlyingError: underlyingError
             )
         }
         finishStreaming(streamToken)
@@ -3356,40 +3366,6 @@ extension ChatViewModel: SyncStreamDelegate {
             return
         }
         await refreshRecentConversations()
-    }
-
-    func getCurrentAuthEpochForStreamConnect() -> Int {
-        authManager.authEpoch
-    }
-
-    func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult {
-        // A stream connect 401/403'd: the token the client believed fresh was
-        // rejected. Force one coalesced refresh, epoch-fenced so a stale refresh
-        // completing after logout/new-login can't overwrite the newer session
-        // (mirrors the ChatAPIClient response-time-401 path). Terminal auth failures
-        // (rejection/no credentials) latch authRequired and halt the loop; transient
-        // failures keep the session intact and signal a retry with backoff.
-        let epochBeforeRefresh = authManager.authEpoch
-        do {
-            try await authManager.refreshIfNeeded(ownerEpoch: epochBeforeRefresh, force: true)
-        } catch AuthError.authRejected, AuthError.noCredentials {
-            authManager.clearAuthStateForReauthIfCurrent(capturedEpoch: epochBeforeRefresh)
-            return .terminalAuth
-        } catch AuthError.transient {
-            return .transientRetry
-        } catch {
-            return .transientRetry
-        }
-        return .reconnected
-    }
-
-    func markStreamConnectAuthRejected(capturedEpoch: Int) async {
-        // A stream connect was rejected with 401/403 AFTER the forced refresh also
-        // succeeded but the retry also 401/403'd. This is a terminal endpoint-specific
-        // auth failure, not a token rotation issue. Latch authRequired and clear the
-        // rejected token, mirroring the `.terminalAuth` path but for the double-rejection
-        // scenario. The epoch fence prevents a stale operation from undoing a newer login.
-        authManager.clearAuthStateForReauthIfCurrent(capturedEpoch: capturedEpoch)
     }
 }
 

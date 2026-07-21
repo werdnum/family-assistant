@@ -1,15 +1,5 @@
 import Foundation
 
-/// Outcome of a forced auth refresh on stream-connect 401/403.
-enum StreamConnectAuthResult {
-    /// A fresh token was minted; the connect is worth retrying at once.
-    case reconnected
-    /// The refresh was rejected or there were no credentials; authRequired is latched.
-    case terminalAuth
-    /// The refresh failed transiently (network/5xx); retry with backoff, no authRequired.
-    case transientRetry
-}
-
 /// The application-side operations the coordinator's owned stream loops invoke.
 ///
 /// The coordinator owns the follow/activity `Task`s and their reconnect loops
@@ -69,29 +59,6 @@ protocol SyncStreamDelegate: AnyObject {
     /// Refresh the recent-conversation list (on activity connect and each ping).
     func activityStreamDidSignal(generation: Int) async
 
-    /// A stream connect was rejected with a response-time 401/403. Force one
-    /// coalesced auth refresh and report the outcome: `.reconnected` means a fresh
-    /// token was minted and the connect is worth retrying at once; `.terminalAuth`
-    /// means the refresh was itself rejected or there were no credentials — the
-    /// delegate has already latched `authRequired`, so the loop must stop rather
-    /// than spin the backoff replaying the rejected token; `.transientRetry` means
-    /// the refresh failed transiently (network/5xx) and the loop should retry with
-    /// backoff but keep the current session intact (no authRequired latch).
-    func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult
-
-    /// A stream connect was rejected with 401/403 AFTER a forced refresh also failed
-    /// with 401/403 — a terminal endpoint-specific auth failure, not a token rotation
-    /// issue. The loop must stop and the delegate must latch authRequired + clear the
-    /// rejected token, mirroring the `.terminalAuth` path. The captured epoch fences
-    /// the operation so a stale clear (from a superseded refresh that completed after
-    /// logout/new-login) doesn't overwrite a newer session.
-    func markStreamConnectAuthRejected(capturedEpoch: Int) async
-
-    /// Return the current auth epoch. Used by stream reconnect loops to fence the
-    /// double-rejection scenario: if a 401/403 connect's forced refresh succeeds but
-    /// the retry also 401/403's, we need the epoch from before the refresh to properly
-    /// clear auth state via `markStreamConnectAuthRejected`.
-    func getCurrentAuthEpochForStreamConnect() -> Int
 }
 
 @MainActor
@@ -177,6 +144,7 @@ final class SyncCoordinator {
     private let pathMonitor: PathMonitoring
     private let followReconnectInitialDelaySeconds: Double
     private let followReconnectMaxDelaySeconds: Double
+    private let authManager: AuthManager
 
     weak var delegate: SyncStreamDelegate?
 
@@ -187,10 +155,12 @@ final class SyncCoordinator {
     private nonisolated(unsafe) var activityTask: Task<Void, Never>?
 
     init(
+        authManager: AuthManager,
         pathMonitor: PathMonitoring,
         followReconnectInitialDelaySeconds: Double = 2,
         followReconnectMaxDelaySeconds: Double = 30
     ) {
+        self.authManager = authManager
         self.pathMonitor = pathMonitor
         self.followReconnectInitialDelaySeconds = followReconnectInitialDelaySeconds
         self.followReconnectMaxDelaySeconds = followReconnectMaxDelaySeconds
@@ -221,7 +191,12 @@ final class SyncCoordinator {
         if phase == .syncing {
             return .syncing
         }
-        if followHealth == .connected, activityHealth == .connected {
+        // When no conversation is selected, only activity health matters.
+        // Otherwise both follow and activity must be connected for live.
+        let isLive = delegate?.currentConversationID() == nil
+            ? activityHealth == .connected
+            : followHealth == .connected && activityHealth == .connected
+        if isLive {
             return .live
         }
         return .degraded
@@ -291,22 +266,24 @@ final class SyncCoordinator {
         let maxDelay = followReconnectMaxDelaySeconds
         followTask = Task { [weak self] in
             var delay = initialDelay
-            var authRefreshAlreadyAttempted = false
-            var authRefreshEpoch = 0
             while !Task.isCancelled {
+                guard let self else { return }
+                if authManager.authRequired {
+                    break
+                }
                 var deliberateStop = false
                 var connected = false
                 var streamError: Error?
                 do {
-                    guard let stream = try await self?.delegate?.openFollowStream(
+                    guard let stream = try await self.delegate?.openFollowStream(
                         conversationID: conversationID,
                         generation: generation
                     ) else {
                         return
                     }
                     connected = true
-                    self?.apply(.followConnected(generation: generation))
-                    await self?.delegate?.followStreamDidConnect(
+                    self.apply(.followConnected(generation: generation))
+                    await self.delegate?.followStreamDidConnect(
                         conversationID: conversationID,
                         generation: generation
                     )
@@ -315,7 +292,7 @@ final class SyncCoordinator {
                         if Task.isCancelled {
                             break
                         }
-                        let shouldContinue = await self?.delegate?.handleFollowEvent(
+                        let shouldContinue = await self.delegate?.handleFollowEvent(
                             event,
                             conversationID: conversationID,
                             generation: generation
@@ -329,37 +306,22 @@ final class SyncCoordinator {
                 } catch {
                     streamError = error
                     if case ChatAPIError.server(let statusCode, _) = error, statusCode == 410 {
-                        self?.delegate?.followBufferRotated(generation: generation)
+                        self.delegate?.followBufferRotated(generation: generation)
                     }
-                    // A response-time 401/403 on connect is a terminal auth failure,
-                    // not an ordinary transient drop: replaying the rejected token
-                    // would spin the backoff forever. Force one coalesced refresh.
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        if authRefreshAlreadyAttempted {
-                            // A second 401/403 after refresh means endpoint-specific auth
-                            // failure (not a token rotation issue). Treat as terminal.
+                        do {
+                            try await authManager.refreshIfNeeded(force: true)
+                        } catch AuthError.authRejected, AuthError.noCredentials {
+                            authManager.markAuthRequired()
                             deliberateStop = true
+                        } catch {
                             streamError = error
-                            await self?.delegate?.markStreamConnectAuthRejected(capturedEpoch: authRefreshEpoch)
-                        } else {
-                            authRefreshAlreadyAttempted = true
-                            authRefreshEpoch = self?.delegate?.getCurrentAuthEpochForStreamConnect() ?? 0
-                            let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
-                            if Task.isCancelled {
-                                break
-                            }
-                            switch result {
-                            case .reconnected:
-                                continue
-                            case .terminalAuth:
-                                deliberateStop = true
-                            case .transientRetry:
-                                streamError = error
-                            }
                         }
                         if deliberateStop {
                             break
+                        } else if streamError == nil {
+                            continue
                         }
                     }
                 }
@@ -367,20 +329,16 @@ final class SyncCoordinator {
                 if Task.isCancelled || deliberateStop {
                     break
                 }
-                self?.delegate?.reportFollowStreamDrop(
+                self.delegate?.reportFollowStreamDrop(
                     conversationID: conversationID,
                     error: streamError,
                     generation: generation
                 )
-                // Suppression parity with the former
-                // `markLiveUpdatesDisconnectedIfActive`: a drop while a send is
-                // actively streaming must not degrade presentation. Suppress at
-                // the event-emission level so the reducer never sees the drop.
-                if self?.delegate?.shouldSurfaceFollowDrop() ?? false {
-                    self?.apply(.followDropped(generation: generation, cleanEOF: streamError == nil))
+                if self.delegate?.shouldSurfaceFollowDrop() ?? false {
+                    self.apply(.followDropped(generation: generation, cleanEOF: streamError == nil))
                 }
                 if !connected {
-                    await self?.delegate?.catchUpFollowHistory(
+                    await self.delegate?.catchUpFollowHistory(
                         conversationID: conversationID,
                         generation: generation
                     )
@@ -413,18 +371,20 @@ final class SyncCoordinator {
         let maxDelay = followReconnectMaxDelaySeconds
         activityTask = Task { [weak self] in
             var delay = initialDelay
-            var authRefreshAlreadyAttempted = false
-            var authRefreshEpoch = 0
             while !Task.isCancelled {
+                guard let self else { return }
+                if authManager.authRequired {
+                    break
+                }
                 do {
-                    guard let stream = try await self?.delegate?.openActivityStream(
+                    guard let stream = try await self.delegate?.openActivityStream(
                         generation: generation
                     ) else {
                         return
                     }
                     delay = initialDelay
-                    self?.apply(.activityConnected(generation: generation))
-                    await self?.delegate?.activityStreamDidSignal(generation: generation)
+                    self.apply(.activityConnected(generation: generation))
+                    await self.delegate?.activityStreamDidSignal(generation: generation)
                     for try await _ in stream {
                         if Task.isCancelled {
                             break
@@ -432,40 +392,23 @@ final class SyncCoordinator {
                         guard self != nil else {
                             return
                         }
-                        await self?.delegate?.activityStreamDidSignal(generation: generation)
+                        await self.delegate?.activityStreamDidSignal(generation: generation)
                     }
                 } catch {
-                    var shouldBreak = false
-                    // A response-time 401/403 on connect is a terminal auth failure
-                    // (see the follow loop): force one coalesced refresh, but only once
-                    // per connection attempt.
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        if authRefreshAlreadyAttempted {
-                            // A second 401/403 after refresh means endpoint-specific auth
-                            // failure. Apply the drop and backoff instead of looping.
-                            self?.apply(.activityDropped(generation: generation, cleanEOF: false))
-                            await self?.delegate?.markStreamConnectAuthRejected(capturedEpoch: authRefreshEpoch)
-                            shouldBreak = false
-                        } else {
-                            authRefreshAlreadyAttempted = true
-                            authRefreshEpoch = self?.delegate?.getCurrentAuthEpochForStreamConnect() ?? 0
-                            let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
-                            if Task.isCancelled {
-                                break
-                            }
-                            switch result {
-                            case .reconnected:
-                                continue
-                            case .terminalAuth:
-                                self?.apply(.activityDropped(generation: generation, cleanEOF: false))
-                                shouldBreak = true
-                            case .transientRetry:
-                                // Fall through to backoff+retry below
-                                break
-                            }
+                        do {
+                            try await authManager.refreshIfNeeded(force: true)
+                        } catch AuthError.authRejected, AuthError.noCredentials {
+                            authManager.markAuthRequired()
+                            self.apply(.activityDropped(generation: generation, cleanEOF: false))
+                            break
+                        } catch {
+                            self.apply(.activityDropped(generation: generation, cleanEOF: false))
                         }
-                        if shouldBreak {
+                        if !authManager.authRequired {
+                            continue
+                        } else {
                             break
                         }
                     }
@@ -473,7 +416,7 @@ final class SyncCoordinator {
                 if Task.isCancelled {
                     break
                 }
-                self?.apply(.activityDropped(generation: generation, cleanEOF: false))
+                self.apply(.activityDropped(generation: generation, cleanEOF: false))
                 try? await Task.sleep(for: .seconds(delay))
                 delay = min(delay * 2, maxDelay)
             }

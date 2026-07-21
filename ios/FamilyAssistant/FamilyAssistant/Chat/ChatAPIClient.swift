@@ -614,41 +614,23 @@ struct ChatAPIClient {
     /// coordinator's `.authRequired` presentation). The view model suppresses the
     /// generic error modal for that error, so a persistent 401 never modals.
     private func authorizedGETWithAuthRetry(url: URL) async throws -> (Data, URLResponse) {
-        let epochBeforeRequest = authManager.authEpoch
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
         let (data, response) = try await urlSession.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 401 else {
             return (data, response)
         }
 
-        if authManager.authEpoch != epochBeforeRequest {
-            throw AuthError.noCredentials
-        }
-        let epochBeforeRefresh = epochBeforeRequest
         do {
-            // Epoch-fence the forced refresh: a stale rotation completing after a
-            // logout/new-login must not overwrite the newer session's credentials
-            // (mirrors the rejection-cleanup fencing below).
-            try await authManager.refreshIfNeeded(ownerEpoch: epochBeforeRefresh, force: true)
+            try await authManager.refreshIfNeeded(force: true)
         } catch AuthError.authRejected, AuthError.noCredentials {
-            // The forced refresh was itself rejected. `performRefresh` latches
-            // authRequired but, reached directly here, never runs
-            // `authorizedRequest`'s credential cleanup — so the rejected token and
-            // its still-fresh expiry would linger and later requests would replay
-            // it. Clear them (epoch-fenced so a concurrent re-login is untouched).
-            authManager.clearAuthStateIfCurrent(capturedEpoch: epochBeforeRefresh)
+            authManager.markAuthRequired()
             throw AuthError.noCredentials
         }
 
         let retryRequest = try await authManager.authorizedRequest(url: url, method: "GET")
         let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
         if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
-            // A freshly minted token is still rejected: terminal auth failure. Clear
-            // the epoch-fenced auth state as well as latching authRequired — the
-            // freshly saved (but rejected) token would otherwise linger in the
-            // keychain and other request paths would keep replaying it. Fenced so a
-            // concurrent re-login that bumped the epoch during the retry is untouched.
-            authManager.clearAuthStateIfCurrent(capturedEpoch: epochBeforeRefresh)
+            authManager.markAuthRequired()
             throw AuthError.noCredentials
         }
         return (retryData, retryResponse)
