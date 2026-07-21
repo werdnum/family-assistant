@@ -5746,7 +5746,8 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
         let sessionBefore = try XCTUnwrap(model.activeTurnSessionForTesting)
-        let generationBefore = model.syncCoordinator.generation
+        let followGenerationBefore = model.syncCoordinator.followGeneration
+        let activityGenerationBefore = model.syncCoordinator.activityGeneration
         let followBaseline = followConnects.value
         let activityBaseline = activityConnects.value
 
@@ -5755,7 +5756,8 @@ final class ChatViewModelTests: XCTestCase {
         try assertBackgroundSuspendedSend(
             model: model,
             sessionBefore: sessionBefore,
-            generationBefore: generationBefore,
+            followGenerationBefore: followGenerationBefore,
+            activityGenerationBefore: activityGenerationBefore,
             followConnects: followConnects,
             activityConnects: activityConnects,
             followBaseline: followBaseline,
@@ -5828,7 +5830,8 @@ final class ChatViewModelTests: XCTestCase {
         // connected but has produced no event yet.
         try await waitUntil { model.isStreaming && postedTurnID.value != nil }
         let sessionBefore = try XCTUnwrap(model.activeTurnSessionForTesting)
-        let generationBefore = model.syncCoordinator.generation
+        let followGenerationBefore = model.syncCoordinator.followGeneration
+        let activityGenerationBefore = model.syncCoordinator.activityGeneration
         let followBaseline = followConnects.value
         let activityBaseline = activityConnects.value
 
@@ -5837,7 +5840,8 @@ final class ChatViewModelTests: XCTestCase {
         try assertBackgroundSuspendedSend(
             model: model,
             sessionBefore: sessionBefore,
-            generationBefore: generationBefore,
+            followGenerationBefore: followGenerationBefore,
+            activityGenerationBefore: activityGenerationBefore,
             followConnects: followConnects,
             activityConnects: activityConnects,
             followBaseline: followBaseline,
@@ -5926,7 +5930,8 @@ final class ChatViewModelTests: XCTestCase {
         }
         let sessionBefore = try XCTUnwrap(model.activeTurnSessionForTesting)
         let cursorBefore = sessionBefore.lastAppliedSeq
-        let generationBefore = model.syncCoordinator.generation
+        let followGenerationBefore = model.syncCoordinator.followGeneration
+        let activityGenerationBefore = model.syncCoordinator.activityGeneration
         let followBaseline = followConnects.value
         let activityBaseline = activityConnects.value
 
@@ -5935,7 +5940,8 @@ final class ChatViewModelTests: XCTestCase {
         try assertBackgroundSuspendedSend(
             model: model,
             sessionBefore: sessionBefore,
-            generationBefore: generationBefore,
+            followGenerationBefore: followGenerationBefore,
+            activityGenerationBefore: activityGenerationBefore,
             followConnects: followConnects,
             activityConnects: activityConnects,
             followBaseline: followBaseline,
@@ -6284,6 +6290,189 @@ final class ChatViewModelTests: XCTestCase {
         advisoryFollow.finish()
     }
 
+    func testPushHintWhileForegroundedRefreshesConversationAndList() async throws {
+        // §4.6: a push arriving while foregrounded targets the referenced
+        // conversation (merge new messages) and refreshes the recent list.
+        let pushed = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                if pushed.value == 0 {
+                    return .json(#"{"conversations":[],"count":0}"#)
+                }
+                return .json(
+                    #"{"conversations":[{"conversation_id":"web_conv_pushrefresh","last_message":"Pushed reply","last_timestamp":"2026-06-08T12:05:00Z","message_count":2}],"count":1}"#
+                )
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_pushrefresh/stream" {
+                    return .hangingStream("", controller: HangingStream())
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    if Self.queryItems(from: request)["after"] == nil {
+                        return .json(
+                            """
+                            {
+                              "conversation_id":"web_conv_pushrefresh",
+                              "messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],
+                              "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false
+                            }
+                            """
+                        )
+                    }
+                    if pushed.value == 0 {
+                        return .json(
+                            #"{"conversation_id":"web_conv_pushrefresh","messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                        )
+                    }
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_pushrefresh",
+                          "messages":[{"internal_id":2,"role":"assistant","content":"Pushed reply","timestamp":"2026-06-08T12:05:00Z"}],
+                          "count":1,"total_messages":2,"has_more_before":false,"has_more_after":false
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_pushrefresh")
+        await model.selectConversation("web_conv_pushrefresh")
+        try await waitUntil { model.messages.map(\.text) == ["Earlier"] }
+
+        pushed.increment()
+        model.pushHintReceived(conversationID: "web_conv_pushrefresh")
+
+        try await waitUntil(timeout: 6) {
+            model.messages.map(\.text) == ["Earlier", "Pushed reply"]
+        }
+        try await waitUntil(timeout: 6) {
+            model.conversations.contains { $0.conversationID == "web_conv_pushrefresh" }
+        }
+    }
+
+    func testPushHintWhileBackgroundedDoesNothing() async throws {
+        // §4.6/§4.8: a push arriving while backgrounded is a no-op — no targeted
+        // refresh runs (silent-push/background refresh is out of scope).
+        let messageMerges = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path == "/api/v1/chat/conversations/web_conv_bgpush/stream" {
+                    return .hangingStream("", controller: HangingStream())
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    if Self.queryItems(from: request)["after"] != nil {
+                        messageMerges.increment()
+                    }
+                    return .json(
+                        #"{"conversation_id":"web_conv_bgpush","messages":[{"internal_id":1,"role":"user","content":"Earlier","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_bgpush")
+        await model.selectConversation("web_conv_bgpush")
+        try await waitUntil { model.messages.map(\.text) == ["Earlier"] }
+
+        model.scenePhaseChanged(old: .active, new: .background)
+        let mergesAfterBackground = messageMerges.value
+
+        model.pushHintReceived(conversationID: "web_conv_bgpush")
+        // Give any (erroneous) refresh a chance to fire before asserting it didn't.
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(
+            messageMerges.value,
+            mergesAfterBackground,
+            "A backgrounded push hint must not trigger a message merge."
+        )
+    }
+
+    func testReachabilityRecoveryRunsFullCoalescedResync() async throws {
+        // §4.4: an unsatisfied→satisfied recovery runs the SAME coalesced resync as
+        // foreground — a full list snapshot fetch — not just a bare loop restart.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let listFetchesAfterRecovery = AtomicCounter()
+        let recovered = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                if recovered.value > 0 {
+                    listFetchesAfterRecovery.increment()
+                    return .json(
+                        #"{"conversations":[{"conversation_id":"web_conv_recovered","last_message":"After recovery","last_timestamp":"2026-06-08T12:05:00Z","message_count":1}],"count":1}"#
+                    )
+                }
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path.hasSuffix("/stream") {
+                    return .hangingStream("", controller: HangingStream())
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    return .json(
+                        #"{"conversation_id":"web_conv_recovered","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_recovered",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01,
+            pathMonitor: monitor
+        )
+        await model.bootstrap()
+
+        // Drop then restore the path: the recovery must run the full coalesced
+        // resync, which refetches the authoritative list (surfacing the row that
+        // changed while offline), not merely restart the reconnect loops.
+        monitor.setSatisfied(false)
+        recovered.increment()
+        monitor.setSatisfied(true)
+
+        try await waitUntil(timeout: 6) {
+            model.conversations.contains { $0.conversationID == "web_conv_recovered" }
+        }
+        XCTAssertGreaterThanOrEqual(
+            listFetchesAfterRecovery.value,
+            1,
+            "Reachability recovery must fetch the authoritative list snapshot (full coalesced resync)."
+        )
+    }
+
     /// Shared assertions for the §4.3 background-suspend traces: the send's
     /// transport task is cancelled, the ActiveTurnSession (instance + cursor) is
     /// preserved, the generation bumped, the advisory follow/activity tasks were
@@ -6292,7 +6481,8 @@ final class ChatViewModelTests: XCTestCase {
     private func assertBackgroundSuspendedSend(
         model: ChatViewModel,
         sessionBefore: ActiveTurnSession,
-        generationBefore: Int,
+        followGenerationBefore: Int,
+        activityGenerationBefore: Int,
         followConnects: AtomicCounter,
         activityConnects: AtomicCounter,
         followBaseline: Int? = nil,
@@ -6303,10 +6493,15 @@ final class ChatViewModelTests: XCTestCase {
         let followFloor = followBaseline ?? followConnects.value
         let activityFloor = activityBaseline ?? activityConnects.value
 
-        XCTAssertEqual(
-            model.syncCoordinator.generation,
-            generationBefore + 1,
-            "A real background must bump the coordinator generation once."
+        XCTAssertGreaterThan(
+            model.syncCoordinator.followGeneration,
+            followGenerationBefore,
+            "A real background must bump the follow generation to fence the torn-down stream."
+        )
+        XCTAssertGreaterThan(
+            model.syncCoordinator.activityGeneration,
+            activityGenerationBefore,
+            "A real background must bump the activity generation to fence the torn-down stream."
         )
         XCTAssertEqual(model.syncPresentation, .suspended)
 

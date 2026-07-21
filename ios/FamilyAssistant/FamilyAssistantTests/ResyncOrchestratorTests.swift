@@ -453,7 +453,11 @@ private final class FakeResyncHost: ResyncHost {
         self.selectedConversationID = selectedConversationID
     }
 
-    var resyncGeneration: Int { generation }
+    // The fake keeps ONE `generation` that stands in for both per-channel
+    // generations: a coalesced foreground/recovery resync bumps both together, so
+    // mutating `generation` supersedes both channels, matching production.
+    var resyncFollowGeneration: Int { generation }
+    var resyncActivityGeneration: Int { generation }
     var resyncSelectedConversationID: String? { selectedConversationID }
 
     func awaitStreamTermination() async {

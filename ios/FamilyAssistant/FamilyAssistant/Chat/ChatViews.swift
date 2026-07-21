@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 struct ChatRootView: View {
     @Environment(SharedAttachmentInbox.self) private var sharedAttachmentInbox
+    @Environment(NotificationManager.self) private var notificationManager
     @State private var viewModel: ChatViewModel
     // Drives which column the compact (iPhone) split view shows. Bound so the
     // launch decision (restore a thread vs. land on the list) is honored
@@ -76,6 +77,16 @@ struct ChatRootView: View {
             // Opening a thread reveals the detail column; tapping Back to the
             // list clears the selection and returns to the sidebar.
             preferredColumn = selection == nil ? .sidebar : .detail
+        }
+        .onChange(of: notificationManager.pendingPushHint) { _, hint in
+            // A foreground push hint (§4.6): targeted refresh of the referenced
+            // conversation + recent list. Consumed once so a repeat push (a fresh
+            // id) re-fires. Backgrounded delivery is filtered in the coordinator.
+            guard let hint else {
+                return
+            }
+            viewModel.pushHintReceived(conversationID: hint.conversationID)
+            notificationManager.clearPendingPushHint()
         }
         .alert(
             "Chat Error",

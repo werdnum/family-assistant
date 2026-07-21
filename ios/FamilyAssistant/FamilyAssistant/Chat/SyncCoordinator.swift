@@ -71,6 +71,14 @@ protocol SyncStreamDelegate: AnyObject {
     /// refresh so the resync aborts cleanly (the auth layer latches
     /// `authRequired`; no error modal is raised).
     func gateAuthIfNeeded(generation: Int) async throws
+
+    /// Run the SAME coalesced foreground resync the orchestrator drives, requested
+    /// from inside the coordinator on an `NWPathMonitor` unsatisfied→satisfied
+    /// recovery (§4.4 "the same resync runs on NWPathMonitor recovery"). Coalesces
+    /// with any in-flight resync, so a burst of recovery hints does the snapshot
+    /// work once. Distinct from `runResync()` (the bare loop restart) — recovery
+    /// gets the full snapshot pass, not just a reconnect.
+    func runCoalescedResync()
 }
 
 @MainActor
@@ -126,6 +134,7 @@ final class SyncCoordinator {
         case activityDropped(generation: Int, cleanEOF: Bool)
         case syncStarted
         case syncFinished
+        case pushHintReceived(conversationID: String?)
     }
 
     enum SyncEffect: Equatable {
@@ -134,6 +143,7 @@ final class SyncCoordinator {
         case cancelStreams
         case suspendSend
         case runResync
+        case targetedRefresh(conversationID: String?)
     }
 
     private(set) var lifecycle: Lifecycle = .foreground
@@ -583,24 +593,6 @@ final class SyncCoordinator {
         }
         startActivityStream()
     }
-
-    /// Reset backoff and retry the reconnect loops immediately on a reachability
-    /// recovery, instead of leaving a loop asleep at capped backoff. Only channels
-    /// that are not currently connected are restarted (recreating their task resets
-    /// the local backoff to the initial delay and re-enters the connect attempt at
-    /// once); a healthy channel is left alone to avoid needless churn. Restarting a
-    /// loop is a retry, not a health assertion — health is only set by an actual
-    /// connect. The follow target is derived from the current conversation so a
-    /// stale cached ID doesn't restart the old stream.
-    private func wakeReconnectLoops() {
-        if followHealth != .connected, let conversationID = delegate?.currentConversationID() {
-            startFollowStream(conversationID: conversationID)
-        }
-        if activityHealth != .connected {
-            startActivityStream()
-        }
-    }
-
     @discardableResult
     func apply(_ event: SyncEvent) -> [SyncEffect] {
         switch event {
@@ -646,11 +638,17 @@ final class SyncCoordinator {
             // Satisfied is only a retry hint (never marks channels healthy), but a
             // loop sleeping at capped backoff would otherwise stay down for up to
             // one max-delay interval, re-showing the stuck indicator. On the
-            // unsatisfied→satisfied transition, reset backoff and wake the reconnect
-            // loops now so a live path is retried immediately. Health still comes
-            // only from actual connects.
+            // unsatisfied→satisfied transition (foregrounded), run the SAME coalesced
+            // resync foreground uses (§4.4): bump BOTH channel generations so late
+            // events from the down streams are fenced, then request the
+            // orchestrator's full snapshot pass. The resync re-establishes and
+            // reconnects both loops (subsuming the bare `wakeReconnectLoops` retry)
+            // AND refetches the authoritative list, so a list mutated while offline
+            // converges. Health still comes only from actual connects.
             if reachability == .satisfied, wasUnsatisfied, lifecycle == .foreground {
-                wakeReconnectLoops()
+                bumpFollowGeneration()
+                bumpActivityGeneration()
+                delegate?.runCoalescedResync()
             }
             return []
 
@@ -661,17 +659,25 @@ final class SyncCoordinator {
         case .authOK:
             authState = .ok
             // Re-auth just succeeded. While `authRequired` was latched the streams
-            // were suppressed/cancelled, so they must be restarted now. Gate on the
-            // `pendingReauthRestart` latch (set when `.authRequired` fired) rather
-            // than `authState`, because the intervening `.refreshing` signal has
-            // already moved `authState` off `.authRequired`. A routine near-expiry
-            // refresh (which never latched `authRequired`) leaves the flag false and
-            // does not churn healthy streams. Restart the non-connected loops now;
-            // health still comes only from a real connect. When backgrounded, leave
-            // the flag set so the foreground resync owns the restart.
+            // could not connect (their requests 401'd), so any loop is now asleep
+            // at capped backoff and would otherwise stay down for up to one
+            // max-delay interval, keeping the stuck indicator up after sign-in.
+            // Route like the reachability recovery (§4.4): bump both channel
+            // generations to fence the down streams' late events, then request the
+            // orchestrator's coalesced resync (re-establishes + reconnects both
+            // loops and refetches the list). Health still comes only from real
+            // connects. Gate on the `pendingReauthRestart` latch (set when
+            // `.authRequired` fired) rather than `authState`, because the
+            // intervening `.refreshing` signal has already moved `authState` off
+            // `.authRequired`. A routine near-expiry refresh (which never latched
+            // `authRequired`) leaves the flag false and does not churn healthy
+            // streams. When backgrounded, leave the flag set so the foreground
+            // resync owns the restart.
             if pendingReauthRestart, lifecycle == .foreground {
                 pendingReauthRestart = false
-                wakeReconnectLoops()
+                bumpFollowGeneration()
+                bumpActivityGeneration()
+                delegate?.runCoalescedResync()
             }
             return []
 
@@ -727,6 +733,17 @@ final class SyncCoordinator {
         case .syncFinished:
             phase = .idle
             return []
+
+        case let .pushHintReceived(conversationID):
+            // A push arriving while foregrounded is a low-latency hint to refresh
+            // the referenced conversation + list (§4.6). Backgrounded, it is a
+            // no-op: silent-push/background refresh is explicitly out of scope
+            // (§4.8) — the OS delivers the notification and the next foreground
+            // resync reconciles.
+            guard lifecycle == .foreground else {
+                return []
+            }
+            return [.targetedRefresh(conversationID: conversationID)]
         }
     }
 }

@@ -14,16 +14,21 @@ enum BufferedResyncEvent {
 /// against a fake host without standing up the full view model and its
 /// `URLProtocol` backend.
 ///
-/// The host is the source of truth for the two values every apply guards on —
-/// the coordinator `generation` and the selected conversation — so a resync
-/// started before a background bump or a conversation switch discards its
-/// snapshot instead of clobbering current state.
+/// The host is the source of truth for the values every apply guards on — the
+/// coordinator's per-channel `followGeneration`/`activityGeneration` and the
+/// selected conversation — so a resync started before a background bump or a
+/// conversation switch discards its snapshot instead of clobbering current state.
 @MainActor
 protocol ResyncHost: AnyObject {
-    /// The coordinator generation current at the moment this is read. A resync
-    /// captures it at the start and re-reads it before applying snapshots; a
-    /// mismatch means a newer lifecycle transition superseded this resync.
-    var resyncGeneration: Int { get }
+    /// The coordinator's follow/activity generations current when read. A resync
+    /// captures both at the start and re-reads them before applying snapshots; a
+    /// mismatch on EITHER means a newer lifecycle transition (background,
+    /// foreground, recovery — each bumps both) or a conversation switch (follow
+    /// only) superseded this resync. Drained follow events are fenced by the
+    /// follow generation and drained activity signals by the activity generation,
+    /// matching the steady-state per-channel fences.
+    var resyncFollowGeneration: Int { get }
+    var resyncActivityGeneration: Int { get }
 
     /// The conversation whose messages a resync snapshots. A switch mid-resync
     /// changes this, so the message snapshot is discarded on a mismatch.
@@ -204,9 +209,31 @@ final class ResyncOrchestrator {
         case overflowRestart
     }
 
+    /// The follow/activity generations captured at the start of a resync attempt,
+    /// used to detect a superseding transition on either channel.
+    private struct ResyncGenerations {
+        let follow: Int
+        let activity: Int
+    }
+
+    /// Whether `host` still owns both channel generations captured at the start of
+    /// the attempt. A mismatch on either means a newer lifecycle transition
+    /// (background/foreground/recovery bump both; a conversation switch bumps
+    /// follow) superseded this resync.
+    private func generationsStillCurrent(
+        _ generations: ResyncGenerations,
+        host: ResyncHost
+    ) -> Bool {
+        host.resyncFollowGeneration == generations.follow
+            && host.resyncActivityGeneration == generations.activity
+    }
+
     private func attemptResync(host: ResyncHost) async -> ResyncOutcome {
         resetBuffer()
-        let generation = host.resyncGeneration
+        let generations = ResyncGenerations(
+            follow: host.resyncFollowGeneration,
+            activity: host.resyncActivityGeneration
+        )
 
         // Step 2: await termination of the old consumer tasks (§4.3) before any new
         // stream is established below. Idempotent across overflow restarts: the
@@ -215,7 +242,7 @@ final class ResyncOrchestrator {
         await host.awaitStreamTermination()
 
         do {
-            try await host.gateAuthIfNeeded(generation: generation)
+            try await host.gateAuthIfNeeded(generation: generations.follow)
         } catch {
             // The refresh was rejected (credentials gone) or otherwise failed.
             // Abort cleanly: the auth layer has already latched `authRequired`
@@ -223,7 +250,7 @@ final class ResyncOrchestrator {
             return .aborted
         }
 
-        guard !Task.isCancelled, host.resyncGeneration == generation else {
+        guard !Task.isCancelled, generationsStillCurrent(generations, host: host) else {
             return .aborted
         }
 
@@ -236,7 +263,7 @@ final class ResyncOrchestrator {
         await startBuffering(
             host: host,
             selectedConversationID: selectedConversationID,
-            generation: generation
+            generations: generations
         )
 
         // Step 5: authoritative snapshots (full-replacement list + selected
@@ -246,7 +273,7 @@ final class ResyncOrchestrator {
         if bufferOverflowed {
             return abortForOverflow()
         }
-        guard !Task.isCancelled, host.resyncGeneration == generation else {
+        guard !Task.isCancelled, generationsStillCurrent(generations, host: host) else {
             stopBuffering()
             return .aborted
         }
@@ -259,7 +286,7 @@ final class ResyncOrchestrator {
         if bufferOverflowed {
             return abortForOverflow()
         }
-        guard !Task.isCancelled, host.resyncGeneration == generation else {
+        guard !Task.isCancelled, generationsStillCurrent(generations, host: host) else {
             stopBuffering()
             return .aborted
         }
@@ -274,10 +301,10 @@ final class ResyncOrchestrator {
         await drainBuffer(
             host: host,
             selectedConversationID: selectedConversationID,
-            generation: generation
+            generations: generations
         )
 
-        guard !Task.isCancelled, host.resyncGeneration == generation else {
+        guard !Task.isCancelled, generationsStillCurrent(generations, host: host) else {
             return .aborted
         }
 
@@ -308,12 +335,12 @@ final class ResyncOrchestrator {
     private func startBuffering(
         host: ResyncHost,
         selectedConversationID: String?,
-        generation: Int
+        generations: ResyncGenerations
     ) async {
         if let selectedConversationID,
            let stream = await host.establishFollowStream(
                conversationID: selectedConversationID,
-               generation: generation
+               generation: generations.follow
            ) {
             followBufferingTask = Task { [weak self] in
                 do {
@@ -331,7 +358,7 @@ final class ResyncOrchestrator {
             }
         }
 
-        if let stream = await host.establishActivityStream(generation: generation) {
+        if let stream = await host.establishActivityStream(generation: generations.activity) {
             activityBufferingTask = Task { [weak self] in
                 do {
                     for try await _ in stream {
@@ -358,7 +385,7 @@ final class ResyncOrchestrator {
     private func drainBuffer(
         host: ResyncHost,
         selectedConversationID: String?,
-        generation: Int
+        generations: ResyncGenerations
     ) async {
         while !buffer.isEmpty {
             let event = buffer.removeFirst()
@@ -368,11 +395,11 @@ final class ResyncOrchestrator {
                     await host.drainFollowEvent(
                         followEvent,
                         conversationID: selectedConversationID,
-                        generation: generation
+                        generation: generations.follow
                     )
                 }
             case .activitySignal:
-                await host.drainActivitySignal(generation: generation)
+                await host.drainActivitySignal(generation: generations.activity)
             }
         }
     }

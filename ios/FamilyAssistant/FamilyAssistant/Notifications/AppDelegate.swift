@@ -60,7 +60,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound, .badge]
+        let userInfo = notification.request.content.userInfo
+        await MainActor.run {
+            notificationManager?.handleForegroundPushPresentation(userInfo: userInfo)
+        }
+        return [.banner, .list, .sound, .badge]
     }
 
     func userNotificationCenter(

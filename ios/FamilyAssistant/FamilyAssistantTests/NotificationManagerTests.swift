@@ -316,6 +316,50 @@ final class NotificationManagerTests: XCTestCase {
         XCTAssertNil(manager.pendingConfirmationModal)
     }
 
+    func testForegroundPushPresentationPublishesHintWithConversationID() {
+        let manager = NotificationManager()
+
+        manager.handleForegroundPushPresentation(userInfo: ["conversation_id": "web_conv_push"])
+
+        XCTAssertEqual(manager.pendingPushHint?.conversationID, "web_conv_push")
+    }
+
+    func testForegroundPushPresentationWithoutConversationIDStillPublishesHint() {
+        let manager = NotificationManager()
+
+        manager.handleForegroundPushPresentation(userInfo: ["title": "Heads up"])
+
+        XCTAssertNotNil(manager.pendingPushHint, "A hint fires even without a conversation id (list-only refresh).")
+        XCTAssertNil(manager.pendingPushHint?.conversationID)
+    }
+
+    func testRepeatForegroundPushForSameConversationYieldsDistinctHintIDs() {
+        let manager = NotificationManager()
+
+        manager.handleForegroundPushPresentation(userInfo: ["conversation_id": "web_conv_push"])
+        let first = manager.pendingPushHint
+        manager.handleForegroundPushPresentation(userInfo: ["conversation_id": "web_conv_push"])
+        let second = manager.pendingPushHint
+
+        XCTAssertNotNil(first)
+        XCTAssertNotNil(second)
+        XCTAssertNotEqual(
+            first?.id,
+            second?.id,
+            "A repeat push for the same conversation must publish a distinct hint id so onChange re-fires."
+        )
+    }
+
+    func testClearPendingPushHintResetsState() {
+        let manager = NotificationManager()
+        manager.handleForegroundPushPresentation(userInfo: ["conversation_id": "web_conv_push"])
+        XCTAssertNotNil(manager.pendingPushHint)
+
+        manager.clearPendingPushHint()
+
+        XCTAssertNil(manager.pendingPushHint)
+    }
+
     private func makeAuthManager() -> AuthManager {
         let authManager = AuthManager()
         authManager.serverURL = "https://assistant.example.test"

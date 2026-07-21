@@ -2447,17 +2447,47 @@ final class ChatViewModel {
             isActive: new == .active
         )
         for effect in effects {
-            switch effect {
-            case .suspendSend:
-                suspendActiveSend()
-            case .cancelStreams:
-                syncCoordinator.cancelStreams()
-            case .runResync:
-                Task { await reconnectLiveUpdates() }
-            case .startFollowStream, .startActivityStream:
-                break
-            }
+            execute(effect)
         }
+    }
+
+    /// A push notification arrived. While foregrounded it is a low-latency hint to
+    /// refresh the referenced conversation + recent list (§4.6); backgrounded it is
+    /// a no-op (silent-push/background refresh is out of scope, §4.8). Plumbed from
+    /// `AppDelegate.userNotificationCenter(_:willPresent:)` via `NotificationManager`
+    /// and observed in `ContentView`.
+    func pushHintReceived(conversationID: String?) {
+        for effect in syncCoordinator.apply(.pushHintReceived(conversationID: conversationID)) {
+            execute(effect)
+        }
+    }
+
+    private func execute(_ effect: SyncCoordinator.SyncEffect) {
+        switch effect {
+        case .suspendSend:
+            suspendActiveSend()
+        case .cancelStreams:
+            syncCoordinator.cancelStreams()
+        case .runResync:
+            Task { await reconnectLiveUpdates() }
+        case let .targetedRefresh(conversationID):
+            Task { await targetedRefresh(conversationID: conversationID) }
+        case .startFollowStream, .startActivityStream:
+            break
+        }
+    }
+
+    /// Refresh a specific conversation named by a push hint plus the recent list
+    /// (§4.6). When the referenced conversation is the one currently selected, merge
+    /// its new messages and reattach to any running turn the server reports;
+    /// otherwise only the recent list is refreshed so the row's preview/order
+    /// converges. Advisory: failures feed the coordinator/breadcrumb path (via the
+    /// merge/list refresh helpers), never a modal.
+    private func targetedRefresh(conversationID: String?) async {
+        if let conversationID, conversationID == self.conversationID {
+            await mergeNewMessages(conversationID: conversationID)
+        }
+        await refreshRecentConversations()
     }
 
     /// Whether the chat thread's message list should be realized into the view
@@ -3410,8 +3440,8 @@ final class ChatViewModel {
 
 /// The coordinator owns the follow/activity `Task`s and their reconnect loops;
 /// this conformance keeps every per-event application here. Each callback carries
-/// the coordinator generation that owned the attempt, and events from a
-/// superseded generation are dropped (`syncCoordinator.isCurrent`).
+/// the per-channel generation that owned the attempt, and events from a superseded
+/// generation are dropped (`syncCoordinator.isCurrentFollow`/`isCurrentActivity`).
 extension ChatViewModel: SyncStreamDelegate {
     func currentConversationID() -> String? {
         opensGeneratedLaunchDraft ? nil : conversationID
@@ -3503,16 +3533,28 @@ extension ChatViewModel: SyncStreamDelegate {
         streamTask = nil
         isStreaming = false
     }
+
+    func runCoalescedResync() {
+        // Reachability recovery routes through the SAME coalesced resync foreground
+        // uses (§4.4). `request()` joins any in-flight resync, so a burst of
+        // recovery hints does the snapshot work once.
+        resyncOrchestrator.request()
+    }
 }
 
 // MARK: - ResyncHost
 
-/// The foreground resync's app-side steps. Every apply guards on
-/// `resyncGeneration` and `resyncSelectedConversationID` so a snapshot captured
-/// before a background bump or a conversation switch is discarded.
+/// The foreground resync's app-side steps. Every apply guards on the coordinator's
+/// per-channel `resyncFollowGeneration`/`resyncActivityGeneration` and
+/// `resyncSelectedConversationID` so a snapshot captured before a background bump
+/// or a conversation switch is discarded.
 extension ChatViewModel: ResyncHost {
-    var resyncGeneration: Int {
-        syncCoordinator.generation
+    var resyncFollowGeneration: Int {
+        syncCoordinator.followGeneration
+    }
+
+    var resyncActivityGeneration: Int {
+        syncCoordinator.activityGeneration
     }
 
     var resyncSelectedConversationID: String? {
