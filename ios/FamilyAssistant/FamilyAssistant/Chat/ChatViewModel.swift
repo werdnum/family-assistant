@@ -3358,6 +3358,10 @@ extension ChatViewModel: SyncStreamDelegate {
         await refreshRecentConversations()
     }
 
+    func getCurrentAuthEpochForStreamConnect() -> Int {
+        authManager.authEpoch
+    }
+
     func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult {
         // A stream connect 401/403'd: the token the client believed fresh was
         // rejected. Force one coalesced refresh, epoch-fenced so a stale refresh
@@ -3377,6 +3381,15 @@ extension ChatViewModel: SyncStreamDelegate {
             return .transientRetry
         }
         return .reconnected
+    }
+
+    func markStreamConnectAuthRejected(capturedEpoch: Int) async {
+        // A stream connect was rejected with 401/403 AFTER the forced refresh also
+        // succeeded but the retry also 401/403'd. This is a terminal endpoint-specific
+        // auth failure, not a token rotation issue. Latch authRequired and clear the
+        // rejected token, mirroring the `.terminalAuth` path but for the double-rejection
+        // scenario. The epoch fence prevents a stale operation from undoing a newer login.
+        authManager.clearAuthStateForReauthIfCurrent(capturedEpoch: capturedEpoch)
     }
 }
 

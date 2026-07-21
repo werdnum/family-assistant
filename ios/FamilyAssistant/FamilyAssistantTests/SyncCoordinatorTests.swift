@@ -583,6 +583,51 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(delegate.forceAuthRefreshCount, 1)
     }
 
+    func testFollowConnect401DoubleRejectionLatchesAuthRequired() async throws {
+        // When a follow connect returns 401 → forceAuthRefreshForStreamConnect
+        // returns .reconnected (fresh token obtained) → the immediate retry connect
+        // is rejected 401 again (endpoint-specific failure), the loop must:
+        // 1. Stop (not spin backoff replaying rejected credentials)
+        // 2. Latch authRequired via markStreamConnectAuthRejected
+        // 3. Present as .authRequired (not generic degraded)
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(
+            pathMonitor: monitor,
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        // First open returns 401; refresh succeeds (.reconnected); second open also
+        // returns 401 (endpoint-specific auth failure).
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
+        delegate.followOpenErrorLimit = 2
+        delegate.forceAuthRefreshResult = .reconnected
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.markStreamConnectAuthRejectedCount >= 1 }
+        let openCountAfterStop = delegate.followOpenCount
+
+        // The loop stopped: no further connect attempts, no further refreshes.
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(delegate.followOpenCount, openCountAfterStop)
+        XCTAssertEqual(delegate.forceAuthRefreshCount, 1, "Refresh should be attempted once")
+        XCTAssertEqual(
+            delegate.markStreamConnectAuthRejectedCount,
+            1,
+            "Auth rejection must be marked on double rejection"
+        )
+        XCTAssertEqual(
+            delegate.lastMarkStreamConnectAuthRejectedEpoch,
+            1,
+            "Epoch passed to markStreamConnectAuthRejected should match getCurrentAuthEpochForStreamConnect"
+        )
+        // Presentation must derive .authRequired (not .degraded).
+        XCTAssertEqual(coordinator.presentation, .degraded, "Before apply(.authRequired)")
+        coordinator.apply(.authRequired)
+        XCTAssertEqual(coordinator.presentation, .authRequired)
+    }
+
     func testActivityConnect401WithRejectedRefreshStopsLoop() async throws {
         let monitor = StubPathMonitor(isSatisfied: true)
         let coordinator = SyncCoordinator(
@@ -602,6 +647,37 @@ final class SyncCoordinatorTests: XCTestCase {
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(delegate.activityOpenCount, openCountAfterStop)
         XCTAssertEqual(delegate.forceAuthRefreshCount, 1)
+        XCTAssertEqual(coordinator.activityHealth, .down)
+    }
+
+    func testActivityConnect401DoubleRejectionLatchesAuthRequired() async throws {
+        // Mirror of the follow-loop test: when activity connect returns 401 →
+        // forceAuthRefreshForStreamConnect returns .reconnected → retry also 401's,
+        // the loop must stop and latch authRequired via markStreamConnectAuthRejected.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(
+            pathMonitor: monitor,
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activityOpenError = ChatAPIError.server(statusCode: 403, detail: nil)
+        delegate.activityOpenErrorLimit = 2
+        delegate.forceAuthRefreshResult = .reconnected
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        try await waitUntil { delegate.markStreamConnectAuthRejectedCount >= 1 }
+        let openCountAfterStop = delegate.activityOpenCount
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(delegate.activityOpenCount, openCountAfterStop)
+        XCTAssertEqual(delegate.forceAuthRefreshCount, 1, "Refresh should be attempted once")
+        XCTAssertEqual(
+            delegate.markStreamConnectAuthRejectedCount,
+            1,
+            "Auth rejection must be marked on double rejection"
+        )
         XCTAssertEqual(coordinator.activityHealth, .down)
     }
 
@@ -637,6 +713,9 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     /// fall through to the hang/finish path. Lets a test exercise "401 then a
     /// successful reconnect" without an infinite open→401→refresh spin.
     var followOpenErrorLimit = 0
+    /// When > 0, `activityOpenError` is thrown only for the first N opens; later opens
+    /// fall through to the hang/finish path.
+    var activityOpenErrorLimit = 0
     /// When set, the opened stream never finishes on its own, so the loop stays
     /// connected without emitting a competing drop event — letting a test assert
     /// stale-generation rejection deterministically instead of racing the loop.
@@ -689,11 +768,11 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         generation: Int
     ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
         activityOpenCount += 1
+        if let activityOpenError, activityOpenErrorLimit == 0 || activityOpenCount <= activityOpenErrorLimit {
+            throw activityOpenError
+        }
         if hangActivityOpen {
             return AsyncThrowingStream { _ in }
-        }
-        if let activityOpenError {
-            throw activityOpenError
         }
         throw StubError()
     }
@@ -710,8 +789,22 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     private(set) var forceAuthRefreshCount = 0
     var forceAuthRefreshResult: StreamConnectAuthResult = .terminalAuth
 
+    /// Records how often the double-rejection scenario latched authRequired.
+    private(set) var markStreamConnectAuthRejectedCount = 0
+    /// The captured epoch passed to the most recent markStreamConnectAuthRejected call.
+    private(set) var lastMarkStreamConnectAuthRejectedEpoch = 0
+
+    func getCurrentAuthEpochForStreamConnect() -> Int {
+        1
+    }
+
     func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult {
         forceAuthRefreshCount += 1
         return forceAuthRefreshResult
+    }
+
+    func markStreamConnectAuthRejected(capturedEpoch: Int) async {
+        markStreamConnectAuthRejectedCount += 1
+        lastMarkStreamConnectAuthRejectedEpoch = capturedEpoch
     }
 }

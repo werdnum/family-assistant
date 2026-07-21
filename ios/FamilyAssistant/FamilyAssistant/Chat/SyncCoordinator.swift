@@ -78,6 +78,20 @@ protocol SyncStreamDelegate: AnyObject {
     /// the refresh failed transiently (network/5xx) and the loop should retry with
     /// backoff but keep the current session intact (no authRequired latch).
     func forceAuthRefreshForStreamConnect() async -> StreamConnectAuthResult
+
+    /// A stream connect was rejected with 401/403 AFTER a forced refresh also failed
+    /// with 401/403 — a terminal endpoint-specific auth failure, not a token rotation
+    /// issue. The loop must stop and the delegate must latch authRequired + clear the
+    /// rejected token, mirroring the `.terminalAuth` path. The captured epoch fences
+    /// the operation so a stale clear (from a superseded refresh that completed after
+    /// logout/new-login) doesn't overwrite a newer session.
+    func markStreamConnectAuthRejected(capturedEpoch: Int) async
+
+    /// Return the current auth epoch. Used by stream reconnect loops to fence the
+    /// double-rejection scenario: if a 401/403 connect's forced refresh succeeds but
+    /// the retry also 401/403's, we need the epoch from before the refresh to properly
+    /// clear auth state via `markStreamConnectAuthRejected`.
+    func getCurrentAuthEpochForStreamConnect() -> Int
 }
 
 @MainActor
@@ -278,6 +292,7 @@ final class SyncCoordinator {
         followTask = Task { [weak self] in
             var delay = initialDelay
             var authRefreshAlreadyAttempted = false
+            var authRefreshEpoch = 0
             while !Task.isCancelled {
                 var deliberateStop = false
                 var connected = false
@@ -326,8 +341,10 @@ final class SyncCoordinator {
                             // failure (not a token rotation issue). Treat as terminal.
                             deliberateStop = true
                             streamError = error
+                            await self?.delegate?.markStreamConnectAuthRejected(capturedEpoch: authRefreshEpoch)
                         } else {
                             authRefreshAlreadyAttempted = true
+                            authRefreshEpoch = self?.delegate?.getCurrentAuthEpochForStreamConnect() ?? 0
                             let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
                             if Task.isCancelled {
                                 break
@@ -397,6 +414,7 @@ final class SyncCoordinator {
         activityTask = Task { [weak self] in
             var delay = initialDelay
             var authRefreshAlreadyAttempted = false
+            var authRefreshEpoch = 0
             while !Task.isCancelled {
                 do {
                     guard let stream = try await self?.delegate?.openActivityStream(
@@ -427,9 +445,11 @@ final class SyncCoordinator {
                             // A second 401/403 after refresh means endpoint-specific auth
                             // failure. Apply the drop and backoff instead of looping.
                             self?.apply(.activityDropped(generation: generation, cleanEOF: false))
+                            await self?.delegate?.markStreamConnectAuthRejected(capturedEpoch: authRefreshEpoch)
                             shouldBreak = false
                         } else {
                             authRefreshAlreadyAttempted = true
+                            authRefreshEpoch = self?.delegate?.getCurrentAuthEpochForStreamConnect() ?? 0
                             let result = await self?.delegate?.forceAuthRefreshForStreamConnect() ?? .terminalAuth
                             if Task.isCancelled {
                                 break
