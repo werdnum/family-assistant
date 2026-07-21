@@ -26,7 +26,7 @@ async def llm_call_async(
     Args:
         prompt: The user prompt to send.
         system: Optional system message.
-        model: Model identifier (default: gemini-3.5-flash).
+        model: Model identifier (default: gemini-3.6-flash).
 
     Returns:
         The text content of the LLM response.
@@ -54,7 +54,7 @@ async def llm_call_json_async(
         prompt: The user prompt to send.
         schema: Optional JSON schema to include in the system prompt.
         system: Optional additional system message.
-        model: Model identifier (default: gemini-3.5-flash).
+        model: Model identifier (default: gemini-3.6-flash).
 
     Returns:
         Parsed JSON object (dict).

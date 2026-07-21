@@ -126,10 +126,10 @@ def test_resolve_live_llm_fallback_model_returns_configured_fallback() -> None:
 def test_resolve_live_llm_fallback_model_strips_google_prefix() -> None:
     class _RetryingGoogleFallback:
         fallback_client = object()
-        fallback_model = "models/gemini-3.5-flash"
+        fallback_model = "models/gemini-3.6-flash"
 
     assert (
-        resolve_live_llm_fallback_model(_RetryingGoogleFallback()) == "gemini-3.5-flash"
+        resolve_live_llm_fallback_model(_RetryingGoogleFallback()) == "gemini-3.6-flash"
     )
 
 

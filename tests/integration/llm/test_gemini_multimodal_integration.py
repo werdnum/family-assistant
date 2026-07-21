@@ -1,12 +1,9 @@
 """Integration tests for tool image attachments with Gemini 3 models.
 
 Regression coverage for a production bug: a tool result that carried an image
-attachment was serialized as a multimodal ``FunctionResponse`` inside a
-``role="function"`` Content. Gemini rejects a function-role Content that holds
-inline media with a generic ``400 INVALID_ARGUMENT``, so the browser/computer-use
-screenshot loop failed on every iteration (then silently fell back). The
-multimodal function response must instead be delivered in a ``role="user"``
-Content (see ``_convert_messages_to_genai_format``).
+attachment was serialized as a multimodal ``FunctionResponse`` inside a legacy
+``role="function"`` Content. Gemini rejects that role, so function responses are
+delivered in a ``role="user"`` Content (see ``_convert_messages_to_genai_format``).
 """
 
 import base64
@@ -38,7 +35,7 @@ _RED_PNG = base64.b64decode(
 async def google_client_gemini3_flash(
     request: pytest.FixtureRequest, llm_record_mode: str
 ) -> "AsyncGenerator[GoogleGenAIClient]":
-    """A gemini-3.5-flash client wired for SDK record/replay."""
+    """A gemini-3.6-flash client wired for SDK record/replay."""
     api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
     test_name = request.node.name
     module_name = request.node.module.__name__.replace("tests.", "")
@@ -49,7 +46,7 @@ async def google_client_gemini3_flash(
     }
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-3.5-flash",
+        model="gemini-3.6-flash",
         debug_config=debug_config,
     )
     try:
@@ -64,14 +61,13 @@ async def google_client_gemini3_flash(
 async def test_tool_image_attachment_delivered_to_gemini3(
     google_client_gemini3_flash: GoogleGenAIClient,
 ) -> None:
-    """A tool image attachment must reach gemini-3.5-flash without a 400.
+    """A tool image attachment must reach gemini-3.6-flash without a 400.
 
     Sends a conversation where a tool returns a red image as an attachment. The
     colour is not stated in any text, so a correct "red" answer proves the image
     was delivered. On the buggy code this raised ``400 INVALID_ARGUMENT`` because
     the multimodal function response was emitted in a ``role="function"`` Content;
-    after the fix it is emitted in a ``role="user"`` Content and the model can
-    see it.
+    after the fix it is emitted in a ``role="user"`` Content and the model can see it.
     """
     if os.getenv("CI") and not os.getenv("GEMINI_API_KEY"):
         pytest.skip("Skipping Google test in CI without API key")

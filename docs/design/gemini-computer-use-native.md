@@ -2,10 +2,8 @@
 
 ## Motivation
 
-The `browser_visual_profile` drives a browser with coordinate-based actions against screenshots.
-Until now it ran plain `gemini-3.5-flash` with hand-written function declarations that *mimic* the
-legacy Gemini 2.5 computer-use action space (`click_at`, `type_text_at`, …). The Gemini API now
-supports native computer use on `gemini-3.5-flash`, which brings:
+The `browser_visual_profile` drives a browser with coordinate-based actions against screenshots. It
+runs `gemini-3.6-flash` with the Gemini API's native computer-use capability, which brings:
 
 - A model actually trained for the action loop (better grounding/reliability).
 - Built-in **prompt-injection detection** over screenshot content.
@@ -21,7 +19,7 @@ machinery the API expects.
   path (the Interactions API is the other option; see decisions).
 - `types.ComputerUse` fields: `environment`, `excluded_predefined_functions`,
   `enable_prompt_injection_detection`, `disabled_safety_policies`.
-- **Gemini 3.5 Flash action space** (all args include an `intent: str` the model generates;
+- **Gemini 3.6 Flash action space** (all args include an `intent: str` the model generates;
   coordinates are normalized 0–999, denormalized by `/1000 * screen_dim`): `click`, `double_click`,
   `triple_click`, `middle_click`, `right_click`, `mouse_down(x, y)`, `mouse_up(x, y)`, `move`,
   `type(text, press_enter=False)`, `drag_and_drop(start_x, start_y, end_x, end_y)`,
@@ -47,7 +45,7 @@ machinery the API expects.
    Interactions API keeps history server-side via `previous_interaction_id`, which conflicts with
    all of that. Native computer use is fully supported on `generate_content`.
 
-2. **Explicit opt-in flag, not model-name sniffing.** Plain `gemini-3.5-flash` is also the default
+2. **Explicit opt-in flag, not model-name sniffing.** Plain `gemini-3.6-flash` is also the default
    assistant model, so the computer-use tool must not be attached based on model name. A new
    `enable_computer_use: true` key on a profile's `processing_config` is plumbed through to
    `GoogleGenAIClient` and is the only thing that attaches the tool (the old

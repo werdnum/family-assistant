@@ -99,7 +99,7 @@ async def llm_integration_processing_service(
         api_key=os.getenv("GEMINI_API_KEY")
         or os.getenv("GOOGLE_API_KEY")
         or "test-key",
-        model="gemini-3.5-flash",  # V3 model with thought signatures, cheaper than pro
+        model="gemini-3.6-flash",  # V3 model with thought signatures, cheaper than pro
         debug_config=gemini_http_api_debug_config,
     )
 
@@ -156,7 +156,10 @@ async def llm_integration_processing_service(
         app_config=AppConfig(),
     )
 
-    yield processing_service
+    try:
+        yield processing_service
+    finally:
+        await llm_client.close()
 
 
 @pytest_asyncio.fixture

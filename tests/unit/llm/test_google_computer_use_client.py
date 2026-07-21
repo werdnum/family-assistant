@@ -19,7 +19,7 @@ class TestComputerUseClientConfiguration:
         """Test client initialization with enable_computer_use=True."""
         client = GoogleGenAIClient(
             api_key="test_key",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             enable_computer_use=True,
         )
 
@@ -34,7 +34,7 @@ class TestComputerUseClientConfiguration:
         excluded = ["double_click", "triple_click"]
         client = GoogleGenAIClient(
             api_key="test_key",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             enable_computer_use=True,
             computer_use_excluded_functions=excluded,
         )
@@ -49,7 +49,7 @@ class TestComputerUseClientConfiguration:
         """Test client without computer use enabled."""
         client = GoogleGenAIClient(
             api_key="test_key",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             enable_computer_use=False,
         )
 
@@ -63,7 +63,7 @@ class TestComputerUseClientConfiguration:
         """Test that ComputerUse tool is injected when enabled."""
         client = GoogleGenAIClient(
             api_key="test_key",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             enable_computer_use=True,
         )
 
@@ -116,7 +116,7 @@ class TestComputerUseClientConfiguration:
         excluded = ["double_click", "triple_click"]
         client = GoogleGenAIClient(
             api_key="test_key",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             enable_computer_use=True,
             computer_use_excluded_functions=excluded,
         )
@@ -157,7 +157,7 @@ class TestComputerUseClientConfiguration:
         """Test that computer use function names are filtered from manual tools."""
         client = GoogleGenAIClient(
             api_key="test_key",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             enable_computer_use=True,
         )
 
@@ -239,7 +239,7 @@ class TestComputerUseClientConfiguration:
         """Test that ComputerUse tool is not injected when disabled."""
         client = GoogleGenAIClient(
             api_key="test_key",
-            model="gemini-3.5-flash",
+            model="gemini-3.6-flash",
             enable_computer_use=False,
         )
 
