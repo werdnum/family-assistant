@@ -278,9 +278,10 @@ final class SyncCoordinator {
         let maxDelay = followReconnectMaxDelaySeconds
         followTask = Task { [weak self] in
             var delay = initialDelay
+            var authRefreshAlreadyAttempted = false
             while !Task.isCancelled {
                 guard let self else { return }
-                if authManager.authRequired {
+                if self.authManager.authRequired {
                     break
                 }
                 var deliberateStop = false
@@ -295,6 +296,7 @@ final class SyncCoordinator {
                     }
                     connected = true
                     self.apply(.followConnected(generation: generation))
+                    authRefreshAlreadyAttempted = false
                     await self.delegate?.followStreamDidConnect(
                         conversationID: conversationID,
                         generation: generation
@@ -322,14 +324,20 @@ final class SyncCoordinator {
                     }
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        do {
-                            try await authManager.refreshIfNeeded(force: true)
-                            continue
-                        } catch AuthError.authRejected, AuthError.noCredentials {
-                            authManager.markAuthRequired()
+                        if !authRefreshAlreadyAttempted {
+                            authRefreshAlreadyAttempted = true
+                            do {
+                                try await self.authManager.refreshIfNeeded(force: true)
+                                continue
+                            } catch AuthError.authRejected, AuthError.noCredentials {
+                                self.authManager.markAuthRequired()
+                                deliberateStop = true
+                            } catch {
+                                streamError = error
+                            }
+                        } else {
+                            self.authManager.markAuthRequired()
                             deliberateStop = true
-                        } catch {
-                            streamError = error
                         }
                         if deliberateStop {
                             break
@@ -382,9 +390,10 @@ final class SyncCoordinator {
         let maxDelay = followReconnectMaxDelaySeconds
         activityTask = Task { [weak self] in
             var delay = initialDelay
+            var authRefreshAlreadyAttempted = false
             while !Task.isCancelled {
                 guard let self else { return }
-                if authManager.authRequired {
+                if self.authManager.authRequired {
                     break
                 }
                 do {
@@ -395,30 +404,35 @@ final class SyncCoordinator {
                     }
                     delay = initialDelay
                     self.apply(.activityConnected(generation: generation))
+                    authRefreshAlreadyAttempted = false
                     await self.delegate?.activityStreamDidSignal(generation: generation)
                     for try await _ in stream {
                         if Task.isCancelled {
                             break
-                        }
-                        guard self != nil else {
-                            return
                         }
                         await self.delegate?.activityStreamDidSignal(generation: generation)
                     }
                 } catch {
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
-                        do {
-                            try await authManager.refreshIfNeeded(force: true)
-                            continue
-                        } catch AuthError.authRejected, AuthError.noCredentials {
-                            authManager.markAuthRequired()
+                        if !authRefreshAlreadyAttempted {
+                            authRefreshAlreadyAttempted = true
+                            do {
+                                try await self.authManager.refreshIfNeeded(force: true)
+                                continue
+                            } catch AuthError.authRejected, AuthError.noCredentials {
+                                self.authManager.markAuthRequired()
+                                self.apply(.activityDropped(generation: generation, cleanEOF: false))
+                                break
+                            } catch {
+                                self.apply(.activityDropped(generation: generation, cleanEOF: false))
+                            }
+                        } else {
+                            self.authManager.markAuthRequired()
                             self.apply(.activityDropped(generation: generation, cleanEOF: false))
                             break
-                        } catch {
-                            self.apply(.activityDropped(generation: generation, cleanEOF: false))
                         }
-                        if authManager.authRequired {
+                        if self.authManager.authRequired {
                             break
                         }
                     }
