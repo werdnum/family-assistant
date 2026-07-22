@@ -521,6 +521,13 @@ final class AuthManager {
         }
         inFlightRefresh = refresh
         try await refresh.value
+        // If the session advanced while our refresh was in flight, `performRefresh`
+        // dropped the (now stale) rotation and returned normally. Do not report
+        // success — otherwise a forced caller would retry its operation under the
+        // newly authenticated session. Mirrors the in-flight-refresh branch above.
+        if authEpoch != currentEpoch {
+            throw AuthError.noCredentials
+        }
     }
 
     /// The network refresh coalesced by ``refreshIfNeeded(ownerEpoch:)``. Emits the
