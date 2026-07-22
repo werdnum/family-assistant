@@ -5882,8 +5882,10 @@ final class ChatViewModelTests: XCTestCase {
         let followBaseline = followConnects.value
         let activityBaseline = activityConnects.value
 
-        model.scenePhaseChanged(old: .active, new: .background)
+        // Capture the transport task before the suspend nils `streamTask`, so the
+        // aftermath await below actually waits for the cancellation cleanup (F1).
         let sendTask = model.sendTaskForTesting
+        model.scenePhaseChanged(old: .active, new: .background)
 
         try assertBackgroundSuspendedSend(
             model: model,
@@ -5993,8 +5995,10 @@ final class ChatViewModelTests: XCTestCase {
         let followBaseline = followConnects.value
         let activityBaseline = activityConnects.value
 
-        model.scenePhaseChanged(old: .active, new: .background)
+        // Capture the transport task before the suspend nils `streamTask`, so the
+        // aftermath await below actually waits for the cancellation cleanup (F1).
         let sendTask = model.sendTaskForTesting
+        model.scenePhaseChanged(old: .active, new: .background)
 
         try assertBackgroundSuspendedSend(
             model: model,

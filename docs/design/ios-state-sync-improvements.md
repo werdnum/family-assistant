@@ -618,3 +618,32 @@ second P1 was the trigger to unwind machinery from the second/third passes:
   targeted refresh is skipped. It requires two pushes within one render cycle *and* the follow
   stream being down (else the thread updates live regardless), and self-corrects on the next
   event/foreground — a queue is disproportionate to that multi-condition, self-healing window.
+
+A sixth local codex pass raised four findings, all P2 (no P1s — convergence held). Two cheap guards
+for genuinely wrong-state outcomes were fixed, one test-correctness gap closed, one accepted:
+
+- **[P2] Wrong-thread merge after a queued-control flush — FIXED.** `attachDiscoveredActiveTurns`
+  (inside `mergeNewMessages`) can itself await — a suspended turn's queued Stop/steer flush issues
+  HTTP — so a thread switch during that await could merge the old thread's delta into the newly
+  selected one, even though the pre-`attachDiscoveredActiveTurns` selection check had passed. Added
+  a selection re-check after it, before the delta merge.
+- **[P2] Stale reattachment marker on re-suspend — FIXED.** `suspendActiveSend` left
+  `reattachedRunningTurnID` populated when an already-reattached turn backgrounded again, so a
+  normal send started before foreground reconciliation inherited the stale marker (making
+  `isSendActivelyStreaming` false and letting passive resync/follow handling drop the new send's
+  placeholder or duplicate output). It now clears the marker on suspend; foreground reconcile
+  re-establishes it if the turn is still running.
+- **[P2] Two remaining background-send tests' cancellation await was a no-op — FIXED.** The
+  third-pass reordering missed `testBackgroundAfterAcceptBeforeFirstStreamEventSuspendsSend` and
+  `testBackgroundMidStreamSuspendsSendAndPreservesCursor` (their capture block lacked the comment
+  the bulk edit matched on). Moved the `sendTaskForTesting` capture before `scenePhaseChanged` in
+  both; both still pass with the aftermath now genuinely awaited (no masked defect, unlike the
+  POST-in-flight test).
+- **[P2] Queued foreground resync can reopen streams in the background — ACCEPTED (documented).** A
+  foreground effect dispatched as an unstructured `Task` could start after an immediate
+  re-background (bumped generations + cancelled streams), then capture the new generations, pass
+  every fence, and reopen the follow/activity streams while backgrounded. The trigger is a
+  foreground→background toggle within the microseconds before the queued task starts; the
+  consequence is briefly-open streams (wasteful, not corrupt), self-corrected by the next real
+  background teardown — degraded, not broken, so accepted per behaviour-altitude over adding a
+  lifecycle re-check to the effect dispatch.

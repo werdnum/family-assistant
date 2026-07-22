@@ -1115,6 +1115,13 @@ final class ChatViewModel {
             // progressive placeholder before any token arrives. Same narrow guards
             // as the full-load path (selected, not locally owned, not ended).
             await attachDiscoveredActiveTurns(activeTurns)
+            // `attachDiscoveredActiveTurns` can itself await (a suspended turn's
+            // queued Stop/steer flush issues HTTP), so re-check the selection before
+            // applying this thread's delta: a switch during that await would
+            // otherwise merge the old thread's messages into the newly selected one.
+            guard conversationID == id else {
+                return
+            }
             guard !delta.isEmpty else {
                 errorMessage = nil
                 return
@@ -2402,6 +2409,13 @@ final class ChatViewModel {
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
+        // A reattached turn re-suspending is no longer actively reattached-rendering:
+        // clear the marker so a normal send started before foreground reconciliation
+        // doesn't inherit a stale `reattachedRunningTurnID` (which would make
+        // `isSendActivelyStreaming` false and let passive resync/follow handling drop
+        // the new send's placeholder or duplicate its output). Foreground reconcile
+        // re-establishes it if the turn is still running.
+        reattachedRunningTurnID = nil
     }
 
     /// Whether this send's transport task was cancelled by `suspendActiveSend()`
