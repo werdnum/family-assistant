@@ -614,6 +614,10 @@ struct ChatAPIClient {
     /// coordinator's `.authRequired` presentation). The view model suppresses the
     /// generic error modal for that error, so a persistent 401 never modals.
     private func authorizedGETWithAuthRetry(url: URL) async throws -> (Data, URLResponse) {
+        // Capture the epoch before the first request so a logout/re-login that
+        // completes while the refresh or retried GET is in flight cannot make a
+        // stale rejection clear the newly issued credentials.
+        let capturedEpoch = authManager.authEpoch
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
         let (data, response) = try await urlSession.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 401 else {
@@ -623,14 +627,14 @@ struct ChatAPIClient {
         do {
             try await authManager.refreshIfNeeded(force: true)
         } catch AuthError.authRejected, AuthError.noCredentials {
-            authManager.markAuthRequired()
+            authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
             throw AuthError.noCredentials
         }
 
         let retryRequest = try await authManager.authorizedRequest(url: url, method: "GET")
         let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
         if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
-            authManager.markAuthRequired()
+            authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
             throw AuthError.noCredentials
         }
         return (retryData, retryResponse)
