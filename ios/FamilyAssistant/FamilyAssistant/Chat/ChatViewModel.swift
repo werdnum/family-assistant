@@ -3899,7 +3899,7 @@ extension ChatViewModel: ResyncHost {
         // possibly-stale `followConversationID` (which only advances when
         // `startLiveEvents` runs, lagging a mid-resync selection switch). Reopening
         // the old conversation's follow stream here would strand the new thread.
-        syncCoordinator.runResync(conversationID: conversationID)
+        syncCoordinator.runResync()
     }
 
     func resyncPhaseDidStart() {
