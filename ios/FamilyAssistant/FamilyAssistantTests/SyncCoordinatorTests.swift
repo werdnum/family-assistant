@@ -383,7 +383,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // A recovery hint that lands while backgrounded is a no-op: the resync runs
         // on the next real foreground, not over a suspended app.
         let monitor = StubPathMonitor(isSatisfied: true)
-        let coordinator = SyncCoordinator(pathMonitor: monitor)
+        let coordinator = SyncCoordinator(authManager: AuthManager(), pathMonitor: monitor)
         let delegate = RecordingSyncStreamDelegate()
         coordinator.delegate = delegate
         coordinator.apply(.backgrounded)
@@ -429,6 +429,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // hitting the bounded timeout.
         let monitor = StubPathMonitor(isSatisfied: true)
         let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
             pathMonitor: monitor,
             streamTerminationTimeoutSeconds: 5
         )
@@ -453,13 +454,14 @@ final class SyncCoordinatorTests: XCTestCase {
         // must not wedge the resync: the await is bounded by the configured timeout.
         let monitor = StubPathMonitor(isSatisfied: true)
         let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
             pathMonitor: monitor,
             streamTerminationTimeoutSeconds: 0.2
         )
         let delegate = WedgingSyncStreamDelegate()
         coordinator.delegate = delegate
         coordinator.startFollowStream(conversationID: "conv-1")
-        try await waitUntil(timeout: 3) { delegate.followOpenCount >= 1 }
+        try await waitUntil { delegate.followOpenCount >= 1 }
 
         let started = Date()
         await coordinator.awaitStreamTermination()
@@ -469,7 +471,7 @@ final class SyncCoordinatorTests: XCTestCase {
     }
 
     func testPushHintWhileForegroundedEmitsTargetedRefresh() {
-        let (coordinator, _) = makeCoordinator()
+        let (coordinator, _, _) = makeCoordinator()
 
         let effects = coordinator.apply(.pushHintReceived(conversationID: "web_conv_push"))
 
@@ -477,7 +479,7 @@ final class SyncCoordinatorTests: XCTestCase {
     }
 
     func testPushHintWithoutConversationIDEmitsListOnlyTargetedRefresh() {
-        let (coordinator, _) = makeCoordinator()
+        let (coordinator, _, _) = makeCoordinator()
 
         let effects = coordinator.apply(.pushHintReceived(conversationID: nil))
 
@@ -485,7 +487,7 @@ final class SyncCoordinatorTests: XCTestCase {
     }
 
     func testPushHintWhileBackgroundedIsANoOp() {
-        let (coordinator, _) = makeCoordinator()
+        let (coordinator, _, _) = makeCoordinator()
         coordinator.apply(.backgrounded)
 
         let effects = coordinator.apply(.pushHintReceived(conversationID: "web_conv_push"))
