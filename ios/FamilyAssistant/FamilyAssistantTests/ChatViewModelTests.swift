@@ -9051,7 +9051,13 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
 
-        let payload = try await waitForSpooledReport(in: spoolDirectory)
+        // Filter by component: the always-on sync breadcrumbs (reachability,
+        // presentation, stream connect/restart) also spool here, so grabbing the
+        // first report is racy.
+        let streamDropReports = try await waitForSpooledReports(
+            component: "Chat.streamDrop", in: spoolDirectory
+        )
+        let payload = try XCTUnwrap(streamDropReports.first)
         let extra = try XCTUnwrap(payload.extraData)
         XCTAssertEqual(payload.componentName, "Chat.streamDrop")
         XCTAssertEqual(extra["phase"], "send-subscribe")

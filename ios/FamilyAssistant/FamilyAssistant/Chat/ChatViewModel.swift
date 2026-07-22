@@ -2798,7 +2798,10 @@ final class ChatViewModel {
         case .suspendSend:
             suspendActiveSend()
         case .cancelStreams:
-            syncCoordinator.cancelStreams(reason: .foreground)
+            // This effect is emitted only by the background-teardown path, so the
+            // teardown's restart breadcrumbs are attributed to `background`, not
+            // `foreground` (which would misdirect the churn investigation).
+            syncCoordinator.cancelStreams(reason: .background)
         case .runResync:
             // Capture the model weakly: a discarded screen's queued effect must not
             // retain it and keep a resync (and its SSE sockets) alive past teardown.

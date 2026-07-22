@@ -126,6 +126,7 @@ final class SyncCoordinator {
     enum RestartReason: String {
         case conversationSwitch
         case foreground
+        case background
         case reachabilityRecovery
         case authOK
         case authRequired
@@ -727,8 +728,10 @@ final class SyncCoordinator {
             // dedicated path (preserving its ActiveTurnSession), and cancel the
             // advisory follow/activity streams (push notifications take over
             // delivery). See design 4.3.
-            bumpFollowGeneration(reason: .foreground)
-            bumpActivityGeneration(reason: .foreground)
+            // Bump silently here (fencing only); the `.cancelStreams` effect below
+            // emits the single, correctly-labeled `background` restart breadcrumb.
+            bumpFollowGeneration()
+            bumpActivityGeneration()
             return [.suspendSend, .cancelStreams]
 
         case let .reachabilityChanged(reachability):
