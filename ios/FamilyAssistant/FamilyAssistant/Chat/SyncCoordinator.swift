@@ -145,6 +145,7 @@ final class SyncCoordinator {
     private let followReconnectInitialDelaySeconds: Double
     private let followReconnectMaxDelaySeconds: Double
     private let authManager: AuthManager
+    private let reconnectDelay: @MainActor (Double) async -> Void
 
     weak var delegate: SyncStreamDelegate?
 
@@ -158,12 +159,16 @@ final class SyncCoordinator {
         authManager: AuthManager,
         pathMonitor: PathMonitoring,
         followReconnectInitialDelaySeconds: Double = 2,
-        followReconnectMaxDelaySeconds: Double = 30
+        followReconnectMaxDelaySeconds: Double = 30,
+        reconnectDelay: @escaping @MainActor (Double) async -> Void = { seconds in
+            try? await Task.sleep(for: .seconds(seconds))
+        }
     ) {
         self.authManager = authManager
         self.pathMonitor = pathMonitor
         self.followReconnectInitialDelaySeconds = followReconnectInitialDelaySeconds
         self.followReconnectMaxDelaySeconds = followReconnectMaxDelaySeconds
+        self.reconnectDelay = reconnectDelay
         pathMonitor.onChange = { [weak self] satisfied in
             self?.apply(.reachabilityChanged(satisfied ? .satisfied : .unsatisfied))
         }
@@ -193,7 +198,9 @@ final class SyncCoordinator {
         }
         // When no conversation is selected, only activity health matters.
         // Otherwise both follow and activity must be connected for live.
-        let isLive = delegate?.currentConversationID() == nil
+        // If delegate is not set, conservatively require both (treat as conversation selected).
+        let isNoConversation = delegate != nil && delegate?.currentConversationID() == nil
+        let isLive = isNoConversation
             ? activityHealth == .connected
             : followHealth == .connected && activityHealth == .connected
         if isLive {
@@ -312,6 +319,7 @@ final class SyncCoordinator {
                        statusCode == 401 || statusCode == 403 {
                         do {
                             try await authManager.refreshIfNeeded(force: true)
+                            continue
                         } catch AuthError.authRejected, AuthError.noCredentials {
                             authManager.markAuthRequired()
                             deliberateStop = true
@@ -320,8 +328,6 @@ final class SyncCoordinator {
                         }
                         if deliberateStop {
                             break
-                        } else if streamError == nil {
-                            continue
                         }
                     }
                 }
@@ -343,7 +349,7 @@ final class SyncCoordinator {
                         generation: generation
                     )
                 }
-                try? await Task.sleep(for: .seconds(delay))
+                await reconnectDelay(delay)
                 delay = min(delay * 2, maxDelay)
             }
         }
@@ -399,6 +405,7 @@ final class SyncCoordinator {
                        statusCode == 401 || statusCode == 403 {
                         do {
                             try await authManager.refreshIfNeeded(force: true)
+                            continue
                         } catch AuthError.authRejected, AuthError.noCredentials {
                             authManager.markAuthRequired()
                             self.apply(.activityDropped(generation: generation, cleanEOF: false))
@@ -406,9 +413,7 @@ final class SyncCoordinator {
                         } catch {
                             self.apply(.activityDropped(generation: generation, cleanEOF: false))
                         }
-                        if !authManager.authRequired {
-                            continue
-                        } else {
+                        if authManager.authRequired {
                             break
                         }
                     }
@@ -417,7 +422,7 @@ final class SyncCoordinator {
                     break
                 }
                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
-                try? await Task.sleep(for: .seconds(delay))
+                await reconnectDelay(delay)
                 delay = min(delay * 2, maxDelay)
             }
         }

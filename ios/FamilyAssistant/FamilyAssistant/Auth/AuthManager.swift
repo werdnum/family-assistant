@@ -31,9 +31,9 @@ final class AuthManager {
     /// credential clear, new login). A session bridge captures it on entry and
     /// only writes its cookie if it is still current — so a bridge abandoned by
     /// the ``bootstrapSession()`` watchdog cannot resurrect a stale session cookie
-    /// after a later logout/re-login has superseded it. `private(set)` so tests can
-    /// observe it; only `bumpAuthEpoch()` mutates it.
-    @MainActor private(set) var authEpoch = 0
+    /// after a later logout/re-login has superseded it. This fence is deliberately
+    /// private to the auth authority; callers only observe ``AuthStateSignal``.
+    @MainActor private var authEpoch = 0
 
     /// Terminal auth state: the server has rejected the stored credentials (or they
     /// are missing where required) and the user must re-authenticate. Distinct from
@@ -89,7 +89,7 @@ final class AuthManager {
         }
     }
 
-    /// Coalesces concurrent ``refreshIfNeeded(ownerEpoch:)`` callers onto one
+    /// Coalesces concurrent ``refreshIfNeeded(force:)`` callers onto one
     /// in-flight refresh so a resume that fans out several requests cannot race
     /// token rotation. The task clears this on completion; every caller awaits the
     /// same task rather than blocking the main actor.
@@ -293,7 +293,7 @@ final class AuthManager {
         }
 
         do {
-            try await refreshIfNeeded(ownerEpoch: epoch)
+            try await refreshIfNeeded(ownerEpoch: epoch, force: false)
         } catch AuthError.authRejected, AuthError.noCredentials {
             if isCurrentAuthEpoch(epoch) { clearLocalAuthState() }
             return
@@ -376,32 +376,21 @@ final class AuthManager {
         emitAuthStateSignal(required ? .authRequired : .ok)
     }
 
-    /// Latch the terminal ``authRequired`` state from a caller that observed a
-    /// response-time rejection the refresh path itself did not surface — namely
-    /// the ChatAPIClient retry helper, when a request still 401s after a forced
-    /// refresh minted a fresh token. Idempotent; emits the transition once.
+    /// Atomically clear rejected credentials and latch the terminal
+    /// ``authRequired`` state. The authenticated shell remains mounted so its
+    /// in-place sign-in affordance can recover the session.
     @MainActor
     func markAuthRequired() {
-        setAuthRequired(true)
-    }
-
-    /// Clear the stored credentials and latch authRequired for in-place re-auth,
-    /// but only if `capturedEpoch` still owns the current auth state. The response-time
-    /// 401 on stream connect or request paths reach here to clear the rejected token
-    /// while preserving the authenticated shell (isAuthenticated stays true) so the
-    /// in-place re-auth affordance stays mounted and can recover without a full logout.
-    /// Honoring the epoch fence: a logout/re-login that bumped the epoch during the
-    /// refresh must not have a stale rejection clear the newer login's state.
-    @MainActor
-    func clearAuthStateForReauthIfCurrent(capturedEpoch: Int) {
-        guard isCurrentAuthEpoch(capturedEpoch) else { return }
-        bumpAuthEpoch()
-        setAuthRequired(true)
+        if !authRequired {
+            bumpAuthEpoch()
+        }
         clearAuthCredentialsOnly()
+        isAuthenticated = false
+        setAuthRequired(true)
     }
 
-    /// Clear only the stored credentials (keychain/defaults) without flipping
-    /// isAuthenticated. Used for in-place re-auth where the shell stays mounted.
+    /// Clear only the stored credentials (keychain/defaults). Used for in-place
+    /// re-auth where the shell stays mounted.
     @MainActor
     private func clearAuthCredentialsOnly() {
         KeychainHelper.delete(key: Keys.apiToken)
@@ -409,28 +398,12 @@ final class AuthManager {
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
     }
 
-    /// Latch terminal auth state, clear credentials, and bump epoch with fencing.
-    /// Used when a request is rejected both initially AND after a forced refresh
-    /// (terminal auth failure), and by tests simulating concurrent auth-state
-    /// changes (logout/relogin while a refresh is in flight). Only clears if the
-    /// captured epoch is still current; a stale call (from a superseded operation)
-    /// is dropped so it doesn't undo a fresh login/re-auth. Bumps the epoch to
-    /// invalidate any in-flight operations using the old epoch.
-    /// Preserves isAuthenticated=true (shell stays mounted for in-place re-auth).
-    @MainActor
-    func clearAuthStateIfCurrent(capturedEpoch: Int) {
-        guard isCurrentAuthEpoch(capturedEpoch) else { return }
-        bumpAuthEpoch()
-        setAuthRequired(true)
-        clearAuthCredentialsOnly()
-    }
-
     /// Whether the bridge that captured `epoch` still owns the current auth state.
     /// False once an auth-invalidating transition (logout / credential clear / new
     /// login) has bumped ``authEpoch``. A watchdog-abandoned bridge that resumes
     /// after such a transition must not mutate auth state (cookies or keychain).
     @MainActor
-    func isCurrentAuthEpoch(_ epoch: Int) -> Bool {
+    private func isCurrentAuthEpoch(_ epoch: Int) -> Bool {
         epoch == authEpoch
     }
 
@@ -454,7 +427,14 @@ final class AuthManager {
 
     // MARK: - Token Refresh
 
-    /// - Parameter ownerEpoch: when set (the bootstrap path), rotated tokens are
+    /// Force a token refresh after a response-time 401, or refresh only when the
+    /// stored token is due. Concurrent callers share the same in-flight operation.
+    @MainActor
+    func refreshIfNeeded(force: Bool = false) async throws {
+        try await refreshIfNeeded(ownerEpoch: nil, force: force)
+    }
+
+    /// - Parameter ownerEpoch: when set by the private bootstrap path, rotated tokens are
     ///   persisted only if this epoch is still current. A watchdog-abandoned
     ///   bootstrap whose refresh returns late after a logout/re-login must not
     ///   overwrite the current session's credentials. The lazy `authorizedRequest`
@@ -472,7 +452,7 @@ final class AuthManager {
     ///   freshness check would no-op and the retry would resend the same rejected
     ///   token.
     @MainActor
-    func refreshIfNeeded(ownerEpoch: Int? = nil, force: Bool = false) async throws {
+    private func refreshIfNeeded(ownerEpoch: Int?, force: Bool) async throws {
         // Capture the current epoch before awaiting any in-flight refresh, so we
         // can detect if a concurrent auth-state change happened and reject adopting
         // a stale refresh result.
@@ -527,7 +507,10 @@ final class AuthManager {
             // Latch it here so EVERY no-credential refresh attempt is terminal,
             // including the forced response-time-401 retry path that reaches
             // `performRefresh` directly rather than through `authorizedRequest`.
-            setAuthRequired(true)
+            if let ownerEpoch, !isCurrentAuthEpoch(ownerEpoch) {
+                throw AuthError.noCredentials
+            }
+            markAuthRequired()
             throw AuthError.noCredentials
         }
 
@@ -582,7 +565,7 @@ final class AuthManager {
             if let ownerEpoch, !isCurrentAuthEpoch(ownerEpoch) {
                 throw AuthError.authRejected
             }
-            setAuthRequired(true)
+            markAuthRequired()
             throw AuthError.authRejected
         default:
             throw AuthError.transient(underlying: nil)
@@ -721,15 +704,13 @@ final class AuthManager {
             // don't clear the new session's credentials; let the error propagate so
             // the caller can retry with the current credentials.
             if isCurrentAuthEpoch(capturedEpoch) {
-                setAuthRequired(true)
-                clearLocalAuthState()
+                markAuthRequired()
             }
             throw AuthError.noCredentials
         }
 
         guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
-            setAuthRequired(true)
-            clearLocalAuthState()
+            markAuthRequired()
             throw AuthError.noCredentials
         }
         var request = URLRequest(url: url)

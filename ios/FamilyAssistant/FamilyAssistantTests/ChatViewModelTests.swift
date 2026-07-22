@@ -214,6 +214,16 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNotNil(model.composerFocusRequestID)
     }
 
+    func testEmptyLaunchDraftIsLiveWhenActivityStreamConnects() {
+        let model = makeViewModel(conversationID: nil)
+
+        model.syncCoordinator.apply(
+            .activityConnected(generation: model.syncCoordinator.activityGeneration)
+        )
+
+        XCTAssertEqual(model.syncPresentation, .live)
+    }
+
     func testExplicitNewConversationRequestIgnoresRestoreWindow() {
         storeLastConversation("web_conv_recent", activeSecondsAgo: 60)
 
@@ -4185,6 +4195,41 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(assistant.status, .failed)
     }
 
+    func testTurnStart401And403UseCentralSignInRequiredPath() async {
+        for statusCode in [401, 403] {
+            resetStoredAuth()
+            KeychainHelper.save(key: "fa_api_token", string: "rejected-turn-token")
+            UserDefaults.standard.set(
+                ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+                forKey: "fa_token_expiry"
+            )
+            let postRequests = AtomicCounter()
+            ChatMockBackendURLProtocol.respond { request in
+                if request.httpMethod == "POST", request.url?.path == "/api/v1/chat/turns" {
+                    _ = postRequests.increment()
+                    return .json(#"{"detail":"sign in again"}"#, statusCode: statusCode)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+            let authManager = AuthManager()
+            authManager.serverURL = serverURL
+            let model = ChatViewModel(
+                authManager: authManager,
+                conversationID: "web_conv_turn_auth_\(statusCode)",
+                pathMonitor: StubPathMonitor(isSatisfied: true)
+            )
+            model.draftText = "Hello"
+
+            await model.sendDraft()
+
+            XCTAssertEqual(postRequests.value, 1)
+            XCTAssertTrue(authManager.authRequired)
+            XCTAssertEqual(model.syncPresentation, .authRequired)
+            XCTAssertNil(model.errorMessage, "turn-start \(statusCode) must not use the generic modal")
+            XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+        }
+    }
+
     func testSendRepeatedNoProgressDropsGiveUpAndReloadHistory() async throws {
         // A stream that keeps dropping at the same seq (no new events on resume)
         // must not reopen forever: after `maxConsecutiveStreamResumes` resumes
@@ -6540,6 +6585,50 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.syncPresentation, .authRequired)
     }
 
+    func testSuccessfulReauthenticationRestartsStreamsThroughAuthObserver() async throws {
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        authManager.markAuthRequired()
+        let model = ChatViewModel(
+            authManager: authManager,
+            conversationID: "web_conv_reauthenticated",
+            pathMonitor: StubPathMonitor(isSatisfied: true)
+        )
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+
+        KeychainHelper.save(key: "fa_api_token", string: "replacement-api-token")
+        KeychainHelper.save(key: "fa_refresh_token", string: "replacement-refresh-token")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+            forKey: "fa_token_expiry"
+        )
+        let followStream = HangingStream()
+        let activityStream = HangingStream()
+        let followRestarted = expectation(description: "follow stream restarted")
+        let activityRestarted = expectation(description: "activity stream restarted")
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path {
+            case "/api/auth/refresh":
+                return .json(#"{"api_token":"fresh","refresh_token":"fresh-refresh","expires_in":7200}"#)
+            case "/api/v1/chat/conversations/web_conv_reauthenticated/stream":
+                followRestarted.fulfill()
+                return .hangingStream("", controller: followStream)
+            case "/api/v1/chat/activity/stream":
+                activityRestarted.fulfill()
+                return .hangingStream("", controller: activityStream)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        try await authManager.refreshIfNeeded(force: true)
+        await fulfillment(of: [followRestarted, activityRestarted], timeout: 2)
+
+        XCTAssertFalse(authManager.authRequired)
+        followStream.finish()
+        activityStream.finish()
+    }
+
     /// A view model whose coordinator is seeded with a satisfied stub monitor, so
     /// reducer-driven presentation assertions are deterministic.
     private func makeCoordinatorBackedModel() -> (ChatViewModel, SyncCoordinator) {
@@ -7606,8 +7695,6 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertEqual(model.syncPresentation, .authRequired)
         XCTAssertNil(model.errorMessage)
-        // Give any (erroneous) breadcrumb time to spool before asserting absence.
-        try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(
             spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
             "an auth-required failure must not raise the generic error modal"
@@ -7643,8 +7730,6 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.syncPresentation, .authRequired)
-        // Give any (erroneous) modal breadcrumb time to spool before asserting absence.
-        try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(
             spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
             "a pre-turn noCredentials send must not raise the generic error modal"

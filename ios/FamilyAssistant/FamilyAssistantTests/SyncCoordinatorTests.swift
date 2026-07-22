@@ -4,6 +4,22 @@ import XCTest
 
 @MainActor
 final class SyncCoordinatorTests: XCTestCase {
+    private let serverURL = "https://assistant.example.test"
+
+    override func setUp() {
+        super.setUp()
+        resetStoredAuth()
+        URLProtocol.registerClass(ChatMockBackendURLProtocol.self)
+        ChatMockBackendURLProtocol.reset()
+    }
+
+    override func tearDown() {
+        ChatMockBackendURLProtocol.reset()
+        URLProtocol.unregisterClass(ChatMockBackendURLProtocol.self)
+        resetStoredAuth()
+        super.tearDown()
+    }
+
     private func makeCoordinator(
         satisfied: Bool = true,
         authManager: AuthManager? = nil
@@ -204,6 +220,17 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.presentation, .degraded)
     }
 
+    func testEmptyLaunchDraftIsLiveWhenActivityStreamIsConnected() {
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        coordinator.delegate = delegate
+
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+
+        XCTAssertNil(delegate.currentConversationID())
+        XCTAssertEqual(coordinator.presentation, .live)
+    }
+
     func testLatchedForegroundEmitsExactlyOneResync() {
         let (coordinator, _, _) = makeCoordinator()
 
@@ -322,6 +349,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // transition resets backoff and retries now.
         let monitor = StubPathMonitor(isSatisfied: true)
         let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
             pathMonitor: monitor,
             followReconnectInitialDelaySeconds: 60,
             followReconnectMaxDelaySeconds: 60
@@ -339,7 +367,7 @@ final class SyncCoordinatorTests: XCTestCase {
 
         // The wake restarts the loop, re-entering openFollowStream well within the
         // 60s backoff that would otherwise gate the retry.
-        try await waitUntil(timeout: 3) { delegate.followOpenCount >= 2 }
+        try await waitUntil { delegate.followOpenCount >= 2 }
     }
 
     func testUnsatisfiedMarksConnectedChannelsDownSoRecoveryRestartsBoth() async throws {
@@ -351,6 +379,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // makes the following `.satisfied` wake restart both loops.
         let monitor = StubPathMonitor(isSatisfied: true)
         let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
             pathMonitor: monitor,
             followReconnectInitialDelaySeconds: 60,
             followReconnectMaxDelaySeconds: 60
@@ -381,7 +410,7 @@ final class SyncCoordinatorTests: XCTestCase {
         delegate.shouldFailFollowOpen = true
 
         coordinator.apply(.reachabilityChanged(.satisfied))
-        try await waitUntil(timeout: 3) {
+        try await waitUntil {
             delegate.followOpenCount > followOpensBeforeDrop && delegate.activityOpenCount >= 1
         }
         XCTAssertEqual(coordinator.followHealth, .down)
@@ -411,6 +440,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // (here 60s) backoff, mirroring the reachability-recovery wake.
         let monitor = StubPathMonitor(isSatisfied: true)
         let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
             pathMonitor: monitor,
             followReconnectInitialDelaySeconds: 60,
             followReconnectMaxDelaySeconds: 60
@@ -432,7 +462,7 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.authState, .authRequired)
 
         coordinator.apply(.authOK)
-        try await waitUntil(timeout: 3) {
+        try await waitUntil {
             delegate.followOpenCount > followOpensBeforeReauth
                 && delegate.activityOpenCount > activityOpensBeforeReauth
         }
@@ -446,6 +476,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // channels down so the authOK wake reconnects under fresh credentials.
         let monitor = StubPathMonitor(isSatisfied: true)
         let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
             pathMonitor: monitor,
             followReconnectInitialDelaySeconds: 60,
             followReconnectMaxDelaySeconds: 60
@@ -473,7 +504,7 @@ final class SyncCoordinatorTests: XCTestCase {
         delegate.hangFollowOpen = false
         delegate.hangActivityOpen = false
         coordinator.apply(.authOK)
-        try await waitUntil(timeout: 3) {
+        try await waitUntil {
             delegate.followOpenCount > followOpensBeforeAuthRequired
                 && delegate.activityOpenCount > activityOpensBeforeAuthRequired
         }
@@ -537,61 +568,182 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.followHealth, .reconnecting)
     }
 
-    func testFollowConnect401StopsLoopWhenAuthRequired() async throws {
-        // When a follow connect returns 401/403 and AuthManager marks authRequired,
-        // the loop must stop and not spin the backoff.
+    func testFollowConnect401WithRejectedRefreshStopsAndLatchesAuthRequired() async {
+        seedStoredAuth()
         let monitor = StubPathMonitor(isSatisfied: true)
-        let authManager = AuthManager()
+        let authManager = makeAuthManager()
+        let authRequired = expectation(description: "authRequired latched")
+        authManager.addAuthStateObserver { signal in
+            if case .authRequired = signal {
+                authRequired.fulfill()
+            }
+        }
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json(#"{"detail":"rejected"}"#, statusCode: 401)
+        }
+        var delayCount = 0
         let coordinator = SyncCoordinator(
             authManager: authManager,
             pathMonitor: monitor,
             followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
+            followReconnectMaxDelaySeconds: 60,
+            reconnectDelay: { _ in delayCount += 1 }
         )
         let delegate = RecordingSyncStreamDelegate()
         delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
         coordinator.delegate = delegate
 
-        // Mark authRequired to simulate a 401 that latched it
-        authManager.markAuthRequired()
-
         coordinator.startFollowStream(conversationID: "conv-1")
-        // The loop should exit immediately without attempting to open
-        try await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertEqual(delegate.followOpenCount, 0)
+        await fulfillment(of: [authRequired], timeout: 2)
+        await Task.yield()
+
+        XCTAssertEqual(delegate.followOpenCount, 1)
+        XCTAssertEqual(refreshRequests.value, 1)
+        XCTAssertEqual(delayCount, 0, "terminal auth must stop instead of entering backoff")
+        XCTAssertTrue(authManager.authRequired)
+        XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
     }
 
-    func testActivityConnect401StopsLoopWhenAuthRequired() async throws {
+    func testActivityConnect403WithRejectedRefreshStopsAndLatchesAuthRequired() async {
+        seedStoredAuth()
         let monitor = StubPathMonitor(isSatisfied: true)
-        let authManager = AuthManager()
+        let authManager = makeAuthManager()
+        let authRequired = expectation(description: "authRequired latched")
+        authManager.addAuthStateObserver { signal in
+            if case .authRequired = signal {
+                authRequired.fulfill()
+            }
+        }
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json(#"{"detail":"rejected"}"#, statusCode: 403)
+        }
+        var delayCount = 0
         let coordinator = SyncCoordinator(
             authManager: authManager,
             pathMonitor: monitor,
             followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
+            followReconnectMaxDelaySeconds: 60,
+            reconnectDelay: { _ in delayCount += 1 }
         )
         let delegate = RecordingSyncStreamDelegate()
         delegate.activityOpenError = ChatAPIError.server(statusCode: 403, detail: nil)
         coordinator.delegate = delegate
 
-        authManager.markAuthRequired()
-
         coordinator.startActivityStream()
-        try await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertEqual(delegate.activityOpenCount, 0)
+        await fulfillment(of: [authRequired], timeout: 2)
+        await Task.yield()
+
+        XCTAssertEqual(delegate.activityOpenCount, 1)
+        XCTAssertEqual(refreshRequests.value, 1)
+        XCTAssertEqual(delayCount, 0, "terminal auth must stop instead of entering backoff")
+        XCTAssertTrue(authManager.authRequired)
         XCTAssertEqual(coordinator.activityHealth, .down)
     }
 
-    private func waitUntil(
-        timeout: TimeInterval = 2,
-        _ predicate: @escaping () -> Bool
-    ) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+    func testFollowConnect401WithSuccessfulRefreshReconnectsImmediately() async {
+        seedStoredAuth()
+        let authManager = makeAuthManager()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+        var delayCount = 0
+        let coordinator = SyncCoordinator(
+            authManager: authManager,
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60,
+            reconnectDelay: { _ in delayCount += 1 }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
+        delegate.followOpenErrorLimit = 1
+        delegate.hangFollowOpen = true
+        let reconnected = expectation(description: "follow stream reopened")
+        reconnected.expectedFulfillmentCount = 2
+        delegate.onFollowOpen = { reconnected.fulfill() }
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        await fulfillment(of: [reconnected], timeout: 2)
+
+        XCTAssertEqual(refreshRequests.value, 1)
+        XCTAssertEqual(delayCount, 0, "successful refresh reconnects without transport backoff")
+        XCTAssertFalse(authManager.authRequired)
+        XCTAssertEqual(coordinator.followHealth, .connected)
+    }
+
+    func testActivityConnect401WithSuccessfulRefreshReconnectsImmediately() async {
+        seedStoredAuth()
+        let authManager = makeAuthManager()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+        var delayCount = 0
+        let coordinator = SyncCoordinator(
+            authManager: authManager,
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60,
+            reconnectDelay: { _ in delayCount += 1 }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activityOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
+        delegate.activityOpenErrorLimit = 1
+        delegate.hangActivityOpen = true
+        let reconnected = expectation(description: "activity stream reopened")
+        reconnected.expectedFulfillmentCount = 2
+        delegate.onActivityOpen = { reconnected.fulfill() }
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        await fulfillment(of: [reconnected], timeout: 2)
+
+        XCTAssertEqual(refreshRequests.value, 1)
+        XCTAssertEqual(delayCount, 0, "successful refresh reconnects without transport backoff")
+        XCTAssertFalse(authManager.authRequired)
+        XCTAssertEqual(coordinator.activityHealth, .connected)
+    }
+
+    private func makeAuthManager() -> AuthManager {
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        return authManager
+    }
+
+    private func seedStoredAuth() {
+        KeychainHelper.save(key: "fa_api_token", string: "rejected-api-token")
+        KeychainHelper.save(key: "fa_refresh_token", string: "refresh-token")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+            forKey: "fa_token_expiry"
+        )
+    }
+
+    private func resetStoredAuth() {
+        KeychainHelper.delete(key: "fa_api_token")
+        KeychainHelper.delete(key: "fa_refresh_token")
+        UserDefaults.standard.removeObject(forKey: "fa_token_expiry")
+        UserDefaults.standard.removeObject(forKey: "fa_server_url")
+    }
+
+    private func waitUntil(_ predicate: @escaping () -> Bool) async throws {
+        for _ in 0 ..< 10_000 {
             if predicate() {
                 return
             }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            await Task.yield()
         }
         XCTFail("Timed out waiting for predicate")
     }
@@ -617,6 +769,8 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     /// When > 0, `activityOpenError` is thrown only for the first N opens; later opens
     /// fall through to the hang/finish path.
     var activityOpenErrorLimit = 0
+    var onFollowOpen: (() -> Void)?
+    var onActivityOpen: (() -> Void)?
     /// When set, the opened stream never finishes on its own, so the loop stays
     /// connected without emitting a competing drop event — letting a test assert
     /// stale-generation rejection deterministically instead of racing the loop.
@@ -634,6 +788,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         generation: Int
     ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
         followOpenCount += 1
+        onFollowOpen?()
         activeConversationID = conversationID
         if let followOpenError, followOpenErrorLimit == 0 || followOpenCount <= followOpenErrorLimit {
             throw followOpenError
@@ -669,6 +824,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         generation: Int
     ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
         activityOpenCount += 1
+        onActivityOpen?()
         if let activityOpenError, activityOpenErrorLimit == 0 || activityOpenCount <= activityOpenErrorLimit {
             throw activityOpenError
         }
@@ -682,5 +838,22 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
 
     func currentConversationID() -> String? {
         activeConversationID
+    }
+}
+
+private final class AtomicCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    @discardableResult
+    func increment() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+
+    var value: Int {
+        lock.withLock { count }
     }
 }

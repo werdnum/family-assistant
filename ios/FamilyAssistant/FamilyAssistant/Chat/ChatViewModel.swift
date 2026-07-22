@@ -3284,7 +3284,7 @@ final class ChatViewModel {
 /// superseded generation are dropped (`syncCoordinator.isCurrent`).
 extension ChatViewModel: SyncStreamDelegate {
     func currentConversationID() -> String? {
-        conversationID
+        opensGeneratedLaunchDraft ? nil : conversationID
     }
 
     func openFollowStream(

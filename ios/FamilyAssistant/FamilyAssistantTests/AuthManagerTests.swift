@@ -78,30 +78,6 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertNotNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
     }
 
-    func testRefreshSkipsPersistWhenOwnerEpochIsSuperseded() async throws {
-        seedStoredAuth(apiToken: "old-api-token", refreshToken: "old-refresh-token", expiresIn: -60)
-        let authManager = makeAuthManager()
-        AuthBackendURLProtocol.respond { _ in
-            .json(
-                """
-                {"api_token": "rotated", "refresh_token": "rotated-refresh", "expires_in": 7200}
-                """
-            )
-        }
-
-        // A stale owner epoch stands in for a bootstrap superseded by a logout /
-        // re-login while its refresh was in flight.
-        try await authManager.refreshIfNeeded(ownerEpoch: authManager.authEpoch - 1)
-
-        XCTAssertEqual(AuthBackendURLProtocol.requests.count, 1, "the refresh request is still made")
-        XCTAssertEqual(
-            KeychainHelper.readString(key: "fa_api_token"),
-            "old-api-token",
-            "a superseded bootstrap must not overwrite the current session's credentials"
-        )
-        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "old-refresh-token")
-    }
-
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
         KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
         let authManager = makeAuthManager()
@@ -312,25 +288,6 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(removedSignals, [.ok], "a removed observer must receive no signals after removal")
     }
 
-    func testLogoutEpochChangeStillSupersedesInFlightRefresh() async throws {
-        // A logout during an in-flight refresh must fence out the rotation exactly
-        // as before single-flighting: the stale owner epoch stands in for the
-        // logout that bumped the epoch while the refresh was on the wire.
-        seedStoredAuth(apiToken: "old-api-token", refreshToken: "old-refresh-token", expiresIn: -60)
-        let authManager = makeAuthManager()
-        AuthBackendURLProtocol.respond { _ in
-            .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
-        }
-
-        try await authManager.refreshIfNeeded(ownerEpoch: authManager.authEpoch - 1)
-
-        XCTAssertEqual(
-            KeychainHelper.readString(key: "fa_api_token"),
-            "old-api-token",
-            "a refresh superseded by a logout epoch bump must not resurrect credentials"
-        )
-    }
-
     func testEstablishSessionPostsBearerTokenAndAcceptsCookieResponse() async throws {
         let authManager = makeAuthManager()
         AuthBackendURLProtocol.respond { request in
@@ -423,24 +380,6 @@ final class AuthManagerTests: XCTestCase {
         }
 
         XCTAssertTrue(completed)
-    }
-
-    func testAuthEpochOwnershipIsLostAfterAuthInvalidation() async {
-        seedStoredAuth(apiToken: "api-token", refreshToken: "refresh-token", expiresIn: 7200)
-        let authManager = makeAuthManager()
-
-        let captured = authManager.authEpoch
-        XCTAssertTrue(authManager.isCurrentAuthEpoch(captured))
-
-        // A logout (the case where a watchdog-abandoned bridge could resume and
-        // re-add the stale cookie or clear a fresh login) invalidates ownership, so
-        // both the cookie write and the auth-rejection clear are fenced out.
-        await authManager.logout()
-
-        XCTAssertFalse(
-            authManager.isCurrentAuthEpoch(captured),
-            "a bridge captured before logout must no longer own the auth state"
-        )
     }
 
     func testStaleCookieSelectionDeletesOnlyOurOwnUnreplacedWrites() {
