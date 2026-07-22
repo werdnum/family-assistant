@@ -924,7 +924,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
 
     func gateAuthIfNeeded(generation: Int) async throws {}
 
-    func runCoalescedResync() {
+    func runCoalescedResync(reason _: SyncCoordinator.RestartReason) {
         runCoalescedResyncCount += 1
     }
 }
@@ -995,5 +995,5 @@ private final class WedgingSyncStreamDelegate: SyncStreamDelegate {
 
     func gateAuthIfNeeded(generation: Int) async throws {}
 
-    func runCoalescedResync() {}
+    func runCoalescedResync(reason _: SyncCoordinator.RestartReason) {}
 }

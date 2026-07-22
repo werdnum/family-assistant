@@ -325,11 +325,21 @@ final class ChatViewModel {
         self.errorReporter = errorReporter
         self.authManager = authManager
         apiClient = ChatAPIClient(authManager: authManager)
+        let syncBreadcrumb: ChatSyncBreadcrumb = { component, extraData in
+            errorReporter.report(
+                message: "iOS chat sync breadcrumb",
+                component: component,
+                errorType: .component,
+                extraData: extraData,
+                bypassDedupe: true
+            )
+        }
         syncCoordinator = SyncCoordinator(
             authManager: authManager,
             pathMonitor: pathMonitor ?? NetworkPathMonitor(),
             followReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
-            followReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds
+            followReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
+            breadcrumb: syncBreadcrumb
         )
         let storedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
         preferredProfileID = storedProfileID
@@ -369,7 +379,7 @@ final class ChatViewModel {
             opensGeneratedLaunchDraft = true
         }
         syncCoordinator.delegate = self
-        resyncOrchestrator = ResyncOrchestrator(host: self)
+        resyncOrchestrator = ResyncOrchestrator(host: self, breadcrumb: syncBreadcrumb)
         // Bridge auth transitions into the coordinator so a token refresh surfaces
         // as `.syncing`-adjacent degraded state and a rejection surfaces as the
         // dedicated `.authRequired` presentation — never the generic error modal.
@@ -415,7 +425,7 @@ final class ChatViewModel {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
-        syncCoordinator.startActivityStream()
+        syncCoordinator.startActivityStream(reason: .initial)
         if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
             lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt
@@ -636,7 +646,9 @@ final class ChatViewModel {
         // would keep delivering events across the suspension and mutate the new
         // conversation's shared state (merging its rows, polluting the ack cursor,
         // appending stray bubbles). `startLiveEvents` re-cancels and restarts it.
-        syncCoordinator.cancelFollowStream()
+        syncCoordinator.cancelFollowStream(
+            reason: isSwitchingConversation ? .conversationSwitch : .initial
+        )
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
@@ -679,7 +691,7 @@ final class ChatViewModel {
                 adoptConversationProfile()
             }
         }
-        startLiveEvents()
+        startLiveEvents(reason: isSwitchingConversation ? .conversationSwitch : .initial)
     }
 
     /// Set the active profile from the conversation just loaded into `messages`.
@@ -701,7 +713,7 @@ final class ChatViewModel {
 
     func startNewConversation() {
         cancelStream()
-        syncCoordinator.cancelFollowStream()
+        syncCoordinator.cancelFollowStream(reason: .newConversation)
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
@@ -727,7 +739,7 @@ final class ChatViewModel {
         // whatever an existing thread we were viewing was pinned to.
         selectedProfileID = preferredProfileID
         persistConversationID()
-        startLiveEvents()
+        startLiveEvents(reason: .newConversation)
     }
 
     private func resetTurnControlState() {
@@ -1483,7 +1495,7 @@ final class ChatViewModel {
             // server-backed; start following it now so the channel reaches live.
             if opensGeneratedLaunchDraft {
                 opensGeneratedLaunchDraft = false
-                startLiveEvents()
+                startLiveEvents(reason: .newConversation)
             }
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
@@ -2696,7 +2708,9 @@ final class ChatViewModel {
         }
     }
 
-    func reconnectLiveUpdates() async {
+    func reconnectLiveUpdates(
+        trigger: SyncCoordinator.RestartReason = .manualReconnect
+    ) async {
         // Drive the coalesced foreground resync (auth gate → authoritative
         // snapshots → restart streams). Snapshots reconcile the list (full
         // replacement) and the selected conversation's history + running turns —
@@ -2705,7 +2719,8 @@ final class ChatViewModel {
         // not optimistically flipped to connected: the coordinator's reducer only
         // reports `followConnected` once the connect actually succeeds, so a
         // failing connect leaves the honest disconnected state.
-        await resyncOrchestrator.request().value
+        syncCoordinator.prepareResync(reason: trigger)
+        await resyncOrchestrator.request(trigger: trigger).value
     }
 
     /// The toolbar's manual "reconnect" affordance. Unlike the foreground,
@@ -2716,9 +2731,9 @@ final class ChatViewModel {
     /// late event from an old consumer would pass the fence. Bump both generations
     /// first so the fence rejects those stragglers, matching the other triggers.
     func requestManualReconnect() async {
-        syncCoordinator.bumpFollowGeneration()
-        syncCoordinator.bumpActivityGeneration()
-        await reconnectLiveUpdates()
+        syncCoordinator.bumpFollowGeneration(reason: .manualReconnect)
+        syncCoordinator.bumpActivityGeneration(reason: .manualReconnect)
+        await reconnectLiveUpdates(trigger: .manualReconnect)
     }
 
     /// Drive the app's existing sign-in flow from the toolbar's `.authRequired`
@@ -2747,6 +2762,17 @@ final class ChatViewModel {
     /// the next active, so every real resume is caught while transient
     /// `.inactive → .active` blips (never having backgrounded) are ignored.
     func scenePhaseChanged(old: ScenePhase, new: ScenePhase) {
+        errorReporter.report(
+            message: "iOS chat scene phase changed",
+            component: "Chat.scenePhase",
+            errorType: .component,
+            extraData: [
+                "did_background": new == .background ? "true" : "false",
+                "is_active": new == .active ? "true" : "false",
+                "phase": String(describing: new),
+            ],
+            bypassDedupe: true
+        )
         let effects = syncCoordinator.scenePhaseChanged(
             didBackground: new == .background,
             isActive: new == .active
@@ -2772,13 +2798,13 @@ final class ChatViewModel {
         case .suspendSend:
             suspendActiveSend()
         case .cancelStreams:
-            syncCoordinator.cancelStreams()
+            syncCoordinator.cancelStreams(reason: .foreground)
         case .runResync:
             // Capture the model weakly: a discarded screen's queued effect must not
             // retain it and keep a resync (and its SSE sockets) alive past teardown.
             // If the model is gone the effect simply no-ops. Pairs with `deinit`'s
             // `cancelInFlight()`.
-            Task { [weak self] in await self?.reconnectLiveUpdates() }
+            Task { [weak self] in await self?.reconnectLiveUpdates(trigger: .foreground) }
         case let .targetedRefresh(conversationID):
             Task { [weak self] in await self?.targetedRefresh(conversationID: conversationID) }
         case .startFollowStream, .startActivityStream:
@@ -2840,12 +2866,12 @@ final class ChatViewModel {
     /// Start (or restart) the per-conversation follow stream through the
     /// coordinator, which owns the task and its reconnect loop. All per-event
     /// application stays in this view model behind ``SyncStreamDelegate``.
-    private func startLiveEvents() {
+    private func startLiveEvents(reason: SyncCoordinator.RestartReason) {
         guard let conversationID else {
-            syncCoordinator.cancelFollowStream()
+            syncCoordinator.cancelFollowStream(reason: reason)
             return
         }
-        syncCoordinator.startFollowStream(conversationID: conversationID)
+        syncCoordinator.startFollowStream(conversationID: conversationID, reason: reason)
     }
 
     private func handleLiveReconnect(conversationID: String) async {
@@ -3873,11 +3899,12 @@ extension ChatViewModel: SyncStreamDelegate {
         await refreshRecentConversations(surfaceErrors: surfaceErrors)
     }
 
-    func runCoalescedResync() {
+    func runCoalescedResync(reason: SyncCoordinator.RestartReason) {
         // Reachability recovery routes through the SAME coalesced resync foreground
         // uses (§4.4). `request()` joins any in-flight resync, so a burst of
         // recovery hints does the snapshot work once.
-        resyncOrchestrator.request()
+        syncCoordinator.prepareResync(reason: reason)
+        resyncOrchestrator.request(trigger: reason)
     }
 }
 

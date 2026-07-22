@@ -1,5 +1,7 @@
 import Foundation
 
+typealias ChatSyncBreadcrumb = @MainActor (_ component: String, _ extraData: [String: String]) -> Void
+
 /// The application-side operations the coordinator's owned stream loops invoke.
 ///
 /// The coordinator owns the follow/activity `Task`s and their reconnect loops
@@ -78,47 +80,59 @@ protocol SyncStreamDelegate: AnyObject {
     /// with any in-flight resync, so a burst of recovery hints does the snapshot
     /// work once. Distinct from `runResync()` (the bare loop restart) — recovery
     /// gets the full snapshot pass, not just a reconnect.
-    func runCoalescedResync()
+    func runCoalescedResync(reason: SyncCoordinator.RestartReason)
 }
 
 @MainActor
 @Observable
 final class SyncCoordinator {
-    enum Lifecycle {
+    enum Lifecycle: String {
         case foreground
         case background
     }
 
-    enum Reachability {
+    enum Reachability: String {
         case satisfied
         case unsatisfied
         case unknown
     }
 
-    enum AuthState {
+    enum AuthState: String {
         case ok
         case refreshing
         case authRequired
     }
 
-    enum ChannelHealth {
+    enum ChannelHealth: String {
         case connected
         case reconnecting
         case down
     }
 
-    enum ReconciliationPhase {
+    enum ReconciliationPhase: String {
         case idle
         case syncing
     }
 
-    enum Presentation {
+    enum Presentation: String {
         case live
         case syncing
         case degraded
         case offline
         case authRequired
         case suspended
+    }
+
+    enum RestartReason: String {
+        case conversationSwitch
+        case foreground
+        case reachabilityRecovery
+        case authOK
+        case authRequired
+        case manualReconnect
+        case resyncHandoff
+        case initial
+        case newConversation
     }
 
     enum SyncEvent {
@@ -175,6 +189,9 @@ final class SyncCoordinator {
     private let authManager: AuthManager
     private let reconnectDelay: @MainActor (Double) async -> Void
     private let streamTerminationTimeoutSeconds: Double
+    private let breadcrumb: ChatSyncBreadcrumb?
+    private var lastReportedPresentation: Presentation = .degraded
+    private var pendingResyncRestartReason: RestartReason?
 
     weak var delegate: SyncStreamDelegate?
 
@@ -192,7 +209,8 @@ final class SyncCoordinator {
         reconnectDelay: @escaping @MainActor (Double) async -> Void = { seconds in
             try? await Task.sleep(for: .seconds(seconds))
         },
-        streamTerminationTimeoutSeconds: Double = 5
+        streamTerminationTimeoutSeconds: Double = 5,
+        breadcrumb: ChatSyncBreadcrumb? = nil
     ) {
         self.authManager = authManager
         self.pathMonitor = pathMonitor
@@ -200,6 +218,7 @@ final class SyncCoordinator {
         self.followReconnectMaxDelaySeconds = followReconnectMaxDelaySeconds
         self.reconnectDelay = reconnectDelay
         self.streamTerminationTimeoutSeconds = streamTerminationTimeoutSeconds
+        self.breadcrumb = breadcrumb
         pathMonitor.onChange = { [weak self] satisfied in
             self?.apply(.reachabilityChanged(satisfied ? .satisfied : .unsatisfied))
         }
@@ -260,15 +279,25 @@ final class SyncCoordinator {
     }
 
     @discardableResult
-    func bumpFollowGeneration() -> Int {
+    func bumpFollowGeneration(reason: RestartReason? = nil) -> Int {
         followGeneration += 1
+        if let reason {
+            reportStreamRestart(channel: "follow", reason: reason, generation: followGeneration)
+        }
         return followGeneration
     }
 
     @discardableResult
-    func bumpActivityGeneration() -> Int {
+    func bumpActivityGeneration(reason: RestartReason? = nil) -> Int {
         activityGeneration += 1
+        if let reason {
+            reportStreamRestart(channel: "activity", reason: reason, generation: activityGeneration)
+        }
         return activityGeneration
+    }
+
+    func prepareResync(reason: RestartReason) {
+        pendingResyncRestartReason = reason
     }
 
     /// Maps a raw scene-phase observation onto the coordinator's lifecycle events. The
@@ -292,14 +321,18 @@ final class SyncCoordinator {
     /// failed connect, 410 buffer-rotation handling). All event application is
     /// delegated to the view model. Cancelling the previous task before starting a
     /// new one is the single-owner cancellation the design requires.
-    func startFollowStream(conversationID: String) {
+    func startFollowStream(
+        conversationID: String,
+        reason: RestartReason = .initial
+    ) {
         // Replacing a live task: cancelling it does not stop its in-flight delegate
         // callbacks synchronously, so they would still pass the generation check and
         // merge/ack stale events into the new stream's state. Bump the follow
         // generation so the replacement runs under a fresh one and the cancelled
         // task's late callbacks are rejected.
-        if followTask != nil {
-            bumpFollowGeneration()
+        let replacesExistingTask = followTask != nil
+        if replacesExistingTask {
+            bumpFollowGeneration(reason: reason)
             // The old task's socket is being torn down; until the replacement task
             // reports a real `followConnected`, the channel is not live. Leaving it
             // `.connected` here would let presentation claim `.live` with no
@@ -311,6 +344,15 @@ final class SyncCoordinator {
         }
         followTask?.cancel()
         let generation = followGeneration
+        if !replacesExistingTask {
+            reportStreamRestart(
+                channel: "follow",
+                reason: reason,
+                generation: generation,
+                conversationID: conversationID
+            )
+        }
+        reportPresentationIfChanged()
         let initialDelay = followReconnectInitialDelaySeconds
         let maxDelay = followReconnectMaxDelaySeconds
         followTask = Task { [weak self] in
@@ -326,6 +368,7 @@ final class SyncCoordinator {
                 let loopEpoch = self.authManager.authEpoch
                 var deliberateStop = false
                 var connected = false
+                var connectedAt: Date?
                 var streamError: Error?
                 do {
                     guard let stream = try await self.delegate?.openFollowStream(
@@ -335,6 +378,7 @@ final class SyncCoordinator {
                         return
                     }
                     connected = true
+                    connectedAt = Date()
                     self.apply(.followConnected(generation: generation))
                     authRefreshAlreadyAttempted = false
                     await self.delegate?.followStreamDidConnect(
@@ -368,6 +412,14 @@ final class SyncCoordinator {
                             authRefreshAlreadyAttempted = true
                             do {
                                 try await self.authManager.refreshIfNeeded(force: true, ownerEpoch: loopEpoch)
+                                self.reportStreamDisconnect(
+                                    channel: "follow",
+                                    generation: generation,
+                                    conversationID: conversationID,
+                                    connectedAt: connectedAt,
+                                    error: error,
+                                    deliberateStop: false
+                                )
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
                                 self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
@@ -380,11 +432,27 @@ final class SyncCoordinator {
                             deliberateStop = true
                         }
                         if deliberateStop {
+                            self.reportStreamDisconnect(
+                                channel: "follow",
+                                generation: generation,
+                                conversationID: conversationID,
+                                connectedAt: connectedAt,
+                                error: streamError,
+                                deliberateStop: true
+                            )
                             break
                         }
                     }
                 }
 
+                self.reportStreamDisconnect(
+                    channel: "follow",
+                    generation: generation,
+                    conversationID: conversationID,
+                    connectedAt: connectedAt,
+                    error: streamError,
+                    deliberateStop: deliberateStop
+                )
                 if Task.isCancelled || deliberateStop {
                     break
                 }
@@ -410,13 +478,14 @@ final class SyncCoordinator {
 
     /// (Re)start the account-global activity stream. Owns the same capped-backoff
     /// reconnect loop; list refresh on connect and on every ping is delegated.
-    func startActivityStream() {
+    func startActivityStream(reason: RestartReason = .initial) {
         // Same generation hole as `startFollowStream`: a replaced activity task's
         // in-flight callbacks would still pass the check and let a stale signal ack
         // into the new stream. Bump the activity generation so the replacement owns
         // a fresh one.
-        if activityTask != nil {
-            bumpActivityGeneration()
+        let replacesExistingTask = activityTask != nil
+        if replacesExistingTask {
+            bumpActivityGeneration(reason: reason)
             // Same as the follow channel: a replaced activity task is no longer a
             // live connection, so demote a `.connected` health to `.reconnecting`
             // until the replacement reports a real `activityConnected`.
@@ -426,6 +495,10 @@ final class SyncCoordinator {
         }
         activityTask?.cancel()
         let generation = activityGeneration
+        if !replacesExistingTask {
+            reportStreamRestart(channel: "activity", reason: reason, generation: generation)
+        }
+        reportPresentationIfChanged()
         let initialDelay = followReconnectInitialDelaySeconds
         let maxDelay = followReconnectMaxDelaySeconds
         activityTask = Task { [weak self] in
@@ -439,12 +512,15 @@ final class SyncCoordinator {
                 // Capture the loop's auth epoch at the start; terminal 401 latch uses this
                 // to prevent a stale rejection from a superseded epoch deleting new creds.
                 let loopEpoch = self.authManager.authEpoch
+                var connectedAt: Date?
+                var streamError: Error?
                 do {
                     guard let stream = try await self.delegate?.openActivityStream(
                         generation: generation
                     ) else {
                         return
                     }
+                    connectedAt = Date()
                     delay = initialDelay
                     self.apply(.activityConnected(generation: generation))
                     authRefreshAlreadyAttempted = false
@@ -456,23 +532,46 @@ final class SyncCoordinator {
                         await self.delegate?.activityStreamDidSignal(generation: generation)
                     }
                 } catch {
+                    streamError = error
                     if case ChatAPIError.server(let statusCode, _) = error,
                        statusCode == 401 || statusCode == 403 {
                         if !authRefreshAlreadyAttempted {
                             authRefreshAlreadyAttempted = true
                             do {
                                 try await self.authManager.refreshIfNeeded(force: true, ownerEpoch: loopEpoch)
+                                self.reportStreamDisconnect(
+                                    channel: "activity",
+                                    generation: generation,
+                                    connectedAt: connectedAt,
+                                    error: streamError,
+                                    deliberateStop: false
+                                )
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
                                 self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
+                                self.reportStreamDisconnect(
+                                    channel: "activity",
+                                    generation: generation,
+                                    connectedAt: connectedAt,
+                                    error: streamError,
+                                    deliberateStop: false
+                                )
                                 break
                             } catch {
+                                streamError = error
                                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
                             }
                         } else {
                             self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                             self.apply(.activityDropped(generation: generation, cleanEOF: false))
+                            self.reportStreamDisconnect(
+                                channel: "activity",
+                                generation: generation,
+                                connectedAt: connectedAt,
+                                error: streamError,
+                                deliberateStop: false
+                            )
                             break
                         }
                         if self.authManager.authRequired {
@@ -480,6 +579,13 @@ final class SyncCoordinator {
                         }
                     }
                 }
+                self.reportStreamDisconnect(
+                    channel: "activity",
+                    generation: generation,
+                    connectedAt: connectedAt,
+                    error: streamError,
+                    deliberateStop: false
+                )
                 if Task.isCancelled {
                     break
                 }
@@ -500,32 +606,34 @@ final class SyncCoordinator {
     /// `isCurrentFollow` and merge/ack into the NEW conversation's state. Bumping
     /// now fences those late callbacks immediately. Also demote a `.connected`
     /// health so presentation cannot claim `.live` over the cancelled stream.
-    func cancelFollowStream() {
+    func cancelFollowStream(reason: RestartReason = .conversationSwitch) {
         if followTask != nil {
-            bumpFollowGeneration()
+            bumpFollowGeneration(reason: reason)
             if followHealth == .connected {
                 followHealth = .reconnecting
             }
         }
         followTask?.cancel()
+        reportPresentationIfChanged()
     }
 
     /// Cancel both owned streams (deinit / logout).
-    func cancelStreams() {
+    func cancelStreams(reason: RestartReason = .authRequired) {
         if followTask != nil {
-            bumpFollowGeneration()
+            bumpFollowGeneration(reason: reason)
             if followHealth == .connected {
                 followHealth = .reconnecting
             }
         }
         if activityTask != nil {
-            bumpActivityGeneration()
+            bumpActivityGeneration(reason: reason)
             if activityHealth == .connected {
                 activityHealth = .reconnecting
             }
         }
         followTask?.cancel()
         activityTask?.cancel()
+        reportPresentationIfChanged()
     }
 
     /// Cancel the follow/activity tasks torn down on background AND await their
@@ -588,13 +696,16 @@ final class SyncCoordinator {
     /// `reconnectLiveUpdates()`. The follow stream target is derived from the
     /// current conversation to avoid stale cached IDs from launch or switch.
     func runResync() {
+        let reason = pendingResyncRestartReason ?? .resyncHandoff
+        pendingResyncRestartReason = nil
         if let conversationID = delegate?.currentConversationID() {
-            startFollowStream(conversationID: conversationID)
+            startFollowStream(conversationID: conversationID, reason: reason)
         }
-        startActivityStream()
+        startActivityStream(reason: reason)
     }
     @discardableResult
     func apply(_ event: SyncEvent) -> [SyncEffect] {
+        defer { reportPresentationIfChanged() }
         switch event {
         case .foregrounded:
             lifecycle = .foreground
@@ -616,13 +727,20 @@ final class SyncCoordinator {
             // dedicated path (preserving its ActiveTurnSession), and cancel the
             // advisory follow/activity streams (push notifications take over
             // delivery). See design 4.3.
-            bumpFollowGeneration()
-            bumpActivityGeneration()
+            bumpFollowGeneration(reason: .foreground)
+            bumpActivityGeneration(reason: .foreground)
             return [.suspendSend, .cancelStreams]
 
         case let .reachabilityChanged(reachability):
             let wasUnsatisfied = self.reachability == .unsatisfied
             self.reachability = reachability
+            breadcrumb?(
+                "Chat.reachability",
+                [
+                    "status": reachability.rawValue,
+                    "interface_type": pathMonitor.interfaceType,
+                ]
+            )
             if reachability == .unsatisfied {
                 // The path just went down. The SSE tasks have not yet observed their
                 // sockets die, so both healths still read `.connected`; leaving them
@@ -646,9 +764,9 @@ final class SyncCoordinator {
             // AND refetches the authoritative list, so a list mutated while offline
             // converges. Health still comes only from actual connects.
             if reachability == .satisfied, wasUnsatisfied, lifecycle == .foreground {
-                bumpFollowGeneration()
-                bumpActivityGeneration()
-                delegate?.runCoalescedResync()
+                bumpFollowGeneration(reason: .reachabilityRecovery)
+                bumpActivityGeneration(reason: .reachabilityRecovery)
+                delegate?.runCoalescedResync(reason: .reachabilityRecovery)
             }
             return []
 
@@ -677,9 +795,9 @@ final class SyncCoordinator {
             // the foreground resync owns the restart.
             if pendingReauthRestart, lifecycle == .foreground, reachability != .unsatisfied {
                 pendingReauthRestart = false
-                bumpFollowGeneration()
-                bumpActivityGeneration()
-                delegate?.runCoalescedResync()
+                bumpFollowGeneration(reason: .authOK)
+                bumpActivityGeneration(reason: .authOK)
+                delegate?.runCoalescedResync(reason: .authOK)
             }
             return []
 
@@ -694,7 +812,7 @@ final class SyncCoordinator {
             // mark their healths down so the `.authOK` wake actually reconnects
             // under fresh credentials. Bumping the generations (via cancelStreams)
             // also fences any in-flight callbacks from the old-session tasks.
-            cancelStreams()
+            cancelStreams(reason: .authRequired)
             followHealth = .down
             activityHealth = .down
             pendingReauthRestart = true
@@ -705,6 +823,10 @@ final class SyncCoordinator {
                 return []
             }
             followHealth = .connected
+            breadcrumb?(
+                "Chat.streamConnect",
+                ["channel": "follow", "generation": String(generation)]
+            )
             return []
 
         case let .followDropped(generation, _):
@@ -719,6 +841,10 @@ final class SyncCoordinator {
                 return []
             }
             activityHealth = .connected
+            breadcrumb?(
+                "Chat.streamConnect",
+                ["channel": "activity", "generation": String(generation)]
+            )
             return []
 
         case let .activityDropped(generation, _):
@@ -747,6 +873,108 @@ final class SyncCoordinator {
             }
             return [.targetedRefresh(conversationID: conversationID)]
         }
+    }
+
+    private func reportStreamRestart(
+        channel: String,
+        reason: RestartReason,
+        generation: Int,
+        conversationID: String? = nil
+    ) {
+        var extraData = [
+            "channel": channel,
+            "reason": reason.rawValue,
+            "generation": String(generation),
+        ]
+        if channel == "follow" {
+            extraData["conversation_id"] = conversationID ?? delegate?.currentConversationID() ?? "none"
+        }
+        breadcrumb?("Chat.streamRestart", extraData)
+    }
+
+    private func reportStreamDisconnect(
+        channel: String,
+        generation: Int,
+        conversationID: String? = nil,
+        connectedAt: Date?,
+        error: Error?,
+        deliberateStop: Bool
+    ) {
+        let connectedSeconds = connectedAt.map { max(0, Date().timeIntervalSince($0)) } ?? 0
+        var extraData = [
+            "channel": channel,
+            "generation": String(generation),
+            "reason": disconnectReason(
+                channel: channel,
+                generation: generation,
+                error: error,
+                deliberateStop: deliberateStop
+            ),
+            "connected_seconds": String(format: "%.3f", connectedSeconds),
+        ]
+        if channel == "follow", let conversationID {
+            extraData["conversation_id"] = conversationID
+        }
+        breadcrumb?("Chat.streamDisconnect", extraData)
+    }
+
+    private func disconnectReason(
+        channel: String,
+        generation: Int,
+        error: Error?,
+        deliberateStop: Bool
+    ) -> String {
+        let isCurrentGeneration = channel == "follow"
+            ? isCurrentFollow(generation)
+            : isCurrentActivity(generation)
+        if !isCurrentGeneration {
+            return "superseded"
+        }
+        if Task.isCancelled || error is CancellationError {
+            return "cancelled"
+        }
+        if let apiError = error as? ChatAPIError,
+           case .server(let statusCode, _) = apiError {
+            switch statusCode {
+            case 410: return "http410"
+            case 401: return "http401"
+            case 403: return "http403"
+            default: return "other"
+            }
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled: return "cancelled"
+            case .timedOut: return "timedOut"
+            case .networkConnectionLost: return "networkConnectionLost"
+            default: return "other"
+            }
+        }
+        if deliberateStop {
+            return "deliberateStop"
+        }
+        return error == nil ? "cleanEOF" : "other"
+    }
+
+    private func reportPresentationIfChanged() {
+        let currentPresentation = presentation
+        guard currentPresentation != lastReportedPresentation else {
+            return
+        }
+        let previousPresentation = lastReportedPresentation
+        lastReportedPresentation = currentPresentation
+        breadcrumb?(
+            "Chat.presentation",
+            [
+                "from": previousPresentation.rawValue,
+                "to": currentPresentation.rawValue,
+                "follow_health": followHealth.rawValue,
+                "activity_health": activityHealth.rawValue,
+                "phase": phase.rawValue,
+                "reachability": reachability.rawValue,
+                "auth_state": authState.rawValue,
+            ]
+        )
     }
 }
 
