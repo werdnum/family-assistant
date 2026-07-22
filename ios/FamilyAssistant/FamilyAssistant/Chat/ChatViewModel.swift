@@ -325,6 +325,10 @@ final class ChatViewModel {
         streamTask?.cancel()
         pendingConfirmationsTask?.cancel()
         textFlushTask?.cancel()
+        // The coordinator's stream tasks retain it across their open connections,
+        // so its own deinit can't run; cancel them here (the owner is not in that
+        // cycle) to break it and stop the streams when this model is torn down.
+        syncCoordinator.cancelOwnedStreams()
         if let authObserverToken {
             let authManager = authManager
             Task { @MainActor in authManager.removeAuthStateObserver(authObserverToken) }
@@ -1395,220 +1399,12 @@ final class ChatViewModel {
                     conversationID: id, turnID: turnID, to: previousSummary
                 )
             }
-            // A 401/403 on turn-start (revoked token) first attempts a single forced
-            // refresh. If it succeeds, retry the turn once with the same turn_id
-            // (server deduplicates on turn_id, so no double-send). Only if refresh
-            // fails or the retry still 401s do we latch signInRequired.
-            var underlyingError: Error?
+            // A 401/403 on turn-start (revoked token) routes through the central
+            // signInRequired path: latch it with no generic modal.
+            let underlyingError: Error?
             if case ChatAPIError.server(let statusCode, _) = error, statusCode == 401 || statusCode == 403 {
-                var shouldRetry = false
-                do {
-                    try await authManager.refreshIfNeeded(force: true)
-                    shouldRetry = true
-                } catch {
-                    authManager.markAuthRequired()
-                    underlyingError = AuthError.noCredentials
-                }
-
-                if shouldRetry {
-                    do {
-                        let retriedStart = try await apiClient.startTurn(
-                            turnID: turnID,
-                            prompt: prompt,
-                            conversationID: id,
-                            profileID: session.profileID,
-                            attachments: attachments
-                        )
-                        startSucceeded = true
-                        if opensGeneratedLaunchDraft {
-                            opensGeneratedLaunchDraft = false
-                            startLiveEvents()
-                        }
-                        let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
-                        guard !Task.isCancelled, currentStreamToken == streamToken else {
-                            if let stopConversationID = stopAfterRegistrationConversationID {
-                                let turnToCancel = ActiveChatTurn(turnID: turnID, conversationID: stopConversationID)
-                                Task { [weak self] in
-                                    guard let self else {
-                                        return
-                                    }
-                                    do {
-                                        _ = try await self.requestStopWithRetry(turnToCancel)
-                                    } catch {
-                                        self.presentErrorAlert(
-                                            error.localizedDescription,
-                                            reason: .stopTurnFailed,
-                                            underlyingError: error
-                                        )
-                                        self.errorReporter.report(error, component: "Chat.stopTurn")
-                                    }
-                                }
-                            }
-                            return
-                        }
-                        registeredTurnIDs.insert(turnID)
-                        let pendingSteers = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
-                        let hadPendingStop = pendingStopTurnIDs.remove(turnID) != nil
-                            || stopAfterRegistrationConversationID != nil
-                        if retriedStart.alreadyComplete {
-                            if hadPendingStop || stopRequestedTurnIDs.contains(turnID) {
-                                detachPendingSteers(pendingSteers, requeue: false)
-                            } else {
-                                detachPendingSteers(pendingSteers, requeue: true)
-                            }
-                            if retriedStart.incomplete {
-                                appendStreamError(
-                                    "The assistant reply could not be recovered. Please try again.",
-                                    assistantMessageID: assistantMessageID
-                                )
-                            } else {
-                                optimisticPendingByTurnID.removeValue(forKey: turnID)
-                                await recoverByReloadingHistory(
-                                    conversationID: id,
-                                    assistantMessageID: assistantMessageID
-                                )
-                            }
-                            finishStreaming(streamToken)
-                            return
-                        }
-                        let start = retriedStart
-                        if hadPendingStop {
-                            detachPendingSteers(pendingSteers, requeue: false)
-                            let secured: Bool
-                            do {
-                                secured = try await requestStopWithRetry(ActiveChatTurn(turnID: turnID, conversationID: id))
-                            } catch {
-                                appendStreamError(
-                                    error.localizedDescription,
-                                    assistantMessageID: assistantMessageID,
-                                    reason: .stopTurnFailed
-                                )
-                                finishStreaming(streamToken)
-                                return
-                            }
-                            guard !Task.isCancelled, currentStreamToken == streamToken else {
-                                return
-                            }
-                            if !secured {
-                                stopWarningMessage = "Stop could not be confirmed. Pending approvals from this turn may still be active."
-                            }
-                        }
-                        if !hadPendingStop {
-                            for prompt in pendingSteers {
-                                let activeTurn = ActiveChatTurn(turnID: turnID, conversationID: id)
-                                let result: SteerSubmissionResult
-                                do {
-                                    result = try await requestSteerWithRetry(activeTurn, prompt: prompt)
-                                } catch {
-                                    removeInFlightSteer(prompt)
-                                    removeAwaitingEchoSteer(prompt)
-                                    steerErrorMessage = error.localizedDescription
-                                    errorReporter.report(error, component: "Chat.steerTurn")
-                                    continue
-                                }
-                                guard !Task.isCancelled, currentStreamToken == streamToken else {
-                                    return
-                                }
-                                await handleSteerSubmissionResult(
-                                    result,
-                                    prompt: prompt,
-                                    activeTurn: activeTurn
-                                )
-                            }
-                        }
-                        var outcome = await runTurnSubscription(
-                            conversationID: id,
-                            fromSeq: start.firstSeq,
-                            ackSeq: lastSeq,
-                            turnID: turnID,
-                            assistantMessageID: assistantMessageID,
-                            lastSeq: &lastSeq
-                        )
-                        session.lastAppliedSeq = lastSeq
-                        var noProgressResumes = 0
-                        var resumeDelay = liveReconnectInitialDelaySeconds
-                        while outcome == .dropped || outcome == .interrupted {
-                            guard !Task.isCancelled, currentStreamToken == streamToken,
-                                  noProgressResumes < maxConsecutiveStreamResumes
-                            else {
-                                break
-                            }
-                            if noProgressResumes > 0 {
-                                try? await Task.sleep(for: .seconds(resumeDelay))
-                                guard !Task.isCancelled, currentStreamToken == streamToken else {
-                                    return
-                                }
-                            }
-                            let seqBeforeResume = lastSeq
-                            let resumeStartedAt = Date()
-                            outcome = await runTurnSubscription(
-                                conversationID: id,
-                                fromSeq: lastSeq.map { $0 + 1 } ?? start.firstSeq,
-                                ackSeq: lastSeq,
-                                turnID: turnID,
-                                assistantMessageID: assistantMessageID,
-                                lastSeq: &lastSeq
-                            )
-                            session.lastAppliedSeq = lastSeq
-                            let heldOpen = Date().timeIntervalSince(resumeStartedAt) >= streamResumeLivenessSeconds
-                            if lastSeq != seqBeforeResume || heldOpen {
-                                noProgressResumes = 0
-                                resumeDelay = liveReconnectInitialDelaySeconds
-                            } else {
-                                noProgressResumes += 1
-                                resumeDelay = min(resumeDelay * 2, liveReconnectMaxDelaySeconds)
-                            }
-                        }
-                        guard !Task.isCancelled, currentStreamToken == streamToken else {
-                            return
-                        }
-                        switch outcome {
-                        case .completed(let status):
-                            if let lastSeq {
-                                let ackClient = apiClient
-                                Task { try? await ackClient.acknowledge(conversationID: id, ackSeq: lastSeq) }
-                            }
-                            completeStream(assistantMessageID: assistantMessageID)
-                            optimisticPendingByTurnID.removeValue(forKey: turnID)
-                            await refreshRecentConversations()
-                            await mergeNewMessages(conversationID: id)
-                            if status == "cancelled" || status == "failed" || stopRequestedTurnIDs.contains(turnID) {
-                                clearRecoverableSteers()
-                            } else {
-                                recoverUnconsumedSteers()
-                            }
-                        case .reloadHistory, .dropped, .interrupted:
-                            if stopRequestedTurnIDs.contains(turnID) {
-                                clearRecoverableSteers()
-                            } else {
-                                dropAcceptedSteersAwaitingEcho()
-                            }
-                            markTurnEnded(turnID, status: nil)
-                            optimisticPendingByTurnID.removeValue(forKey: turnID)
-                            await recoverByReloadingHistory(
-                                conversationID: id,
-                                assistantMessageID: assistantMessageID
-                            )
-                        case .failed(let message):
-                            clearRecoverableSteers()
-                            appendStreamError(message, assistantMessageID: assistantMessageID)
-                        }
-                        finishStreaming(streamToken)
-                        return
-                    } catch is CancellationError {
-                        markStreamStopped(assistantMessageID: assistantMessageID)
-                        return
-                    } catch {
-                        if case ChatAPIError.server(let statusCode, _) = error, statusCode == 401 || statusCode == 403 {
-                            authManager.markAuthRequired()
-                            underlyingError = AuthError.noCredentials
-                        } else {
-                            underlyingError = error
-                        }
-                    }
-                } else {
-                    return
-                }
+                authManager.markAuthRequired()
+                underlyingError = AuthError.noCredentials
             } else {
                 underlyingError = error
             }

@@ -188,6 +188,17 @@ final class SyncCoordinator {
         activityTask?.cancel()
     }
 
+    /// Cancel the owned stream tasks from a nonisolated context. A running stream
+    /// task retains `self` for the life of its open SSE connection (the loop holds
+    /// a strong `self` across the indefinite `for await`), so the coordinator's own
+    /// `deinit` cannot run until the tasks end. The owning view model calls this
+    /// from its `deinit` to break that cycle and tear the sockets down when the UI
+    /// goes away, rather than orphaning them until the process exits.
+    nonisolated func cancelOwnedStreams() {
+        followTask?.cancel()
+        activityTask?.cancel()
+    }
+
     var presentation: Presentation {
         if lifecycle == .background {
             return .suspended
