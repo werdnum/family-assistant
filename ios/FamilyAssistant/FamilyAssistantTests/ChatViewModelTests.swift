@@ -4372,9 +4372,15 @@ final class ChatViewModelTests: XCTestCase {
 
             await model.sendDraft()
             do {
-                try await waitUntil { authManager.authRequired }
+                // Wait for the presentation to settle, not just the auth flag: the
+                // coordinator adopts `.authRequired` via the auth-state observer a hop
+                // after `authManager.authRequired` flips, so asserting `syncPresentation`
+                // the instant the flag is set is racy.
+                try await waitUntil {
+                    authManager.authRequired && model.syncPresentation == .authRequired
+                }
             } catch {
-                XCTFail("Timed out waiting for auth to be marked required: \(error)")
+                XCTFail("Timed out waiting for auth-required presentation: \(error)")
             }
 
             XCTAssertEqual(postRequests.value, 1)
@@ -4383,6 +4389,26 @@ final class ChatViewModelTests: XCTestCase {
             XCTAssertNil(model.errorMessage, "turn-start \(statusCode) must not use the generic modal")
             XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
         }
+    }
+
+    func testCancelledOperationNeverRaisesModal() {
+        // A cancelled operation is benign — a request superseded or torn down (e.g.
+        // the recent-list refresh aborted when `authRequired` latches and cancels the
+        // streams, or a conversation switch cancelling an in-flight read). Its `-999`
+        // "cancelled" must never surface as the generic error modal.
+        let model = makeViewModel(conversationID: "web_conv_cancel_modal")
+        model.presentErrorAlert(
+            "cancelled",
+            reason: .recentConversationsRefresh,
+            underlyingError: URLError(.cancelled)
+        )
+        XCTAssertNil(model.errorMessage, "a URLError.cancelled must not raise a modal")
+        model.presentErrorAlert(
+            "cancelled",
+            reason: .streamError,
+            underlyingError: CancellationError()
+        )
+        XCTAssertNil(model.errorMessage, "a Swift CancellationError must not raise a modal")
     }
 
     func testSendRepeatedNoProgressDropsGiveUpAndReloadHistory() async throws {
