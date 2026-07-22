@@ -62,6 +62,10 @@ struct ChatRootView: View {
         .task {
             await viewModel.bootstrap(initialPrompt: route.initialPrompt)
             await importSharedAttachments(for: route)
+            // `onChange` below does not fire for a hint already pending at mount
+            // (e.g. a push delivered during auth bootstrap or before this view
+            // mounted), so consume the current value once the chat UI is ready.
+            consumePendingPushHint()
         }
         .onChange(of: route) { _, newRoute in
             Task {
@@ -78,15 +82,8 @@ struct ChatRootView: View {
             // list clears the selection and returns to the sidebar.
             preferredColumn = selection == nil ? .sidebar : .detail
         }
-        .onChange(of: notificationManager.pendingPushHint) { _, hint in
-            // A foreground push hint (§4.6): targeted refresh of the referenced
-            // conversation + recent list. Consumed once so a repeat push (a fresh
-            // id) re-fires. Backgrounded delivery is filtered in the coordinator.
-            guard let hint else {
-                return
-            }
-            viewModel.pushHintReceived(conversationID: hint.conversationID)
-            notificationManager.clearPendingPushHint()
+        .onChange(of: notificationManager.pendingPushHint) { _, _ in
+            consumePendingPushHint()
         }
         .alert(
             "Chat Error",
@@ -99,6 +96,19 @@ struct ChatRootView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+    }
+
+    /// Deliver a foreground push hint (§4.6): targeted refresh of the referenced
+    /// conversation + recent list, consumed once so a repeat push (a fresh id)
+    /// re-fires. Backgrounded delivery is filtered in the coordinator. Called both
+    /// from the `pendingPushHint` observer and once on mount, because `onChange`
+    /// does not fire for a value already set before the view appeared.
+    private func consumePendingPushHint() {
+        guard let hint = notificationManager.pendingPushHint else {
+            return
+        }
+        viewModel.pushHintReceived(conversationID: hint.conversationID)
+        notificationManager.clearPendingPushHint()
     }
 
     private func importSharedAttachments(for route: ChatRoute) async {

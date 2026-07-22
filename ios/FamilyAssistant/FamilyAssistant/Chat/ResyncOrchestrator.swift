@@ -141,7 +141,10 @@ protocol ResyncHost: AnyObject {
 @MainActor
 final class ResyncOrchestrator {
     private weak var host: ResyncHost?
-    private var currentTask: Task<Void, Never>?
+    // Cancelled from the owning view model's nonisolated `deinit` (see
+    // `cancelInFlight`), so — like the coordinator's stream tasks — these are
+    // `nonisolated(unsafe)`; `Task.cancel()` is itself thread-safe.
+    nonisolated(unsafe) private var currentTask: Task<Void, Never>?
 
     private let bufferCapacity: Int
     private let maxRestarts: Int
@@ -151,8 +154,8 @@ final class ResyncOrchestrator {
     /// tasks and read by the drain, all on the main actor.
     private var buffer: [BufferedResyncEvent] = []
     private var bufferOverflowed = false
-    private var followBufferingTask: Task<Void, Never>?
-    private var activityBufferingTask: Task<Void, Never>?
+    nonisolated(unsafe) private var followBufferingTask: Task<Void, Never>?
+    nonisolated(unsafe) private var activityBufferingTask: Task<Void, Never>?
 
     /// The generations + selection the currently-running attempt is reconciling. A
     /// `request()` that arrives while a resync runs joins the in-flight task, but
@@ -206,6 +209,18 @@ final class ResyncOrchestrator {
         }
         currentTask = task
         return task
+    }
+
+    /// Cancel the in-flight resync and its buffering tasks from a nonisolated
+    /// context. The owning view model calls this from its `deinit` so a
+    /// fire-and-forget resync (e.g. the auth-observer re-auth path, which does not
+    /// await `request()`) cannot outlive the model — holding open SSE sockets and
+    /// running its handover after the owner is gone (which also leaked the resync's
+    /// async work across test boundaries). Mirrors `SyncCoordinator.cancelOwnedStreams`.
+    nonisolated func cancelInFlight() {
+        currentTask?.cancel()
+        followBufferingTask?.cancel()
+        activityBufferingTask?.cancel()
     }
 
     private func run() async {

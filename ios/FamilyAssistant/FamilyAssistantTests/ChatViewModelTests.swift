@@ -5784,10 +5784,10 @@ final class ChatViewModelTests: XCTestCase {
         let followBaseline = followConnects.value
         let activityBaseline = activityConnects.value
 
-        model.scenePhaseChanged(old: .active, new: .background)
         // Capture the transport task before the suspend nils `streamTask`, so we can
         // drive its ASYNCHRONOUS cancellation aftermath to completion (F1).
         let sendTask = model.sendTaskForTesting
+        model.scenePhaseChanged(old: .active, new: .background)
 
         try assertBackgroundSuspendedSend(
             model: model,

@@ -515,3 +515,39 @@ than new machinery:
   Added a `Task.isCancelled` check immediately before `enqueue` in both buffering loops; it is
   atomic with element receipt (no await between) and does not affect natural stream-finish tail
   draining.
+
+A third local codex pass confirmed the above and raised four more, disposed as follows:
+
+- **[P1] Re-auth resync leaked across the view model's lifetime — FIXED.** The auth-observer re-auth
+  path calls `resyncOrchestrator.request()` fire-and-forget (does not await the returned task), and
+  `deinit` tore down the coordinator's streams but not the orchestrator, so a discarded model could
+  leave a resync running (holding open SSE sockets and performing its handover) — which also leaked
+  the async work across test boundaries (an XCTest "multiple calls made to fulfill" under some suite
+  orderings). Added `ResyncOrchestrator.cancelInFlight()` (nonisolated, mirroring
+  `SyncCoordinator.cancelOwnedStreams`) and called it from `ChatViewModel.deinit`.
+- **[P1] Invalidate buffered resyncs on mid-resync auth rejection — DECLINED (threat model).** If
+  the token is revoked *during* a resync (after the initial gate), the buffering tasks can drain a
+  few more events from sockets opened with then-valid credentials before the restarted streams get
+  401 and latch `authRequired`. Per the trust model this feature operates under — a trusted client
+  on a personal single-user device, with the server enforcing auth on every request — those events
+  are the user's *own* already-authorized data rendered to their *own* screen; there is no
+  exfiltration, cross-user leak, or state corruption, and the re-auth resync reconciles
+  authoritative state afterward. The system already converges to `authRequired` correctly. Adding
+  generation-invalidation machinery to fence a sub-second, harmless-under-the-threat-model race is
+  the client-side auth over-engineering the `REVIEW_GUIDELINES.md` threat-model gate exists to
+  filter, so it is declined.
+- **[P2] Background-send tests' cancellation await was a no-op — FIXED, and uncovered a real bug.**
+  The three new background-send tests read `sendTaskForTesting` *after* `scenePhaseChanged` had
+  already nilled `streamTask` (the comment even said "before"), so `await sendTask?.value` awaited
+  nil and the aftermath assertions could run before the async cancellation handler. Moved the
+  capture before `scenePhaseChanged` — which then exposed a genuine defect the no-op await had
+  masked: backgrounding while the initial turn POST is in flight tears down the URLSession request,
+  which throws `URLError(.cancelled)` (not a Swift `CancellationError`), so it fell through the
+  suspend-aware `catch is CancellationError` into the generic catch and surfaced a spurious "Chat
+  Error" modal, marked the bubble failed, and rolled back the optimistic row. Fixed by checking
+  `isSuspendCancelled` (the authoritative signal, independent of error type) at the top of the
+  generic turn-start catch, taking the same silent suspend-preserve path.
+- **[P2] Push hint pending at mount was never consumed — FIXED.** `onChange(of: pendingPushHint)`
+  does not fire for a value already set when the view mounts, so a push delivered during auth
+  bootstrap (or before `ChatRootView` appeared) was dropped. Factored the observer body into
+  `consumePendingPushHint()` and also call it once from the mount `.task`.

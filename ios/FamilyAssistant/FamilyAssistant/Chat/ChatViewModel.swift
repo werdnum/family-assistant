@@ -409,6 +409,10 @@ final class ChatViewModel {
         // so its own deinit can't run; cancel them here (the owner is not in that
         // cycle) to break it and stop the streams when this model is torn down.
         syncCoordinator.cancelOwnedStreams()
+        // Tear down any in-flight resync too: a fire-and-forget resync (the
+        // auth-observer re-auth path does not await request()) would otherwise
+        // outlive this model, holding open SSE sockets and running its handover.
+        resyncOrchestrator?.cancelInFlight()
         if let authObserverToken {
             let authManager = authManager
             Task { @MainActor in authManager.removeAuthStateObserver(authObserverToken) }
@@ -1710,6 +1714,17 @@ final class ChatViewModel {
             }
             markStreamStopped(assistantMessageID: assistantMessageID)
         } catch {
+            // A suspend-cancel (real background) whose in-flight turn POST was torn
+            // down surfaces as a transport cancellation (URLError.cancelled), NOT a
+            // Swift CancellationError, so it lands in this generic catch rather than
+            // the one above. `isSuspendCancelled` is the authoritative signal
+            // regardless of the thrown error type: take the same silent suspend path
+            // (preserve the turn for foreground reattach) with no user-cancel side
+            // effects — no rollback, no error modal, no "failed" bubble.
+            if isSuspendCancelled(streamToken) {
+                finishStreaming(streamToken)
+                return
+            }
             if !(await cancelStopQueuedBeforeRegistration(for: turnID)) {
                 recoverPendingSteersAsDraft(for: turnID)
             }
