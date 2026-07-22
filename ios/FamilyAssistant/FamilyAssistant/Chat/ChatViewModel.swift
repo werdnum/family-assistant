@@ -613,7 +613,10 @@ final class ChatViewModel {
         guard let id else {
             return
         }
-        Task { await selectConversation(id) }
+        // Weakly captured for the same reason as the resync/refresh effect tasks: a
+        // discarded model must not be held alive (blocking `deinit`) by an in-flight
+        // `selectConversation` load; if it's gone the selection is moot.
+        Task { [weak self] in await self?.selectConversation(id) }
     }
 
     func selectConversation(_ id: String, shouldLoadMessages: Bool = true) async {
