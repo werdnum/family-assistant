@@ -55,26 +55,49 @@ state; the stream loops do not implement an authentication protocol.
 - **On a 401**, `AuthManager` performs **one single-flight forced refresh**. If it succeeds, retry
   once where replay is safe (idempotent GETs, and the turn-start path reconciled by `turn_id`). If
   it fails/rejects, **atomically** clear credentials and enter `signInRequired`.
-- **Stream connectors** receive one of: a live stream, a transient transport error, or
-  `signInRequired`. They **back off only on transport errors** and **stop on `signInRequired`**.
-  They carry no refresh-attempt flags, no double-401 detection, no epoch capture.
+- **Stream connectors** back off only on transport errors and stop on `signInRequired`. On a connect
+  401/403 a loop performs **one** forced refresh and retries the connect once; a second 401/403 is
+  terminal (latch `signInRequired`, stop). To bound that to a single attempt per consecutive-401
+  episode, each loop keeps one local `authRefreshAlreadyAttempted` bool that **resets on a
+  successful connect** (so a later legitimate expiry can refresh again). This is the minimum needed
+  for loop termination — *not* the deleted cross-layer machinery (the tri-state
+  `StreamConnectAuthResult`, the `forceAuthRefreshForStreamConnect`/`markStreamConnectAuthRejected`
+  delegate protocol, per-channel attempt state threaded through the view model). Review rounds
+  confirmed some bound is genuinely required: without it a persistently-rejecting stream whose
+  refresh returns 200 hot-loops forever and never surfaces sign-in.
 - **Successful login restarts the streams centrally** (via the existing auth-state observer), and
   clears `signInRequired`.
-- **Generation fencing stays private to `AuthManager`**, scoped to its original narrow purpose:
-  preventing a stale refresh or a watchdog-abandoned WebKit session-cookie bridge from overwriting a
-  newer login. It is **not** threaded through callers.
+- **The terminal auth latch is epoch-fenced.** Clearing credentials + latching `signInRequired` is
+  destructive, so it must not fire from a stale operation whose session has since been superseded by
+  a logout/re-login. Each auth-sensitive operation (turn start, each stream loop, the GET retry)
+  captures `AuthManager.authEpoch` at its start and latches via
+  `markAuthRequiredIfCurrent(capturedEpoch:)`, which no-ops unless that epoch still owns the auth
+  state. This is a single captured `Int` at the terminal path only — the minimum for correctness,
+  not the full per-request epoch threading that was deleted. Refresh-completion fencing (a stale
+  refresh overwriting a newer login) stays private to `AuthManager` and additionally guards the
+  WebKit session-cookie bridge.
 
 ## What gets deleted vs kept
 
-**Delete:** caller-managed epoch capture/compare in `ChatAPIClient`
-(`capturedEpoch`/`clearAuthStateIfCurrent(capturedEpoch:)` at call sites); per-loop
-`authRefreshAlreadyAttempted` flags; the tri-state `StreamConnectAuthResult`;
-`forceAuthRefreshForStreamConnect` / `markStreamConnectAuthRejected` /
-`getCurrentAuthEpochForStreamConnect` delegate plumbing and the duplicated double-401 branches in
-both stream loops.
+**Delete:** the tri-state `StreamConnectAuthResult`; the `forceAuthRefreshForStreamConnect` /
+`markStreamConnectAuthRejected` / `getCurrentAuthEpochForStreamConnect` delegate plumbing; the
+duplicated ~120-line inline turn-start retry that reimplemented the whole registration flow; the
+full per-request epoch threading (every request/refresh/clear passing a caller-managed epoch).
 
-**Keep:** single-flight refresh; the `authRequired`/`AuthStateSignal` state and its observer
-registry; `authEpoch` **private to `AuthManager`** for the stale-refresh/WebKit bridge race only.
+**Keep** (and, where review showed it necessary, a deliberately minimal form of):
+
+- single-flight refresh;
+- the `authRequired`/`AuthStateSignal` state and its observer registry;
+- `authEpoch` inside `AuthManager` for the stale-refresh / WebKit-bridge race;
+- a one-line per-loop `authRefreshAlreadyAttempted` bool (reset on connect) to bound stream 401
+  recovery to a single refresh;
+- a start-captured epoch checked via `markAuthRequiredIfCurrent` at each terminal-latch site (turn
+  start, both stream loops, the GET retry), so a stale rejection can't erase a newer login;
+- a transparent single retry wrapping the turn-start POST (one call site, one refresh, one replay by
+  `turn_id`, cancellation-checked before the replay).
+
+These are the minimum for loop termination, terminal-latch correctness, and silent recovery — not
+the deleted distributed machinery.
 
 ## Disposition of the open review findings (PR #1041)
 

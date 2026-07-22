@@ -1148,6 +1148,13 @@ final class ChatViewModel {
                 throw ChatAPIError.server(statusCode: statusCode, detail: nil)
             }
 
+            // The forced refresh is single-flight, so awaiting it does not observe
+            // this send's cancellation. If the user switched chats (cancelStream
+            // cancelled runSendTurn) while it was in flight, bail before issuing a
+            // second POST — the first rejection registered no turn, so retrying
+            // would start an orphan server-side turn.
+            try Task.checkCancellation()
+
             // Refresh succeeded; retry the turn start with the SAME turnID.
             return try await apiClient.startTurn(
                 turnID: turnID,
