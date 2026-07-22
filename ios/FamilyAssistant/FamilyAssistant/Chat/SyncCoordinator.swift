@@ -220,6 +220,11 @@ final class SyncCoordinator {
         self.reconnectDelay = reconnectDelay
         self.streamTerminationTimeoutSeconds = streamTerminationTimeoutSeconds
         self.breadcrumb = breadcrumb
+    }
+
+    /// Deferred so constructing a coordinator during a SwiftUI rebuild has no
+    /// side effects and does not start a path monitor for a discarded model.
+    func start() {
         pathMonitor.onChange = { [weak self] satisfied in
             self?.apply(.reachabilityChanged(satisfied ? .satisfied : .unsatisfied))
         }

@@ -33,16 +33,23 @@ final class SyncCoordinatorTests: XCTestCase {
         return (coordinator, monitor, auth)
     }
 
-    func testInitStartsPathMonitorAndSeedsReachability() {
+    func testConstructionDoesNotStartPathMonitorUntilStart() {
         let (coordinator, monitor, _) = makeCoordinator(satisfied: true)
+
+        XCTAssertEqual(monitor.startCount, 0)
+        XCTAssertEqual(coordinator.reachability, .unknown)
+
+        coordinator.start()
 
         XCTAssertEqual(monitor.startCount, 1)
         XCTAssertEqual(coordinator.reachability, .satisfied)
         XCTAssertEqual(coordinator.presentation, .degraded)
     }
 
-    func testInitLeavesReachabilityUnknownWhenPathUnsatisfied() {
+    func testStartLeavesReachabilityUnknownWhenPathUnsatisfied() {
         let (coordinator, _, _) = makeCoordinator(satisfied: false)
+
+        coordinator.start()
 
         XCTAssertEqual(coordinator.reachability, .unknown)
     }
@@ -293,6 +300,7 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testReachabilityUnsatisfiedShowsOfflineImmediatelyWithoutEffects() {
         let (coordinator, monitor, _) = makeCoordinator(satisfied: true)
+        coordinator.start()
 
         monitor.setSatisfied(false)
 
@@ -330,6 +338,7 @@ final class SyncCoordinatorTests: XCTestCase {
         // path monitor must still deliver it so the coordinator leaves `.unknown`
         // and shows offline, rather than being pinned at `.unknown` forever.
         let (coordinator, monitor, _) = makeCoordinator(satisfied: false)
+        coordinator.start()
         XCTAssertEqual(coordinator.reachability, .unknown)
 
         monitor.setSatisfied(false)
@@ -360,6 +369,7 @@ final class SyncCoordinatorTests: XCTestCase {
         let (coordinator, monitor, _) = makeCoordinator(satisfied: true)
         let delegate = RecordingSyncStreamDelegate()
         coordinator.delegate = delegate
+        coordinator.start()
         let followGenerationBefore = coordinator.followGeneration
         let activityGenerationBefore = coordinator.activityGeneration
 
@@ -386,6 +396,7 @@ final class SyncCoordinatorTests: XCTestCase {
         let coordinator = SyncCoordinator(authManager: AuthManager(), pathMonitor: monitor)
         let delegate = RecordingSyncStreamDelegate()
         coordinator.delegate = delegate
+        coordinator.start()
         coordinator.apply(.backgrounded)
 
         monitor.setSatisfied(false)

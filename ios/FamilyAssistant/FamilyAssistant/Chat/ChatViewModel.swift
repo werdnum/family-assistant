@@ -380,20 +380,6 @@ final class ChatViewModel {
         }
         syncCoordinator.delegate = self
         resyncOrchestrator = ResyncOrchestrator(host: self, breadcrumb: syncBreadcrumb)
-        // Bridge auth transitions into the coordinator so a token refresh surfaces
-        // as `.syncing`-adjacent degraded state and a rejection surfaces as the
-        // dedicated `.authRequired` presentation — never the generic error modal.
-        let coordinator = syncCoordinator
-        authObserverToken = authManager.addAuthStateObserver { [weak coordinator] signal in
-            switch signal {
-            case .refreshing:
-                coordinator?.apply(.authRefreshing)
-            case .ok:
-                coordinator?.apply(.authOK)
-            case .authRequired:
-                coordinator?.apply(.authRequired)
-            }
-        }
     }
 
     deinit {
@@ -414,7 +400,27 @@ final class ChatViewModel {
         }
     }
 
+    private func activateSync() {
+        guard authObserverToken == nil else { return }
+        syncCoordinator.start()
+        // Bridge auth transitions into the coordinator so a token refresh surfaces
+        // as `.syncing`-adjacent degraded state and a rejection surfaces as the
+        // dedicated `.authRequired` presentation — never the generic error modal.
+        let coordinator = syncCoordinator
+        authObserverToken = authManager.addAuthStateObserver { [weak coordinator] signal in
+            switch signal {
+            case .refreshing:
+                coordinator?.apply(.authRefreshing)
+            case .ok:
+                coordinator?.apply(.authOK)
+            case .authRequired:
+                coordinator?.apply(.authRequired)
+            }
+        }
+    }
+
     func bootstrap(initialPrompt: String? = nil) async {
+        activateSync()
         await loadProfiles()
         await refreshConversations()
         // Only load through the normal selection path when launch restored or

@@ -93,6 +93,31 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testConstructionDoesNotStartPathMonitorUntilBootstrap() async {
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .text("")
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let model = makeViewModel(conversationID: nil, pathMonitor: monitor)
+
+        XCTAssertEqual(monitor.startCount, 0)
+
+        await model.bootstrap()
+
+        XCTAssertGreaterThanOrEqual(monitor.startCount, 1)
+    }
+
     func testBootstrapDoesNotAutoSendUserTypedLaunchDraft() async {
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
@@ -4307,11 +4332,31 @@ final class ChatViewModelTests: XCTestCase {
                 ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
                 forKey: "fa_token_expiry"
             )
+            let conversationID = "web_conv_turn_auth_\(statusCode)"
             let postRequests = AtomicCounter()
             ChatMockBackendURLProtocol.respond { request in
-                if request.httpMethod == "POST", request.url?.path == "/api/v1/chat/turns" {
+                let method = request.httpMethod ?? "GET"
+                let path = request.url?.path ?? ""
+                if method == "POST", path == "/api/v1/chat/turns" {
                     _ = postRequests.increment()
                     return .json(#"{"detail":"sign in again"}"#, statusCode: statusCode)
+                }
+                if method == "GET", path == "/api/v1/profiles" {
+                    return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+                }
+                if method == "GET", path == "/api/v1/chat/conversations" {
+                    return .json(#"{"conversations":[],"count":0}"#)
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    return .json(
+                        #"{"conversation_id":"\#(conversationID)","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                if method == "GET", path == "/api/v1/chat/confirmations/pending" {
+                    return .json(#"{"confirmations":[]}"#)
+                }
+                if method == "GET", path.hasSuffix("/stream") {
+                    return .text("")
                 }
                 return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
             }
@@ -4319,9 +4364,10 @@ final class ChatViewModelTests: XCTestCase {
             authManager.serverURL = serverURL
             let model = ChatViewModel(
                 authManager: authManager,
-                conversationID: "web_conv_turn_auth_\(statusCode)",
+                conversationID: conversationID,
                 pathMonitor: StubPathMonitor(isSatisfied: true)
             )
+            await model.bootstrap()
             model.draftText = "Hello"
 
             await model.sendDraft()
@@ -6988,6 +7034,7 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectMaxDelaySeconds: 0.01,
             pathMonitor: monitor
         )
+        model.syncCoordinator.start()
         model.draftText = "Hi"
         await model.sendDraft()
         // Actively streaming: the send owns its transport (isSendActivelyStreaming).
@@ -8124,12 +8171,11 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.syncPresentation, .live)
     }
 
-    func testFreshViewModelAdoptsLatchedAuthRequiredPresentation() {
-        // A ChatViewModel built AFTER `authRequired` latched (a rebuild while the
-        // stored credentials are already rejected) must present `.authRequired`
-        // immediately: its coordinator learns the state through the observer's
-        // synchronous current-state delivery at registration, not only on the
-        // next transition.
+    func testBootstrappedViewModelAdoptsLatchedAuthRequiredPresentation() async {
+        // A live ChatViewModel bootstrapped AFTER `authRequired` latched must
+        // present `.authRequired`: its coordinator learns the state through the
+        // observer's synchronous current-state delivery at activation, not only
+        // on the next transition.
         let authManager = AuthManager()
         authManager.serverURL = serverURL
         authManager.markAuthRequired()
@@ -8139,6 +8185,10 @@ final class ChatViewModelTests: XCTestCase {
             conversationID: "web_conv_latched_auth",
             pathMonitor: StubPathMonitor(isSatisfied: true)
         )
+
+        XCTAssertNotEqual(model.syncPresentation, .authRequired)
+
+        await model.bootstrap()
 
         XCTAssertEqual(model.syncPresentation, .authRequired)
     }
@@ -8152,6 +8202,7 @@ final class ChatViewModelTests: XCTestCase {
             conversationID: "web_conv_reauthenticated",
             pathMonitor: StubPathMonitor(isSatisfied: true)
         )
+        await model.bootstrap()
         XCTAssertEqual(model.syncPresentation, .authRequired)
 
         KeychainHelper.save(key: "fa_api_token", string: "replacement-api-token")
@@ -9255,7 +9306,7 @@ final class ChatViewModelTests: XCTestCase {
             spoolDirectory: spoolDirectory
         )
 
-        await model.refreshConversations()
+        await model.bootstrap()
 
         XCTAssertEqual(model.syncPresentation, .authRequired)
         XCTAssertNil(model.errorMessage)
@@ -9288,6 +9339,7 @@ final class ChatViewModelTests: XCTestCase {
             spoolDirectory: spoolDirectory
         )
 
+        await model.bootstrap()
         model.draftText = "Hello"
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
