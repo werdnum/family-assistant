@@ -889,6 +889,16 @@ final class ChatViewModel {
             // Not running server-side: either a turn we had reattached that has
             // since ended, or a suspended session whose turn finished while
             // backgrounded. Retire it so the composer leaves steer/stop mode.
+            if reattachedRunningTurnID != session.turnID {
+                // A pure suspended turn (not a reattached one, which finalizes via
+                // its live-follow bubble). A turn that finished while backgrounded
+                // brings its reply in this merge's delta, which replaces the
+                // placeholder; a turn whose initial POST never registered brings an
+                // EMPTY delta, whose early return in `mergeNewMessages` skips the
+                // `local_` drop — leaving the optimistic assistant bubble stranded
+                // in `running` forever. Remove it here so it can't spin indefinitely.
+                removeLocalAssistantPlaceholder(session.assistantMessageID)
+            }
             clearReattachedSession()
         }
     }
@@ -964,6 +974,14 @@ final class ChatViewModel {
             pendingSteersByTurnID[turnID] = nil
         }
         activeTurnSession = nil
+        // Leaving streaming mode: drain any follow-up steer queued against this
+        // (reattached) turn, mirroring `finishStreaming`. A steer that resolved
+        // `.finished` before the follow-stream `turn_ended` is queued but its
+        // immediate drain no-ops while `isStreaming` is still true; without this the
+        // cleared composer text would stay queued and never send.
+        Task { [weak self] in
+            await self?.sendNextQueuedFollowUpSteerIfReady()
+        }
     }
 
     /// Bubbles for live-follow turns still held — mapped in

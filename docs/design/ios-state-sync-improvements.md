@@ -551,3 +551,37 @@ A third local codex pass confirmed the above and raised four more, disposed as f
   does not fire for a value already set when the view mounts, so a push delivered during auth
   bootstrap (or before `ChatRootView` appeared) was dropped. Factored the observer body into
   `consumePendingPushHint()` and also call it once from the mount `.task`.
+
+A fourth local codex pass (all findings P2 — the P1s had converged) raised four more:
+
+- **[P2] Orphaned `running` placeholder after an unregistered suspend — FIXED.** Refines the
+  never-registered case above: on foreground the incremental merge returns an empty delta, and
+  `mergeNewMessages`'s empty-delta early return fires *before* the `local_` drop, so the optimistic
+  assistant bubble was stranded spinning in `running` forever (a broken outcome, not mere
+  degradation). `reconcileSuspendedSession` now removes the orphaned placeholder when it retires a
+  pure suspended session that is not running server-side (scoped to exclude the reattached case,
+  which finalizes via its live-follow bubble). Covered by
+  `testForegroundReconcileRemovesOrphanedPlaceholderForUnregisteredTurn`.
+- **[P2] Queued follow-up stranded after a reattached turn ends — FIXED.** A steer that resolved
+  `.finished` before the follow-stream `turn_ended` is queued, but its immediate drain no-ops while
+  `isStreaming` is still true; the terminal event then reached `clearReattachedSession`, which left
+  streaming mode without scheduling the drain, so the cleared composer text stayed queued forever.
+  `clearReattachedSession` now schedules `sendNextQueuedFollowUpSteerIfReady`, mirroring
+  `finishStreaming` (whose normal-path drain is covered by
+  `testFinishedSteerQueuesFollowUpUntilTurnCompletes`).
+- **[P2] Final list snapshot races the activity handover — ACCEPTED (documented).** After
+  `restartStreams()` spawns the coordinator loops, the resync's final full-list refetch races the
+  activity connection's connect-time refresh; a specific interleaving (final request snapshots old
+  state → a mutation lands → the no-replay activity stream connects and refreshes *after* it → the
+  delayed old response arrives last) can leave one list row stale until the next activity event or
+  resync. It requires several conditions to align, the staleness is transient and self-healing, and
+  the fix is added ordering machinery on the carefully sequenced handover; accepted per the
+  behaviour-altitude / cost-benefit gates.
+- **[P2] Resync retains its host across awaits, delaying teardown — ACCEPTED (documented).** The
+  `deinit` `cancelInFlight()` hook (added in the third pass) cannot preempt a resync while it is
+  suspended *inside* a host method call, because invoking a method on the (weak) `host` retains it
+  for that call's duration, so a discarded screen's resync runs to its next await boundary before
+  teardown proceeds. There is no permanent leak — `host` is weak, each step's await is bounded by
+  the `URLSession` timeout, and the resync releases the host and completes on its own — so
+  preempting mid-await (a broad refactor to stop calling host methods across awaits) is
+  disproportionate to a bounded, rare (discard-mid-resync) delay.

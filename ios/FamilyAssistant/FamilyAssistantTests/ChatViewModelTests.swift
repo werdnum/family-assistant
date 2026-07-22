@@ -6409,6 +6409,101 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testForegroundReconcileRemovesOrphanedPlaceholderForUnregisteredTurn() async throws {
+        // §4.3: background while the initial turn POST is in flight so the turn never
+        // registers server-side. On foreground the incremental merge returns an empty
+        // delta and no active_turns; the empty-delta early return would otherwise skip
+        // the `local_` drop, stranding the optimistic assistant bubble spinning in
+        // `running` forever. The suspended-session reconcile must remove it.
+        let postBody = HangingStream()
+        let postedTurnID = AtomicString()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                // Hang the POST so the turn is in flight when we background; the
+                // suspend cancels it before it can register server-side.
+                return .hangingStream("", controller: postBody)
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path.hasSuffix("/stream") {
+                    return .hangingStream("", controller: HangingStream())
+                }
+                if method == "GET", path.hasSuffix("/messages") {
+                    let hasAfter = Self.queryItems(from: request)["after"] != nil
+                    if !hasAfter {
+                        // Initial full load: one persisted message so the later merge
+                        // takes the incremental (empty-delta) path, not a full reload.
+                        return .json(
+                            """
+                            {
+                              "conversation_id":"web_conv_orphan",
+                              "messages":[
+                                {"internal_id":1,"role":"assistant","content":"Earlier reply","timestamp":"2026-06-08T12:00:00Z","turn_id":"prior"}
+                              ],
+                              "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false
+                            }
+                            """
+                        )
+                    }
+                    // Incremental fetch after foreground: empty delta, no active_turns
+                    // (the turn never registered).
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_orphan",
+                          "messages":[],"count":0,"total_messages":0,
+                          "has_more_before":false,"has_more_after":false,"active_turns":[]
+                        }
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_orphan",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model.bootstrap()
+
+        model.draftText = "Hi"
+        await model.sendDraft()
+        // The optimistic assistant placeholder is rendered and the session preserved
+        // while the POST is in flight.
+        try await waitUntil { model.activeTurnSessionForTesting != nil }
+        XCTAssertTrue(
+            model.messages.contains { $0.status == .running },
+            "The send optimistically renders a running assistant placeholder."
+        )
+
+        model.scenePhaseChanged(old: .active, new: .background)
+        postBody.finish()
+        model.scenePhaseChanged(old: .background, new: .active)
+
+        // The reconcile clears the never-registered session and removes the orphaned
+        // placeholder — no bubble is left spinning.
+        try await waitUntil(timeout: 8) { model.activeTurnSessionForTesting == nil }
+        XCTAssertFalse(
+            model.messages.contains { $0.status == .running },
+            "A never-registered suspended turn must not strand a running assistant placeholder."
+        )
+        XCTAssertNil(model.errorMessage)
+    }
+
     func testDeadSendTransportReconcilesCompletedMessageWithoutAlert() async throws {
         // §4.3 scenario (c): a send whose transport died while the turn kept running
         // (a mid-turn drop the send loop couldn't resume). The next resync's history
