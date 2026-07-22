@@ -31,9 +31,70 @@ final class AuthManager {
     /// credential clear, new login). A session bridge captures it on entry and
     /// only writes its cookie if it is still current — so a bridge abandoned by
     /// the ``bootstrapSession()`` watchdog cannot resurrect a stale session cookie
-    /// after a later logout/re-login has superseded it. `private(set)` so tests can
-    /// observe it; only `bumpAuthEpoch()` mutates it.
+    /// after a later logout/re-login has superseded it. Callers capture this epoch
+    /// at the start of network operations and compare it at terminal latch points
+    /// to prevent a stale rejection from deleting a freshly re-authenticated session.
     @MainActor private(set) var authEpoch = 0
+
+    /// Terminal auth state: the server has rejected the stored credentials (or they
+    /// are missing where required) and the user must re-authenticate. Distinct from
+    /// a transient refresh failure, which keeps the existing credentials. Consumers
+    /// surface this as a dedicated re-auth affordance — it must NEVER be routed
+    /// through the generic error modal. Cleared on any successful (re)auth/login.
+    @MainActor private(set) var authRequired = false
+
+    /// A coarse auth-state transition observers (the sync coordinator) can react to
+    /// without depending on `AuthManager`'s internals. Fires on `refreshIfNeeded`
+    /// entering its network refresh (`.refreshing`), on that refresh (or a login)
+    /// succeeding (`.ok`), and on a rejection latching `authRequired` (`.authRequired`).
+    enum AuthStateSignal {
+        case ok
+        case refreshing
+        case authRequired
+    }
+
+    /// Live auth-state observers, keyed by an opaque token returned at
+    /// registration. Every observer receives every transition — SwiftUI can
+    /// construct a fresh `ChatViewModel` (and its coordinator) while `@State`
+    /// retains the original, so a single rebindable callback would leave the
+    /// on-screen model's coordinator without auth signals. Each view model
+    /// registers its own entry and removes it on `deinit`.
+    @ObservationIgnored @MainActor private var authStateObservers:
+        [UUID: (AuthStateSignal) -> Void] = [:]
+
+    /// Register `observer` for auth-state transitions. Returns a token the caller
+    /// passes to ``removeAuthStateObserver(_:)`` on teardown so a discarded view
+    /// model's closure does not linger and drive a dead coordinator.
+    @MainActor
+    @discardableResult
+    func addAuthStateObserver(_ observer: @escaping (AuthStateSignal) -> Void) -> UUID {
+        let token = UUID()
+        authStateObservers[token] = observer
+        // Deliver the current stable state immediately: an observer registered
+        // after `authRequired` latched (a fresh ChatViewModel whose coordinator
+        // is built post-rejection) would otherwise stay at its default `.ok` and
+        // never learn re-auth is required until the next transition.
+        observer(authRequired ? .authRequired : .ok)
+        return token
+    }
+
+    @MainActor
+    func removeAuthStateObserver(_ token: UUID) {
+        authStateObservers.removeValue(forKey: token)
+    }
+
+    @MainActor
+    private func emitAuthStateSignal(_ signal: AuthStateSignal) {
+        for observer in authStateObservers.values {
+            observer(signal)
+        }
+    }
+
+    /// Coalesces concurrent ``refreshIfNeeded(force:)`` callers onto one
+    /// in-flight refresh so a resume that fans out several requests cannot race
+    /// token rotation. The task clears this on completion; every caller awaits the
+    /// same task rather than blocking the main actor.
+    @ObservationIgnored @MainActor private var inFlightRefresh: Task<Void, Error>?
 
     private var codeVerifier: String?
     private var authSession: ASWebAuthenticationSession?
@@ -157,6 +218,7 @@ final class AuthManager {
             bumpAuthEpoch()
             try await establishSession(apiToken: tokens.apiToken)
             isAuthenticated = true
+            setAuthRequired(false)
         } catch {
             errorMessage = "Authentication failed: \(error.localizedDescription)"
             ErrorReporter.shared.report(error, component: "Auth.callback")
@@ -232,7 +294,7 @@ final class AuthManager {
         }
 
         do {
-            try await refreshIfNeeded(ownerEpoch: epoch)
+            try await refreshIfNeeded(ownerEpoch: epoch, force: false)
         } catch AuthError.authRejected, AuthError.noCredentials {
             if isCurrentAuthEpoch(epoch) { clearLocalAuthState() }
             return
@@ -304,12 +366,58 @@ final class AuthManager {
         authEpoch += 1
     }
 
+    /// Mutate ``authRequired`` and, on an actual change, emit the matching
+    /// transition signal (`.authRequired` / `.ok`) so the sync coordinator's
+    /// presentation follows. Clearing it also emits `.ok`, since a successful
+    /// (re)auth is exactly the transition observers surface as "connected again".
+    @MainActor
+    private func setAuthRequired(_ required: Bool) {
+        guard authRequired != required else { return }
+        authRequired = required
+        emitAuthStateSignal(required ? .authRequired : .ok)
+    }
+
+    /// Atomically clear rejected credentials and latch the terminal
+    /// ``authRequired`` state. The authenticated shell remains mounted so its
+    /// in-place sign-in affordance can recover the session.
+    @MainActor
+    func markAuthRequired() {
+        if !authRequired {
+            bumpAuthEpoch()
+        }
+        clearAuthCredentialsOnly()
+        setAuthRequired(true)
+    }
+
+    /// Atomically clear rejected credentials and latch the terminal ``authRequired``
+    /// state, but only if the provided epoch still owns the current auth state.
+    /// Called from callers (operation start-to-terminal-latch paths) that captured
+    /// their epoch at the start of a network operation; a stale rejection from a
+    /// superseded epoch (logout/re-login happened while the operation was in flight)
+    /// must not delete a freshly re-authenticated session's credentials.
+    @MainActor
+    func markAuthRequiredIfCurrent(capturedEpoch: Int) {
+        guard isCurrentAuthEpoch(capturedEpoch) else {
+            return
+        }
+        markAuthRequired()
+    }
+
+    /// Clear only the stored credentials (keychain/defaults). Used for in-place
+    /// re-auth where the shell stays mounted.
+    @MainActor
+    private func clearAuthCredentialsOnly() {
+        KeychainHelper.delete(key: Keys.apiToken)
+        KeychainHelper.delete(key: Keys.refreshToken)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+    }
+
     /// Whether the bridge that captured `epoch` still owns the current auth state.
     /// False once an auth-invalidating transition (logout / credential clear / new
     /// login) has bumped ``authEpoch``. A watchdog-abandoned bridge that resumes
     /// after such a transition must not mutate auth state (cookies or keychain).
     @MainActor
-    func isCurrentAuthEpoch(_ epoch: Int) -> Bool {
+    private func isCurrentAuthEpoch(_ epoch: Int) -> Bool {
         epoch == authEpoch
     }
 
@@ -333,28 +441,115 @@ final class AuthManager {
 
     // MARK: - Token Refresh
 
-    /// - Parameter ownerEpoch: when set (the bootstrap path), rotated tokens are
+    /// Force a token refresh after a response-time 401, or refresh only when the
+    /// stored token is due. Concurrent callers share the same in-flight operation.
+    @MainActor
+    func refreshIfNeeded(force: Bool = false, ownerEpoch: Int? = nil) async throws {
+        // A forced refresh is triggered by a specific operation (a stream connect,
+        // turn start, or GET) that captured its auth epoch when it began. If the
+        // session has since advanced (logout/re-login), that operation is stale: it
+        // must NOT refresh or clear the *new* session's credentials, and its caller
+        // must not retry under the new session. Abort here so the stale operation
+        // stops without touching auth state.
+        if force, let ownerEpoch, ownerEpoch != authEpoch {
+            throw AuthError.noCredentials
+        }
+        // The ordinary near-expiry refresh (from `authorizedRequest`) has no
+        // originating operation, so it fences on the current epoch; a forced
+        // refresh fences on its operation's captured epoch. Either way a
+        // logout/re-login completing while the refresh suspends on the network
+        // drops the superseded result rather than clobbering the newer session.
+        try await refreshIfNeeded(ownerEpoch: ownerEpoch ?? authEpoch, force: force)
+    }
+
+    /// - Parameter ownerEpoch: when set by the private bootstrap path, rotated tokens are
     ///   persisted only if this epoch is still current. A watchdog-abandoned
     ///   bootstrap whose refresh returns late after a logout/re-login must not
     ///   overwrite the current session's credentials. The lazy `authorizedRequest`
     ///   path passes `nil` and always persists.
+    ///
+    /// Concurrent callers are single-flighted: the first caller that finds the
+    /// token due for refresh performs the network refresh and every other caller
+    /// awaits that same in-flight `Task` rather than issuing its own refresh POST,
+    /// so a resume that fans out several requests cannot race token rotation. Each
+    /// caller awaits the shared task (never blocks the main actor).
+    ///
+    /// - Parameter force: skip the clock-based freshness check and always refresh
+    ///   (still single-flighted). The response-time-401 retry path uses this: the
+    ///   server rejected a token the client still believes is unexpired, so a
+    ///   freshness check would no-op and the retry would resend the same rejected
+    ///   token.
     @MainActor
-    func refreshIfNeeded(ownerEpoch: Int? = nil) async throws {
-        guard let expiryString = UserDefaults.standard.string(forKey: Keys.tokenExpiry),
-              let expiry = ISO8601DateFormatter().date(from: expiryString)
-        else {
-            throw AuthError.noCredentials
-        }
+    private func refreshIfNeeded(ownerEpoch: Int?, force: Bool) async throws {
+        // Capture the current epoch before awaiting any in-flight refresh, so we
+        // can detect if a concurrent auth-state change happened and reject adopting
+        // a stale refresh result.
+        let currentEpoch = authEpoch
 
-        if expiry.timeIntervalSinceNow > 3600 {
+        // Await any in-flight refresh BEFORE the freshness short-circuit. A forced
+        // refresh (response-time 401 path) can be running while the stored expiry
+        // still looks fresh; a non-forced caller that returned at the freshness
+        // check here would send the token the server just rejected. Awaiting the
+        // in-flight refresh first ensures such callers observe the rotated token.
+        if let inFlightRefresh {
+            try await inFlightRefresh.value
+            // If the epoch changed while we were awaiting the in-flight refresh,
+            // the refresh's result is stale and we must not return success. Either
+            // the previous owner was superseded or we were, and either way adopting
+            // the stale result would corrupt the auth state.
+            if authEpoch != currentEpoch {
+                throw AuthError.noCredentials
+            }
             return
         }
 
+        if !force {
+            guard let expiryString = UserDefaults.standard.string(forKey: Keys.tokenExpiry),
+                  let expiry = ISO8601DateFormatter().date(from: expiryString)
+            else {
+                throw AuthError.noCredentials
+            }
+
+            if expiry.timeIntervalSinceNow > 3600 {
+                return
+            }
+        }
+
+        let refresh = Task { @MainActor [weak self] in
+            defer { self?.inFlightRefresh = nil }
+            try await self?.performRefresh(ownerEpoch: ownerEpoch)
+        }
+        inFlightRefresh = refresh
+        try await refresh.value
+        // If the session advanced while our refresh was in flight, `performRefresh`
+        // dropped the (now stale) rotation and returned normally. Do not report
+        // success — otherwise a forced caller would retry its operation under the
+        // newly authenticated session. Mirrors the in-flight-refresh branch above.
+        if authEpoch != currentEpoch {
+            throw AuthError.noCredentials
+        }
+    }
+
+    /// The network refresh coalesced by ``refreshIfNeeded(ownerEpoch:)``. Emits the
+    /// `.refreshing` transition on entry, latches ``authRequired`` on a rejection,
+    /// and clears it on success.
+    @MainActor
+    private func performRefresh(ownerEpoch: Int?) async throws {
         guard let refreshToken = KeychainHelper.readString(key: Keys.refreshToken),
               let baseURL = validatedServerURL()
         else {
+            // No refresh token to present (or no server URL): re-auth is required.
+            // Latch it here so EVERY no-credential refresh attempt is terminal,
+            // including the forced response-time-401 retry path that reaches
+            // `performRefresh` directly rather than through `authorizedRequest`.
+            if let ownerEpoch, !isCurrentAuthEpoch(ownerEpoch) {
+                throw AuthError.noCredentials
+            }
+            markAuthRequired()
             throw AuthError.noCredentials
         }
+
+        emitAuthStateSignal(.refreshing)
 
         let url = baseURL.appendingPathComponent("api/auth/refresh")
         var request = URLRequest(url: url)
@@ -385,10 +580,27 @@ final class AuthManager {
                     return
                 }
                 saveTokens(tokenResponse)
+                if authRequired {
+                    setAuthRequired(false)
+                } else {
+                    // `authRequired` is already false, so `setAuthRequired(false)` will
+                    // not emit a signal. Emit `.ok` explicitly so observers (including
+                    // the sync coordinator) learn the refresh completed successfully
+                    // rather than remaining in `.refreshing` state.
+                    emitAuthStateSignal(.ok)
+                }
             } catch {
                 throw AuthError.transient(underlying: error)
             }
         case 401, 403:
+            // Only latch authRequired if this refresh still owns the current auth state.
+            // A stale rejection from a superseded epoch (logout/re-login happened while
+            // the refresh was in flight) must not mark a freshly re-authenticated session
+            // as needing sign-in, and must not clear the new credentials.
+            if let ownerEpoch, !isCurrentAuthEpoch(ownerEpoch) {
+                throw AuthError.authRejected
+            }
+            markAuthRequired()
             throw AuthError.authRejected
         default:
             throw AuthError.transient(underlying: nil)
@@ -496,6 +708,7 @@ final class AuthManager {
         await dataStore.removeData(ofTypes: types, for: records)
 
         isAuthenticated = false
+        authRequired = false
     }
 
     // MARK: - Helpers
@@ -517,15 +730,22 @@ final class AuthManager {
 
     @MainActor
     func authorizedRequest(url: URL, method: String) async throws -> URLRequest {
+        let capturedEpoch = authEpoch
         do {
             try await refreshIfNeeded()
         } catch AuthError.authRejected, AuthError.noCredentials {
-            clearLocalAuthState()
+            // Only clear state if the epoch hasn't changed since we started. If
+            // logout/relogin bumped the epoch while we were in an in-flight refresh,
+            // don't clear the new session's credentials; let the error propagate so
+            // the caller can retry with the current credentials.
+            if isCurrentAuthEpoch(capturedEpoch) {
+                markAuthRequired()
+            }
             throw AuthError.noCredentials
         }
 
         guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
-            clearLocalAuthState()
+            markAuthRequired()
             throw AuthError.noCredentials
         }
         var request = URLRequest(url: url)

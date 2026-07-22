@@ -78,30 +78,6 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertNotNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
     }
 
-    func testRefreshSkipsPersistWhenOwnerEpochIsSuperseded() async throws {
-        seedStoredAuth(apiToken: "old-api-token", refreshToken: "old-refresh-token", expiresIn: -60)
-        let authManager = makeAuthManager()
-        AuthBackendURLProtocol.respond { _ in
-            .json(
-                """
-                {"api_token": "rotated", "refresh_token": "rotated-refresh", "expires_in": 7200}
-                """
-            )
-        }
-
-        // A stale owner epoch stands in for a bootstrap superseded by a logout /
-        // re-login while its refresh was in flight.
-        try await authManager.refreshIfNeeded(ownerEpoch: authManager.authEpoch - 1)
-
-        XCTAssertEqual(AuthBackendURLProtocol.requests.count, 1, "the refresh request is still made")
-        XCTAssertEqual(
-            KeychainHelper.readString(key: "fa_api_token"),
-            "old-api-token",
-            "a superseded bootstrap must not overwrite the current session's credentials"
-        )
-        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "old-refresh-token")
-    }
-
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
         KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
         let authManager = makeAuthManager()
@@ -112,8 +88,207 @@ final class AuthManagerTests: XCTestCase {
             XCTFail("Expected authorizedRequest to throw")
         } catch AuthError.noCredentials {
             XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
-            XCTAssertFalse(authManager.isAuthenticated)
+            XCTAssertTrue(
+                authManager.isAuthenticated,
+                "shell must stay mounted so in-place sign-in can recover the session"
+            )
+            XCTAssertTrue(
+                authManager.authRequired,
+                "missing credentials on the required path must latch authRequired"
+            )
         }
+    }
+
+    func testConcurrentRefreshIsSingleFlighted() async throws {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "the-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+
+        // Both callers reach `refreshIfNeeded` while the token is due: the first
+        // starts the network refresh and suspends; the second coalesces onto it.
+        async let first: Void = authManager.refreshIfNeeded()
+        async let second: Void = authManager.refreshIfNeeded()
+        _ = try await (first, second)
+
+        let refreshPosts = AuthBackendURLProtocol.requests.filter { $0.url?.path == "/api/auth/refresh" }
+        XCTAssertEqual(refreshPosts.count, 1, "two concurrent callers must share exactly one refresh POST")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+    }
+
+    func testNonForcedRefreshAwaitsInFlightForcedRefresh() async throws {
+        // A forced refresh (the response-time-401 path) rotates the token even
+        // though the stored expiry still looks fresh. A concurrent non-forced
+        // caller must NOT short-circuit at the freshness check and send the token
+        // the server just rejected — it must await the in-flight forced refresh and
+        // observe the rotated credentials.
+        seedStoredAuth(apiToken: "rejected-but-unexpired", refreshToken: "the-refresh", expiresIn: 7200)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+        let gate = AuthBackendURLProtocol.installResponseGate()
+
+        // Start the forced refresh and let it reach the (gated) network POST so
+        // `inFlightRefresh` is latched before the non-forced caller runs.
+        async let forced: Void = authManager.refreshIfNeeded(force: true)
+        try await waitUntil(timeout: 2) { !AuthBackendURLProtocol.requests.isEmpty }
+
+        async let concurrent: Void = authManager.refreshIfNeeded()
+        // The concurrent caller must be parked on the in-flight task; signal the
+        // gate to allow the forced refresh to complete and return.
+        gate.signal()
+
+        _ = try await (forced, concurrent)
+
+        let refreshPosts = AuthBackendURLProtocol.requests.filter { $0.url?.path == "/api/auth/refresh" }
+        XCTAssertEqual(
+            refreshPosts.count,
+            1,
+            "the non-forced caller must coalesce onto the in-flight forced refresh, not issue its own"
+        )
+        XCTAssertEqual(
+            KeychainHelper.readString(key: "fa_api_token"),
+            "rotated",
+            "the non-forced caller must return only after observing the rotated token"
+        )
+    }
+
+    func testRefreshRejectionLatchesAuthRequired() async {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json("{}", statusCode: 401)
+        }
+
+        do {
+            try await authManager.refreshIfNeeded()
+            XCTFail("Expected refreshIfNeeded to throw on rejection")
+        } catch AuthError.authRejected {
+            XCTAssertTrue(authManager.authRequired)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testForcedRefreshWithNoRefreshTokenLatchesAuthRequired() async {
+        // An api token exists but no refresh token: the forced response-time-401
+        // retry path reaches `performRefresh` directly (bypassing
+        // `authorizedRequest`) and hits the no-credentials branch. That branch
+        // must latch the terminal auth state and emit the `.authRequired` signal so
+        // the coordinator surfaces the re-auth affordance rather than nothing.
+        KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
+        let authManager = makeAuthManager()
+        var signals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { signals.append($0) }
+
+        do {
+            try await authManager.refreshIfNeeded(force: true)
+            XCTFail("Expected refreshIfNeeded to throw with no refresh token")
+        } catch AuthError.noCredentials {
+            XCTAssertTrue(
+                authManager.authRequired,
+                "a forced refresh with no refresh token must latch the terminal auth state"
+            )
+            // The observer receives the current state (`.ok`) immediately on
+            // registration, then the `.authRequired` latch.
+            XCTAssertEqual(signals, [.ok, .authRequired])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testAuthRequiredSignalsReachObserver() async {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        var signals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { signals.append($0) }
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+
+        try? await authManager.refreshIfNeeded()
+
+        XCTAssertEqual(signals, [.ok, .refreshing, .authRequired])
+    }
+
+    func testObserverRegisteredAfterLatchLearnsAuthRequiredImmediately() async {
+        // SwiftUI can build a fresh ChatViewModel (and its coordinator) after
+        // `authRequired` has already latched. Its observer, registered post-latch,
+        // must be told the current state at once rather than defaulting to `.ok`
+        // and never learning re-auth is required until the next transition.
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+        try? await authManager.refreshIfNeeded()
+        XCTAssertTrue(authManager.authRequired)
+
+        var lateSignals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { lateSignals.append($0) }
+
+        XCTAssertEqual(lateSignals, [.authRequired])
+    }
+
+    func testSuccessfulReAuthClearsAuthRequired() async {
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+        try? await authManager.refreshIfNeeded()
+        XCTAssertTrue(authManager.authRequired)
+
+        // A successful refresh (token still valid) clears the terminal state.
+        seedStoredAuth(apiToken: "expiring-again", refreshToken: "good-refresh", expiresIn: -60)
+        var signals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { signals.append($0) }
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"fresh","refresh_token":"fresh-refresh","expires_in":7200}"#)
+        }
+
+        try? await authManager.refreshIfNeeded()
+
+        XCTAssertFalse(authManager.authRequired)
+        // Registered while `authRequired` was already latched, so the observer
+        // first learns the current `.authRequired` state, then the re-auth's
+        // `.refreshing`/`.ok`.
+        XCTAssertEqual(signals, [.authRequired, .refreshing, .ok])
+    }
+
+    func testMultipleAuthStateObserversAllReceiveSignals() async {
+        // SwiftUI can construct a fresh ChatViewModel (and coordinator) while
+        // @State retains the original, so a single rebindable callback would leave
+        // the on-screen model's coordinator without auth signals. Every live
+        // observer must receive every transition.
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        var firstSignals: [AuthManager.AuthStateSignal] = []
+        var secondSignals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { firstSignals.append($0) }
+        authManager.addAuthStateObserver { secondSignals.append($0) }
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+
+        try? await authManager.refreshIfNeeded()
+
+        XCTAssertEqual(firstSignals, [.ok, .refreshing, .authRequired])
+        XCTAssertEqual(secondSignals, [.ok, .refreshing, .authRequired])
+    }
+
+    func testRemovedAuthStateObserverStopsReceivingSignalsWhileOthersContinue() async {
+        // Deallocating one view model (which removes its observer by token) must not
+        // break signal delivery to the still-live model.
+        seedStoredAuth(apiToken: "expiring", refreshToken: "stale-refresh", expiresIn: -60)
+        let authManager = makeAuthManager()
+        var survivorSignals: [AuthManager.AuthStateSignal] = []
+        var removedSignals: [AuthManager.AuthStateSignal] = []
+        authManager.addAuthStateObserver { survivorSignals.append($0) }
+        let removedToken = authManager.addAuthStateObserver { removedSignals.append($0) }
+        authManager.removeAuthStateObserver(removedToken)
+        AuthBackendURLProtocol.respond { _ in .json("{}", statusCode: 401) }
+
+        try? await authManager.refreshIfNeeded()
+
+        XCTAssertEqual(survivorSignals, [.ok, .refreshing, .authRequired])
+        // The removed observer still received the immediate current-state (`.ok`)
+        // delivered synchronously at registration, but nothing after removal.
+        XCTAssertEqual(removedSignals, [.ok], "a removed observer must receive no signals after removal")
     }
 
     func testEstablishSessionPostsBearerTokenAndAcceptsCookieResponse() async throws {
@@ -154,11 +329,18 @@ final class AuthManagerTests: XCTestCase {
 
         await authManager.bootstrapSession()
 
-        XCTAssertFalse(authManager.isAuthenticated)
+        XCTAssertTrue(
+            authManager.isAuthenticated,
+            "shell must stay mounted so in-place sign-in can recover the session"
+        )
         XCTAssertFalse(authManager.isBootstrapping)
         XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
         XCTAssertNil(KeychainHelper.readString(key: "fa_refresh_token"))
         XCTAssertNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
+        XCTAssertTrue(
+            authManager.authRequired,
+            "authRequired must be latched so in-place sign-in is presented"
+        )
     }
 
     func testBootstrapSessionCompletesNormallyWhenSessionBridgeSucceeds() async {
@@ -210,24 +392,6 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertTrue(completed)
     }
 
-    func testAuthEpochOwnershipIsLostAfterAuthInvalidation() async {
-        seedStoredAuth(apiToken: "api-token", refreshToken: "refresh-token", expiresIn: 7200)
-        let authManager = makeAuthManager()
-
-        let captured = authManager.authEpoch
-        XCTAssertTrue(authManager.isCurrentAuthEpoch(captured))
-
-        // A logout (the case where a watchdog-abandoned bridge could resume and
-        // re-add the stale cookie or clear a fresh login) invalidates ownership, so
-        // both the cookie write and the auth-rejection clear are fenced out.
-        await authManager.logout()
-
-        XCTAssertFalse(
-            authManager.isCurrentAuthEpoch(captured),
-            "a bridge captured before logout must no longer own the auth state"
-        )
-    }
-
     func testStaleCookieSelectionDeletesOnlyOurOwnUnreplacedWrites() {
         let session = "session"
         let domain = "assistant.example.test"
@@ -270,6 +434,20 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(Data([0xfb, 0xff]).base64URLEncoded, "-_8")
     }
 
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        predicate: @escaping () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() {
+                return
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Timed out waiting for predicate")
+    }
+
     private func makeAuthManager() -> AuthManager {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -304,6 +482,10 @@ private final class AuthBackendURLProtocol: URLProtocol {
     private static let lock = NSLock()
     private static var handler: Handler?
     private static var recordedRequests: [URLRequest] = []
+    /// When set, `startLoading` blocks on this gate before producing a response,
+    /// so a test can hold a request in flight (e.g. a forced refresh) while it
+    /// exercises a concurrent caller, then release it deterministically.
+    private static var responseGate: DispatchSemaphore?
 
     static var requests: [URLRequest] {
         lock.withLock { recordedRequests }
@@ -315,10 +497,17 @@ private final class AuthBackendURLProtocol: URLProtocol {
         }
     }
 
+    static func installResponseGate() -> DispatchSemaphore {
+        let gate = DispatchSemaphore(value: 0)
+        lock.withLock { responseGate = gate }
+        return gate
+    }
+
     static func reset() {
         lock.withLock {
             handler = nil
             recordedRequests = []
+            responseGate = nil
         }
     }
 
@@ -331,10 +520,12 @@ private final class AuthBackendURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        let handler: Handler? = Self.lock.withLock {
+        let (handler, gate): (Handler?, DispatchSemaphore?) = Self.lock.withLock {
             Self.recordedRequests.append(request)
-            return Self.handler
+            return (Self.handler, Self.responseGate)
         }
+
+        gate?.wait()
 
         guard let handler else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))

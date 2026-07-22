@@ -214,6 +214,16 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNotNil(model.composerFocusRequestID)
     }
 
+    func testEmptyLaunchDraftIsLiveWhenActivityStreamConnects() {
+        let model = makeViewModel(conversationID: nil)
+
+        model.syncCoordinator.apply(
+            .activityConnected(generation: model.syncCoordinator.activityGeneration)
+        )
+
+        XCTAssertEqual(model.syncPresentation, .live)
+    }
+
     func testExplicitNewConversationRequestIgnoresRestoreWindow() {
         storeLastConversation("web_conv_recent", activeSecondsAgo: 60)
 
@@ -670,6 +680,54 @@ final class ChatViewModelTests: XCTestCase {
             model.selectedProfileID,
             "complex_tasks",
             "A transiently empty profiles list must not clobber the active selection."
+        )
+    }
+
+    func testSendCapturesProfileAtSendTimeNotStartTurnTime() async throws {
+        // The turn must POST under the profile selected when the send was issued,
+        // not a later `selectedProfileID`. `sendDraft` captures the profile into the
+        // ActiveTurnSession and only then spawns the transport task, so a profile
+        // switch made before that task suspends into its `startTurn` POST (here,
+        // synchronously on the main actor right after `sendDraft` returns, before
+        // any await lets the task run) must not retarget the in-flight turn.
+        let startProfileID = AtomicString()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                startProfileID.set(payload["profile_id"] as? String ?? "<nil>")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_profile_capture","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_profile_capture/stream"):
+                return .droppedStream("")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_profile_capture/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_profile_capture","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_profile_capture")
+        model.selectedProfileID = "complex_tasks"
+        model.draftText = "Hi"
+        await model.sendDraft()
+        // No await between here and the switch: the just-spawned transport task
+        // (also main-actor-isolated) cannot have reached its startTurn POST yet.
+        model.selectedProfileID = "engineer"
+
+        try await waitUntil { startProfileID.value != nil }
+
+        XCTAssertEqual(
+            startProfileID.value,
+            "complex_tasks",
+            "The turn POST must carry the profile captured at send time, not the later switch."
         )
     }
 
@@ -3368,6 +3426,248 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testActiveTurnSessionSurvivesTransportDropRetainingPayloadAndCursor() async throws {
+        // The durable ActiveTurnSession must OUTLIVE its transport task: after a
+        // mid-turn drop the send resumes from the SAME session instance (not a
+        // reconstructed one), and that session still carries its original payload
+        // and the cursor it had applied before the drop. This is the M2
+        // reattachment precondition — assert it directly, not just observationally.
+        let streamRequests = AtomicCounter()
+        var streamedTurnID = "turn-survive"
+        var resumeFromSeq: String?
+        let leg1 = HangingStream()
+        let leg2 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                if let body = (try? Self.jsonObject(from: request)) as? [String: Any],
+                   let postedTurnID = body["turn_id"] as? String {
+                    streamedTurnID = postedTurnID
+                }
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_survive","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_survive/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_survive","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                if request.httpMethod == "GET", path == "/api/v1/chat/conversations/web_conv_survive/stream" {
+                    if streamRequests.increment() == 1 {
+                        // First leg: apply a token at seq 2, then hold the socket
+                        // open until the test finishes it (a clean mid-turn EOF).
+                        return .hangingStream(
+                            "event: text\ndata: {\"turn_id\":\"\(streamedTurnID)\",\"content\":\"Partial\",\"seq\":2}\n\n",
+                            controller: leg1
+                        )
+                    }
+                    // Resume leg: hold open so the turn stays in flight while the
+                    // test inspects the surviving session.
+                    resumeFromSeq = Self.queryItems(from: request)["from_seq"]
+                    return .hangingStream("", controller: leg2)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_survive",
+            liveReconnectInitialDelaySeconds: 0.001,
+            liveReconnectMaxDelaySeconds: 0.001
+        )
+        model.draftText = "Ask something"
+        await model.sendDraft()
+
+        // Capture the session while the first transport leg is live.
+        try await waitUntil { model.messages.last?.text == "Partial" }
+        let session = try XCTUnwrap(model.activeTurnSessionForTesting)
+        XCTAssertEqual(session.prompt, "Ask something")
+        XCTAssertEqual(session.conversationID, "web_conv_survive")
+
+        // Sever the first leg: the send loop resubscribes on the SAME session.
+        leg1.finish()
+        try await waitUntil { streamRequests.value >= 2 }
+
+        // The session survived the transport task's drop: same instance, same
+        // payload, and the cursor it applied before the drop (seq 2).
+        let resumed = try XCTUnwrap(model.activeTurnSessionForTesting)
+        XCTAssertTrue(resumed === session)
+        XCTAssertEqual(resumed.prompt, "Ask something")
+        XCTAssertEqual(resumed.lastAppliedSeq, 2)
+        // The resume resumes from just past the applied seq (server replays
+        // seq >= from_seq), matching the send cursor now held by the session.
+        XCTAssertEqual(resumeFromSeq, "3")
+
+        leg2.finish()
+        model.cancelStream()
+    }
+
+    func testDiscoveredActiveTurnTailAttachesAndReconcilesAtTurnEnded() async throws {
+        // A turn the server reports in /messages active_turns for the selected
+        // conversation, for which this client holds NO local session (e.g. started
+        // on another device), must render progressively from the follow-stream
+        // tail — a placeholder that streams the remaining tokens — and then be
+        // reconciled by the canonical history replacement at turn_ended. No
+        // mid-turn prefix reconstruction: the prefix arrives only via history.
+        let streamConnects = AtomicCounter()
+        let turnEnded = AtomicCounter()
+        var tailFromSeq: String?
+        let leg1 = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_discover/messages") {
+                // While the turn runs, history holds only its earlier (persisted)
+                // rows and reports the running turn in active_turns — the reply's
+                // prefix is NOT included. Only once the turn has ended does the
+                // canonical reply appear, supplying the missed prefix + tail.
+                if turnEnded.value == 0 {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_discover",
+                          "messages":[{"internal_id":1,"role":"user","content":"Kick off","timestamp":"2026-06-08T12:00:00Z"}],
+                          "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false,
+                          "active_turns":[{"turn_id":"turn-remote","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                        }
+                        """
+                    )
+                }
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_discover",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Kick off","timestamp":"2026-06-08T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Full remote reply","timestamp":"2026-06-08T12:00:05Z","turn_id":"turn-remote"}
+                      ],
+                      "count":2,"total_messages":2,"has_more_before":false,"has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_discover/stream") {
+                let n = streamConnects.increment()
+                if n == 1 {
+                    // Tail-only attach: the discovered turn has no local cursor, so
+                    // the follow stream subscribes from the head (-1) and streams a
+                    // tail token live, then holds open (the turn is still running).
+                    tailFromSeq = Self.queryItems(from: request)["from_seq"]
+                    return .hangingStream(
+                        "event: text\ndata: {\"turn_id\":\"turn-remote\",\"content\":\" tail\",\"seq\":8}\n\n",
+                        controller: leg1
+                    )
+                }
+                // The reconnect after the first leg is finished delivers turn_ended.
+                turnEnded.increment()
+                return .text(
+                    """
+                    event: turn_ended
+                    data: {"turn_id":"turn-remote","status":"complete","seq":9}
+
+                    """
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(
+            conversationID: nil,
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model.selectConversation("web_conv_discover")
+
+        // The discovered turn renders progressively: its tail token appears in a
+        // placeholder even though no local send is driving it.
+        try await waitUntil { model.messages.contains { $0.text == " tail" } }
+        XCTAssertEqual(tailFromSeq, "-1")
+
+        // End the first leg; the reconnect delivers turn_ended, which triggers the
+        // canonical history replacement supplying the full reply (prefix + tail)
+        // the tail-only attach never reconstructed.
+        leg1.finish()
+        try await waitUntil { model.messages.contains { $0.text == "Full remote reply" } }
+        XCTAssertFalse(model.messages.contains { $0.text == " tail" })
+        XCTAssertEqual(model.messages.map(\.text), ["Kick off", "Full remote reply"])
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testReconnectCatchUpDiscoversActiveTurnBeforeAnyToken() async throws {
+        // The incremental catch-up path (mergeNewMessages / fetchMessages) — the
+        // PRIMARY reconnect / 410 flow — must consume each page's active_turns and
+        // attach a discovered running turn, rendering its progressive placeholder
+        // before any token arrives. Previously only the full loadMessages path did
+        // this, so a turn discovered during a reconnect showed nothing until a
+        // token landed.
+        let messagesFetches = AtomicCounter()
+        let stream = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_catchup/messages") {
+                // The FULL load (no `after`) reports no active_turns, so any
+                // discovered placeholder can only come from the incremental
+                // catch-up page below — the path under test.
+                if Self.queryItems(from: request)["after"] == nil {
+                    return .json(
+                        """
+                        {
+                          "conversation_id":"web_conv_catchup",
+                          "messages":[{"internal_id":1,"role":"user","content":"Kick off","timestamp":"2026-06-08T12:00:00Z"}],
+                          "count":1,"total_messages":1,"has_more_before":false,"has_more_after":false
+                        }
+                        """
+                    )
+                }
+                // The incremental page (the reconnect catch-up) reports the running
+                // turn in active_turns with an empty message delta, so the only way
+                // a placeholder can appear is by consuming active_turns here.
+                messagesFetches.increment()
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_catchup",
+                      "messages":[],"count":0,"total_messages":1,"has_more_before":false,"has_more_after":false,
+                      "active_turns":[{"turn_id":"turn-remote","started_at":"2026-06-08T12:00:01Z","latest_seq":7,"status":"running"}]
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/conversations/web_conv_catchup/stream") {
+                // The follow stream connects (which drives the catch-up merge) but
+                // delivers NO token for the running turn — so the placeholder must
+                // originate from the active_turns discovery, not a streamed token.
+                return .hangingStream("", controller: stream)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: nil,
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.selectConversation("web_conv_catchup")
+
+        // The catch-up merge ran and surfaced the discovered turn as a progressive
+        // placeholder even though no token has arrived.
+        try await waitUntil {
+            model?.messages.contains { $0.id == "local_follow_turn-remote" && $0.status == .running } == true
+        }
+        XCTAssertGreaterThanOrEqual(messagesFetches.value, 1)
+
+        stream.finish()
+        model = nil
+    }
+
     func testSendResumesTokenStreamAfterMidTurnInterruption() async throws {
         // The proxy severs the send-and-watch stream mid-turn — a CLEAN EOF with
         // no turn_ended (e.g. an Envoy 15s request timeout) right after the first
@@ -3893,6 +4193,46 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.messages.first?.text, "Hi")
         let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
         XCTAssertEqual(assistant.status, .failed)
+    }
+
+    func testTurnStart401And403UseCentralSignInRequiredPath() async {
+        for statusCode in [401, 403] {
+            resetStoredAuth()
+            KeychainHelper.save(key: "fa_api_token", string: "rejected-turn-token")
+            UserDefaults.standard.set(
+                ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+                forKey: "fa_token_expiry"
+            )
+            let postRequests = AtomicCounter()
+            ChatMockBackendURLProtocol.respond { request in
+                if request.httpMethod == "POST", request.url?.path == "/api/v1/chat/turns" {
+                    _ = postRequests.increment()
+                    return .json(#"{"detail":"sign in again"}"#, statusCode: statusCode)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+            let authManager = AuthManager()
+            authManager.serverURL = serverURL
+            let model = ChatViewModel(
+                authManager: authManager,
+                conversationID: "web_conv_turn_auth_\(statusCode)",
+                pathMonitor: StubPathMonitor(isSatisfied: true)
+            )
+            model.draftText = "Hello"
+
+            await model.sendDraft()
+            do {
+                try await waitUntil { authManager.authRequired }
+            } catch {
+                XCTFail("Timed out waiting for auth to be marked required: \(error)")
+            }
+
+            XCTAssertEqual(postRequests.value, 1)
+            XCTAssertTrue(authManager.authRequired)
+            XCTAssertEqual(model.syncPresentation, .authRequired)
+            XCTAssertNil(model.errorMessage, "turn-start \(statusCode) must not use the generic modal")
+            XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+        }
     }
 
     func testSendRepeatedNoProgressDropsGiveUpAndReloadHistory() async throws {
@@ -4654,8 +4994,9 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(streamConnects.value, 1)
         XCTAssertGreaterThanOrEqual(incrementalMerges.value, 1)
         // Content recovery is decoupled from connection health: the disconnected
-        // indicator is still surfaced, but the thread is no longer stranded.
-        XCTAssertEqual(model?.liveUpdatesConnected, false)
+        // indicator is still surfaced (presentation is not `.live` while the follow
+        // stream can't connect), but the thread is no longer stranded.
+        XCTAssertNotEqual(model?.syncPresentation, .live)
 
         // Release so deinit cancels the fast reconnect loop before teardown.
         model = nil
@@ -5179,14 +5520,61 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
-    func testShouldReconnectOnForegroundOnlyFromBackground() {
-        // The scene-phase reconnect must fire only on a real return from the
-        // background, not on a transient .inactive -> .active blip (which would
-        // tear down a healthy follow connection).
-        let model = makeViewModel(conversationID: "web_conv_scene")
-        XCTAssertTrue(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: true))
-        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: false, isNowActive: true))
-        XCTAssertFalse(model.shouldReconnectOnForeground(cameFromBackground: true, isNowActive: false))
+    func testRealResumeSceneSequenceRestartsStreamsExactlyOnce() async throws {
+        // A normal iOS resume delivers TWO scene-phase firings —
+        // `.background -> .inactive` then `.inactive -> .active` — which the former
+        // single-transition predicate never matched. The latched gate must run
+        // exactly one resync (one follow restart + catch-up) across the sequence,
+        // and none for an `.inactive -> .active` blip that never backgrounded.
+        let followConnects = AtomicCounter()
+        let followController = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/stream"), !path.contains("activity") {
+                followConnects.increment()
+                // Hang so the follow loop never spontaneously reconnects: any
+                // additional connect is attributable to a resync restart.
+                return .hangingStream("", controller: HangingStream())
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: followController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_scene","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_scene",
+            liveReconnectInitialDelaySeconds: 10,
+            liveReconnectMaxDelaySeconds: 10
+        )
+        await model?.selectConversation("web_conv_scene")
+        try await waitUntil { followConnects.value == 1 }
+        let baseline = followConnects.value
+
+        // Realistic resume: two firings. Only the latched foreground runs a resync.
+        model?.scenePhaseChanged(old: .active, new: .background)
+        model?.scenePhaseChanged(old: .background, new: .inactive)
+        model?.scenePhaseChanged(old: .inactive, new: .active)
+        try await waitUntil { followConnects.value == baseline + 1 }
+        XCTAssertEqual(followConnects.value, baseline + 1)
+
+        // An `.inactive -> .active` blip with no prior background triggers none.
+        model?.scenePhaseChanged(old: .active, new: .inactive)
+        model?.scenePhaseChanged(old: .inactive, new: .active)
+        // Give any erroneous resync a chance to fire before asserting it didn't.
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(followConnects.value, baseline + 1)
+
+        followController.finish()
+        model = nil
     }
 
     func testShouldRenderThreadKeepsListMountedOnceActive() {
@@ -6049,6 +6437,208 @@ final class ChatViewModelTests: XCTestCase {
         // Release the view model so `deinit` cancels the fast reconnect loop;
         // otherwise it would keep hitting the mock and bleed into the next test.
         model = nil
+    }
+
+    func testIndicatorBackToLiveAfterSuccessfulReconnect() async throws {
+        // Both channels connect and stay open (hanging), so the coordinator's
+        // derived presentation reaches `.live`. The follow stream then drops
+        // cleanly; presentation leaves `.live`, and the auto-reconnect brings a
+        // fresh follow connect back to `.live`.
+        let followController = HangingStream()
+        let activityController = HangingStream()
+        let followConnects = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: activityController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = followConnects.increment()
+                if n == 1 {
+                    // First connect drops cleanly (empty event stream).
+                    return .text("")
+                }
+                return .hangingStream("", controller: followController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_live","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/profiles" {
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/confirmations/pending" {
+                return .json(#"{"confirmations":[]}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_live",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01
+        )
+        await model?.bootstrap()
+        await model?.selectConversation("web_conv_live")
+
+        // The first follow connect dropped cleanly; the auto-reconnect eventually
+        // establishes a held follow stream and, with the held activity stream,
+        // drives presentation to `.live`.
+        try await waitUntil(timeout: 6) { model?.syncPresentation == .live }
+        XCTAssertEqual(model?.syncPresentation, .live)
+
+        followController.finish()
+        activityController.finish()
+        model = nil
+    }
+
+    func testIndicatorNotLiveAfterCleanEOFDrop() async throws {
+        // A held (connected) follow stream that then closes cleanly (empty EOF)
+        // must leave the derived presentation off `.live`: a clean EOF is still an
+        // involuntary drop.
+        let followController = HangingStream()
+        let activityController = HangingStream()
+        let followConnects = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: activityController)
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                let n = followConnects.increment()
+                if n == 1 {
+                    return .hangingStream("", controller: followController)
+                }
+                // Later reconnects hang so the drop below is observable before a
+                // fresh connect flips the indicator back.
+                return .hangingStream("", controller: HangingStream())
+            }
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    #"{"conversation_id":"web_conv_eof","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/profiles" {
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/confirmations/pending" {
+                return .json(#"{"confirmations":[]}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(
+            conversationID: "web_conv_eof",
+            liveReconnectInitialDelaySeconds: 10,
+            liveReconnectMaxDelaySeconds: 10
+        )
+        await model?.bootstrap()
+        await model?.selectConversation("web_conv_eof")
+
+        try await waitUntil(timeout: 6) { model?.syncPresentation == .live }
+
+        // Close the held follow stream cleanly (empty EOF). The reconnect backoff
+        // is long, so the indicator stays off `.live` while we observe.
+        followController.finish()
+        try await waitUntil(timeout: 4) { model?.syncPresentation != .live }
+        XCTAssertNotEqual(model?.syncPresentation, .live)
+
+        activityController.finish()
+        model = nil
+    }
+
+    func testPresentationUnaffectedByStaleGenerationFollowCallback() async throws {
+        // A follow callback tagged with a superseded generation must not degrade
+        // the derived presentation: the coordinator's reducer rejects stale-
+        // generation events. Drive the coordinator directly for determinism.
+        let (model, coordinator) = makeCoordinatorBackedModel()
+
+        let followGeneration = coordinator.followGeneration
+        coordinator.apply(.followConnected(generation: followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+        XCTAssertEqual(model.syncPresentation, .live)
+
+        coordinator.bumpFollowGeneration()
+        // A late drop from the old follow generation is rejected; presentation holds.
+        coordinator.apply(.followDropped(generation: followGeneration, cleanEOF: true))
+        XCTAssertEqual(model.syncPresentation, .live)
+    }
+
+    func testFreshViewModelAdoptsLatchedAuthRequiredPresentation() {
+        // A ChatViewModel built AFTER `authRequired` latched (a rebuild while the
+        // stored credentials are already rejected) must present `.authRequired`
+        // immediately: its coordinator learns the state through the observer's
+        // synchronous current-state delivery at registration, not only on the
+        // next transition.
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        authManager.markAuthRequired()
+
+        let model = ChatViewModel(
+            authManager: authManager,
+            conversationID: "web_conv_latched_auth",
+            pathMonitor: StubPathMonitor(isSatisfied: true)
+        )
+
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+    }
+
+    func testSuccessfulReauthenticationRestartsStreamsThroughAuthObserver() async throws {
+        let authManager = AuthManager()
+        authManager.serverURL = serverURL
+        authManager.markAuthRequired()
+        let model = ChatViewModel(
+            authManager: authManager,
+            conversationID: "web_conv_reauthenticated",
+            pathMonitor: StubPathMonitor(isSatisfied: true)
+        )
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+
+        KeychainHelper.save(key: "fa_api_token", string: "replacement-api-token")
+        KeychainHelper.save(key: "fa_refresh_token", string: "replacement-refresh-token")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+            forKey: "fa_token_expiry"
+        )
+        let followStream = HangingStream()
+        let activityStream = HangingStream()
+        let followRestarted = expectation(description: "follow stream restarted")
+        let activityRestarted = expectation(description: "activity stream restarted")
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path {
+            case "/api/auth/refresh":
+                return .json(#"{"api_token":"fresh","refresh_token":"fresh-refresh","expires_in":7200}"#)
+            case "/api/v1/chat/conversations/web_conv_reauthenticated/stream":
+                followRestarted.fulfill()
+                return .hangingStream("", controller: followStream)
+            case "/api/v1/chat/activity/stream":
+                activityRestarted.fulfill()
+                return .hangingStream("", controller: activityStream)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        try await authManager.refreshIfNeeded(force: true)
+        await fulfillment(of: [followRestarted, activityRestarted], timeout: 2)
+
+        XCTAssertFalse(authManager.authRequired)
+        followStream.finish()
+        activityStream.finish()
+    }
+
+    /// A view model whose coordinator is seeded with a satisfied stub monitor, so
+    /// reducer-driven presentation assertions are deterministic.
+    private func makeCoordinatorBackedModel() -> (ChatViewModel, SyncCoordinator) {
+        let model = makeViewModel(conversationID: "web_conv_stale")
+        return (model, model.syncCoordinator)
     }
 
     func testPendingConfirmationsPollAndApprove() async throws {
@@ -7086,6 +7676,71 @@ final class ChatViewModelTests: XCTestCase {
         }
     }
 
+    func testAuthRequiredYieldsAuthRequiredPresentationWithoutModal() async throws {
+        // A rejected token refresh on a required request must drive the coordinator
+        // to `.authRequired` and NEVER raise the generic error modal or its
+        // `Chat.alertPresented` breadcrumb.
+        seedExpiringToken()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                return .json(#"{"detail":"expired"}"#, statusCode: 401)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-auth-required-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+
+        await model.refreshConversations()
+
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "an auth-required failure must not raise the generic error modal"
+        )
+    }
+
+    func testPreTurnNoCredentialsSendDoesNotModal() async throws {
+        // Finding 7: a send whose `startTurn` fails pre-turn with
+        // `AuthError.noCredentials` (a rejected session) routes through
+        // `appendStreamError`, not the underlyingError-carrying `presentErrorAlert`.
+        // The underlying error must be threaded through so the auth failure is
+        // suppressed: the `.authRequired` presentation covers the UX, and no generic
+        // modal (`errorMessage` / `Chat.alertPresented` breadcrumb) may appear.
+        seedExpiringToken()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                return .json(#"{"detail":"expired"}"#, statusCode: 401)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-preturn-nocreds-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_preturn_nocreds",
+            spoolDirectory: spoolDirectory
+        )
+
+        model.draftText = "Hello"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "a pre-turn noCredentials send must not raise the generic error modal"
+        )
+    }
+
     func testMidTurnDropRecoveryEmitsNoAlertPresentedBreadcrumb() async throws {
         // Characterization: a mid-turn transport drop recovers by reloading
         // history. It WILL spool a `Chat.streamDrop` breadcrumb, but it must NOT
@@ -7355,7 +8010,8 @@ final class ChatViewModelTests: XCTestCase {
         liveReconnectInitialDelaySeconds: Double = 2,
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
-        streamResumeLivenessSeconds: Double = 2
+        streamResumeLivenessSeconds: Double = 2,
+        pathMonitor: PathMonitoring? = nil
     ) -> ChatViewModel {
         let reporter = ErrorReporter(spoolDirectory: spoolDirectory, dedupeWindow: dedupeWindow)
         let authManager = AuthManager()
@@ -7367,7 +8023,8 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
             streamResumeLivenessSeconds: streamResumeLivenessSeconds,
-            errorReporter: reporter
+            errorReporter: reporter,
+            pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true)
         )
     }
 
@@ -7379,7 +8036,8 @@ final class ChatViewModelTests: XCTestCase {
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
         streamResumeLivenessSeconds: Double = 2,
-        streamTextFlushInterval: Duration = .milliseconds(50)
+        streamTextFlushInterval: Duration = .milliseconds(50),
+        pathMonitor: PathMonitoring? = nil
     ) -> ChatViewModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
@@ -7392,7 +8050,8 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
             streamResumeLivenessSeconds: streamResumeLivenessSeconds,
-            streamTextFlushInterval: streamTextFlushInterval
+            streamTextFlushInterval: streamTextFlushInterval,
+            pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true)
         )
     }
 
@@ -7419,6 +8078,17 @@ final class ChatViewModelTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "lastConversationId")
         UserDefaults.standard.removeObject(forKey: "lastConversationActiveAt")
         UserDefaults.standard.removeObject(forKey: "selectedProfileId")
+    }
+
+    /// Overwrite the fresh setUp token with one due for refresh, so the next
+    /// authorized request drives `refreshIfNeeded` through its network path.
+    private func seedExpiringToken() {
+        KeychainHelper.save(key: "fa_api_token", string: "chat-view-model-token")
+        KeychainHelper.save(key: "fa_refresh_token", string: "chat-view-model-refresh")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(-60)),
+            forKey: "fa_token_expiry"
+        )
     }
 
     private func storeLastConversation(_ id: String, activeSecondsAgo: TimeInterval) {

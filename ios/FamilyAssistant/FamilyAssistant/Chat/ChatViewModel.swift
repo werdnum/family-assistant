@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import os
+import SwiftUI
 
 @MainActor
 @Observable
@@ -38,7 +39,6 @@ final class ChatViewModel {
     var isLoadingProfiles = false
     var isStreaming = false
     var errorMessage: String?
-    var liveUpdatesConnected = true
     var mobileShowsConversationList = false
     var steerErrorMessage: String?
     var stopWarningMessage: String?
@@ -53,6 +53,13 @@ final class ChatViewModel {
         // so a send would post under the previous profile and the backend would
         // filter this thread's history out of the turn's context.
         return hasContent && attachmentsReady && !isLoadingMessages
+    }
+
+    /// Derived connection state for the toolbar indicator. Forwards the
+    /// coordinator's presentation so the view renders one derived value instead of
+    /// the former single `liveUpdatesConnected` boolean.
+    var syncPresentation: SyncCoordinator.Presentation {
+        syncCoordinator.presentation
     }
 
     @ObservationIgnored private let apiClient: ChatAPIClient
@@ -72,10 +79,30 @@ final class ChatViewModel {
     // across an await must not clobber the turn that replaced it, so its tail
     // work is gated on this token still matching.
     @ObservationIgnored private var currentStreamToken: UUID?
-    @ObservationIgnored private var liveEventsTask: Task<Void, Never>?
-    @ObservationIgnored private var activityStreamTask: Task<Void, Never>?
+    // Owns the follow + activity stream tasks and their reconnect loops. This
+    // view model retains all per-event application (history merges, ack cursor,
+    // live-token rendering) as the coordinator's stream delegate; the coordinator
+    // owns cancellation/restart and derives the connection presentation state.
+    @ObservationIgnored let syncCoordinator: SyncCoordinator
+    // Retained so the toolbar's `.authRequired` affordance can drive the existing
+    // re-auth flow, and so `deinit` can unregister this model's auth observer.
+    @ObservationIgnored private let authManager: AuthManager
+    // Token for this model's entry in `AuthManager`'s observer registry; removed on
+    // `deinit` so a discarded model's closure stops driving its dead coordinator.
+    @ObservationIgnored private var authObserverToken: UUID?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
-    @ObservationIgnored private var activeTurn: ActiveChatTurn?
+    // The durable state of the one in-flight send turn (see `ActiveTurnSession`).
+    // Survives its transport task: cleared only on turn completion/reconciliation
+    // (`finishStreaming` / `cancelStream` / conversation switch), never on a
+    // transport drop the send loop recovers from. The lightweight `ActiveChatTurn`
+    // identity the steer/stop helpers use is derived via `activeTurnIdentity`.
+    @ObservationIgnored private var activeTurnSession: ActiveTurnSession?
+
+    /// The lightweight turn identity for the active session, or nil when no turn
+    /// is in flight. The steer/stop control dictionaries key on this identity.
+    private var activeTurnIdentity: ActiveChatTurn? {
+        activeTurnSession.map { ActiveChatTurn(turnID: $0.turnID, conversationID: $0.conversationID) }
+    }
     // In-flight optimistic summaries, keyed by the owning turn id (value is the
     // conversation id). While a conversation has any pending turn,
     // `refreshRecentConversations` keeps its held optimistic row over a stale
@@ -204,6 +231,13 @@ final class ChatViewModel {
     var bufferedStreamTextForTesting: String {
         pendingTextByMessageID.values.joined()
     }
+
+    /// Test-only: the durable active-turn session. Lets tests assert the session
+    /// SURVIVES a transport drop (same instance, retained payload and cursor)
+    /// rather than being reconstructed each subscription attempt.
+    var activeTurnSessionForTesting: ActiveTurnSession? {
+        activeTurnSession
+    }
     #endif
 
     init(
@@ -216,7 +250,8 @@ final class ChatViewModel {
         maxConsecutiveStreamResumes: Int = 5,
         streamResumeLivenessSeconds: Double = 2,
         streamTextFlushInterval: Duration = .milliseconds(50),
-        errorReporter: ErrorReporter = .shared
+        errorReporter: ErrorReporter = .shared,
+        pathMonitor: PathMonitoring? = nil
     ) {
         self.liveReconnectInitialDelaySeconds = liveReconnectInitialDelaySeconds
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
@@ -224,7 +259,14 @@ final class ChatViewModel {
         self.streamResumeLivenessSeconds = streamResumeLivenessSeconds
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
+        self.authManager = authManager
         apiClient = ChatAPIClient(authManager: authManager)
+        syncCoordinator = SyncCoordinator(
+            authManager: authManager,
+            pathMonitor: pathMonitor ?? NetworkPathMonitor(),
+            followReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
+            followReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds
+        )
         let storedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
         preferredProfileID = storedProfileID
         // Starts at the preferred profile; if launch restores a conversation,
@@ -262,14 +304,35 @@ final class ChatViewModel {
             composerFocusRequestID = UUID()
             opensGeneratedLaunchDraft = true
         }
+        syncCoordinator.delegate = self
+        // Bridge auth transitions into the coordinator so a token refresh surfaces
+        // as `.syncing`-adjacent degraded state and a rejection surfaces as the
+        // dedicated `.authRequired` presentation — never the generic error modal.
+        let coordinator = syncCoordinator
+        authObserverToken = authManager.addAuthStateObserver { [weak coordinator] signal in
+            switch signal {
+            case .refreshing:
+                coordinator?.apply(.authRefreshing)
+            case .ok:
+                coordinator?.apply(.authOK)
+            case .authRequired:
+                coordinator?.apply(.authRequired)
+            }
+        }
     }
 
     deinit {
         streamTask?.cancel()
-        liveEventsTask?.cancel()
-        activityStreamTask?.cancel()
         pendingConfirmationsTask?.cancel()
         textFlushTask?.cancel()
+        // The coordinator's stream tasks retain it across their open connections,
+        // so its own deinit can't run; cancel them here (the owner is not in that
+        // cycle) to break it and stop the streams when this model is torn down.
+        syncCoordinator.cancelOwnedStreams()
+        if let authObserverToken {
+            let authManager = authManager
+            Task { @MainActor in authManager.removeAuthStateObserver(authObserverToken) }
+        }
     }
 
     func bootstrap(initialPrompt: String? = nil) async {
@@ -283,7 +346,7 @@ final class ChatViewModel {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
-        startActivityStream()
+        syncCoordinator.startActivityStream()
         if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
             lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt
@@ -332,6 +395,8 @@ final class ChatViewModel {
             // deep link to the same thread reopens it instead of leaving the
             // user stranded on the conversation list.
             conversationSelection = conversationID
+            // Clear the launch-draft sentinel if selecting a saved conversation.
+            opensGeneratedLaunchDraft = false
         }
     }
 
@@ -480,8 +545,8 @@ final class ChatViewModel {
         // selected thread. Restoring the current conversation (id unchanged) keeps
         // any draft the user is typing.
         let isSwitchingConversation = id != conversationID
-        let queuedStopTurnID = activeTurn.flatMap { activeTurn in
-            stopAfterRegistrationByTurnID[activeTurn.turnID] == nil ? nil : activeTurn.turnID
+        let queuedStopTurnID = activeTurnSession.flatMap { session in
+            stopAfterRegistrationByTurnID[session.turnID] == nil ? nil : session.turnID
         }
         cancelStream(sendQueuedStopCancel: false)
         // Tear down the previous conversation's follow loop NOW, before the
@@ -490,7 +555,7 @@ final class ChatViewModel {
         // would keep delivering events across the suspension and mutate the new
         // conversation's shared state (merging its rows, polluting the ack cursor,
         // appending stray bubbles). `startLiveEvents` re-cancels and restarts it.
-        liveEventsTask?.cancel()
+        syncCoordinator.cancelFollowStream()
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
@@ -502,6 +567,9 @@ final class ChatViewModel {
         }
         conversationID = id
         conversationSelection = id
+        // Clear the launch-draft sentinel when opening a saved conversation so
+        // currentConversationID() returns the real id and the follow stream is managed.
+        opensGeneratedLaunchDraft = false
         persistConversationID()
         mobileShowsConversationList = false
         // Mark loading synchronously, before the first suspension below, so the
@@ -552,7 +620,7 @@ final class ChatViewModel {
 
     func startNewConversation() {
         cancelStream()
-        liveEventsTask?.cancel()
+        syncCoordinator.cancelFollowStream()
         highestAppliedSeq = nil
         liveFollowBubbleByTurnID.removeAll()
         endedTurnIDs.removeAll()
@@ -582,7 +650,7 @@ final class ChatViewModel {
     }
 
     private func resetTurnControlState() {
-        activeTurn = nil
+        activeTurnSession = nil
         registeredTurnIDs.removeAll()
         pendingStopTurnIDs.removeAll()
         stopRequestedTurnIDs.removeAll()
@@ -616,14 +684,15 @@ final class ChatViewModel {
         }
         isLoadingMessages = true
         do {
-            let backendMessages = try await apiClient.getMessages(conversationID: id)
+            let response = try await apiClient.getMessages(conversationID: id)
             // The user may have switched conversations during the network await;
             // applying this thread's rows now would clobber the one they moved to.
             // (`self.` is required: the `conversationID` parameter shadows it.)
             guard self.conversationID == id else {
                 return
             }
-            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: backendMessages)))
+            replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
+            attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
         } catch {
             guard self.conversationID == id else {
@@ -637,6 +706,36 @@ final class ChatViewModel {
             errorReporter.report(error, component: "Chat.messages")
         }
         isLoadingMessages = false
+    }
+
+    /// Tail-attach to a turn the server reports as still running in `active_turns`
+    /// for the SELECTED conversation but for which this client holds no local
+    /// session — e.g. a turn started on another device, or one whose own send task
+    /// gave up before it finished. Renders a progressive placeholder so the
+    /// always-on follow stream tails its remaining tokens live; the missed prefix
+    /// is supplied by the canonical history replacement at `turn_ended` (see
+    /// `finalizeLiveFollowBubble` / `reconcileLiveFollowBubbles`). No mid-turn
+    /// prefix reconstruction is attempted — tail-only, matching server semantics.
+    ///
+    /// Deliberately narrow to avoid disturbing the pinned send/follow behavior:
+    /// - a turn THIS device is driving (`activeTurnSession`) is skipped; its send
+    ///   path owns rendering, and a follow bubble would duplicate it;
+    /// - a turn already ended, or already mapped to a live-follow bubble, is
+    ///   skipped (the placeholder is idempotent, but this keeps intent clear);
+    /// - only turns the server marks running are attached.
+    private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) {
+        for turn in activeTurns {
+            guard turn.status == "running",
+                  turn.turnID != activeTurnSession?.turnID,
+                  liveFollowBubbleByTurnID[turn.turnID] == nil
+            else {
+                continue
+            }
+            if endedTurnIDs.contains(turn.turnID) {
+                endedTurnIDs.remove(turn.turnID)
+            }
+            _ = makeLiveFollowBubble(for: turn.turnID)
+        }
     }
 
     /// Bubbles for live-follow turns still held — mapped in
@@ -770,12 +869,18 @@ final class ChatViewModel {
             return
         }
         do {
-            let delta = try await fetchMessages(conversationID: id, after: after)
+            let (delta, activeTurns) = try await fetchMessages(conversationID: id, after: after)
             // A conversation switch during the await would otherwise merge this
             // thread's delta into the one the user moved to.
             guard conversationID == id else {
                 return
             }
+            // Surface running turns the server reports on the incremental path too:
+            // reconnect / 410 catch-up flow through here (not `loadMessages`), so a
+            // turn discovered during the PRIMARY reconnect path must render a
+            // progressive placeholder before any token arrives. Same narrow guards
+            // as the full-load path (selected, not locally owned, not ended).
+            attachDiscoveredActiveTurns(activeTurns)
             guard !delta.isEmpty else {
                 errorMessage = nil
                 return
@@ -802,8 +907,14 @@ final class ChatViewModel {
         }
     }
 
-    /// Page through all persisted messages newer than `after`.
-    private func fetchMessages(conversationID id: String, after: Date) async throws -> [ChatBackendMessage] {
+    /// Page through all persisted messages newer than `after`. Also surfaces the
+    /// server's `active_turns` from the last page so the incremental path can
+    /// reattach to a turn discovered mid-reconnect. `active_turns` reflects current
+    /// server state, so the final page's list is the authoritative snapshot.
+    private func fetchMessages(
+        conversationID id: String,
+        after: Date
+    ) async throws -> (messages: [ChatBackendMessage], activeTurns: [ChatActiveTurnInfo]) {
         var collected: [ChatBackendMessage] = []
         var cursor = after
         while true {
@@ -814,7 +925,7 @@ final class ChatViewModel {
             )
             collected.append(contentsOf: page.messages)
             guard page.hasMoreAfter, let last = page.messages.last else {
-                return collected
+                return (collected, page.activeTurns)
             }
             cursor = last.timestamp
         }
@@ -954,23 +1065,22 @@ final class ChatViewModel {
 
         let streamToken = UUID()
         currentStreamToken = streamToken
-        activeTurn = ActiveChatTurn(
+        let session = ActiveTurnSession(
             turnID: turnID,
-            conversationID: id
+            conversationID: id,
+            assistantMessageID: assistantMessageID,
+            prompt: prompt,
+            attachments: uploadedAttachments,
+            profileID: selectedProfileID,
+            previousSummary: previousSummary,
+            streamToken: streamToken
         )
+        activeTurnSession = session
         steerErrorMessage = nil
         stopWarningMessage = nil
         streamTask = Task { [weak self] in
             guard let self else { return }
-            await runSendTurn(
-                turnID: turnID,
-                prompt: prompt,
-                conversationID: id,
-                attachments: uploadedAttachments,
-                assistantMessageID: assistantMessageID,
-                streamToken: streamToken,
-                previousSummary: previousSummary
-            )
+            await runSendTurn(session)
         }
     }
 
@@ -1005,15 +1115,81 @@ final class ChatViewModel {
         }
     }
 
-    private func runSendTurn(
+    /// Retry a failed turn-start on 401/403. Performs one forced refresh
+    /// (single-flight); if it succeeds, retries startTurn with the same turnID
+    /// (server dedupes) and returns its result. On refresh failure or a second
+    /// 401/403, throws so the caller's existing catch can latch signInRequired.
+    ///
+    /// CRITICAL: The retry must be transparent — the caller's post-start flow
+    /// runs exactly once on the returned result, never duplicated for the retry.
+    private func startTurnWithAuthRetry(
         turnID: String,
         prompt: String,
-        conversationID id: String,
+        conversationID: String,
+        profileID: String?,
         attachments: [ChatAttachment],
-        assistantMessageID: String,
-        streamToken: UUID,
-        previousSummary: ChatConversationSummary?
-    ) async {
+        ownerEpoch: Int
+    ) async throws -> ChatTurnStart {
+        do {
+            return try await apiClient.startTurn(
+                turnID: turnID,
+                prompt: prompt,
+                conversationID: conversationID,
+                profileID: profileID,
+                attachments: attachments
+            )
+        } catch let ChatAPIError.server(statusCode, _) where statusCode == 401 || statusCode == 403 {
+            // First attempt got a 401/403. Try one forced refresh; if it succeeds,
+            // retry once. If the refresh fails or the retry also 401/403s, the error
+            // bubbles up so the existing catch in runSendTurn latches signInRequired.
+            do {
+                try await authManager.refreshIfNeeded(force: true, ownerEpoch: ownerEpoch)
+            } catch {
+                // The forced refresh is single-flight, so awaiting it does not observe
+                // this send's cancellation. If a chat switch cancelled runSendTurn
+                // while it was in flight, bail as cancelled rather than surface a
+                // superseded send's error (terminal OR transient).
+                try Task.checkCancellation()
+                switch error {
+                case AuthError.authRejected, AuthError.noCredentials:
+                    // Terminal rejection (or superseded session): propagate as the
+                    // original 401/403 so runSendTurn's catch latches signInRequired
+                    // (epoch-fenced; a no-op for a stale send).
+                    throw ChatAPIError.server(statusCode: statusCode, detail: nil)
+                default:
+                    // Transient refresh failure: surface it via the normal path.
+                    throw error
+                }
+            }
+
+            // Refresh succeeded but is single-flight, so awaiting it did not observe
+            // this send's cancellation. If a chat switch cancelled runSendTurn, bail
+            // before issuing a second POST — the first rejection registered no turn,
+            // so retrying would start an orphan server-side turn.
+            try Task.checkCancellation()
+
+            // Refresh succeeded; retry the turn start with the SAME turnID.
+            return try await apiClient.startTurn(
+                turnID: turnID,
+                prompt: prompt,
+                conversationID: conversationID,
+                profileID: profileID,
+                attachments: attachments
+            )
+        }
+    }
+
+    private func runSendTurn(_ session: ActiveTurnSession) async {
+        let turnID = session.turnID
+        let prompt = session.prompt
+        let id = session.conversationID
+        let attachments = session.attachments
+        let assistantMessageID = session.assistantMessageID
+        let streamToken = session.streamToken
+        let previousSummary = session.previousSummary
+        // Capture the auth epoch at send start; a 401 that arrives after a
+        // logout+login (epoch bumped) must not clear the new session's credentials.
+        let startEpoch = authManager.authEpoch
         // Retire this turn's optimistic pending mark on EVERY return path —
         // completion, recovery, failure, cancellation, and the superseded early
         // returns below — so a row can never stay pending (and pinned over the
@@ -1021,21 +1197,33 @@ final class ChatViewModel {
         // recovered paths run earlier so their refresh already uses the server;
         // this is the catch-all and is idempotent.
         defer { optimisticPendingByTurnID.removeValue(forKey: turnID) }
-        var lastSeq: Int?
+        // The send's resume/ack cursor. Threaded `inout` through the subscription
+        // consumers as the working value, then mirrored into the session
+        // (`session.lastAppliedSeq`) after each subscription so the cursor
+        // SURVIVES this transport task — a resync/retry reattaching to the session
+        // resumes from just past it (see `ActiveTurnSession`).
+        var lastSeq: Int? = session.lastAppliedSeq
         // Becomes true once startTurn returns: the backend persists the user
         // message inside start_turn, so a successful return means the
         // conversation is now server-backed and its optimistic row must NOT be
         // removed on a later failure.
         var startSucceeded = false
         do {
-            let start = try await apiClient.startTurn(
+            let start = try await startTurnWithAuthRetry(
                 turnID: turnID,
                 prompt: prompt,
                 conversationID: id,
-                profileID: selectedProfileID,
-                attachments: attachments
+                profileID: session.profileID,
+                attachments: attachments,
+                ownerEpoch: startEpoch
             )
             startSucceeded = true
+            // The first send of a generated launch draft makes the conversation
+            // server-backed; start following it now so the channel reaches live.
+            if opensGeneratedLaunchDraft {
+                opensGeneratedLaunchDraft = false
+                startLiveEvents()
+            }
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
                 if let stopConversationID = stopAfterRegistrationConversationID {
@@ -1141,6 +1329,7 @@ final class ChatViewModel {
                 assistantMessageID: assistantMessageID,
                 lastSeq: &lastSeq
             )
+            session.lastAppliedSeq = lastSeq
             // Resume the live token stream across mid-turn drops instead of
             // stranding on the disconnected indicator. The turn keeps running
             // durably on the server and the hub replays events with
@@ -1185,6 +1374,7 @@ final class ChatViewModel {
                     assistantMessageID: assistantMessageID,
                     lastSeq: &lastSeq
                 )
+                session.lastAppliedSeq = lastSeq
                 let heldOpen = Date().timeIntervalSince(resumeStartedAt) >= streamResumeLivenessSeconds
                 if lastSeq != seqBeforeResume || heldOpen {
                     noProgressResumes = 0
@@ -1282,7 +1472,20 @@ final class ChatViewModel {
                     conversationID: id, turnID: turnID, to: previousSummary
                 )
             }
-            appendStreamError(error.localizedDescription, assistantMessageID: assistantMessageID)
+            // A 401/403 on turn-start (revoked token) routes through the central
+            // signInRequired path: latch it with no generic modal.
+            let underlyingError: Error?
+            if case ChatAPIError.server(let statusCode, _) = error, statusCode == 401 || statusCode == 403 {
+                authManager.markAuthRequiredIfCurrent(capturedEpoch: startEpoch)
+                underlyingError = AuthError.noCredentials
+            } else {
+                underlyingError = error
+            }
+            appendStreamError(
+                error.localizedDescription,
+                assistantMessageID: assistantMessageID,
+                underlyingError: underlyingError
+            )
         }
         finishStreaming(streamToken)
     }
@@ -1471,14 +1674,14 @@ final class ChatViewModel {
             isStreaming = false
             streamTask = nil
             currentStreamToken = nil
-            if let turnID = activeTurn?.turnID {
+            if let turnID = activeTurnSession?.turnID {
                 registeredTurnIDs.remove(turnID)
                 pendingStopTurnIDs.remove(turnID)
                 stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
                 stopRequestedTurnIDs.remove(turnID)
                 pendingSteersByTurnID[turnID] = nil
             }
-            activeTurn = nil
+            activeTurnSession = nil
             Task { [weak self] in
                 await self?.sendNextQueuedFollowUpSteerIfReady()
             }
@@ -1486,7 +1689,7 @@ final class ChatViewModel {
     }
 
     func stopTurn() async {
-        guard let activeTurn else {
+        guard let activeTurn = activeTurnIdentity else {
             cancelStream()
             return
         }
@@ -1529,7 +1732,7 @@ final class ChatViewModel {
         // No turn is running, so there is nothing to steer: the composer text is
         // just a normal message. Send it as one (sendDraft consumes and clears
         // the composer).
-        guard let activeTurn else {
+        guard let activeTurn = activeTurnIdentity else {
             await sendDraft()
             return
         }
@@ -1557,7 +1760,7 @@ final class ChatViewModel {
         prompt: String,
         activeTurn: ActiveChatTurn
     ) async {
-        let isCurrentTurn = self.activeTurn == activeTurn
+        let isCurrentTurn = activeTurnIdentity == activeTurn
         let isSameConversation = conversationID == activeTurn.conversationID
         let originalTurnEnded = endedTurnIDs.contains(activeTurn.turnID)
         let originalTurnEndedCleanly = canRecoverSteerAfterTurnEnded(activeTurn.turnID)
@@ -1792,8 +1995,8 @@ final class ChatViewModel {
     }
 
     private func shouldSurfaceStopWarning(for stoppedTurn: ActiveChatTurn) -> Bool {
-        activeTurn == stoppedTurn
-            || (activeTurn == nil && conversationID == stoppedTurn.conversationID)
+        activeTurnIdentity == stoppedTurn
+            || (activeTurnSession == nil && conversationID == stoppedTurn.conversationID)
     }
 
     /// Tear down steers that were queued before their turn registered: drop their
@@ -1906,7 +2109,7 @@ final class ChatViewModel {
         }
         streamTask?.cancel()
         streamTask = nil
-        if sendQueuedStopCancel, let activeTurn,
+        if sendQueuedStopCancel, let activeTurn = activeTurnIdentity,
            stopAfterRegistrationByTurnID[activeTurn.turnID] != nil {
             let turnID = activeTurn.turnID
             Task { [weak self] in
@@ -1915,7 +2118,7 @@ final class ChatViewModel {
         }
         isStreaming = false
         currentStreamToken = nil
-        activeTurn = nil
+        activeTurnSession = nil
         registeredTurnIDs.removeAll()
         pendingStopTurnIDs.removeAll()
         stopRequestedTurnIDs.removeAll()
@@ -2159,67 +2362,24 @@ final class ChatViewModel {
     }
 
     func reconnectLiveUpdates() async {
-        // Don't optimistically flip the indicator to connected: `startLiveEvents`
-        // only schedules the connect, so a fresh connect that immediately fails
-        // (the hostile front door) would flash "connected" before the loop sets it
-        // back to disconnected. A successful connect sets it true in
-        // `handleLiveReconnect`; a failing one leaves the honest disconnected state.
-        startLiveEvents()
-        // The account-global activity stream is torn down with the scene on
-        // background (its Task is suspended/killed by the OS); restart it on the
-        // same foreground transition so list updates for OTHER conversations
-        // resume, and refresh once to close any gap missed while backgrounded.
-        startActivityStream()
+        // Restart both streams through the coordinator (the single owner). The
+        // account-global activity stream is torn down with the scene on background
+        // (its Task is suspended/killed by the OS); restarting it on the same
+        // foreground transition resumes list updates for OTHER conversations and
+        // refreshes once to close any gap missed while backgrounded. The follow
+        // connect is not optimistically flipped to connected — the coordinator's
+        // reducer only reports `followConnected` once the connect actually
+        // succeeds, so a failing connect leaves the honest disconnected state.
+        syncCoordinator.runResync()
     }
 
-    /// Subscribe to the account-global conversation-activity stream and refresh
-    /// the conversation list whenever any owned conversation changes.
-    ///
-    /// This is what keeps the list fresh for activity OUTSIDE the open thread —
-    /// a brand-new chat, or a delegated/scheduled/background reply landing in a
-    /// conversation the user isn't currently viewing — none of which the
-    /// per-conversation follow stream (`startLiveEvents`) observes. The stream is
-    /// advisory: every ping just triggers an authoritative
-    /// `refreshRecentConversations`, and a (re)connect refreshes once to close
-    /// any gap missed while disconnected. Mirrors `startLiveEvents`' capped
-    /// exponential-backoff reconnect loop and weak-`self` discipline so logout/
-    /// deinit tears the connection down.
-    private func startActivityStream() {
-        activityStreamTask?.cancel()
-        let client = apiClient
-        let initialDelay = liveReconnectInitialDelaySeconds
-        let maxDelay = liveReconnectMaxDelaySeconds
-        activityStreamTask = Task { [weak self] in
-            var delay = initialDelay
-            while !Task.isCancelled {
-                do {
-                    let stream = try await client.connectActivityStream()
-                    // A successful (re)connect resets the backoff and refreshes
-                    // once: pings are ephemeral, so anything that changed while
-                    // we were disconnected is caught by this single pull.
-                    delay = initialDelay
-                    await self?.refreshRecentConversations()
-                    for try await _ in stream {
-                        if Task.isCancelled {
-                            break
-                        }
-                        // `self` deallocated -> deinit already cancelled this
-                        // task; stop instead of spinning reconnects.
-                        guard self != nil else {
-                            return
-                        }
-                        await self?.refreshRecentConversations()
-                    }
-                } catch {
-                    // Connection failed or dropped; fall through to backoff+retry.
-                }
-                if Task.isCancelled {
-                    break
-                }
-                try? await Task.sleep(for: .seconds(delay))
-                delay = min(delay * 2, maxDelay)
-            }
-        }
+    /// Drive the app's existing sign-in flow from the toolbar's `.authRequired`
+    /// affordance. The stored credentials were rejected; re-running `login()`
+    /// presents the authentication session so the user can re-authenticate without
+    /// a full logout. On success `AuthManager` clears `authRequired`, which the
+    /// coordinator observes and returns the indicator to a connected state.
+    func requestReauthentication() {
+        authManager.login()
     }
 
     /// The hub buffer rotated past this client's resume cursor (a 410). Clear it so
@@ -2229,14 +2389,23 @@ final class ChatViewModel {
         highestAppliedSeq = nil
     }
 
-    /// Whether a scene-phase transition should trigger a live-updates reconnect.
-    /// Only a real return from the BACKGROUND should: a transient
-    /// `.inactive → .active` blip (Control Center, the app switcher, a
-    /// notification banner) must not tear down and restart a healthy follow
-    /// connection. Kept SwiftUI-agnostic (booleans) so the gating is unit-testable
-    /// without importing the scene-phase type into the view model.
-    func shouldReconnectOnForeground(cameFromBackground: Bool, isNowActive: Bool) -> Bool {
-        cameFromBackground && isNowActive
+    /// Feed a raw scene-phase transition to the coordinator's latched lifecycle.
+    ///
+    /// A normal iOS resume delivers two `onChange` firings —
+    /// `.background → .inactive` then `.inactive → .active` — so the former
+    /// single-transition predicate (`.background → .active`) never matched and the
+    /// resync never ran on the common resume path. The coordinator latches
+    /// `cameFromBackground` when it observes a background, then runs the resync on
+    /// the next active, so every real resume is caught while transient
+    /// `.inactive → .active` blips (never having backgrounded) are ignored.
+    func scenePhaseChanged(old: ScenePhase, new: ScenePhase) {
+        let effects = syncCoordinator.scenePhaseChanged(
+            didBackground: new == .background,
+            isActive: new == .active
+        )
+        for case .runResync in effects {
+            Task { await reconnectLiveUpdates() }
+        }
     }
 
     /// Whether the chat thread's message list should be realized into the view
@@ -2270,120 +2439,23 @@ final class ChatViewModel {
         highestAppliedSeq.map { $0 + 1 } ?? -1
     }
 
+    /// Start (or restart) the per-conversation follow stream through the
+    /// coordinator, which owns the task and its reconnect loop. All per-event
+    /// application stays in this view model behind ``SyncStreamDelegate``.
     private func startLiveEvents() {
-        liveEventsTask?.cancel()
         guard let conversationID else {
+            syncCoordinator.cancelFollowStream()
             return
         }
-        // Capture the API client (a value type whose only reference is the
-        // AuthManager, never the view model) and the backoff bounds up front.
-        // The follow loop below never binds a strong `self` across its awaits —
-        // every mutation goes through a weak `self?` hop — so releasing the view
-        // model (e.g. on logout) lets `deinit` run, which cancels this task and
-        // tears down the open SSE connection instead of stranding it.
-        let client = apiClient
-        let initialDelay = liveReconnectInitialDelaySeconds
-        let maxDelay = liveReconnectMaxDelaySeconds
-        liveEventsTask = Task { [weak self] in
-            // Reconnect loop: a dropped follow stream self-heals with capped
-            // exponential backoff instead of stranding the disconnected
-            // indicator until a manual tap. The loop exits only on cancellation
-            // (conversation change, logout/deinit) or a deliberate stop.
-            var delay = initialDelay
-            while !Task.isCancelled {
-                // Re-read the cursor each attempt: `ackSeq` marks everything applied
-                // as delivered (push suppression); `fromSeq` resumes the replay just
-                // past it so a mid-turn reconnect doesn't skip frames produced during
-                // the drop. A prior 410 cleared the cursor, so this tails the head
-                // until a fresh frame advances it (no re-request of the gone seq).
-                let ackSeq = self?.highestAppliedSeq ?? -1
-                let fromSeq = self?.followResumeFromSeq() ?? -1
-                var deliberateStop = false
-                var connected = false
-                var streamError: Error?
-                do {
-                    let stream = try await client.connectEvents(
-                        conversationID: conversationID,
-                        fromSeq: fromSeq,
-                        ackSeq: ackSeq
-                        // No `event_types` filter: the always-on follow stream now
-                        // carries token frames too, so a turn started elsewhere (or
-                        // after our own send task gave up) streams live into a
-                        // bubble via `handleLiveEvent`, not just a history reload on
-                        // completion.
-                    )
-                    // Call through the weak `self?` at each suspension point
-                    // instead of binding a strong `self`: a binding would keep
-                    // the view model (and its open SSE connection) alive across
-                    // the indefinite follow loop, so logout/deinit could never
-                    // tear it down.
-                    connected = true
-                    await self?.handleLiveReconnect(conversationID: conversationID)
-                    // A successful (re)connect resets the backoff.
-                    delay = initialDelay
-                    for try await event in stream {
-                        if Task.isCancelled {
-                            break
-                        }
-                        let shouldContinue = await self?.handleLiveEvent(
-                            event,
-                            conversationID: conversationID,
-                            client: client
-                        )
-                        // `self` deallocated mid-loop -> nil -> stop following.
-                        guard let shouldContinue else { return }
-                        if !shouldContinue {
-                            deliberateStop = true
-                            break
-                        }
-                    }
-                } catch {
-                    // Connection failed or dropped mid-stream; fall through to
-                    // surface the disconnected state and retry after a backoff.
-                    streamError = error
-                    // A 410 means the resume cursor rotated out of the hub buffer.
-                    // Clear it so the next attempt (and every one after, until a
-                    // fresh frame) tails the head instead of re-requesting the gone
-                    // seq; the catch-up reload below fills the gap.
-                    if case ChatAPIError.server(let statusCode, _) = error, statusCode == 410 {
-                        self?.markFollowBufferRotated()
-                    }
-                }
-
-                if Task.isCancelled || deliberateStop {
-                    break
-                }
-                // Breadcrumb every involuntary disconnect (the disconnected-
-                // indicator cause), whether the stream threw or was closed cleanly
-                // by an idle proxy / server shutdown (a clean EOF finishes the loop
-                // without throwing). The error — or its absence — tells an idle
-                // timeout from a connection loss from a clean server-side close.
-                self?.reportLiveStreamDrop(conversationID: conversationID, error: streamError)
-                self?.markLiveUpdatesDisconnectedIfActive()
-                // Catch up persisted history over plain HTTP, but ONLY when the
-                // connect itself failed. When the front door makes SSE unusable
-                // (buffered/severed framing) the connect keeps throwing and
-                // `handleLiveReconnect` never runs, so without this a finished turn
-                // would strand until a manual refresh — a short GET succeeds where
-                // the long-lived SSE doesn't. When the connect SUCCEEDED,
-                // `handleLiveReconnect` already caught up and the next reconnect
-                // will again, so catching up here too just doubles the GETs on a
-                // healthy-but-flapping link.
-                if !connected {
-                    await self?.catchUpPersistedHistory(conversationID: conversationID)
-                }
-                try? await Task.sleep(for: .seconds(delay))
-                delay = min(delay * 2, maxDelay)
-            }
-        }
+        syncCoordinator.startFollowStream(conversationID: conversationID)
     }
 
     private func handleLiveReconnect(conversationID: String) async {
-        liveUpdatesConnected = true
         // Reload on (re)connect: the stream tails from the live head, so a
         // reconnect after a drop resumes at the new head and misses events
         // published while offline. Message content always comes from persisted
-        // history, so a reload closes that gap.
+        // history, so a reload closes that gap. Connection health is now published
+        // by the coordinator's `followConnected` event, not a local boolean.
         await catchUpPersistedHistory(conversationID: conversationID)
     }
 
@@ -2455,10 +2527,11 @@ final class ChatViewModel {
             // stream (started on another device or by a schedule). A failed
             // follow turn still surfaces via its `turn_ended` + history reload.
             applyLiveFollowToken(event)
-        case .connected:
-            liveUpdatesConnected = true
-        case .heartbeat, .turnStarted, .streamDropped, .error,
+        case .connected, .heartbeat, .turnStarted, .streamDropped, .error,
              .toolConfirmationRequest, .toolConfirmationResult:
+            // `.connected` is dead against this backend (the server never emits
+            // it); connect health is inferred from the connect call succeeding and
+            // published by the coordinator's `followConnected` event.
             break
         }
         return true
@@ -2547,16 +2620,6 @@ final class ChatViewModel {
         }
     }
 
-    private func markLiveUpdatesDisconnectedIfActive() {
-        // Don't surface the disconnected indicator while a send is actively
-        // streaming: the send path owns the live connection then and resumes the
-        // turn across drops on its own (see `runSendTurn`), so a transient
-        // follow-stream drop here is not a user-visible disconnect.
-        if !Task.isCancelled, !isStreaming {
-            liveUpdatesConnected = false
-        }
-    }
-
     /// The operation whose failure raised the shared "Chat Error" modal. Each
     /// case tags a `Chat.alertPresented` breadcrumb so the popup rate is directly
     /// measurable in production rather than inferred from transport breadcrumbs.
@@ -2592,6 +2655,14 @@ final class ChatViewModel {
         reason: ChatAlertReason,
         underlyingError: Error? = nil
     ) {
+        // A terminal auth failure (`authorizedRequest` throwing `noCredentials`
+        // after a rejected refresh) already latched `AuthManager.authRequired`,
+        // which drives the coordinator's dedicated `.authRequired` presentation.
+        // It must NEVER also raise the generic error modal, so suppress it at this
+        // single choke point rather than auditing every request catch site.
+        if let underlyingError, case AuthError.noCredentials = underlyingError {
+            return
+        }
         let newlyPresented = errorMessage == nil
         errorMessage = message
         guard newlyPresented else {
@@ -2957,7 +3028,8 @@ final class ChatViewModel {
     private func appendStreamError(
         _ message: String,
         assistantMessageID: String,
-        reason: ChatAlertReason = .streamError
+        reason: ChatAlertReason = .streamError,
+        underlyingError: Error? = nil
     ) {
         flushPendingTextNow()
         if let index = messages.firstIndex(where: { $0.id == assistantMessageID }) {
@@ -2968,7 +3040,11 @@ final class ChatViewModel {
             }
             messages[index].text += "\n\n\(message)"
         }
-        presentErrorAlert(message, reason: reason)
+        // Thread the underlying error through so a pre-turn terminal auth failure
+        // (`AuthError.noCredentials`, e.g. startTurn failing on a rejected session)
+        // is suppressed by `presentErrorAlert` — the dedicated `authRequired`
+        // presentation already covers that UX; a generic error modal would be spurious.
+        presentErrorAlert(message, reason: reason, underlyingError: underlyingError)
         errorReporter.report(message: message, component: "Chat.stream")
     }
 
@@ -3275,6 +3351,99 @@ final class ChatViewModel {
             }
             return backend.chatAttachment
         }
+    }
+}
+
+// MARK: - SyncStreamDelegate
+
+/// The coordinator owns the follow/activity `Task`s and their reconnect loops;
+/// this conformance keeps every per-event application here. Each callback carries
+/// the coordinator generation that owned the attempt, and events from a
+/// superseded generation are dropped (`syncCoordinator.isCurrent`).
+extension ChatViewModel: SyncStreamDelegate {
+    func currentConversationID() -> String? {
+        opensGeneratedLaunchDraft ? nil : conversationID
+    }
+
+    func openFollowStream(
+        conversationID: String,
+        generation _: Int
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        // Re-read the cursor at each connect: `ackSeq` marks everything applied as
+        // delivered (push suppression); `fromSeq` resumes the replay just past it
+        // so a mid-turn reconnect doesn't skip frames produced during the drop. A
+        // prior 410 cleared the cursor, so this tails the head until a fresh frame
+        // advances it (no re-request of the gone seq).
+        try await apiClient.connectEvents(
+            conversationID: conversationID,
+            fromSeq: followResumeFromSeq(),
+            ackSeq: highestAppliedSeq ?? -1
+            // No `event_types` filter: the always-on follow stream carries token
+            // frames too, so a turn started elsewhere (or after our own send task
+            // gave up) streams live into a bubble via `handleLiveEvent`.
+        )
+    }
+
+    func followStreamDidConnect(conversationID: String, generation: Int) async {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            return
+        }
+        await handleLiveReconnect(conversationID: conversationID)
+    }
+
+    func handleFollowEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        generation: Int
+    ) async -> Bool {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            // A superseded generation's event: drop it (don't apply, don't stop
+            // the loop — the loop is already being torn down by cancellation).
+            return true
+        }
+        return await handleLiveEvent(event, conversationID: conversationID, client: apiClient)
+    }
+
+    func followBufferRotated(generation: Int) {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            return
+        }
+        markFollowBufferRotated()
+    }
+
+    func reportFollowStreamDrop(conversationID: String, error: Error?, generation: Int) {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            return
+        }
+        reportLiveStreamDrop(conversationID: conversationID, error: error)
+    }
+
+    func shouldSurfaceFollowDrop() -> Bool {
+        // Suppression parity with the former `markLiveUpdatesDisconnectedIfActive`:
+        // a drop while a send is actively streaming is not a user-visible
+        // disconnect (the send path owns the live connection then and resumes the
+        // turn across drops on its own — see `runSendTurn`).
+        !isStreaming
+    }
+
+    func catchUpFollowHistory(conversationID: String, generation: Int) async {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            return
+        }
+        await catchUpPersistedHistory(conversationID: conversationID)
+    }
+
+    func openActivityStream(
+        generation _: Int
+    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+        try await apiClient.connectActivityStream()
+    }
+
+    func activityStreamDidSignal(generation: Int) async {
+        guard syncCoordinator.isCurrentActivity(generation) else {
+            return
+        }
+        await refreshRecentConversations()
     }
 }
 
