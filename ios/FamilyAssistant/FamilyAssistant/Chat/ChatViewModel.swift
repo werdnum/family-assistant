@@ -1144,18 +1144,28 @@ final class ChatViewModel {
             // bubbles up so the existing catch in runSendTurn latches signInRequired.
             do {
                 try await authManager.refreshIfNeeded(force: true, ownerEpoch: ownerEpoch)
-            } catch AuthError.authRejected, AuthError.noCredentials {
-                // Refresh failed (or the send's session was superseded): let the
-                // 401/403 propagate so the existing catch latches (epoch-fenced) or,
-                // if superseded, no-ops the latch and drops this stale send.
-                throw ChatAPIError.server(statusCode: statusCode, detail: nil)
+            } catch {
+                // The forced refresh is single-flight, so awaiting it does not observe
+                // this send's cancellation. If a chat switch cancelled runSendTurn
+                // while it was in flight, bail as cancelled rather than surface a
+                // superseded send's error (terminal OR transient).
+                try Task.checkCancellation()
+                switch error {
+                case AuthError.authRejected, AuthError.noCredentials:
+                    // Terminal rejection (or superseded session): propagate as the
+                    // original 401/403 so runSendTurn's catch latches signInRequired
+                    // (epoch-fenced; a no-op for a stale send).
+                    throw ChatAPIError.server(statusCode: statusCode, detail: nil)
+                default:
+                    // Transient refresh failure: surface it via the normal path.
+                    throw error
+                }
             }
 
-            // The forced refresh is single-flight, so awaiting it does not observe
-            // this send's cancellation. If the user switched chats (cancelStream
-            // cancelled runSendTurn) while it was in flight, bail before issuing a
-            // second POST — the first rejection registered no turn, so retrying
-            // would start an orphan server-side turn.
+            // Refresh succeeded but is single-flight, so awaiting it did not observe
+            // this send's cancellation. If a chat switch cancelled runSendTurn, bail
+            // before issuing a second POST — the first rejection registered no turn,
+            // so retrying would start an orphan server-side turn.
             try Task.checkCancellation()
 
             // Refresh succeeded; retry the turn start with the SAME turnID.
