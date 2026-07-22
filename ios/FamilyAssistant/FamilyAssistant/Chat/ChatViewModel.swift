@@ -2771,9 +2771,13 @@ final class ChatViewModel {
         case .cancelStreams:
             syncCoordinator.cancelStreams()
         case .runResync:
-            Task { await reconnectLiveUpdates() }
+            // Capture the model weakly: a discarded screen's queued effect must not
+            // retain it and keep a resync (and its SSE sockets) alive past teardown.
+            // If the model is gone the effect simply no-ops. Pairs with `deinit`'s
+            // `cancelInFlight()`.
+            Task { [weak self] in await self?.reconnectLiveUpdates() }
         case let .targetedRefresh(conversationID):
-            Task { await targetedRefresh(conversationID: conversationID) }
+            Task { [weak self] in await self?.targetedRefresh(conversationID: conversationID) }
         case .startFollowStream, .startActivityStream:
             break
         }
