@@ -53,6 +53,21 @@ final class ChatViewModel {
         // so a send would post under the previous profile and the backend would
         // filter this thread's history out of the turn's context.
         return hasContent && attachmentsReady && !isLoadingMessages
+            && !hasUnreconciledSuspendedSend
+    }
+
+    /// A send that was suspended on background (transport torn down but its
+    /// `ActiveTurnSession` preserved for reattach) and not yet reconciled against
+    /// the server's `active_turns` on foreground. `suspendActiveSend` leaves
+    /// `isStreaming == false` with the session retained, and foreground resync
+    /// resolves it — restoring steer/stop mode (`isStreaming = true`) if the turn is
+    /// still running, or clearing the session if it finished. Until then a NORMAL
+    /// send would overwrite `activeTurnSession` and overlap the still-running
+    /// durable turn, losing stop/steer control of the original, so block new sends
+    /// through this window. It is bounded by the foreground resync; a
+    /// reachability-recovery resync also clears it once connectivity returns.
+    private var hasUnreconciledSuspendedSend: Bool {
+        activeTurnSession != nil && !isStreaming
     }
 
     /// Derived connection state for the toolbar indicator. Forwards the
@@ -3869,6 +3884,17 @@ extension ChatViewModel: ResyncHost {
     }
 
     func applyMessagesSnapshot(conversationID: String) async {
+        // A send actively streaming owns its own rendering and reconciles its
+        // history when the turn finishes; merging a persisted delta here would drop
+        // its optimistic `local_` assistant placeholder (mergeNewMessages filters
+        // out `local_` rows) and strand the in-flight tokens still targeting it.
+        // This completes the passive-resync guard the other steps already apply
+        // (reconcileSuspendedSession, handleFollowEvent, shouldSurfaceFollowDrop all
+        // no-op while `isSendActivelyStreaming`); a foregrounded reachability/auth
+        // recovery is the path that would otherwise reach this mid-send.
+        guard !isSendActivelyStreaming else {
+            return
+        }
         await mergeNewMessages(conversationID: conversationID, surfaceErrors: false)
     }
 

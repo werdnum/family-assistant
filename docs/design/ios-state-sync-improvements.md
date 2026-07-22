@@ -452,3 +452,42 @@ policy (cancel transport via suspend path, await old consumer, preserve session)
 buffering with overflow-restarts, endpoint-aware 403 handling and user-initiated-operation awareness
 in the taxonomy, and corrected production cluster counts (F/G/H overlap from the 22:07 server
 incident).
+
+### 9.1 M2 review disposition (codex `gpt-5.6-sol`, 2026-07-22)
+
+A local codex pass on the M2 branch (after rebasing onto M1's centralized-auth refactor) raised four
+findings about the new foreground-resync interacting with active sends. Disposition, applying the
+threat-model / cost-benefit / behaviour-altitude gates in `REVIEW_GUIDELINES.md`:
+
+- **[P1] Active-send resync erases the streaming placeholder — FIXED.** A foregrounded
+  reachability/auth recovery ran `applyMessagesSnapshot` → `mergeNewMessages` while a send was
+  actively streaming; `mergeNewMessages` drops every `local_` row, deleting the in-flight assistant
+  placeholder the send is rendering into. Common scenario (network blip during a streaming reply).
+  Fixed by guarding `applyMessagesSnapshot` on `isSendActivelyStreaming`, completing the pattern the
+  other passive-resync steps (`reconcileSuspendedSession`, `catchUpPersistedHistory`, the follow
+  merge) already follow. Covered by `testActiveSendResyncPreservesOptimisticPlaceholder`.
+- **[P1] Overlapping send during the suspend-reconcile window — FIXED.** Between foreground and the
+  resync's `reconcileSuspendedSession`, a preserved suspended session had `isStreaming == false` and
+  `canSendDraft == true`, so a normal send could overwrite `activeTurnSession` and overlap the
+  still-running durable turn (losing stop/steer control). Fixed by deriving the block from existing
+  state — `canSendDraft` now excludes the `activeTurnSession != nil && !isStreaming` window — rather
+  than adding a new flag with its own lifecycle (which risked a stuck-blocked composer). It
+  self-heals: reconcile restores `isStreaming` (still running) or clears the session (finished), and
+  a reachability resync clears it once connectivity returns. Covered by
+  `testUnreconciledSuspendedSendBlocksNewSend`.
+- **[P2] Never-registered suspended turn loses the composed message — ACCEPTED (documented).** If
+  the app backgrounds in the sub-second window while the initial `POST /turns` is in flight and its
+  cancellation prevents server registration, the foreground snapshot legitimately shows no
+  `active_turns` entry and the session is cleared, dropping the optimistic `local_` messages. The
+  window is narrow and the "proper" mitigations codex proposed (reissue the idempotent turn, or
+  verify a terminal persisted reply) are disproportionate machinery; the pragmatic alternative
+  (restore the draft) needs finished-vs-never-registered disambiguation that reintroduces the same
+  cost. Per behaviour-altitude an uncommon scenario warrants reasonable, not ideal, behaviour, so
+  this is accepted as a known limitation. Revisit with a minimal draft-restore only if it is
+  observed in practice.
+- **[P2] Stalled follow handshake delays snapshots — ACCEPTED (documented).** A blackholed follow
+  proxy that stalls (rather than fails) the HTTP handshake can delay the activity stream and both
+  snapshots behind the sequential establish, bounded by the `URLSession` request timeout (not
+  unbounded). Establishing the channels concurrently risks regressing the carefully ordered
+  subscribe-then-buffer sequence (§4.4 steps 3/5/6) for an uncommon degraded case, so the bounded
+  status quo is accepted.

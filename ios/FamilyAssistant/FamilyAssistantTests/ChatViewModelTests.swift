@@ -6826,6 +6826,152 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testActiveSendResyncPreservesOptimisticPlaceholder() async throws {
+        // A foregrounded reachability recovery must not merge a messages snapshot
+        // while a send is actively streaming: `mergeNewMessages` drops every `local_`
+        // row, which would delete the in-flight assistant placeholder the send task
+        // is still rendering into (subsequent tokens would then target a removed
+        // message and vanish until a final reload). The send owns its rendering and
+        // reconciles its own history on completion, so `applyMessagesSnapshot`
+        // no-ops here — completing the passive-resync guard the other steps already
+        // apply (reconcileSuspendedSession / catchUpPersistedHistory / follow merge).
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let stream = HangingStream()
+        let postedTurnID = AtomicString()
+        let listFetches = AtomicCounter()
+        let messagesFetches = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let method = request.httpMethod ?? "GET"
+            switch (method, path) {
+            case ("GET", "/api/v1/profiles"):
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            case ("GET", "/api/v1/chat/activity/stream"):
+                return .hangingStream("", controller: HangingStream())
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_active","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_active/stream"):
+                return .hangingStream(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(postedTurnID.value ?? "turn-active")","seq":0}
+
+                    event: token
+                    data: {"turn_id":"\(postedTurnID.value ?? "turn-active")","text":"partial","seq":1}
+
+                    """,
+                    controller: stream
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                listFetches.increment()
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if method == "GET", path.hasSuffix("/messages") {
+                    messagesFetches.increment()
+                    return .json(
+                        #"{"conversation_id":"web_conv_active","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_active",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.01,
+            pathMonitor: monitor
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        // Actively streaming: the send owns its transport (isSendActivelyStreaming).
+        try await waitUntil { model.isStreaming && postedTurnID.value != nil }
+        let assistantBubbleID = try XCTUnwrap(
+            model.messages.last(where: { $0.role == .assistant })?.id
+        )
+        XCTAssertTrue(assistantBubbleID.hasPrefix("local_"))
+
+        let listBaseline = listFetches.value
+        // A reachability recovery drives the full coalesced resync while the send is
+        // still streaming.
+        monitor.setSatisfied(false)
+        monitor.setSatisfied(true)
+
+        // The resync ran (it refetched the authoritative list)...
+        try await waitUntil(timeout: 6) { listFetches.value > listBaseline }
+        // ...but no messages snapshot was merged, so the optimistic placeholder the
+        // send is rendering into survives.
+        XCTAssertEqual(
+            messagesFetches.value,
+            0,
+            "applyMessagesSnapshot must no-op while a send is actively streaming."
+        )
+        XCTAssertTrue(
+            model.messages.contains { $0.id == assistantBubbleID },
+            "The in-flight assistant placeholder must survive an active-send resync."
+        )
+    }
+
+    func testUnreconciledSuspendedSendBlocksNewSend() async throws {
+        // §4.3: after a background suspend the ActiveTurnSession is preserved with
+        // `isStreaming == false` until foreground resync reconciles it (restoring
+        // steer/stop mode if still running, or clearing it if finished). A NORMAL
+        // send in that window would overwrite the session and overlap the preserved
+        // durable turn, losing its stop/steer control — so `canSendDraft` must be
+        // false until reconciliation resolves the suspended session.
+        let stream = HangingStream()
+        let postedTurnID = AtomicString()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_block","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_block/stream"):
+                return .hangingStream(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(postedTurnID.value ?? "turn-block")","seq":0}
+
+                    """,
+                    controller: stream
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_block")
+        model.draftText = "First"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && postedTurnID.value != nil }
+
+        model.suspendActiveSend()
+        XCTAssertFalse(model.isStreaming)
+        XCTAssertNotNil(model.activeTurnSessionForTesting)
+
+        // Compose a new message: it must not be sendable while the suspended session
+        // is unreconciled, or it would overlap the preserved durable turn.
+        model.draftText = "Second"
+        XCTAssertFalse(
+            model.canSendDraft,
+            "A new send must be blocked while a suspended session awaits foreground reconciliation."
+        )
+    }
+
     /// Shared assertions for the §4.3 background-suspend traces: the send's
     /// transport task is cancelled, the ActiveTurnSession (instance + cursor) is
     /// preserved, the generation bumped, the advisory follow/activity tasks were
