@@ -468,7 +468,18 @@ final class ResyncOrchestrator {
                     // buffered tail before ending, and a cancelled iterator over an
                     // unfinished stream simply returns nil (loop ends) — so no
                     // yielded-but-unbuffered event is dropped on handover.
+                    //
+                    // Reject a post-cancel delivery: cancellation is cooperative, so
+                    // an element already produced before `stopBuffering` cancelled
+                    // this task can still be delivered afterward. On the MainActor the
+                    // isCancelled check is atomic with element receipt (no await
+                    // between), so an overflow-restart that reset the shared buffer
+                    // cannot see this stale element appended to the next attempt's
+                    // buffer (it would otherwise be drained and re-rendered when the
+                    // replacement follow connection replays the same seq). A natural
+                    // stream finish is not cancellation, so tail draining is intact.
                     for try await event in stream {
+                        if Task.isCancelled { break }
                         self?.enqueue(.follow(event))
                     }
                 } catch {
@@ -482,6 +493,7 @@ final class ResyncOrchestrator {
             activityBufferingTask = Task { [weak self] in
                 do {
                     for try await _ in stream {
+                        if Task.isCancelled { break }
                         self?.enqueue(.activitySignal)
                     }
                 } catch {}
@@ -508,6 +520,19 @@ final class ResyncOrchestrator {
         generations: ResyncGenerations
     ) async {
         while !buffer.isEmpty {
+            // A selection switch mid-drain (the per-event await let the user move to
+            // another thread) supersedes this attempt: the remaining buffered follow
+            // events belong to the OLD conversation, and during a resync
+            // `selectConversation` cannot bump the follow generation to fence them
+            // (the coordinator's follow task was already nilled by
+            // awaitStreamTermination), so draining them would route stale tokens at
+            // the new thread. Stop draining — the buffered follow events are the old
+            // thread's, and the remaining activity signals are account-global and
+            // safely reconciled by the fresh run's snapshot (same rationale as the
+            // pre-drain supersede checks in `runAttempt`).
+            if host.resyncSelectedConversationID != selectedConversationID {
+                return
+            }
             let event = buffer.removeFirst()
             switch event {
             case let .follow(followEvent):

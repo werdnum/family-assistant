@@ -491,3 +491,27 @@ threat-model / cost-benefit / behaviour-altitude gates in `REVIEW_GUIDELINES.md`
   unbounded). Establishing the channels concurrently risks regressing the carefully ordered
   subscribe-then-buffer sequence (§4.4 steps 3/5/6) for an uncommon degraded case, so the bounded
   status quo is accepted.
+
+A second local codex pass (after the two P1 fixes above) confirmed them resolved and found four more
+interleavings, all fixed in the same branch — each a completion of the same guard pattern rather
+than new machinery:
+
+- **[P1] Push-hint merge erases the streaming placeholder — FIXED.** `targetedRefresh` (the
+  push-hint path, §4.6) called `mergeNewMessages` for the selected conversation without the
+  `isSendActivelyStreaming` guard — the same class as the resync fix, on the push path. Guarded
+  identically.
+- **[P1] Buffered events drained into a switched-to thread — FIXED.**
+  `ResyncOrchestrator.drainBuffer` had no selection recheck, so a conversation switch mid-drain
+  (during a per-event await) could route the old thread's buffered follow events at the new thread —
+  the follow generation cannot be bumped during a resync (the coordinator's task is nilled). Added
+  the per-iteration selection-supersede check the pre-drain steps already use.
+- **[P2] Overlapping turn via the mutation path — FIXED.** The `canSendDraft` block was UI-only;
+  `sendDraft` and the queued-follow-up-steer drain (`sendNextQueuedFollowUpSteerIfReady`) could
+  still overwrite a suspended session. Enforced `hasUnreconciledSuspendedSend` in `sendDraft` itself
+  and bailed the steer drain before dequeuing so queued steers survive to reconciliation.
+- **[P2] Stale enqueue after overflow-restart — FIXED.** On the `@MainActor`, a cooperatively
+  cancelled buffering task could deliver one already-produced element after `stopBuffering`/
+  `resetBuffer`, appending it into the next attempt's buffer (drained + re-rendered on replay).
+  Added a `Task.isCancelled` check immediately before `enqueue` in both buffering loops; it is
+  atomic with element receipt (no await between) and does not affect natural stream-finish tail
+  draining.

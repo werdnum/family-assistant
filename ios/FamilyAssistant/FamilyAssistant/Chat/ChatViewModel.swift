@@ -1214,6 +1214,15 @@ final class ChatViewModel {
         guard !isLoadingMessages else {
             return
         }
+        // Defensive: never start a NORMAL send while a suspended session is still
+        // awaiting foreground reconciliation (see `hasUnreconciledSuspendedSend`).
+        // The composer disables the send button through this window, but the
+        // mutation path is also reachable from the queued-follow-up-steer drain, so
+        // enforce it here too — otherwise a delayed steer could overwrite the
+        // preserved ActiveTurnSession and overlap the still-running durable turn.
+        guard !hasUnreconciledSuspendedSend else {
+            return
+        }
         guard draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
             presentErrorAlert(
                 "Wait for attachments to finish uploading before sending.",
@@ -2337,7 +2346,12 @@ final class ChatViewModel {
     }
 
     private func sendNextQueuedFollowUpSteerIfReady() async {
-        guard !isStreaming, !queuedFollowUpSteers.isEmpty else {
+        // Also hold while a suspended session awaits reconciliation: draining a
+        // follow-up here routes through `sendDraft`, which refuses to overwrite the
+        // preserved session — so dequeuing now would consume the queued steer for
+        // nothing. Bail before dequeuing; a later turn completion re-drains the
+        // queue once the session is reconciled.
+        guard !isStreaming, !hasUnreconciledSuspendedSend, !queuedFollowUpSteers.isEmpty else {
             return
         }
         let followUp = queuedFollowUpSteers.removeFirst()
@@ -2746,7 +2760,12 @@ final class ChatViewModel {
     private func targetedRefresh(conversationID: String?) async {
         // A push hint is advisory: its refresh feeds breadcrumbs and health, never
         // a modal (§4.6). The user did not initiate this refresh.
-        if let conversationID, conversationID == self.conversationID {
+        //
+        // Skip the merge while a send is actively streaming: mergeNewMessages drops
+        // every `local_` row, which would delete the in-flight assistant placeholder
+        // the send transport is rendering into (same guard as applyMessagesSnapshot
+        // and the other passive-refresh paths). The list refresh below is safe.
+        if let conversationID, conversationID == self.conversationID, !isSendActivelyStreaming {
             await mergeNewMessages(conversationID: conversationID, surfaceErrors: false)
         }
         await refreshRecentConversations(surfaceErrors: false)
