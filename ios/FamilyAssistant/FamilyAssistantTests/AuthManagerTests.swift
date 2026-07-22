@@ -117,6 +117,40 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
     }
 
+    func testForcedRefreshSkipsRejectionForAlreadyRotatedToken() async throws {
+        seedStoredAuth(apiToken: "rotated", refreshToken: "rotated-refresh", expiresIn: 7200)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            XCTFail("An already-recovered rejection must not issue another refresh")
+            return .json("{}")
+        }
+
+        try await authManager.refreshIfNeeded(
+            force: true,
+            rejectedAccessToken: "rejected-token"
+        )
+
+        XCTAssertTrue(AuthBackendURLProtocol.requests.isEmpty)
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+    }
+
+    func testLogoutUsesInjectedWebsiteDataCleaner() async {
+        seedStoredAuth(apiToken: "stored", refreshToken: "stored-refresh", expiresIn: 7200)
+        var cleanedWebsiteData = false
+        let authManager = AuthManager(websiteDataCleaner: {
+            cleanedWebsiteData = true
+        })
+        authManager.serverURL = serverURL
+        AuthBackendURLProtocol.respond { _ in .json("{}") }
+
+        await authManager.logout()
+
+        XCTAssertTrue(cleanedWebsiteData)
+        XCTAssertFalse(authManager.isAuthenticated)
+        XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+        XCTAssertNil(KeychainHelper.readString(key: "fa_refresh_token"))
+    }
+
     func testNonForcedRefreshAwaitsInFlightForcedRefresh() async throws {
         // A forced refresh (the response-time-401 path) rotates the token even
         // though the stored expiry still looks fresh. A concurrent non-forced

@@ -624,8 +624,22 @@ struct ChatAPIClient {
             return (data, response)
         }
 
+        let rejectedAccessToken: String? = request
+            .value(forHTTPHeaderField: "Authorization")
+            .flatMap { authorization -> String? in
+                let bearerPrefix = "Bearer "
+                guard authorization.hasPrefix(bearerPrefix) else {
+                    return nil
+                }
+                return String(authorization.dropFirst(bearerPrefix.count))
+            }
+
         do {
-            try await authManager.refreshIfNeeded(force: true, ownerEpoch: capturedEpoch)
+            try await authManager.refreshIfNeeded(
+                force: true,
+                ownerEpoch: capturedEpoch,
+                rejectedAccessToken: rejectedAccessToken
+            )
         } catch AuthError.authRejected, AuthError.noCredentials {
             authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
             throw AuthError.noCredentials

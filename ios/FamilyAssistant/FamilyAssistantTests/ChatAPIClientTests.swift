@@ -577,7 +577,10 @@ final class ChatAPIClientTests: XCTestCase {
 
         XCTAssertEqual(responses.0.defaultProfileID, "default_assistant")
         XCTAssertEqual(responses.1.defaultProfileID, "default_assistant")
-        XCTAssertEqual(getRequests.value, 4, "both rejected GETs retry exactly once")
+        XCTAssertTrue(
+            (3 ... 4).contains(getRequests.value),
+            "each GET runs once and only requests that used the rejected token retry"
+        )
         XCTAssertEqual(refreshRequests.value, 1, "concurrent 401 recovery is single-flight")
         XCTAssertFalse(authManager.authRequired)
     }

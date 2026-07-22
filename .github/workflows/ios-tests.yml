@@ -7,16 +7,14 @@ on:
       - '.github/workflows/ios-tests.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'ios/**'
-      - '.github/workflows/ios-tests.yml'
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 permissions:
   contents: read
 jobs:
-  test:
+  ios-tests:
+    name: ios-tests
     # macos-26 (Apple Silicon, Xcode 26.x) is the current GA image. The exact
     # simulator lineup changes with each Xcode release, so the simulator is
     # resolved dynamically below rather than hardcoded to a device name.
