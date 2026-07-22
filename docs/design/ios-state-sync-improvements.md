@@ -466,15 +466,14 @@ threat-model / cost-benefit / behaviour-altitude gates in `REVIEW_GUIDELINES.md`
   Fixed by guarding `applyMessagesSnapshot` on `isSendActivelyStreaming`, completing the pattern the
   other passive-resync steps (`reconcileSuspendedSession`, `catchUpPersistedHistory`, the follow
   merge) already follow. Covered by `testActiveSendResyncPreservesOptimisticPlaceholder`.
-- **[P1] Overlapping send during the suspend-reconcile window — FIXED.** Between foreground and the
-  resync's `reconcileSuspendedSession`, a preserved suspended session had `isStreaming == false` and
-  `canSendDraft == true`, so a normal send could overwrite `activeTurnSession` and overlap the
-  still-running durable turn (losing stop/steer control). Fixed by deriving the block from existing
-  state — `canSendDraft` now excludes the `activeTurnSession != nil && !isStreaming` window — rather
-  than adding a new flag with its own lifecycle (which risked a stuck-blocked composer). It
-  self-heals: reconcile restores `isStreaming` (still running) or clears the session (finished), and
-  a reachability resync clears it once connectivity returns. Covered by
-  `testUnreconciledSuspendedSendBlocksNewSend`.
+- **[P1] Overlapping send during the suspend-reconcile window — FIXED, then REVERTED (see the fifth
+  pass).** Between foreground and the resync's `reconcileSuspendedSession`, a preserved suspended
+  session had `isStreaming == false` and `canSendDraft == true`, so a normal send could overwrite
+  `activeTurnSession` and overlap the still-running durable turn (losing stop/steer control). This
+  was first fixed by deriving a send block from existing state (`canSendDraft` excluding the
+  `activeTurnSession != nil && !isStreaming` window). The fifth pass showed the block's own failure
+  mode (a failed reconcile bricking the composer) outweighed the rare, recoverable overlap it
+  prevented, so the block was removed — see §9.1's fifth-pass entry.
 - **[P2] Never-registered suspended turn loses the composed message — ACCEPTED (documented).** If
   the app backgrounds in the sub-second window while the initial `POST /turns` is in flight and its
   cancellation prevents server registration, the foreground snapshot legitimately shows no
@@ -505,10 +504,9 @@ than new machinery:
   (during a per-event await) could route the old thread's buffered follow events at the new thread —
   the follow generation cannot be bumped during a resync (the coordinator's task is nilled). Added
   the per-iteration selection-supersede check the pre-drain steps already use.
-- **[P2] Overlapping turn via the mutation path — FIXED.** The `canSendDraft` block was UI-only;
-  `sendDraft` and the queued-follow-up-steer drain (`sendNextQueuedFollowUpSteerIfReady`) could
-  still overwrite a suspended session. Enforced `hasUnreconciledSuspendedSend` in `sendDraft` itself
-  and bailed the steer drain before dequeuing so queued steers survive to reconciliation.
+- **[P2] Overlapping turn via the mutation path — FIXED, then REVERTED with the block (see the fifth
+  pass).** `sendDraft` and the queued-follow-up-steer drain were also made to enforce the same
+  suspended-send block. Removed together with the block in the fifth pass.
 - **[P2] Stale enqueue after overflow-restart — FIXED.** On the `@MainActor`, a cooperatively
   cancelled buffering task could deliver one already-produced element after `stopBuffering`/
   `resetBuffer`, appending it into the next attempt's buffer (drained + re-rendered on replay).
@@ -585,3 +583,38 @@ A fourth local codex pass (all findings P2 — the P1s had converged) raised fou
   the `URLSession` timeout, and the resync releases the host and completes on its own — so
   preempting mid-await (a broad refactor to stop calling host methods across awaits) is
   disproportionate to a bounded, rare (discard-mid-resync) delay.
+
+A fifth local codex pass raised four findings; the two P1s were addressed, and — notably — its
+second P1 was the trigger to unwind machinery from the second/third passes:
+
+- **[P1] Active-send placeholder erased by a resync started while idle — FIXED.** The
+  `isSendActivelyStreaming` entry guards (on `applyMessagesSnapshot` / `targetedRefresh` /
+  `catchUpPersistedHistory`) are evaluated *before* `mergeNewMessages` awaits its HTTP fetch, so a
+  send that STARTS during that await would have its fresh `local_` placeholders dropped out from
+  under the still-rendering send task (a TOCTOU on the earlier fix). Added the companion re-check
+  inside `mergeNewMessages` after the fetch, before the `local_` drop — one central guard covering
+  every caller.
+- **[P1] Failed reconcile bricked the composer → the suspended-send block REMOVED.** The second-pass
+  `hasUnreconciledSuspendedSend` block (which blocked sends while
+  `activeTurnSession != nil && !isStreaming`) had a worse failure mode than the race it guarded: if
+  the foreground reconcile *failed*, the session stayed unreconciled and the composer was blocked
+  permanently with no reconnect affordance. This is the machinery-edge-case spiral the
+  `REVIEW_GUIDELINES.md` cost/benefit gate exists to stop. Reassessed against behaviour-altitude:
+  the overlap the block prevented (a send in the sub-second foreground-reconcile window overwriting
+  the preserved session) is uncommon and *recoverable* — the original durable turn still completes
+  server-side; only client-side stop/steer of it is lost. That is "reasonable, non-broken" behaviour
+  for a rare scenario, so the block (and its `sendDraft` / steer-drain enforcement and two tests)
+  was removed outright rather than gated. The active-send placeholder protection above is
+  independent and stays.
+- **[P2] Never-registered turn leaves a "sent"-looking user row — ACCEPTED (documented).** The
+  fourth-pass fix removes the orphaned *assistant* placeholder (the broken stuck-spinner); the
+  unsent optimistic *user* row lingers looking sent until the next non-empty merge drops it.
+  Distinguishing this from a finished-while-backgrounded turn (whose user row is legitimate) needs
+  the same disambiguation declined in the first pass; the residue is transient and self-correcting,
+  so accepted per behaviour-altitude for this uncommon window.
+- **[P2] Two foreground push hints coalesce lossily — ACCEPTED (documented).** `pendingPushHint` is
+  a single value, so a second foreground push arriving before SwiftUI consumes the first overwrites
+  it; if the first named the selected conversation and the second did not, the selected thread's
+  targeted refresh is skipped. It requires two pushes within one render cycle *and* the follow
+  stream being down (else the thread updates live regardless), and self-corrects on the next
+  event/foreground — a queue is disproportionate to that multi-condition, self-healing window.

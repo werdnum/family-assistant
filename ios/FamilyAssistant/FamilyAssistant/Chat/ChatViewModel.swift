@@ -53,21 +53,6 @@ final class ChatViewModel {
         // so a send would post under the previous profile and the backend would
         // filter this thread's history out of the turn's context.
         return hasContent && attachmentsReady && !isLoadingMessages
-            && !hasUnreconciledSuspendedSend
-    }
-
-    /// A send that was suspended on background (transport torn down but its
-    /// `ActiveTurnSession` preserved for reattach) and not yet reconciled against
-    /// the server's `active_turns` on foreground. `suspendActiveSend` leaves
-    /// `isStreaming == false` with the session retained, and foreground resync
-    /// resolves it — restoring steer/stop mode (`isStreaming = true`) if the turn is
-    /// still running, or clearing the session if it finished. Until then a NORMAL
-    /// send would overwrite `activeTurnSession` and overlap the still-running
-    /// durable turn, losing stop/steer control of the original, so block new sends
-    /// through this window. It is bounded by the foreground resync; a
-    /// reachability-recovery resync also clears it once connectivity returns.
-    private var hasUnreconciledSuspendedSend: Bool {
-        activeTurnSession != nil && !isStreaming
     }
 
     /// Derived connection state for the toolbar indicator. Forwards the
@@ -1134,6 +1119,16 @@ final class ChatViewModel {
                 errorMessage = nil
                 return
             }
+            // A send may have STARTED during the fetch await above: the entry guards
+            // (applyMessagesSnapshot / targetedRefresh / catchUpPersistedHistory) all
+            // check `isSendActivelyStreaming` before this async fetch, so a send that
+            // begins mid-fetch would have its fresh `local_` placeholders dropped
+            // below, out from under the still-rendering send task. Re-check here (the
+            // TOCTOU companion to those entry guards) and bail — the send owns its
+            // rendering and reconciles its own history on completion.
+            guard !isSendActivelyStreaming else {
+                return
+            }
             let rendered = Self.renderMessages(from: delta)
             // Drop optimistic local placeholders now that persisted copies exist,
             // then append the fetched delta. Still-running live-follow bubbles are
@@ -1234,15 +1229,6 @@ final class ChatViewModel {
         // Defensive: the send button is disabled while a conversation loads, but
         // never post a turn before its profile is adopted (see `canSendDraft`).
         guard !isLoadingMessages else {
-            return
-        }
-        // Defensive: never start a NORMAL send while a suspended session is still
-        // awaiting foreground reconciliation (see `hasUnreconciledSuspendedSend`).
-        // The composer disables the send button through this window, but the
-        // mutation path is also reachable from the queued-follow-up-steer drain, so
-        // enforce it here too — otherwise a delayed steer could overwrite the
-        // preserved ActiveTurnSession and overlap the still-running durable turn.
-        guard !hasUnreconciledSuspendedSend else {
             return
         }
         guard draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
@@ -2379,12 +2365,7 @@ final class ChatViewModel {
     }
 
     private func sendNextQueuedFollowUpSteerIfReady() async {
-        // Also hold while a suspended session awaits reconciliation: draining a
-        // follow-up here routes through `sendDraft`, which refuses to overwrite the
-        // preserved session — so dequeuing now would consume the queued steer for
-        // nothing. Bail before dequeuing; a later turn completion re-drains the
-        // queue once the session is reconciled.
-        guard !isStreaming, !hasUnreconciledSuspendedSend, !queuedFollowUpSteers.isEmpty else {
+        guard !isStreaming, !queuedFollowUpSteers.isEmpty else {
             return
         }
         let followUp = queuedFollowUpSteers.removeFirst()
