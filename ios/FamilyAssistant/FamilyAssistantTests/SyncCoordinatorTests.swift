@@ -915,6 +915,16 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     func currentConversationID() -> String? {
         activeConversationID
     }
+
+    func suspendActiveSend() {
+        suspendActiveSendCount += 1
+    }
+
+    func gateAuthIfNeeded(generation: Int) async throws {}
+
+    func runCoalescedResync() {
+        runCoalescedResyncCount += 1
+    }
 }
 
 private final class AtomicCounter: @unchecked Sendable {
@@ -931,16 +941,6 @@ private final class AtomicCounter: @unchecked Sendable {
 
     var value: Int {
         lock.withLock { count }
-    }
-
-    func suspendActiveSend() {
-        suspendActiveSendCount += 1
-    }
-
-    func gateAuthIfNeeded(generation: Int) async throws {}
-
-    func runCoalescedResync() {
-        runCoalescedResyncCount += 1
     }
 }
 
@@ -987,7 +987,7 @@ private final class WedgingSyncStreamDelegate: SyncStreamDelegate {
 
     func activityStreamDidSignal(generation: Int) async {}
 
-    func forceAuthRefreshForStreamConnect() async -> Bool { false }
+    func currentConversationID() -> String? { nil }
 
     func suspendActiveSend() {}
 
