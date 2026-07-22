@@ -295,6 +295,9 @@ final class SyncCoordinator {
                 if self.authManager.authRequired {
                     break
                 }
+                // Capture the loop's auth epoch at the start; terminal 401 latch uses this
+                // to prevent a stale rejection from a superseded epoch deleting new creds.
+                let loopEpoch = self.authManager.authEpoch
                 var deliberateStop = false
                 var connected = false
                 var streamError: Error?
@@ -341,13 +344,13 @@ final class SyncCoordinator {
                                 try await self.authManager.refreshIfNeeded(force: true)
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
-                                self.authManager.markAuthRequired()
+                                self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                                 deliberateStop = true
                             } catch {
                                 streamError = error
                             }
                         } else {
-                            self.authManager.markAuthRequired()
+                            self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                             deliberateStop = true
                         }
                         if deliberateStop {
@@ -407,6 +410,9 @@ final class SyncCoordinator {
                 if self.authManager.authRequired {
                     break
                 }
+                // Capture the loop's auth epoch at the start; terminal 401 latch uses this
+                // to prevent a stale rejection from a superseded epoch deleting new creds.
+                let loopEpoch = self.authManager.authEpoch
                 do {
                     guard let stream = try await self.delegate?.openActivityStream(
                         generation: generation
@@ -432,14 +438,14 @@ final class SyncCoordinator {
                                 try await self.authManager.refreshIfNeeded(force: true)
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
-                                self.authManager.markAuthRequired()
+                                self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
                                 break
                             } catch {
                                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
                             }
                         } else {
-                            self.authManager.markAuthRequired()
+                            self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                             self.apply(.activityDropped(generation: generation, cleanEOF: false))
                             break
                         }

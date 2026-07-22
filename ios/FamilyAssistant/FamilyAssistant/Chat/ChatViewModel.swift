@@ -395,6 +395,8 @@ final class ChatViewModel {
             // deep link to the same thread reopens it instead of leaving the
             // user stranded on the conversation list.
             conversationSelection = conversationID
+            // Clear the launch-draft sentinel if selecting a saved conversation.
+            opensGeneratedLaunchDraft = false
         }
     }
 
@@ -565,6 +567,9 @@ final class ChatViewModel {
         }
         conversationID = id
         conversationSelection = id
+        // Clear the launch-draft sentinel when opening a saved conversation so
+        // currentConversationID() returns the real id and the follow stream is managed.
+        opensGeneratedLaunchDraft = false
         persistConversationID()
         mobileShowsConversationList = false
         // Mark loading synchronously, before the first suspension below, so the
@@ -1110,6 +1115,50 @@ final class ChatViewModel {
         }
     }
 
+    /// Retry a failed turn-start on 401/403. Performs one forced refresh
+    /// (single-flight); if it succeeds, retries startTurn with the same turnID
+    /// (server dedupes) and returns its result. On refresh failure or a second
+    /// 401/403, throws so the caller's existing catch can latch signInRequired.
+    ///
+    /// CRITICAL: The retry must be transparent — the caller's post-start flow
+    /// runs exactly once on the returned result, never duplicated for the retry.
+    private func startTurnWithAuthRetry(
+        turnID: String,
+        prompt: String,
+        conversationID: String,
+        profileID: String?,
+        attachments: [ChatAttachment]
+    ) async throws -> ChatTurnStart {
+        do {
+            return try await apiClient.startTurn(
+                turnID: turnID,
+                prompt: prompt,
+                conversationID: conversationID,
+                profileID: profileID,
+                attachments: attachments
+            )
+        } catch let ChatAPIError.server(statusCode, _) where statusCode == 401 || statusCode == 403 {
+            // First attempt got a 401/403. Try one forced refresh; if it succeeds,
+            // retry once. If the refresh fails or the retry also 401/403s, the error
+            // bubbles up so the existing catch in runSendTurn latches signInRequired.
+            do {
+                try await authManager.refreshIfNeeded(force: true)
+            } catch AuthError.authRejected, AuthError.noCredentials {
+                // Refresh failed: let the 401/403 propagate so the catch latches.
+                throw ChatAPIError.server(statusCode: statusCode, detail: nil)
+            }
+
+            // Refresh succeeded; retry the turn start with the SAME turnID.
+            return try await apiClient.startTurn(
+                turnID: turnID,
+                prompt: prompt,
+                conversationID: conversationID,
+                profileID: profileID,
+                attachments: attachments
+            )
+        }
+    }
+
     private func runSendTurn(_ session: ActiveTurnSession) async {
         let turnID = session.turnID
         let prompt = session.prompt
@@ -1118,6 +1167,9 @@ final class ChatViewModel {
         let assistantMessageID = session.assistantMessageID
         let streamToken = session.streamToken
         let previousSummary = session.previousSummary
+        // Capture the auth epoch at send start; a 401 that arrives after a
+        // logout+login (epoch bumped) must not clear the new session's credentials.
+        let startEpoch = authManager.authEpoch
         // Retire this turn's optimistic pending mark on EVERY return path —
         // completion, recovery, failure, cancellation, and the superseded early
         // returns below — so a row can never stay pending (and pinned over the
@@ -1137,7 +1189,7 @@ final class ChatViewModel {
         // removed on a later failure.
         var startSucceeded = false
         do {
-            let start = try await apiClient.startTurn(
+            let start = try await startTurnWithAuthRetry(
                 turnID: turnID,
                 prompt: prompt,
                 conversationID: id,
@@ -1403,7 +1455,7 @@ final class ChatViewModel {
             // signInRequired path: latch it with no generic modal.
             let underlyingError: Error?
             if case ChatAPIError.server(let statusCode, _) = error, statusCode == 401 || statusCode == 403 {
-                authManager.markAuthRequired()
+                authManager.markAuthRequiredIfCurrent(capturedEpoch: startEpoch)
                 underlyingError = AuthError.noCredentials
             } else {
                 underlyingError = error

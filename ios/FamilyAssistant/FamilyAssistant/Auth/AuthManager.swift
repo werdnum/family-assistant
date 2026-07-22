@@ -31,9 +31,10 @@ final class AuthManager {
     /// credential clear, new login). A session bridge captures it on entry and
     /// only writes its cookie if it is still current — so a bridge abandoned by
     /// the ``bootstrapSession()`` watchdog cannot resurrect a stale session cookie
-    /// after a later logout/re-login has superseded it. This fence is deliberately
-    /// private to the auth authority; callers only observe ``AuthStateSignal``.
-    @MainActor private var authEpoch = 0
+    /// after a later logout/re-login has superseded it. Callers capture this epoch
+    /// at the start of network operations and compare it at terminal latch points
+    /// to prevent a stale rejection from deleting a freshly re-authenticated session.
+    @MainActor private(set) var authEpoch = 0
 
     /// Terminal auth state: the server has rejected the stored credentials (or they
     /// are missing where required) and the user must re-authenticate. Distinct from
@@ -386,6 +387,20 @@ final class AuthManager {
         }
         clearAuthCredentialsOnly()
         setAuthRequired(true)
+    }
+
+    /// Atomically clear rejected credentials and latch the terminal ``authRequired``
+    /// state, but only if the provided epoch still owns the current auth state.
+    /// Called from callers (operation start-to-terminal-latch paths) that captured
+    /// their epoch at the start of a network operation; a stale rejection from a
+    /// superseded epoch (logout/re-login happened while the operation was in flight)
+    /// must not delete a freshly re-authenticated session's credentials.
+    @MainActor
+    func markAuthRequiredIfCurrent(capturedEpoch: Int) {
+        guard isCurrentAuthEpoch(capturedEpoch) else {
+            return
+        }
+        markAuthRequired()
     }
 
     /// Clear only the stored credentials (keychain/defaults). Used for in-place
