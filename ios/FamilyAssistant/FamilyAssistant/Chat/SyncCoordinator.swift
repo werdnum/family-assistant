@@ -128,6 +128,11 @@ final class SyncCoordinator {
     private(set) var authState: AuthState = .ok
     private(set) var followHealth: ChannelHealth = .down
     private(set) var activityHealth: ChannelHealth = .down
+    /// Set while `authRequired` is latched (streams suppressed) and consumed by
+    /// the next `.authOK` to restart the suppressed streams. A separate latch is
+    /// required because a `.refreshing` signal always fires between `.authRequired`
+    /// and `.ok`, so `authState` is no longer `.authRequired` at `.authOK` time.
+    private var pendingReauthRestart = false
     private(set) var phase: ReconciliationPhase = .idle
     private(set) var cameFromBackground = false
 
@@ -544,15 +549,18 @@ final class SyncCoordinator {
             return []
 
         case .authOK:
-            let wasAuthRequired = authState == .authRequired
             authState = .ok
             // Re-auth just succeeded. While `authRequired` was latched the streams
-            // could not connect (their requests 401'd), so any loop is now asleep
-            // at capped backoff and would otherwise stay down for up to one
-            // max-delay interval, keeping the stuck indicator up after sign-in.
-            // Mirror the reachability-recovery wake: reset backoff and retry the
-            // non-connected loops now. Health still comes only from real connects.
-            if wasAuthRequired, lifecycle == .foreground {
+            // were suppressed/cancelled, so they must be restarted now. Gate on the
+            // `pendingReauthRestart` latch (set when `.authRequired` fired) rather
+            // than `authState`, because the intervening `.refreshing` signal has
+            // already moved `authState` off `.authRequired`. A routine near-expiry
+            // refresh (which never latched `authRequired`) leaves the flag false and
+            // does not churn healthy streams. Restart the non-connected loops now;
+            // health still comes only from a real connect. When backgrounded, leave
+            // the flag set so the foreground resync owns the restart.
+            if pendingReauthRestart, lifecycle == .foreground {
+                pendingReauthRestart = false
                 wakeReconnectLoops()
             }
             return []
@@ -571,6 +579,7 @@ final class SyncCoordinator {
             cancelStreams()
             followHealth = .down
             activityHealth = .down
+            pendingReauthRestart = true
             return []
 
         case let .followConnected(generation):

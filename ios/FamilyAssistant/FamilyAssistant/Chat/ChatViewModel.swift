@@ -308,14 +308,15 @@ final class ChatViewModel {
         // Bridge auth transitions into the coordinator so a token refresh surfaces
         // as `.syncing`-adjacent degraded state and a rejection surfaces as the
         // dedicated `.authRequired` presentation — never the generic error modal.
-        authObserverToken = authManager.addAuthStateObserver { [weak syncCoordinator] signal in
+        let coordinator = syncCoordinator
+        authObserverToken = authManager.addAuthStateObserver { [weak coordinator] signal in
             switch signal {
             case .refreshing:
-                syncCoordinator?.apply(.authRefreshing)
+                coordinator?.apply(.authRefreshing)
             case .ok:
-                syncCoordinator?.apply(.authOK)
+                coordinator?.apply(.authOK)
             case .authRequired:
-                syncCoordinator?.apply(.authRequired)
+                coordinator?.apply(.authRequired)
             }
         }
     }

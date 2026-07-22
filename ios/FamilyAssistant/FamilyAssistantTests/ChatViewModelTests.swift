@@ -4221,6 +4221,11 @@ final class ChatViewModelTests: XCTestCase {
             model.draftText = "Hello"
 
             await model.sendDraft()
+            do {
+                try await waitUntil { authManager.authRequired }
+            } catch {
+                XCTFail("Timed out waiting for auth to be marked required: \(error)")
+            }
 
             XCTAssertEqual(postRequests.value, 1)
             XCTAssertTrue(authManager.authRequired)
