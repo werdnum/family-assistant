@@ -88,7 +88,10 @@ final class AuthManagerTests: XCTestCase {
             XCTFail("Expected authorizedRequest to throw")
         } catch AuthError.noCredentials {
             XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
-            XCTAssertFalse(authManager.isAuthenticated)
+            XCTAssertTrue(
+                authManager.isAuthenticated,
+                "shell must stay mounted so in-place sign-in can recover the session"
+            )
             XCTAssertTrue(
                 authManager.authRequired,
                 "missing credentials on the required path must latch authRequired"
@@ -326,11 +329,18 @@ final class AuthManagerTests: XCTestCase {
 
         await authManager.bootstrapSession()
 
-        XCTAssertFalse(authManager.isAuthenticated)
+        XCTAssertTrue(
+            authManager.isAuthenticated,
+            "shell must stay mounted so in-place sign-in can recover the session"
+        )
         XCTAssertFalse(authManager.isBootstrapping)
         XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
         XCTAssertNil(KeychainHelper.readString(key: "fa_refresh_token"))
         XCTAssertNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
+        XCTAssertTrue(
+            authManager.authRequired,
+            "authRequired must be latched so in-place sign-in is presented"
+        )
     }
 
     func testBootstrapSessionCompletesNormallyWhenSessionBridgeSucceeds() async {

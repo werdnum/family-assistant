@@ -385,7 +385,6 @@ final class AuthManager {
             bumpAuthEpoch()
         }
         clearAuthCredentialsOnly()
-        isAuthenticated = false
         setAuthRequired(true)
     }
 
@@ -431,7 +430,12 @@ final class AuthManager {
     /// stored token is due. Concurrent callers share the same in-flight operation.
     @MainActor
     func refreshIfNeeded(force: Bool = false) async throws {
-        try await refreshIfNeeded(ownerEpoch: nil, force: force)
+        // Capture the current auth epoch when forcing a refresh, so the fence works
+        // even when called from callers (SyncCoordinator stream loops) that manage
+        // no epochs. This prevents a forced refresh awaiting the network during a
+        // logout/re-login from overwriting the new session's credentials.
+        let ownerEpoch = force ? authEpoch : nil
+        try await refreshIfNeeded(ownerEpoch: ownerEpoch, force: force)
     }
 
     /// - Parameter ownerEpoch: when set by the private bootstrap path, rotated tokens are
