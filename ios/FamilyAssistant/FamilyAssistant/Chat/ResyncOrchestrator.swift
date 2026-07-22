@@ -148,12 +148,14 @@ final class ResyncOrchestrator {
 
     private let bufferCapacity: Int
     private let maxRestarts: Int
+    private let breadcrumb: ChatSyncBreadcrumb?
 
     /// Buffered stream events held (undispatched) while the snapshots are
     /// fetched, then drained in order. Actor-isolated: appended by the buffering
     /// tasks and read by the drain, all on the main actor.
     private var buffer: [BufferedResyncEvent] = []
     private var bufferOverflowed = false
+    private var bufferingDegraded = false
     nonisolated(unsafe) private var followBufferingTask: Task<Void, Never>?
     nonisolated(unsafe) private var activityBufferingTask: Task<Void, Never>?
 
@@ -168,10 +170,16 @@ final class ResyncOrchestrator {
     private var runningTarget: ResyncTarget?
     private var pendingSupersede = false
 
-    init(host: ResyncHost, bufferCapacity: Int = 256, maxRestarts: Int = 3) {
+    init(
+        host: ResyncHost,
+        bufferCapacity: Int = 256,
+        maxRestarts: Int = 3,
+        breadcrumb: ChatSyncBreadcrumb? = nil
+    ) {
         self.host = host
         self.bufferCapacity = bufferCapacity
         self.maxRestarts = maxRestarts
+        self.breadcrumb = breadcrumb
     }
 
     /// The reconciliation target captured from the host: the per-channel
@@ -196,7 +204,7 @@ final class ResyncOrchestrator {
     /// selection changed), it is remembered as superseding so a fresh run covers
     /// the new target once the stale attempt unwinds.
     @discardableResult
-    func request() -> Task<Void, Never> {
+    func request(trigger: SyncCoordinator.RestartReason = .initial) -> Task<Void, Never> {
         if let currentTask {
             if let host, runningTarget != nil, ResyncTarget(host: host) != runningTarget {
                 pendingSupersede = true
@@ -204,7 +212,7 @@ final class ResyncOrchestrator {
             return currentTask
         }
         let task = Task { [weak self] in
-            await self?.run()
+            await self?.run(trigger: trigger)
             self?.currentTask = nil
         }
         currentTask = task
@@ -223,21 +231,36 @@ final class ResyncOrchestrator {
         activityBufferingTask?.cancel()
     }
 
-    private func run() async {
+    private func run(trigger: SyncCoordinator.RestartReason) async {
         guard let host else {
             return
         }
+        let startedAt = Date()
+        var terminalOutcome = RunOutcome.aborted
+        var overflowRestarts = 0
+        breadcrumb?("Chat.resync", ["phase": "start", "trigger": trigger.rawValue])
         host.resyncPhaseDidStart()
         defer {
             runningTarget = nil
             host.resyncPhaseDidFinish()
+            breadcrumb?(
+                "Chat.resync",
+                [
+                    "phase": "finish",
+                    "outcome": terminalOutcome.rawValue,
+                    "overflow_restarts": String(overflowRestarts),
+                    "duration_seconds": String(format: "%.3f", max(0, Date().timeIntervalSince(startedAt))),
+                ]
+            )
         }
 
         while true {
             pendingSupersede = false
-            let outcome = await runOneResync(host: host)
-            switch outcome {
-            case .completed, .aborted:
+            let result = await runOneResync(host: host)
+            overflowRestarts += result.overflowRestarts
+            terminalOutcome = result.outcome
+            switch result.outcome {
+            case .completed, .aborted, .degraded:
                 // A supersede request that arrived during this run (a differing
                 // target) starts a fresh run rather than leaving the new target
                 // unreconciled with streams possibly torn down.
@@ -255,18 +278,21 @@ final class ResyncOrchestrator {
 
     /// One full resync pass INCLUDING its bounded overflow restarts. Returns the
     /// terminal outcome for the `run()` supersede loop.
-    private func runOneResync(host: ResyncHost) async -> RunOutcome {
+    private func runOneResync(host: ResyncHost) async -> RunResult {
         var attempt = 0
         while true {
             runningTarget = ResyncTarget(host: host)
             let outcome = await attemptResync(host: host)
             switch outcome {
             case .completed:
-                return .completed
+                return RunResult(
+                    outcome: bufferingDegraded ? .degraded : .completed,
+                    overflowRestarts: attempt
+                )
             case .aborted:
-                return .aborted
+                return RunResult(outcome: .aborted, overflowRestarts: attempt)
             case .superseded:
-                return .superseded
+                return RunResult(outcome: .superseded, overflowRestarts: attempt)
             case .overflowRestart:
                 attempt += 1
                 if attempt > maxRestarts {
@@ -276,16 +302,22 @@ final class ResyncOrchestrator {
                     // catch-up reconcile content (the loops fence by generation),
                     // and the indicator reflects real per-channel health.
                     host.restartStreams()
-                    return .completed
+                    return RunResult(outcome: .degraded, overflowRestarts: attempt)
                 }
             }
         }
     }
 
-    private enum RunOutcome {
+    private struct RunResult {
+        let outcome: RunOutcome
+        let overflowRestarts: Int
+    }
+
+    private enum RunOutcome: String {
         case completed
         case aborted
         case superseded
+        case degraded
     }
 
     private enum ResyncOutcome {
@@ -502,6 +534,8 @@ final class ResyncOrchestrator {
                     // handover reconnects, and the snapshot already covers content.
                 }
             }
+        } else if selectedConversationID != nil {
+            bufferingDegraded = true
         }
 
         if let stream = await host.establishActivityStream(generation: generations.activity) {
@@ -513,6 +547,8 @@ final class ResyncOrchestrator {
                     }
                 } catch {}
             }
+        } else {
+            bufferingDegraded = true
         }
     }
 
@@ -578,5 +614,6 @@ final class ResyncOrchestrator {
     private func resetBuffer() {
         buffer.removeAll(keepingCapacity: true)
         bufferOverflowed = false
+        bufferingDegraded = false
     }
 }

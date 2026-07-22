@@ -4,9 +4,14 @@ import Network
 @MainActor
 protocol PathMonitoring: AnyObject {
     var isSatisfied: Bool { get }
+    var interfaceType: String { get }
     var onChange: ((Bool) -> Void)? { get set }
     func start()
     func cancel()
+}
+
+extension PathMonitoring {
+    var interfaceType: String { "unknown" }
 }
 
 @MainActor
@@ -16,6 +21,7 @@ final class NetworkPathMonitor: PathMonitoring {
     private var started = false
 
     private(set) var isSatisfied = false
+    private(set) var interfaceType = "unknown"
     private var hasDelivered = false
     var onChange: ((Bool) -> Void)?
 
@@ -24,8 +30,9 @@ final class NetworkPathMonitor: PathMonitoring {
         started = true
         monitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
+            let interfaceType = Self.interfaceType(for: path)
             Task { @MainActor in
-                self?.update(satisfied: satisfied)
+                self?.update(satisfied: satisfied, interfaceType: interfaceType)
             }
         }
         monitor.start(queue: queue)
@@ -37,7 +44,8 @@ final class NetworkPathMonitor: PathMonitoring {
         monitor.cancel()
     }
 
-    private func update(satisfied: Bool) {
+    private func update(satisfied: Bool, interfaceType: String) {
+        self.interfaceType = interfaceType
         // Always deliver the first observation even when its value equals the
         // initial `isSatisfied` (false): launching offline reports `.unsatisfied`
         // first, which must reach the coordinator so it can leave `.unknown`.
@@ -45,5 +53,15 @@ final class NetworkPathMonitor: PathMonitoring {
         hasDelivered = true
         isSatisfied = satisfied
         onChange?(satisfied)
+    }
+
+    nonisolated private static func interfaceType(for path: NWPath) -> String {
+        if path.usesInterfaceType(.wifi) {
+            return "wifi"
+        }
+        if path.usesInterfaceType(.cellular) {
+            return "cellular"
+        }
+        return "other"
     }
 }
