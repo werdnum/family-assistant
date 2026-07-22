@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 struct ChatRootView: View {
     @Environment(SharedAttachmentInbox.self) private var sharedAttachmentInbox
+    @Environment(NotificationManager.self) private var notificationManager
     @State private var viewModel: ChatViewModel
     // Drives which column the compact (iPhone) split view shows. Bound so the
     // launch decision (restore a thread vs. land on the list) is honored
@@ -61,6 +62,10 @@ struct ChatRootView: View {
         .task {
             await viewModel.bootstrap(initialPrompt: route.initialPrompt)
             await importSharedAttachments(for: route)
+            // `onChange` below does not fire for a hint already pending at mount
+            // (e.g. a push delivered during auth bootstrap or before this view
+            // mounted), so consume the current value once the chat UI is ready.
+            consumePendingPushHint()
         }
         .onChange(of: route) { _, newRoute in
             Task {
@@ -77,6 +82,9 @@ struct ChatRootView: View {
             // list clears the selection and returns to the sidebar.
             preferredColumn = selection == nil ? .sidebar : .detail
         }
+        .onChange(of: notificationManager.pendingPushHint) { _, _ in
+            consumePendingPushHint()
+        }
         .alert(
             "Chat Error",
             isPresented: Binding(
@@ -88,6 +96,19 @@ struct ChatRootView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+    }
+
+    /// Deliver a foreground push hint (§4.6): targeted refresh of the referenced
+    /// conversation + recent list, consumed once so a repeat push (a fresh id)
+    /// re-fires. Backgrounded delivery is filtered in the coordinator. Called both
+    /// from the `pendingPushHint` observer and once on mount, because `onChange`
+    /// does not fire for a value already set before the view appeared.
+    private func consumePendingPushHint() {
+        guard let hint = notificationManager.pendingPushHint else {
+            return
+        }
+        viewModel.pushHintReceived(conversationID: hint.conversationID)
+        notificationManager.clearPendingPushHint()
     }
 
     private func importSharedAttachments(for route: ChatRoute) async {
@@ -889,7 +910,7 @@ private struct LiveUpdatesIndicator: View {
                 tint: .secondary,
                 label: "Syncing live updates.",
                 identifier: "chat-live-updates-syncing",
-                action: { model in Task { await model.reconnectLiveUpdates() } }
+                action: { model in Task { await model.requestManualReconnect() } }
             )
         case .degraded:
             return Style(
@@ -897,7 +918,7 @@ private struct LiveUpdatesIndicator: View {
                 tint: .orange,
                 label: "Live updates degraded. Tap to reconnect.",
                 identifier: "chat-live-updates-degraded",
-                action: { model in Task { await model.reconnectLiveUpdates() } }
+                action: { model in Task { await model.requestManualReconnect() } }
             )
         case .offline:
             return Style(
@@ -905,7 +926,7 @@ private struct LiveUpdatesIndicator: View {
                 tint: .orange,
                 label: "No connection. Tap to reconnect.",
                 identifier: "chat-live-updates-offline",
-                action: { model in Task { await model.reconnectLiveUpdates() } }
+                action: { model in Task { await model.requestManualReconnect() } }
             )
         case .authRequired:
             return Style(

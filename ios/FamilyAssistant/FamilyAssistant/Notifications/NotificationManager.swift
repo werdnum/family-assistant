@@ -24,6 +24,12 @@ final class NotificationManager {
     var errorMessage: String?
     var pendingNavigationPath: String?
     var pendingConfirmationModal: PendingConfirmationModal?
+    // A push that arrived while the app is foregrounded. Mirrors
+    // `pendingNavigationPath`: an @Observable hint `ContentView` observes and hands
+    // to the chat view model for a targeted conversation + list refresh (§4.6).
+    // Carries a fresh id so a repeat push for the same conversation still fires the
+    // `onChange`.
+    var pendingPushHint: PushHint?
 
     @ObservationIgnored private weak var authManager: AuthManager?
     @ObservationIgnored private let logger = Logger(
@@ -184,6 +190,18 @@ final class NotificationManager {
         errorMessage = error.localizedDescription
         ErrorReporter.shared.report(error, component: "Notifications.apnsRegistration")
         logger.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
+    }
+
+    /// Publish a foreground push hint from `AppDelegate`'s `willPresent`. The OS
+    /// still presents the banner; this only mirrors the payload's `conversation_id`
+    /// into an @Observable value so the chat view model can do a targeted refresh
+    /// (§4.6). Silent-push/background refresh stays out of scope (§4.8).
+    func handleForegroundPushPresentation(userInfo: [AnyHashable: Any]) {
+        pendingPushHint = PushHint(conversationID: stringValue(userInfo["conversation_id"]))
+    }
+
+    func clearPendingPushHint() {
+        pendingPushHint = nil
     }
 
     func handleNotificationResponse(_ response: UNNotificationResponse) {
@@ -497,6 +515,14 @@ final class NotificationManager {
         "production"
         #endif
     }
+}
+
+/// A foreground push hint carrying the payload's `conversation_id`. `Identifiable`
+/// with a fresh id per push so a repeat notification for the same conversation
+/// still triggers the `ContentView` `onChange` that drives the targeted refresh.
+struct PushHint: Identifiable, Equatable {
+    let id = UUID()
+    let conversationID: String?
 }
 
 private struct PushTokenRegistrationRequest: Encodable {

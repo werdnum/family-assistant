@@ -233,11 +233,18 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testLatchedForegroundEmitsExactlyOneResync() {
         let (coordinator, _, _) = makeCoordinator()
+        let followGenerationBeforeBackground = coordinator.followGeneration
+        let activityGenerationBeforeBackground = coordinator.activityGeneration
 
-        coordinator.scenePhaseChanged(didBackground: true, isActive: false)
+        let backgroundEffects = coordinator.scenePhaseChanged(didBackground: true, isActive: false)
         XCTAssertEqual(coordinator.lifecycle, .background)
         XCTAssertTrue(coordinator.cameFromBackground)
         XCTAssertEqual(coordinator.presentation, .suspended)
+        // Background bumps BOTH channel generations (fencing the torn-down streams'
+        // late events) and asks for a send suspend + stream teardown (design 4.3).
+        XCTAssertEqual(backgroundEffects, [.suspendSend, .cancelStreams])
+        XCTAssertGreaterThan(coordinator.followGeneration, followGenerationBeforeBackground)
+        XCTAssertGreaterThan(coordinator.activityGeneration, activityGenerationBeforeBackground)
 
         let effects = coordinator.apply(.foregrounded)
 
@@ -254,7 +261,9 @@ final class SyncCoordinatorTests: XCTestCase {
         allEffects += coordinator.scenePhaseChanged(didBackground: false, isActive: false)
         allEffects += coordinator.scenePhaseChanged(didBackground: false, isActive: true)
 
-        XCTAssertEqual(allEffects, [.runResync])
+        // A full resume emits the background suspend + teardown, then exactly one
+        // latched-foreground resync.
+        XCTAssertEqual(allEffects, [.suspendSend, .cancelStreams, .runResync])
         XCTAssertFalse(coordinator.cameFromBackground)
 
         let repeated = coordinator.apply(.foregrounded)
@@ -343,78 +352,147 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(delivered, [false, true])
     }
 
-    func testReachabilityRecoveryWakesReconnectLoopImmediately() async throws {
-        // A follow loop asleep at backoff after an unsatisfied path must not wait
-        // out the capped delay when the path recovers: the unsatisfied→satisfied
-        // transition resets backoff and retries now.
-        let monitor = StubPathMonitor(isSatisfied: true)
-        let coordinator = SyncCoordinator(
-            authManager: AuthManager(),
-            pathMonitor: monitor,
-            followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
-        )
+    func testReachabilityRecoveryRunsCoalescedResync() async throws {
+        // §4.4: an unsatisfied→satisfied recovery (foregrounded) runs the SAME
+        // coalesced resync foreground uses — the full snapshot pass — not the bare
+        // loop restart, and bumps both channel generations so late events from the
+        // down streams are fenced.
+        let (coordinator, monitor, _) = makeCoordinator(satisfied: true)
         let delegate = RecordingSyncStreamDelegate()
         coordinator.delegate = delegate
+        let followGenerationBefore = coordinator.followGeneration
+        let activityGenerationBefore = coordinator.activityGeneration
 
-        // Bring a follow loop up so it owns a conversation, then let it drop into a
-        // long backoff sleep by failing the next connect.
-        coordinator.startFollowStream(conversationID: "conv-1")
-        try await waitUntil { delegate.followOpenCount >= 1 }
-        delegate.shouldFailFollowOpen = true
         monitor.setSatisfied(false)
         monitor.setSatisfied(true)
 
-        // The wake restarts the loop, re-entering openFollowStream well within the
-        // 60s backoff that would otherwise gate the retry.
-        try await waitUntil { delegate.followOpenCount >= 2 }
+        XCTAssertEqual(delegate.runCoalescedResyncCount, 1, "Recovery must request the coalesced resync exactly once.")
+        XCTAssertGreaterThan(
+            coordinator.followGeneration,
+            followGenerationBefore,
+            "Recovery must bump the follow generation to fence late events from the down stream."
+        )
+        XCTAssertGreaterThan(
+            coordinator.activityGeneration,
+            activityGenerationBefore,
+            "Recovery must bump the activity generation to fence late events from the down stream."
+        )
     }
 
-    func testUnsatisfiedMarksConnectedChannelsDownSoRecoveryRestartsBoth() async throws {
+    func testReachabilityRecoveryDoesNotResyncWhileBackgrounded() async throws {
+        // A recovery hint that lands while backgrounded is a no-op: the resync runs
+        // on the next real foreground, not over a suspended app.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(authManager: AuthManager(), pathMonitor: monitor)
+        let delegate = RecordingSyncStreamDelegate()
+        coordinator.delegate = delegate
+        coordinator.apply(.backgrounded)
+
+        monitor.setSatisfied(false)
+        monitor.setSatisfied(true)
+
+        XCTAssertEqual(delegate.runCoalescedResyncCount, 0, "A backgrounded recovery hint must not resync.")
+    }
+
+    func testUnsatisfiedMarksConnectedChannelsDownSoRecoveryReconciles() async throws {
         // Both channels are live when the path drops. The SSE tasks have not yet
         // seen their sockets die, so without marking health down here both healths
-        // would stay `.connected`; the recovery wake (which only restarts
-        // non-connected channels) would then skip both loops and presentation would
-        // flip back to `.live` over dead sockets. Marking both down on `.unsatisfied`
-        // makes the following `.satisfied` wake restart both loops.
-        let monitor = StubPathMonitor(isSatisfied: true)
-        let coordinator = SyncCoordinator(
-            authManager: AuthManager(),
-            pathMonitor: monitor,
-            followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
-        )
+        // would stay `.connected` and presentation would flip back to `.live` over
+        // dead sockets before the recovery resync republishes real health. Marking
+        // both down on `.unsatisfied` keeps the indicator honest until an actual
+        // connect (driven by the recovery resync) republishes health.
+        let (coordinator, monitor, _) = makeCoordinator(satisfied: true)
         let delegate = RecordingSyncStreamDelegate()
         coordinator.delegate = delegate
 
-        // Bring the follow loop up and mark both channels connected (the live state
-        // just before the path drops). The activity loop's open always throws, so
-        // its health is asserted via the coordinator event, not a real connect.
         coordinator.startFollowStream(conversationID: "conv-1")
         try await waitUntil { delegate.followOpenCount >= 1 }
         coordinator.apply(.followConnected(generation: coordinator.followGeneration))
         coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(coordinator.presentation, .live)
-        let followOpensBeforeDrop = delegate.followOpenCount
 
-        // Path drops: both healths must go down even though no drop event fired.
         coordinator.apply(.reachabilityChanged(.unsatisfied))
         XCTAssertEqual(coordinator.followHealth, .down)
         XCTAssertEqual(coordinator.activityHealth, .down)
         XCTAssertEqual(coordinator.presentation, .offline)
 
-        // Fail the next connects so the restarted loops stay down deterministically;
-        // the point under test is that recovery *restarts* both loops (re-invokes
-        // openFollow/openActivity), not that they reconnect. Health only ever becomes
-        // connected again via a real follow/activity connect.
-        delegate.shouldFailFollowOpen = true
-
         coordinator.apply(.reachabilityChanged(.satisfied))
-        try await waitUntil {
-            delegate.followOpenCount > followOpensBeforeDrop && delegate.activityOpenCount >= 1
-        }
-        XCTAssertEqual(coordinator.followHealth, .down)
+
+        XCTAssertEqual(delegate.runCoalescedResyncCount, 1, "Recovery reconciles through the coalesced resync.")
+        XCTAssertEqual(coordinator.followHealth, .down, "Health stays down until an actual connect republishes it.")
         XCTAssertEqual(coordinator.activityHealth, .down)
+    }
+
+    func testAwaitStreamTerminationCompletesWhenTasksEndPromptly() async throws {
+        // Cancellation propagates through the stream's onTermination, so a live
+        // consumer throws promptly and the task returns: the await resolves without
+        // hitting the bounded timeout.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
+            pathMonitor: monitor,
+            streamTerminationTimeoutSeconds: 5
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        coordinator.delegate = delegate
+        coordinator.startFollowStream(conversationID: "conv-1")
+        coordinator.startActivityStream()
+        try await waitUntil { delegate.followOpenCount >= 1 && delegate.activityOpenCount >= 1 }
+
+        let started = Date()
+        await coordinator.awaitStreamTermination()
+
+        XCTAssertLessThan(
+            Date().timeIntervalSince(started),
+            2,
+            "A promptly-terminating consumer must not wait out the bounded timeout."
+        )
+    }
+
+    func testAwaitStreamTerminationIsBoundedForAWedgedTask() async throws {
+        // An old task whose socket read is wedged (never observes cancellation)
+        // must not wedge the resync: the await is bounded by the configured timeout.
+        let monitor = StubPathMonitor(isSatisfied: true)
+        let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
+            pathMonitor: monitor,
+            streamTerminationTimeoutSeconds: 0.2
+        )
+        let delegate = WedgingSyncStreamDelegate()
+        coordinator.delegate = delegate
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.followOpenCount >= 1 }
+
+        let started = Date()
+        await coordinator.awaitStreamTermination()
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertLessThan(elapsed, 2, "The wedged await must resolve within the bounded timeout, not hang.")
+    }
+
+    func testPushHintWhileForegroundedEmitsTargetedRefresh() {
+        let (coordinator, _, _) = makeCoordinator()
+
+        let effects = coordinator.apply(.pushHintReceived(conversationID: "web_conv_push"))
+
+        XCTAssertEqual(effects, [.targetedRefresh(conversationID: "web_conv_push")])
+    }
+
+    func testPushHintWithoutConversationIDEmitsListOnlyTargetedRefresh() {
+        let (coordinator, _, _) = makeCoordinator()
+
+        let effects = coordinator.apply(.pushHintReceived(conversationID: nil))
+
+        XCTAssertEqual(effects, [.targetedRefresh(conversationID: nil)])
+    }
+
+    func testPushHintWhileBackgroundedIsANoOp() {
+        let (coordinator, _, _) = makeCoordinator()
+        coordinator.apply(.backgrounded)
+
+        let effects = coordinator.apply(.pushHintReceived(conversationID: "web_conv_push"))
+
+        XCTAssertTrue(effects.isEmpty, "A backgrounded push hint must not refresh (silent-push out of scope).")
     }
 
     func testAuthRequiredOverridesReachabilityAndSync() {
@@ -433,54 +511,49 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.presentation, .offline)
     }
 
-    func testReauthSuccessWakesReconnectLoopsImmediately() async throws {
-        // While `authRequired` is latched the streams cannot connect, so their
-        // loops sit at capped backoff. On the authRequired→ok transition (re-auth
-        // success) the loops must be woken immediately instead of waiting out the
-        // (here 60s) backoff, mirroring the reachability-recovery wake.
-        let monitor = StubPathMonitor(isSatisfied: true)
-        let coordinator = SyncCoordinator(
-            authManager: AuthManager(),
-            pathMonitor: monitor,
-            followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
-        )
+    func testReauthSuccessRunsCoalescedResync() async throws {
+        // While `authRequired` is latched the streams cannot connect (their
+        // requests 401), so their loops sit at capped backoff. On the
+        // authRequired→ok transition (re-auth success) recovery must route like the
+        // reachability recovery on M2: bump both channel generations (fencing the
+        // down streams' late events) and request the coalesced resync, rather than
+        // leaving the loops asleep for up to one max-delay interval.
+        let (coordinator, _, _) = makeCoordinator(satisfied: true)
         let delegate = RecordingSyncStreamDelegate()
         coordinator.delegate = delegate
 
-        // Bring both loops up (activity's open always throws, so it drops into
-        // backoff), then fail every connect so they stay down deterministically.
-        coordinator.startFollowStream(conversationID: "conv-1")
-        try await waitUntil { delegate.followOpenCount >= 1 }
-        delegate.shouldFailFollowOpen = true
-        coordinator.startActivityStream()
-        try await waitUntil { delegate.activityOpenCount >= 1 }
-        let followOpensBeforeReauth = delegate.followOpenCount
-        let activityOpensBeforeReauth = delegate.activityOpenCount
-
         coordinator.apply(.authRequired)
         XCTAssertEqual(coordinator.authState, .authRequired)
+        let followGenerationBefore = coordinator.followGeneration
+        let activityGenerationBefore = coordinator.activityGeneration
 
         coordinator.apply(.authOK)
-        try await waitUntil {
-            delegate.followOpenCount > followOpensBeforeReauth
-                && delegate.activityOpenCount > activityOpensBeforeReauth
-        }
+
+        XCTAssertEqual(
+            delegate.runCoalescedResyncCount,
+            1,
+            "Re-auth success must request the coalesced resync exactly once."
+        )
+        XCTAssertGreaterThan(
+            coordinator.followGeneration,
+            followGenerationBefore,
+            "Re-auth must bump the follow generation to fence late events from the down stream."
+        )
+        XCTAssertGreaterThan(
+            coordinator.activityGeneration,
+            activityGenerationBefore,
+            "Re-auth must bump the activity generation to fence late events from the down stream."
+        )
     }
 
     func testAuthRequiredCancelsConnectedStreamsAndMarksHealthsDown() async throws {
         // Finding 1: when authRequired latches while both channels read connected,
         // the old-session sockets keep applying events (the backend authorizes once
-        // at connect) and a later authOK would skip the restart because health is
-        // still `.connected`. The transition must cancel the streams and mark both
-        // channels down so the authOK wake reconnects under fresh credentials.
-        let monitor = StubPathMonitor(isSatisfied: true)
-        let coordinator = SyncCoordinator(
-            authManager: AuthManager(),
-            pathMonitor: monitor,
-            followReconnectInitialDelaySeconds: 60,
-            followReconnectMaxDelaySeconds: 60
-        )
+        // at connect). The transition must cancel the streams and mark both channels
+        // down; combined with the generation bump (via cancelStreams), the later
+        // re-auth resync then reconnects under fresh credentials without any old
+        // socket lingering as `.connected`.
+        let (coordinator, _, _) = makeCoordinator()
         let delegate = RecordingSyncStreamDelegate()
         delegate.hangFollowOpen = true
         delegate.hangActivityOpen = true
@@ -492,22 +565,23 @@ final class SyncCoordinatorTests: XCTestCase {
         coordinator.apply(.followConnected(generation: coordinator.followGeneration))
         coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(coordinator.presentation, .live)
-        let followOpensBeforeAuthRequired = delegate.followOpenCount
-        let activityOpensBeforeAuthRequired = delegate.activityOpenCount
+        let followGenerationBefore = coordinator.followGeneration
+        let activityGenerationBefore = coordinator.activityGeneration
 
         coordinator.apply(.authRequired)
+
         XCTAssertEqual(coordinator.followHealth, .down)
         XCTAssertEqual(coordinator.activityHealth, .down)
         XCTAssertEqual(coordinator.presentation, .authRequired)
-
-        // authOK's wake now restarts both loops because their healths are down.
-        delegate.hangFollowOpen = false
-        delegate.hangActivityOpen = false
-        coordinator.apply(.authOK)
-        try await waitUntil {
-            delegate.followOpenCount > followOpensBeforeAuthRequired
-                && delegate.activityOpenCount > activityOpensBeforeAuthRequired
-        }
+        // Cancelling both streams bumps both generations, so any in-flight callback
+        // from the old-session tasks is now fenced.
+        XCTAssertGreaterThan(coordinator.followGeneration, followGenerationBefore)
+        XCTAssertGreaterThan(coordinator.activityGeneration, activityGenerationBefore)
+        let followConnectAfterCancel = coordinator.apply(
+            .followConnected(generation: followGenerationBefore)
+        )
+        XCTAssertTrue(followConnectAfterCancel.isEmpty)
+        XCTAssertEqual(coordinator.followHealth, .down)
     }
 
     func testCancelFollowStreamBumpsGenerationSoInFlightCallbacksAreFenced() async throws {
@@ -756,6 +830,9 @@ final class SyncCoordinatorTests: XCTestCase {
 private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     private(set) var followOpenCount = 0
     private(set) var activityOpenCount = 0
+    private(set) var suspendActiveSendCount = 0
+    private(set) var runCoalescedResyncCount = 0
+    private(set) var lastFollowConversationID: String?
     var shouldFailFollowOpen = false
     /// When set, the follow/activity open throws this specific error instead of the
     /// generic `StubError` (e.g. a `ChatAPIError.server(401)` to exercise the
@@ -790,6 +867,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         followOpenCount += 1
         onFollowOpen?()
         activeConversationID = conversationID
+        lastFollowConversationID = conversationID
         if let followOpenError, followOpenErrorLimit == 0 || followOpenCount <= followOpenErrorLimit {
             throw followOpenError
         }
@@ -839,6 +917,16 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     func currentConversationID() -> String? {
         activeConversationID
     }
+
+    func suspendActiveSend() {
+        suspendActiveSendCount += 1
+    }
+
+    func gateAuthIfNeeded(generation: Int) async throws {}
+
+    func runCoalescedResync() {
+        runCoalescedResyncCount += 1
+    }
 }
 
 private final class AtomicCounter: @unchecked Sendable {
@@ -856,4 +944,56 @@ private final class AtomicCounter: @unchecked Sendable {
     var value: Int {
         lock.withLock { count }
     }
+}
+
+/// A `SyncStreamDelegate` whose follow open wedges: it awaits a continuation that
+/// is never resumed and does not observe cancellation, modeling a socket read that
+/// neither delivers nor closes. Used to prove `awaitStreamTermination` is bounded.
+@MainActor
+private final class WedgingSyncStreamDelegate: SyncStreamDelegate {
+    private(set) var followOpenCount = 0
+
+    func openFollowStream(
+        conversationID: String,
+        generation: Int
+    ) async throws -> AsyncThrowingStream<ChatStreamEvent, Error> {
+        followOpenCount += 1
+        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in
+            // Never resumed and no cancellation handler: the owning task stays
+            // parked here until the bounded termination await gives up on it.
+        }
+        return AsyncThrowingStream { $0.finish() }
+    }
+
+    func followStreamDidConnect(conversationID: String, generation: Int) async {}
+
+    func handleFollowEvent(
+        _ event: ChatStreamEvent,
+        conversationID: String,
+        generation: Int
+    ) async -> Bool { true }
+
+    func followBufferRotated(generation: Int) {}
+
+    func reportFollowStreamDrop(conversationID: String, error: Error?, generation: Int) {}
+
+    func shouldSurfaceFollowDrop() -> Bool { true }
+
+    func catchUpFollowHistory(conversationID: String, generation: Int) async {}
+
+    func openActivityStream(
+        generation: Int
+    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    func activityStreamDidSignal(generation: Int) async {}
+
+    func currentConversationID() -> String? { nil }
+
+    func suspendActiveSend() {}
+
+    func gateAuthIfNeeded(generation: Int) async throws {}
+
+    func runCoalescedResync() {}
 }

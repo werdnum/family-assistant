@@ -59,6 +59,26 @@ protocol SyncStreamDelegate: AnyObject {
     /// Refresh the recent-conversation list (on activity connect and each ping).
     func activityStreamDidSignal(generation: Int) async
 
+    /// Tear down the in-flight send's transport task WITHOUT running the
+    /// user-facing `cancelStream()` semantics ("Response stopped", control
+    /// discard, queued stop-cancel POST). The `ActiveTurnSession` (state, cursors,
+    /// retry payload) survives so foreground resync can reattach to the turn. The
+    /// dedicated background-suspend path in §4.3.
+    func suspendActiveSend()
+
+    /// Complete the foreground resync's auth gate: a single-flight token refresh
+    /// when the stored token is near expiry (§4.4 step 2). Throws on a rejected
+    /// refresh so the resync aborts cleanly (the auth layer latches
+    /// `authRequired`; no error modal is raised).
+    func gateAuthIfNeeded(generation: Int) async throws
+
+    /// Run the SAME coalesced foreground resync the orchestrator drives, requested
+    /// from inside the coordinator on an `NWPathMonitor` unsatisfied→satisfied
+    /// recovery (§4.4 "the same resync runs on NWPathMonitor recovery"). Coalesces
+    /// with any in-flight resync, so a burst of recovery hints does the snapshot
+    /// work once. Distinct from `runResync()` (the bare loop restart) — recovery
+    /// gets the full snapshot pass, not just a reconnect.
+    func runCoalescedResync()
 }
 
 @MainActor
@@ -114,13 +134,16 @@ final class SyncCoordinator {
         case activityDropped(generation: Int, cleanEOF: Bool)
         case syncStarted
         case syncFinished
+        case pushHintReceived(conversationID: String?)
     }
 
     enum SyncEffect: Equatable {
         case startFollowStream(generation: Int)
         case startActivityStream(generation: Int)
         case cancelStreams
+        case suspendSend
         case runResync
+        case targetedRefresh(conversationID: String?)
     }
 
     private(set) var lifecycle: Lifecycle = .foreground
@@ -151,6 +174,7 @@ final class SyncCoordinator {
     private let followReconnectMaxDelaySeconds: Double
     private let authManager: AuthManager
     private let reconnectDelay: @MainActor (Double) async -> Void
+    private let streamTerminationTimeoutSeconds: Double
 
     weak var delegate: SyncStreamDelegate?
 
@@ -167,13 +191,15 @@ final class SyncCoordinator {
         followReconnectMaxDelaySeconds: Double = 30,
         reconnectDelay: @escaping @MainActor (Double) async -> Void = { seconds in
             try? await Task.sleep(for: .seconds(seconds))
-        }
+        },
+        streamTerminationTimeoutSeconds: Double = 5
     ) {
         self.authManager = authManager
         self.pathMonitor = pathMonitor
         self.followReconnectInitialDelaySeconds = followReconnectInitialDelaySeconds
         self.followReconnectMaxDelaySeconds = followReconnectMaxDelaySeconds
         self.reconnectDelay = reconnectDelay
+        self.streamTerminationTimeoutSeconds = streamTerminationTimeoutSeconds
         pathMonitor.onChange = { [weak self] satisfied in
             self?.apply(.reachabilityChanged(satisfied ? .satisfied : .unsatisfied))
         }
@@ -502,6 +528,61 @@ final class SyncCoordinator {
         activityTask?.cancel()
     }
 
+    /// Cancel the follow/activity tasks torn down on background AND await their
+    /// completion before the caller (the foreground resync) establishes fresh
+    /// streams. §4.3 requires the await, beyond the generation fence: a late event
+    /// from the old consumer is already dropped by the fence, but an old task still
+    /// iterating its socket could otherwise race the new follow connect and the
+    /// two would briefly both consume the same conversation.
+    ///
+    /// Cancellation propagates through each `AsyncThrowingStream`'s `onTermination`,
+    /// so a live iteration throws promptly and the task returns. A task whose socket
+    /// read is wedged (a proxy that neither delivers nor closes) can't be waited on
+    /// forever, so each await is bounded by `streamTerminationTimeoutSeconds`; the
+    /// generation fence still protects against any event it emits after the timeout.
+    func awaitStreamTermination() async {
+        let follow = followTask
+        let activity = activityTask
+        followTask = nil
+        activityTask = nil
+        follow?.cancel()
+        activity?.cancel()
+        await awaitTaskWithTimeout(follow)
+        await awaitTaskWithTimeout(activity)
+    }
+
+    private func awaitTaskWithTimeout(_ task: Task<Void, Never>?) async {
+        guard let task else {
+            return
+        }
+        let timeout = streamTerminationTimeoutSeconds
+        // Race the task's completion against a timeout. `Task.value` is not
+        // cancellable, so a wedged task (parked in a non-cancellable await after
+        // ignoring cancellation) never resolves; this method's return must NOT
+        // depend on it. A waiter resumes the continuation on task completion and a
+        // sleep resumes it on timeout — whichever fires first wins and the method
+        // returns. The loser is orphaned: on the timeout path the waiter is left
+        // awaiting `task.value` (harmless — the generation fence already rejects
+        // anything the wedged task might emit); on the completion path the sleep is
+        // cancelled.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumed = ResumeOnce()
+            let waiter = Task {
+                await task.value
+                if resumed.tryResume() {
+                    continuation.resume()
+                }
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(timeout))
+                if resumed.tryResume() {
+                    waiter.cancel()
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     /// Run the foreground resync: restart the follow stream for the active
     /// conversation and the activity stream, matching the former
     /// `reconnectLiveUpdates()`. The follow stream target is derived from the
@@ -512,24 +593,6 @@ final class SyncCoordinator {
         }
         startActivityStream()
     }
-
-    /// Reset backoff and retry the reconnect loops immediately on a reachability
-    /// recovery, instead of leaving a loop asleep at capped backoff. Only channels
-    /// that are not currently connected are restarted (recreating their task resets
-    /// the local backoff to the initial delay and re-enters the connect attempt at
-    /// once); a healthy channel is left alone to avoid needless churn. Restarting a
-    /// loop is a retry, not a health assertion — health is only set by an actual
-    /// connect. The follow target is derived from the current conversation so a
-    /// stale cached ID doesn't restart the old stream.
-    private func wakeReconnectLoops() {
-        if followHealth != .connected, let conversationID = delegate?.currentConversationID() {
-            startFollowStream(conversationID: conversationID)
-        }
-        if activityHealth != .connected {
-            startActivityStream()
-        }
-    }
-
     @discardableResult
     func apply(_ event: SyncEvent) -> [SyncEffect] {
         switch event {
@@ -547,7 +610,15 @@ final class SyncCoordinator {
         case .backgrounded:
             lifecycle = .background
             cameFromBackground = true
-            return []
+            // On a real background: stop scheduling advisory work (bump BOTH channel
+            // generations so the per-channel fences reject any late events from the
+            // streams we tear down), suspend the in-flight send through the
+            // dedicated path (preserving its ActiveTurnSession), and cancel the
+            // advisory follow/activity streams (push notifications take over
+            // delivery). See design 4.3.
+            bumpFollowGeneration()
+            bumpActivityGeneration()
+            return [.suspendSend, .cancelStreams]
 
         case let .reachabilityChanged(reachability):
             let wasUnsatisfied = self.reachability == .unsatisfied
@@ -567,11 +638,17 @@ final class SyncCoordinator {
             // Satisfied is only a retry hint (never marks channels healthy), but a
             // loop sleeping at capped backoff would otherwise stay down for up to
             // one max-delay interval, re-showing the stuck indicator. On the
-            // unsatisfied→satisfied transition, reset backoff and wake the reconnect
-            // loops now so a live path is retried immediately. Health still comes
-            // only from actual connects.
+            // unsatisfied→satisfied transition (foregrounded), run the SAME coalesced
+            // resync foreground uses (§4.4): bump BOTH channel generations so late
+            // events from the down streams are fenced, then request the
+            // orchestrator's full snapshot pass. The resync re-establishes and
+            // reconnects both loops (subsuming the bare `wakeReconnectLoops` retry)
+            // AND refetches the authoritative list, so a list mutated while offline
+            // converges. Health still comes only from actual connects.
             if reachability == .satisfied, wasUnsatisfied, lifecycle == .foreground {
-                wakeReconnectLoops()
+                bumpFollowGeneration()
+                bumpActivityGeneration()
+                delegate?.runCoalescedResync()
             }
             return []
 
@@ -582,17 +659,27 @@ final class SyncCoordinator {
         case .authOK:
             authState = .ok
             // Re-auth just succeeded. While `authRequired` was latched the streams
-            // were suppressed/cancelled, so they must be restarted now. Gate on the
-            // `pendingReauthRestart` latch (set when `.authRequired` fired) rather
-            // than `authState`, because the intervening `.refreshing` signal has
-            // already moved `authState` off `.authRequired`. A routine near-expiry
-            // refresh (which never latched `authRequired`) leaves the flag false and
-            // does not churn healthy streams. Restart the non-connected loops now;
-            // health still comes only from a real connect. When backgrounded, leave
-            // the flag set so the foreground resync owns the restart.
-            if pendingReauthRestart, lifecycle == .foreground {
+            // could not connect (their requests 401'd), so any loop is now asleep
+            // at capped backoff and would otherwise stay down for up to one
+            // max-delay interval, keeping the stuck indicator up after sign-in.
+            // Route like the reachability recovery (§4.4): bump both channel
+            // generations to fence the down streams' late events, then request the
+            // orchestrator's coalesced resync (re-establishes + reconnects both
+            // loops and refetches the list). Health still comes only from real
+            // connects. Gate on the `pendingReauthRestart` latch (set when
+            // `.authRequired` fired) rather than `authState`, because the
+            // intervening `.refreshing` signal has already moved `authState` off
+            // `.authRequired`. A routine near-expiry refresh (which never latched
+            // `authRequired`) leaves the flag false and does not churn healthy
+            // streams. Also gate on a satisfied path so a re-auth over a down
+            // network doesn't kick a futile resync (the reachability recovery runs
+            // it once the path returns). When backgrounded, leave the flag set so
+            // the foreground resync owns the restart.
+            if pendingReauthRestart, lifecycle == .foreground, reachability != .unsatisfied {
                 pendingReauthRestart = false
-                wakeReconnectLoops()
+                bumpFollowGeneration()
+                bumpActivityGeneration()
+                delegate?.runCoalescedResync()
             }
             return []
 
@@ -648,6 +735,33 @@ final class SyncCoordinator {
         case .syncFinished:
             phase = .idle
             return []
+
+        case let .pushHintReceived(conversationID):
+            // A push arriving while foregrounded is a low-latency hint to refresh
+            // the referenced conversation + list (§4.6). Backgrounded, it is a
+            // no-op: silent-push/background refresh is explicitly out of scope
+            // (§4.8) — the OS delivers the notification and the next foreground
+            // resync reconciles.
+            guard lifecycle == .foreground else {
+                return []
+            }
+            return [.targetedRefresh(conversationID: conversationID)]
         }
+    }
+}
+
+/// One-shot latch guarding a `CheckedContinuation` against a double resume when
+/// two racing tasks (a task-completion waiter and a timeout) may each try to
+/// resume it. Only the first `tryResume` wins.
+@MainActor
+private final class ResumeOnce {
+    private var resumed = false
+
+    func tryResume() -> Bool {
+        guard !resumed else {
+            return false
+        }
+        resumed = true
+        return true
     }
 }

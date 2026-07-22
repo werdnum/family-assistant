@@ -54,6 +54,7 @@
 		A10045 /* AssistantReplySnippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045 /* AssistantReplySnippet.swift */; };
 		A10046 /* FamilyAssistantAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046 /* FamilyAssistantAppShortcuts.swift */; };
 		A10050 /* ErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050 /* ErrorReporter.swift */; };
+		A10051 /* ResyncOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10051 /* ResyncOrchestrator.swift */; };
 		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
 		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
 		A20003 /* NotesAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20004 /* NotesAPIClientTests.swift */; };
@@ -63,6 +64,7 @@
 		A20007 /* SSEParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20008 /* SSEParserTests.swift */; };
 		A20021 /* StubPathMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20021 /* StubPathMonitor.swift */; };
 		A20022 /* SyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20022 /* SyncCoordinatorTests.swift */; };
+		A20023 /* ResyncOrchestratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20023 /* ResyncOrchestratorTests.swift */; };
 		A20008 /* ChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20009 /* ChatViewModelTests.swift */; };
 		A20009 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20010 /* MarkdownRendererTests.swift */; };
 		A20010 /* ToolRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20011 /* ToolRenderingTests.swift */; };
@@ -70,6 +72,7 @@
 		A20012 /* AppIntentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* AppIntentsTests.swift */; };
 		A20020 /* ErrorReporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* ErrorReporterTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
+		A30010 /* ChatSceneWiringUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30010 /* ChatSceneWiringUITests.swift */; };
 		B3D6F3BE9BB984B403AEE52E /* PCMConverterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34957746CE7E5DA61AC5149A /* PCMConverterTests.swift */; };
 		B7AAF73E52D328506FAA7F4F /* GeminiLiveCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */; };
 		B7F030F107C950AD8C2BA887 /* VoiceSessionViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D5A200966EBAD61C16887A4 /* VoiceSessionViewModelTests.swift */; };
@@ -155,6 +158,7 @@
 		B10045 /* AssistantReplySnippet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantReplySnippet.swift; sourceTree = "<group>"; };
 		B10046 /* FamilyAssistantAppShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantAppShortcuts.swift; sourceTree = "<group>"; };
 		B10050 /* ErrorReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporter.swift; sourceTree = "<group>"; };
+		B10051 /* ResyncOrchestrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResyncOrchestrator.swift; sourceTree = "<group>"; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
 		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
@@ -165,6 +169,7 @@
 		B20008 /* SSEParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParserTests.swift; sourceTree = "<group>"; };
 		B20021 /* StubPathMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubPathMonitor.swift; sourceTree = "<group>"; };
 		B20022 /* SyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinatorTests.swift; sourceTree = "<group>"; };
+		B20023 /* ResyncOrchestratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResyncOrchestratorTests.swift; sourceTree = "<group>"; };
 		B20009 /* ChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModelTests.swift; sourceTree = "<group>"; };
 		B20010 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
 		B20011 /* ToolRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRenderingTests.swift; sourceTree = "<group>"; };
@@ -173,6 +178,7 @@
 		B20020 /* ErrorReporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporterTests.swift; sourceTree = "<group>"; };
 		B30001 /* FamilyAssistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30002 /* FamilyAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantUITests.swift; sourceTree = "<group>"; };
+		B30010 /* ChatSceneWiringUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSceneWiringUITests.swift; sourceTree = "<group>"; };
 		5D6E7F8091A2B3C4D5E6F708 /* SimulatorVoiceAudioIOTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SimulatorVoiceAudioIOTests.swift; sourceTree = "<group>"; };
 		BAFF01F579AC57F9B68D2E5D /* VoiceSessionViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceSessionViewModel.swift; sourceTree = "<group>"; };
 		D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveModels.swift; sourceTree = "<group>"; };
@@ -328,6 +334,7 @@
 				B10047 /* PathMonitoring.swift */,
 				B10048 /* SyncCoordinator.swift */,
 				B10049 /* ActiveTurnSession.swift */,
+				B10051 /* ResyncOrchestrator.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -381,6 +388,7 @@
 				6A272834699FEDEC1F4899A5 /* ChatLayoutBudgetTests.swift */,
 				B20021 /* StubPathMonitor.swift */,
 				B20022 /* SyncCoordinatorTests.swift */,
+				B20023 /* ResyncOrchestratorTests.swift */,
 			);
 			path = FamilyAssistantTests;
 			sourceTree = "<group>";
@@ -389,6 +397,7 @@
 			isa = PBXGroup;
 			children = (
 				B30002 /* FamilyAssistantUITests.swift */,
+				B30010 /* ChatSceneWiringUITests.swift */,
 			);
 			path = FamilyAssistantUITests;
 			sourceTree = "<group>";
@@ -563,6 +572,7 @@
 				A10046 /* FamilyAssistantAppShortcuts.swift in Sources */,
 				A10025 /* ConfirmationModalView.swift in Sources */,
 				A10050 /* ErrorReporter.swift in Sources */,
+				A10051 /* ResyncOrchestrator.swift in Sources */,
 				D0F574A4B1DB1233913FABAD /* GeminiLiveModels.swift in Sources */,
 				2ABFDD16D062601B9E6B3852 /* GeminiLiveCodec.swift in Sources */,
 				EF8E1CBADFFFEADB737479EA /* GeminiLiveSocket.swift in Sources */,
@@ -590,6 +600,7 @@
 				A20007 /* SSEParserTests.swift in Sources */,
 				A20021 /* StubPathMonitor.swift in Sources */,
 				A20022 /* SyncCoordinatorTests.swift in Sources */,
+				A20023 /* ResyncOrchestratorTests.swift in Sources */,
 				A20008 /* ChatViewModelTests.swift in Sources */,
 				A20009 /* MarkdownRendererTests.swift in Sources */,
 				A20010 /* ToolRenderingTests.swift in Sources */,
@@ -613,6 +624,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A30001 /* FamilyAssistantUITests.swift in Sources */,
+				A30010 /* ChatSceneWiringUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

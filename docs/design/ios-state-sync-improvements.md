@@ -452,3 +452,198 @@ policy (cancel transport via suspend path, await old consumer, preserve session)
 buffering with overflow-restarts, endpoint-aware 403 handling and user-initiated-operation awareness
 in the taxonomy, and corrected production cluster counts (F/G/H overlap from the 22:07 server
 incident).
+
+### 9.1 M2 review disposition (codex `gpt-5.6-sol`, 2026-07-22)
+
+A local codex pass on the M2 branch (after rebasing onto M1's centralized-auth refactor) raised four
+findings about the new foreground-resync interacting with active sends. Disposition, applying the
+threat-model / cost-benefit / behaviour-altitude gates in `REVIEW_GUIDELINES.md`:
+
+- **[P1] Active-send resync erases the streaming placeholder — FIXED.** A foregrounded
+  reachability/auth recovery ran `applyMessagesSnapshot` → `mergeNewMessages` while a send was
+  actively streaming; `mergeNewMessages` drops every `local_` row, deleting the in-flight assistant
+  placeholder the send is rendering into. Common scenario (network blip during a streaming reply).
+  Fixed by guarding `applyMessagesSnapshot` on `isSendActivelyStreaming`, completing the pattern the
+  other passive-resync steps (`reconcileSuspendedSession`, `catchUpPersistedHistory`, the follow
+  merge) already follow. Covered by `testActiveSendResyncPreservesOptimisticPlaceholder`.
+- **[P1] Overlapping send during the suspend-reconcile window — FIXED, then REVERTED (see the fifth
+  pass).** Between foreground and the resync's `reconcileSuspendedSession`, a preserved suspended
+  session had `isStreaming == false` and `canSendDraft == true`, so a normal send could overwrite
+  `activeTurnSession` and overlap the still-running durable turn (losing stop/steer control). This
+  was first fixed by deriving a send block from existing state (`canSendDraft` excluding the
+  `activeTurnSession != nil && !isStreaming` window). The fifth pass showed the block's own failure
+  mode (a failed reconcile bricking the composer) outweighed the rare, recoverable overlap it
+  prevented, so the block was removed — see §9.1's fifth-pass entry.
+- **[P2] Never-registered suspended turn loses the composed message — ACCEPTED (documented).** If
+  the app backgrounds in the sub-second window while the initial `POST /turns` is in flight and its
+  cancellation prevents server registration, the foreground snapshot legitimately shows no
+  `active_turns` entry and the session is cleared, dropping the optimistic `local_` messages. The
+  window is narrow and the "proper" mitigations codex proposed (reissue the idempotent turn, or
+  verify a terminal persisted reply) are disproportionate machinery; the pragmatic alternative
+  (restore the draft) needs finished-vs-never-registered disambiguation that reintroduces the same
+  cost. Per behaviour-altitude an uncommon scenario warrants reasonable, not ideal, behaviour, so
+  this is accepted as a known limitation. Revisit with a minimal draft-restore only if it is
+  observed in practice.
+- **[P2] Stalled follow handshake delays snapshots — ACCEPTED (documented).** A blackholed follow
+  proxy that stalls (rather than fails) the HTTP handshake can delay the activity stream and both
+  snapshots behind the sequential establish, bounded by the `URLSession` request timeout (not
+  unbounded). Establishing the channels concurrently risks regressing the carefully ordered
+  subscribe-then-buffer sequence (§4.4 steps 3/5/6) for an uncommon degraded case, so the bounded
+  status quo is accepted.
+
+A second local codex pass (after the two P1 fixes above) confirmed them resolved and found four more
+interleavings, all fixed in the same branch — each a completion of the same guard pattern rather
+than new machinery:
+
+- **[P1] Push-hint merge erases the streaming placeholder — FIXED.** `targetedRefresh` (the
+  push-hint path, §4.6) called `mergeNewMessages` for the selected conversation without the
+  `isSendActivelyStreaming` guard — the same class as the resync fix, on the push path. Guarded
+  identically.
+- **[P1] Buffered events drained into a switched-to thread — FIXED.**
+  `ResyncOrchestrator.drainBuffer` had no selection recheck, so a conversation switch mid-drain
+  (during a per-event await) could route the old thread's buffered follow events at the new thread —
+  the follow generation cannot be bumped during a resync (the coordinator's task is nilled). Added
+  the per-iteration selection-supersede check the pre-drain steps already use.
+- **[P2] Overlapping turn via the mutation path — FIXED, then REVERTED with the block (see the fifth
+  pass).** `sendDraft` and the queued-follow-up-steer drain were also made to enforce the same
+  suspended-send block. Removed together with the block in the fifth pass.
+- **[P2] Stale enqueue after overflow-restart — FIXED.** On the `@MainActor`, a cooperatively
+  cancelled buffering task could deliver one already-produced element after `stopBuffering`/
+  `resetBuffer`, appending it into the next attempt's buffer (drained + re-rendered on replay).
+  Added a `Task.isCancelled` check immediately before `enqueue` in both buffering loops; it is
+  atomic with element receipt (no await between) and does not affect natural stream-finish tail
+  draining.
+
+A third local codex pass confirmed the above and raised four more, disposed as follows:
+
+- **[P1] Re-auth resync leaked across the view model's lifetime — FIXED.** The auth-observer re-auth
+  path calls `resyncOrchestrator.request()` fire-and-forget (does not await the returned task), and
+  `deinit` tore down the coordinator's streams but not the orchestrator, so a discarded model could
+  leave a resync running (holding open SSE sockets and performing its handover) — which also leaked
+  the async work across test boundaries (an XCTest "multiple calls made to fulfill" under some suite
+  orderings). Added `ResyncOrchestrator.cancelInFlight()` (nonisolated, mirroring
+  `SyncCoordinator.cancelOwnedStreams`) and called it from `ChatViewModel.deinit`.
+- **[P1] Invalidate buffered resyncs on mid-resync auth rejection — DECLINED (threat model).** If
+  the token is revoked *during* a resync (after the initial gate), the buffering tasks can drain a
+  few more events from sockets opened with then-valid credentials before the restarted streams get
+  401 and latch `authRequired`. Per the trust model this feature operates under — a trusted client
+  on a personal single-user device, with the server enforcing auth on every request — those events
+  are the user's *own* already-authorized data rendered to their *own* screen; there is no
+  exfiltration, cross-user leak, or state corruption, and the re-auth resync reconciles
+  authoritative state afterward. The system already converges to `authRequired` correctly. Adding
+  generation-invalidation machinery to fence a sub-second, harmless-under-the-threat-model race is
+  the client-side auth over-engineering the `REVIEW_GUIDELINES.md` threat-model gate exists to
+  filter, so it is declined.
+- **[P2] Background-send tests' cancellation await was a no-op — FIXED, and uncovered a real bug.**
+  The three new background-send tests read `sendTaskForTesting` *after* `scenePhaseChanged` had
+  already nilled `streamTask` (the comment even said "before"), so `await sendTask?.value` awaited
+  nil and the aftermath assertions could run before the async cancellation handler. Moved the
+  capture before `scenePhaseChanged` — which then exposed a genuine defect the no-op await had
+  masked: backgrounding while the initial turn POST is in flight tears down the URLSession request,
+  which throws `URLError(.cancelled)` (not a Swift `CancellationError`), so it fell through the
+  suspend-aware `catch is CancellationError` into the generic catch and surfaced a spurious "Chat
+  Error" modal, marked the bubble failed, and rolled back the optimistic row. Fixed by checking
+  `isSuspendCancelled` (the authoritative signal, independent of error type) at the top of the
+  generic turn-start catch, taking the same silent suspend-preserve path.
+- **[P2] Push hint pending at mount was never consumed — FIXED.** `onChange(of: pendingPushHint)`
+  does not fire for a value already set when the view mounts, so a push delivered during auth
+  bootstrap (or before `ChatRootView` appeared) was dropped. Factored the observer body into
+  `consumePendingPushHint()` and also call it once from the mount `.task`.
+
+A fourth local codex pass (all findings P2 — the P1s had converged) raised four more:
+
+- **[P2] Orphaned `running` placeholder after an unregistered suspend — FIXED.** Refines the
+  never-registered case above: on foreground the incremental merge returns an empty delta, and
+  `mergeNewMessages`'s empty-delta early return fires *before* the `local_` drop, so the optimistic
+  assistant bubble was stranded spinning in `running` forever (a broken outcome, not mere
+  degradation). `reconcileSuspendedSession` now removes the orphaned placeholder when it retires a
+  pure suspended session that is not running server-side (scoped to exclude the reattached case,
+  which finalizes via its live-follow bubble). Covered by
+  `testForegroundReconcileRemovesOrphanedPlaceholderForUnregisteredTurn`.
+- **[P2] Queued follow-up stranded after a reattached turn ends — FIXED.** A steer that resolved
+  `.finished` before the follow-stream `turn_ended` is queued, but its immediate drain no-ops while
+  `isStreaming` is still true; the terminal event then reached `clearReattachedSession`, which left
+  streaming mode without scheduling the drain, so the cleared composer text stayed queued forever.
+  `clearReattachedSession` now schedules `sendNextQueuedFollowUpSteerIfReady`, mirroring
+  `finishStreaming` (whose normal-path drain is covered by
+  `testFinishedSteerQueuesFollowUpUntilTurnCompletes`).
+- **[P2] Final list snapshot races the activity handover — ACCEPTED (documented).** After
+  `restartStreams()` spawns the coordinator loops, the resync's final full-list refetch races the
+  activity connection's connect-time refresh; a specific interleaving (final request snapshots old
+  state → a mutation lands → the no-replay activity stream connects and refreshes *after* it → the
+  delayed old response arrives last) can leave one list row stale until the next activity event or
+  resync. It requires several conditions to align, the staleness is transient and self-healing, and
+  the fix is added ordering machinery on the carefully sequenced handover; accepted per the
+  behaviour-altitude / cost-benefit gates.
+- **[P2] Resync retains its host across awaits, delaying teardown — ACCEPTED (documented).** The
+  `deinit` `cancelInFlight()` hook (added in the third pass) cannot preempt a resync while it is
+  suspended *inside* a host method call, because invoking a method on the (weak) `host` retains it
+  for that call's duration, so a discarded screen's resync runs to its next await boundary before
+  teardown proceeds. There is no permanent leak — `host` is weak, each step's await is bounded by
+  the `URLSession` timeout, and the resync releases the host and completes on its own — so
+  preempting mid-await (a broad refactor to stop calling host methods across awaits) is
+  disproportionate to a bounded, rare (discard-mid-resync) delay.
+
+A fifth local codex pass raised four findings; the two P1s were addressed, and — notably — its
+second P1 was the trigger to unwind machinery from the second/third passes:
+
+- **[P1] Active-send placeholder erased by a resync started while idle — FIXED.** The
+  `isSendActivelyStreaming` entry guards (on `applyMessagesSnapshot` / `targetedRefresh` /
+  `catchUpPersistedHistory`) are evaluated *before* `mergeNewMessages` awaits its HTTP fetch, so a
+  send that STARTS during that await would have its fresh `local_` placeholders dropped out from
+  under the still-rendering send task (a TOCTOU on the earlier fix). Added the companion re-check
+  inside `mergeNewMessages` after the fetch, before the `local_` drop — one central guard covering
+  every caller.
+- **[P1] Failed reconcile bricked the composer → the suspended-send block REMOVED.** The second-pass
+  `hasUnreconciledSuspendedSend` block (which blocked sends while
+  `activeTurnSession != nil && !isStreaming`) had a worse failure mode than the race it guarded: if
+  the foreground reconcile *failed*, the session stayed unreconciled and the composer was blocked
+  permanently with no reconnect affordance. This is the machinery-edge-case spiral the
+  `REVIEW_GUIDELINES.md` cost/benefit gate exists to stop. Reassessed against behaviour-altitude:
+  the overlap the block prevented (a send in the sub-second foreground-reconcile window overwriting
+  the preserved session) is uncommon and *recoverable* — the original durable turn still completes
+  server-side; only client-side stop/steer of it is lost. That is "reasonable, non-broken" behaviour
+  for a rare scenario, so the block (and its `sendDraft` / steer-drain enforcement and two tests)
+  was removed outright rather than gated. The active-send placeholder protection above is
+  independent and stays.
+- **[P2] Never-registered turn leaves a "sent"-looking user row — ACCEPTED (documented).** The
+  fourth-pass fix removes the orphaned *assistant* placeholder (the broken stuck-spinner); the
+  unsent optimistic *user* row lingers looking sent until the next non-empty merge drops it.
+  Distinguishing this from a finished-while-backgrounded turn (whose user row is legitimate) needs
+  the same disambiguation declined in the first pass; the residue is transient and self-correcting,
+  so accepted per behaviour-altitude for this uncommon window.
+- **[P2] Two foreground push hints coalesce lossily — ACCEPTED (documented).** `pendingPushHint` is
+  a single value, so a second foreground push arriving before SwiftUI consumes the first overwrites
+  it; if the first named the selected conversation and the second did not, the selected thread's
+  targeted refresh is skipped. It requires two pushes within one render cycle *and* the follow
+  stream being down (else the thread updates live regardless), and self-corrects on the next
+  event/foreground — a queue is disproportionate to that multi-condition, self-healing window.
+
+A sixth local codex pass raised four findings, all P2 (no P1s — convergence held). Two cheap guards
+for genuinely wrong-state outcomes were fixed, one test-correctness gap closed, one accepted:
+
+- **[P2] Wrong-thread merge after a queued-control flush — FIXED.** `attachDiscoveredActiveTurns`
+  (inside `mergeNewMessages`) can itself await — a suspended turn's queued Stop/steer flush issues
+  HTTP — so a thread switch during that await could merge the old thread's delta into the newly
+  selected one, even though the pre-`attachDiscoveredActiveTurns` selection check had passed. Added
+  a selection re-check after it, before the delta merge.
+- **[P2] Stale reattachment marker on re-suspend — FIXED.** `suspendActiveSend` left
+  `reattachedRunningTurnID` populated when an already-reattached turn backgrounded again, so a
+  normal send started before foreground reconciliation inherited the stale marker (making
+  `isSendActivelyStreaming` false and letting passive resync/follow handling drop the new send's
+  placeholder or duplicate output). It now clears the marker on suspend; foreground reconcile
+  re-establishes it if the turn is still running.
+- **[P2] Two remaining background-send tests' cancellation await was a no-op — FIXED.** The
+  third-pass reordering missed `testBackgroundAfterAcceptBeforeFirstStreamEventSuspendsSend` and
+  `testBackgroundMidStreamSuspendsSendAndPreservesCursor` (their capture block lacked the comment
+  the bulk edit matched on). Moved the `sendTaskForTesting` capture before `scenePhaseChanged` in
+  both; both still pass with the aftermath now genuinely awaited (no masked defect, unlike the
+  POST-in-flight test).
+- **[P2] Queued foreground resync can reopen streams in the background — ACCEPTED (documented).** A
+  foreground effect dispatched as an unstructured `Task` could start after an immediate
+  re-background (bumped generations + cancelled streams), then capture the new generations, pass
+  every fence, and reopen the follow/activity streams while backgrounded. The trigger is a
+  foreground→background toggle within the microseconds before the queued task starts; the
+  consequence is briefly-open streams (wasteful, not corrupt), self-corrected by the next real
+  background teardown — degraded, not broken, so accepted per behaviour-altitude over adding a
+  lifecycle re-check to the effect dispatch.
