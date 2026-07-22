@@ -1127,7 +1127,8 @@ final class ChatViewModel {
         prompt: String,
         conversationID: String,
         profileID: String?,
-        attachments: [ChatAttachment]
+        attachments: [ChatAttachment],
+        ownerEpoch: Int
     ) async throws -> ChatTurnStart {
         do {
             return try await apiClient.startTurn(
@@ -1142,9 +1143,11 @@ final class ChatViewModel {
             // retry once. If the refresh fails or the retry also 401/403s, the error
             // bubbles up so the existing catch in runSendTurn latches signInRequired.
             do {
-                try await authManager.refreshIfNeeded(force: true)
+                try await authManager.refreshIfNeeded(force: true, ownerEpoch: ownerEpoch)
             } catch AuthError.authRejected, AuthError.noCredentials {
-                // Refresh failed: let the 401/403 propagate so the catch latches.
+                // Refresh failed (or the send's session was superseded): let the
+                // 401/403 propagate so the existing catch latches (epoch-fenced) or,
+                // if superseded, no-ops the latch and drops this stale send.
                 throw ChatAPIError.server(statusCode: statusCode, detail: nil)
             }
 
@@ -1201,7 +1204,8 @@ final class ChatViewModel {
                 prompt: prompt,
                 conversationID: id,
                 profileID: session.profileID,
-                attachments: attachments
+                attachments: attachments,
+                ownerEpoch: startEpoch
             )
             startSucceeded = true
             // The first send of a generated launch draft makes the conversation

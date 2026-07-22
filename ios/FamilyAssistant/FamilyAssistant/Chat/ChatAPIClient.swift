@@ -625,7 +625,7 @@ struct ChatAPIClient {
         }
 
         do {
-            try await authManager.refreshIfNeeded(force: true)
+            try await authManager.refreshIfNeeded(force: true, ownerEpoch: capturedEpoch)
         } catch AuthError.authRejected, AuthError.noCredentials {
             authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
             throw AuthError.noCredentials

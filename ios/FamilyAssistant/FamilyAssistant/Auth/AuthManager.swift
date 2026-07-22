@@ -444,14 +444,22 @@ final class AuthManager {
     /// Force a token refresh after a response-time 401, or refresh only when the
     /// stored token is due. Concurrent callers share the same in-flight operation.
     @MainActor
-    func refreshIfNeeded(force: Bool = false) async throws {
-        // Capture the current auth epoch for BOTH forced and ordinary (near-expiry)
-        // refreshes: either can suspend on the network, so if a logout/re-login
-        // completes before the refresh returns, persisting its rotated tokens (200)
-        // or clearing on its rejection (401/403) would clobber the newer session.
-        // Fencing on the captured epoch drops such a superseded result. Callers
-        // (e.g. the SyncCoordinator stream loops) manage no epochs of their own.
-        try await refreshIfNeeded(ownerEpoch: authEpoch, force: force)
+    func refreshIfNeeded(force: Bool = false, ownerEpoch: Int? = nil) async throws {
+        // A forced refresh is triggered by a specific operation (a stream connect,
+        // turn start, or GET) that captured its auth epoch when it began. If the
+        // session has since advanced (logout/re-login), that operation is stale: it
+        // must NOT refresh or clear the *new* session's credentials, and its caller
+        // must not retry under the new session. Abort here so the stale operation
+        // stops without touching auth state.
+        if force, let ownerEpoch, ownerEpoch != authEpoch {
+            throw AuthError.noCredentials
+        }
+        // The ordinary near-expiry refresh (from `authorizedRequest`) has no
+        // originating operation, so it fences on the current epoch; a forced
+        // refresh fences on its operation's captured epoch. Either way a
+        // logout/re-login completing while the refresh suspends on the network
+        // drops the superseded result rather than clobbering the newer session.
+        try await refreshIfNeeded(ownerEpoch: ownerEpoch ?? authEpoch, force: force)
     }
 
     /// - Parameter ownerEpoch: when set by the private bootstrap path, rotated tokens are

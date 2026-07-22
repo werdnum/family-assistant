@@ -341,7 +341,7 @@ final class SyncCoordinator {
                         if !authRefreshAlreadyAttempted {
                             authRefreshAlreadyAttempted = true
                             do {
-                                try await self.authManager.refreshIfNeeded(force: true)
+                                try await self.authManager.refreshIfNeeded(force: true, ownerEpoch: loopEpoch)
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
                                 self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
@@ -435,7 +435,7 @@ final class SyncCoordinator {
                         if !authRefreshAlreadyAttempted {
                             authRefreshAlreadyAttempted = true
                             do {
-                                try await self.authManager.refreshIfNeeded(force: true)
+                                try await self.authManager.refreshIfNeeded(force: true, ownerEpoch: loopEpoch)
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
                                 self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
