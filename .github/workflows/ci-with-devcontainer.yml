@@ -129,6 +129,7 @@ jobs:
             ios:
               - 'ios/**'
               - '.github/workflows/ios-tests.yml'
+              - '.github/workflows/ci-with-devcontainer.yml'
   build-ci-container:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.has_code_changes == 'true'
