@@ -66,6 +66,7 @@ final class ChatViewModel {
     // Injectable so tests can observe the diagnostic breadcrumbs emitted on a
     // stream drop without going through the shared singleton.
     @ObservationIgnored private let errorReporter: ErrorReporter
+    @ObservationIgnored private let syncBreadcrumb: ChatSyncBreadcrumb
     // Diagnostic logger for the SSE streaming paths. Pairs with the
     // ErrorReporter breadcrumbs emitted on a stream drop: os.Logger is the live
     // (tethered) view, ErrorReporter persists the same facts to the backend
@@ -199,6 +200,36 @@ final class ChatViewModel {
         let text: String
     }
 
+    enum ResyncStreamEstablishment<Stream> {
+        case connected(Stream?)
+        case timeout
+        case cancelled
+    }
+
+    @MainActor
+    private final class ResyncStreamEstablishmentRace<Stream> {
+        private var resolution: ResyncStreamEstablishment<Stream>?
+        private var continuation: CheckedContinuation<ResyncStreamEstablishment<Stream>, Never>?
+
+        func wait() async -> ResyncStreamEstablishment<Stream> {
+            if let resolution {
+                return resolution
+            }
+            return await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        }
+
+        func resolve(_ resolution: ResyncStreamEstablishment<Stream>) {
+            guard self.resolution == nil else {
+                return
+            }
+            self.resolution = resolution
+            continuation?.resume(returning: resolution)
+            continuation = nil
+        }
+    }
+
     // How recently the last conversation must have been active for it to reopen
     // on launch. Past this, launch lands on the conversation list instead of
     // restoring (then bouncing away from) a thread the user has moved on from.
@@ -233,6 +264,7 @@ final class ChatViewModel {
     // out the production delay.
     @ObservationIgnored private let liveReconnectInitialDelaySeconds: Double
     @ObservationIgnored private let liveReconnectMaxDelaySeconds: Double
+    @ObservationIgnored private let resyncEstablishTimeoutSeconds: Double
 
     // While a send is in flight the watch stream is resumed across mid-turn drops
     // (see `runSendTurn`). This caps the number of *consecutive* resumes that end
@@ -313,6 +345,7 @@ final class ChatViewModel {
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
         streamResumeLivenessSeconds: Double = 2,
+        resyncEstablishTimeoutSeconds: Double = 8,
         streamTextFlushInterval: Duration = .milliseconds(50),
         errorReporter: ErrorReporter = .shared,
         pathMonitor: PathMonitoring? = nil
@@ -321,6 +354,7 @@ final class ChatViewModel {
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
         self.maxConsecutiveStreamResumes = maxConsecutiveStreamResumes
         self.streamResumeLivenessSeconds = streamResumeLivenessSeconds
+        self.resyncEstablishTimeoutSeconds = resyncEstablishTimeoutSeconds
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
         self.authManager = authManager
@@ -334,6 +368,7 @@ final class ChatViewModel {
                 bypassDedupe: true
             )
         }
+        self.syncBreadcrumb = syncBreadcrumb
         syncCoordinator = SyncCoordinator(
             authManager: authManager,
             pathMonitor: pathMonitor ?? NetworkPathMonitor(),
@@ -3973,18 +4008,91 @@ extension ChatViewModel: ResyncHost {
 
     func establishFollowStream(
         conversationID: String,
-        generation: Int
+        generation _: Int
     ) async -> AsyncThrowingStream<ChatStreamEvent, Error>? {
         // Reuse the delegate's connect (cursor-resumed, returns after headers). A
         // failed connect leaves this channel unbuffered; the coordinator's loop
         // reconnects it on handover.
-        try? await openFollowStream(conversationID: conversationID, generation: generation)
+        let timeout = resyncEstablishTimeoutSeconds
+        let client = apiClient
+        let fromSeq = followResumeFromSeq()
+        let ackSeq = highestAppliedSeq ?? -1
+        let result = await Self.raceResyncStreamEstablishment(timeoutSeconds: timeout) {
+            try? await client.connectEvents(
+                conversationID: conversationID,
+                fromSeq: fromSeq,
+                ackSeq: ackSeq
+            )
+        }
+        switch result {
+        case let .connected(stream):
+            return stream
+        case .timeout:
+            syncBreadcrumb(
+                "Chat.resyncStep",
+                ["step": "establishFollow", "edge": "timeout"]
+            )
+            return nil
+        case .cancelled:
+            return nil
+        }
     }
 
     func establishActivityStream(
-        generation: Int
+        generation _: Int
     ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
-        try? await openActivityStream(generation: generation)
+        let timeout = resyncEstablishTimeoutSeconds
+        let client = apiClient
+        let result = await Self.raceResyncStreamEstablishment(timeoutSeconds: timeout) {
+            try? await client.connectActivityStream()
+        }
+        switch result {
+        case let .connected(stream):
+            return stream
+        case .timeout:
+            syncBreadcrumb(
+                "Chat.resyncStep",
+                ["step": "establishActivity", "edge": "timeout"]
+            )
+            return nil
+        case .cancelled:
+            return nil
+        }
+    }
+
+    /// Race a stream connect against its establishment timeout without a
+    /// structured scope. The losing connect is cancelled but never awaited, so a
+    /// transport that ignores cancellation cannot extend the timeout. Both racers
+    /// and the resolver are main-actor isolated, making the one-shot continuation
+    /// handoff race-free.
+    static func raceResyncStreamEstablishment<Stream>(
+        timeoutSeconds: Double,
+        connect: @escaping @MainActor () async -> Stream?
+    ) async -> ResyncStreamEstablishment<Stream> {
+        let race = ResyncStreamEstablishmentRace<Stream>()
+        let connectTask = Task { @MainActor in
+            race.resolve(.connected(await connect()))
+        }
+        let timeoutTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(timeoutSeconds))
+            } catch {
+                return
+            }
+            race.resolve(.timeout)
+        }
+        let resolution = await withTaskCancellationHandler {
+            await race.wait()
+        } onCancel: {
+            connectTask.cancel()
+            timeoutTask.cancel()
+            Task { @MainActor in
+                race.resolve(.cancelled)
+            }
+        }
+        connectTask.cancel()
+        timeoutTask.cancel()
+        return resolution
     }
 
     func applyListSnapshot() async {

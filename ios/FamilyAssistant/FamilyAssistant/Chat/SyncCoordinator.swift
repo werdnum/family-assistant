@@ -702,6 +702,11 @@ final class SyncCoordinator {
     /// `reconnectLiveUpdates()`. The follow stream target is derived from the
     /// current conversation to avoid stale cached IDs from launch or switch.
     func runResync() {
+        // Reopening advisory follow/activity streams while backgrounded violates
+        // the push-only background policy (design 4.3). Every restart caller,
+        // including foreground handoff and deadline recovery, is a no-op there.
+        guard lifecycle != .background else { return }
+
         let reason = pendingResyncRestartReason ?? .resyncHandoff
         pendingResyncRestartReason = nil
         if let conversationID = delegate?.currentConversationID() {
