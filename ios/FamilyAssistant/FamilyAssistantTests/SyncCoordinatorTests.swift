@@ -801,20 +801,13 @@ final class SyncCoordinatorTests: XCTestCase {
     }
 
     func testReplacingFollowStreamDemotesConnectedHealthToReconnecting() async throws {
-        // Finding 3: replacing a live follow task must not leave followHealth
-        // `.connected` until the new task connects — a late event from the cancelled
-        // task must not be mistaken for the new stream. The health drops to
-        // `.reconnecting` on replace and is promoted back only by a real connect.
-        //
-        // NOTE: `.reconnecting` no longer maps to `.degraded` presentation. Finding
-        // 3 originally required that, to avoid "claiming live with no connected
-        // follow stream" — but that was when the SSE establish could stall ~8s
-        // (the front-door head-buffering bug, since fixed by an immediate flush).
-        // With sub-second establishment, a brief `.reconnecting` after a DELIBERATE
-        // replace (switch / resync handover) is held `.live` by the warning grace and
-        // then shows the `.syncing` spinner if it lingers — never `.degraded`, which
-        // is reserved for a `.down` channel waiting to retry. See
-        // `testReconnectAfterSwitchHoldsLiveThenSpins`.
+        // Replacing a live follow task must not leave followHealth `.connected` until
+        // the new task connects — a late event from the cancelled task must not be
+        // mistaken for the new stream. The health drops to `.reconnecting` on replace
+        // and is promoted back only by a real connect. Presentation treats that brief
+        // `.reconnecting` as `.live` during the warning grace (then the `.syncing`
+        // spinner if it lingers), never `.degraded`; see
+        // `testReconnectingBeyondGraceShowsSpinnerNotWifiBad`.
         let (coordinator, _, _) = makeCoordinator()
         let delegate = RecordingSyncStreamDelegate()
         delegate.hangFollowOpen = true
