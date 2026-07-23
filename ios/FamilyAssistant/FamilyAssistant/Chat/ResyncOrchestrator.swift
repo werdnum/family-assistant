@@ -171,6 +171,7 @@ final class ResyncOrchestrator {
     private var runningTarget: ResyncTarget?
     private var pendingSupersede = false
     private var currentAttempt = 1
+    private var overflowRestarts = 0
     private var lastEnteredResyncStep: String?
     private var activeRunID: UUID?
 
@@ -243,14 +244,10 @@ final class ResyncOrchestrator {
         }
         let startedAt = Date()
         var terminalOutcome = RunOutcome.aborted
-        var overflowRestarts = 0
         let runID = UUID()
         activeRunID = runID
+        overflowRestarts = 0
         lastEnteredResyncStep = nil
-        let runGenerations = ResyncGenerations(
-            follow: host.resyncFollowGeneration,
-            activity: host.resyncActivityGeneration
-        )
         breadcrumb?("Chat.resync", ["phase": "start", "trigger": trigger.rawValue])
         host.resyncPhaseDidStart()
         defer {
@@ -299,37 +296,33 @@ final class ResyncOrchestrator {
         deadlineTask.cancel()
 
         switch resolution {
-        case let .completed(result):
-            terminalOutcome = result.outcome
-            overflowRestarts = result.overflowRestarts
+        case let .completed(outcome):
+            terminalOutcome = outcome
         case .deadline:
             terminalOutcome = .degraded
+            let stuckStep = lastEnteredResyncStep ?? "unknown"
+            stopBuffering()
+            restartStreams(host: host, attempt: currentAttempt, runID: runID)
             breadcrumb?(
                 "Chat.resyncStuck",
-                ["last_step": lastEnteredResyncStep ?? "unknown"]
+                ["last_step": stuckStep]
             )
-            stopBuffering()
-            if generationsStillCurrent(runGenerations, host: host) {
-                restartStreams(host: host, attempt: currentAttempt, runID: runID)
-            }
         case .cancelled:
             stopBuffering()
         }
     }
 
-    private func runToCompletion(host: ResyncHost, runID: UUID) async -> RunResult {
-        var overflowRestarts = 0
+    private func runToCompletion(host: ResyncHost, runID: UUID) async -> RunOutcome {
         while true {
             guard !Task.isCancelled else {
-                return RunResult(outcome: .aborted, overflowRestarts: overflowRestarts)
+                return .aborted
             }
             pendingSupersede = false
-            let result = await runOneResync(host: host, runID: runID)
-            overflowRestarts += result.overflowRestarts
+            let outcome = await runOneResync(host: host, runID: runID)
             guard !Task.isCancelled else {
-                return RunResult(outcome: .aborted, overflowRestarts: overflowRestarts)
+                return .aborted
             }
-            switch result.outcome {
+            switch outcome {
             case .completed, .aborted, .degraded:
                 // A supersede request that arrived during this run (a differing
                 // target) starts a fresh run rather than leaving the new target
@@ -337,7 +330,7 @@ final class ResyncOrchestrator {
                 if pendingSupersede {
                     continue
                 }
-                return RunResult(outcome: result.outcome, overflowRestarts: overflowRestarts)
+                return outcome
             case .superseded:
                 // A selection switch mid-attempt aborted the stale attempt without
                 // draining its follow buffer; re-run targeting the new selection.
@@ -348,7 +341,7 @@ final class ResyncOrchestrator {
 
     /// One full resync pass INCLUDING its bounded overflow restarts. Returns the
     /// terminal outcome for the `run()` supersede loop.
-    private func runOneResync(host: ResyncHost, runID: UUID) async -> RunResult {
+    private func runOneResync(host: ResyncHost, runID: UUID) async -> RunOutcome {
         var attempt = 0
         while true {
             currentAttempt = attempt + 1
@@ -356,16 +349,14 @@ final class ResyncOrchestrator {
             let outcome = await attemptResync(host: host, attempt: currentAttempt, runID: runID)
             switch outcome {
             case .completed:
-                return RunResult(
-                    outcome: bufferingDegraded ? .degraded : .completed,
-                    overflowRestarts: attempt
-                )
+                return bufferingDegraded ? .degraded : .completed
             case .aborted:
-                return RunResult(outcome: .aborted, overflowRestarts: attempt)
+                return .aborted
             case .superseded:
-                return RunResult(outcome: .superseded, overflowRestarts: attempt)
+                return .superseded
             case .overflowRestart:
                 attempt += 1
+                overflowRestarts += 1
                 if attempt > maxRestarts {
                     // Bounded restarts exhausted: finish degraded. Hand the live
                     // connections to the coordinator's reconnect loops so a healthy
@@ -373,19 +364,14 @@ final class ResyncOrchestrator {
                     // catch-up reconcile content (the loops fence by generation),
                     // and the indicator reflects real per-channel health.
                     restartStreams(host: host, attempt: currentAttempt, runID: runID)
-                    return RunResult(outcome: .degraded, overflowRestarts: attempt)
+                    return .degraded
                 }
             }
         }
     }
 
-    private struct RunResult {
-        let outcome: RunOutcome
-        let overflowRestarts: Int
-    }
-
     private enum RunResolution {
-        case completed(RunResult)
+        case completed(RunOutcome)
         case deadline
         case cancelled
     }

@@ -277,6 +277,28 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertTrue(repeated.isEmpty)
     }
 
+    func testRunResyncStartsAdvisoryStreamsOnlyWhileForegrounded() async throws {
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activeConversationID = "conv-1"
+        coordinator.delegate = delegate
+
+        coordinator.apply(.backgrounded)
+        coordinator.runResync()
+
+        XCTAssertEqual(delegate.followOpenCount, 0)
+        XCTAssertEqual(delegate.activityOpenCount, 0)
+
+        coordinator.apply(.foregrounded)
+        coordinator.runResync()
+        try await waitUntil {
+            delegate.followOpenCount >= 1 && delegate.activityOpenCount >= 1
+        }
+
+        XCTAssertGreaterThanOrEqual(delegate.followOpenCount, 1)
+        XCTAssertGreaterThanOrEqual(delegate.activityOpenCount, 1)
+    }
+
     func testInactiveBlipWithoutBackgroundEmitsNothing() {
         let (coordinator, _, _) = makeCoordinator()
 
@@ -867,7 +889,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     /// The conversation ID from the most recent openFollowStream call, returned by
     /// currentConversationID so wakeReconnectLoops can restart the loop for the
     /// active conversation.
-    private var activeConversationID: String?
+    var activeConversationID: String?
 
     struct StubError: Error {}
 

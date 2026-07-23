@@ -402,7 +402,7 @@ final class ResyncOrchestratorTests: XCTestCase {
         )
     }
 
-    func testOverallDeadlineDoesNotRestartStreamsAfterGenerationChange() async {
+    func testOverallDeadlineRestartsStreamsAfterGenerationChange() async {
         let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
         let neverOpen = AsyncGate()
         host.onEstablishFollow = { [weak host] in
@@ -424,8 +424,8 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.phaseFinishCount, 1)
         XCTAssertFalse(host.isResyncPhaseActive, "The deadline must still clear the syncing phase.")
         XCTAssertEqual(
-            host.restartStreamsCount, 0,
-            "A lifecycle generation change must keep background policy from reopening streams."
+            host.restartStreamsCount, 1,
+            "Deadline recovery must serve the current target after a superseding generation change."
         )
         XCTAssertTrue(
             breadcrumbs.contains {
@@ -433,6 +433,49 @@ final class ResyncOrchestratorTests: XCTestCase {
                     && $0.extraData["last_step"] == "establishFollow"
             }
         )
+    }
+
+    func testOverallDeadlineReportsOverflowRestartsBeforeWedgedEstablishment() async {
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        let follow = ControllableFollowStream()
+        let firstSnapshotGate = AsyncGate()
+        let neverOpen = AsyncGate()
+        host.followStreamSource = follow
+        host.onEstablishFollow = { [weak host] in
+            if host?.followEstablishCount == 2 {
+                await neverOpen.wait()
+            }
+        }
+        host.onListSnapshotAsync = { host in
+            if host.listSnapshotCount == 1 {
+                for index in 0 ..< 5 {
+                    follow.emit(Self.tokenEvent(turnID: "turn-1", text: "\(index)"))
+                }
+                await firstSnapshotGate.wait()
+            }
+        }
+        var breadcrumbs: [(component: String, extraData: [String: String])] = []
+        let orchestrator = ResyncOrchestrator(
+            host: host,
+            bufferCapacity: 2,
+            overallDeadlineSeconds: 0.2,
+            breadcrumb: { component, extraData in
+                breadcrumbs.append((component, extraData))
+            }
+        )
+
+        let task = orchestrator.request()
+        try? await waitUntil { host.listSnapshotCount == 1 && follow.emittedCount == 5 }
+        follow.finish()
+        firstSnapshotGate.open()
+        await task.value
+        neverOpen.open()
+
+        let finish = breadcrumbs.last {
+            $0.component == "Chat.resync" && $0.extraData["phase"] == "finish"
+        }
+        XCTAssertEqual(finish?.extraData["overflow_restarts"], "1")
+        XCTAssertEqual(host.restartStreamsCount, 1)
     }
 
     func testEstablishmentTimeoutDoesNotAwaitWedgedConnect() async {
