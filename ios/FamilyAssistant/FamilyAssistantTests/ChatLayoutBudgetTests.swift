@@ -647,7 +647,10 @@ final class ChatLayoutBudgetTests: XCTestCase {
     /// Hosts the production message-list layout and forces a synchronous
     /// content-sizing pass, returning its wall-clock duration.
     private func layoutSeconds(for messages: [ChatMessage]) -> Double {
-        let viewModel = ChatViewModel(authManager: AuthManager())
+        let viewModel = ChatViewModel(
+            authManager: AuthManager(),
+            errorReporter: ErrorReporter(spoolDirectory: nil)
+        )
         let probe = ChatMessageListLayoutProbe(messages: messages, viewModel: viewModel)
         let host = UIHostingController(rootView: probe)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: Self.width, height: Self.height))

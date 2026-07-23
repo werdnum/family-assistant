@@ -7,6 +7,7 @@ import XCTest
 @MainActor
 final class ChatViewModelTests: XCTestCase {
     private let serverURL = "https://assistant.example.test"
+    private var trackedViewModels: [WeakChatViewModelReference] = []
 
     override func setUp() {
         super.setUp()
@@ -21,6 +22,12 @@ final class ChatViewModelTests: XCTestCase {
     }
 
     override func tearDown() {
+        for reference in trackedViewModels {
+            guard let model = reference.model else { continue }
+            model.scenePhaseChanged(old: .active, new: .background)
+            model.cancelStream()
+        }
+        trackedViewModels.removeAll()
         ChatMockBackendURLProtocol.reset()
         URLProtocol.unregisterClass(ChatMockBackendURLProtocol.self)
         resetStoredAuth()
@@ -3607,6 +3614,11 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectInitialDelaySeconds: 0.001,
             liveReconnectMaxDelaySeconds: 0.001
         )
+        defer {
+            leg1.finish()
+            leg2.finish()
+            model.cancelStream()
+        }
         model.draftText = "Ask something"
         await model.sendDraft()
 
@@ -4362,11 +4374,12 @@ final class ChatViewModelTests: XCTestCase {
             }
             let authManager = AuthManager()
             authManager.serverURL = serverURL
-            let model = ChatViewModel(
+            let model = track(ChatViewModel(
                 authManager: authManager,
                 conversationID: conversationID,
+                errorReporter: ErrorReporter(spoolDirectory: nil),
                 pathMonitor: StubPathMonitor(isSatisfied: true)
-            )
+            ))
             await model.bootstrap()
             model.draftText = "Hello"
 
@@ -7060,6 +7073,10 @@ final class ChatViewModelTests: XCTestCase {
             liveReconnectMaxDelaySeconds: 0.01,
             pathMonitor: monitor
         )
+        defer {
+            stream.finish()
+            model.cancelStream()
+        }
         model.syncCoordinator.start()
         model.draftText = "Hi"
         await model.sendDraft()
@@ -8206,11 +8223,12 @@ final class ChatViewModelTests: XCTestCase {
         authManager.serverURL = serverURL
         authManager.markAuthRequired()
 
-        let model = ChatViewModel(
+        let model = track(ChatViewModel(
             authManager: authManager,
             conversationID: "web_conv_latched_auth",
+            errorReporter: ErrorReporter(spoolDirectory: nil),
             pathMonitor: StubPathMonitor(isSatisfied: true)
-        )
+        ))
 
         XCTAssertNotEqual(model.syncPresentation, .authRequired)
 
@@ -8223,11 +8241,12 @@ final class ChatViewModelTests: XCTestCase {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
         authManager.markAuthRequired()
-        let model = ChatViewModel(
+        let model = track(ChatViewModel(
             authManager: authManager,
             conversationID: "web_conv_reauthenticated",
+            errorReporter: ErrorReporter(spoolDirectory: nil),
             pathMonitor: StubPathMonitor(isSatisfied: true)
-        )
+        ))
         await model.bootstrap()
         XCTAssertEqual(model.syncPresentation, .authRequired)
 
@@ -8260,8 +8279,6 @@ final class ChatViewModelTests: XCTestCase {
         await fulfillment(of: [followRestarted, activityRestarted], timeout: 2)
 
         XCTAssertFalse(authManager.authRequired)
-        followStream.finish()
-        activityStream.finish()
     }
 
     /// A view model whose coordinator is seeded with a satisfied stub monitor, so
@@ -9115,7 +9132,7 @@ final class ChatViewModelTests: XCTestCase {
         let reporter = ErrorReporter(spoolDirectory: spoolDirectory, dedupeWindow: 0)
         let authManager = AuthManager()
         authManager.serverURL = serverURL
-        let model = ChatViewModel(
+        let model = track(ChatViewModel(
             authManager: authManager,
             conversationID: "web_conv_breadcrumb",
             liveReconnectInitialDelaySeconds: 0.001,
@@ -9123,7 +9140,7 @@ final class ChatViewModelTests: XCTestCase {
             maxConsecutiveStreamResumes: 1,
             streamResumeLivenessSeconds: 60,
             errorReporter: reporter
-        )
+        ))
         model.draftText = "Hi"
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
@@ -9709,7 +9726,7 @@ final class ChatViewModelTests: XCTestCase {
         let reporter = ErrorReporter(spoolDirectory: spoolDirectory, dedupeWindow: dedupeWindow)
         let authManager = AuthManager()
         authManager.serverURL = serverURL
-        return ChatViewModel(
+        return track(ChatViewModel(
             authManager: authManager,
             conversationID: conversationID,
             liveReconnectInitialDelaySeconds: liveReconnectInitialDelaySeconds,
@@ -9718,7 +9735,7 @@ final class ChatViewModelTests: XCTestCase {
             streamResumeLivenessSeconds: streamResumeLivenessSeconds,
             errorReporter: reporter,
             pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true)
-        )
+        ))
     }
 
     private func makeViewModel(
@@ -9734,7 +9751,7 @@ final class ChatViewModelTests: XCTestCase {
     ) -> ChatViewModel {
         let authManager = AuthManager()
         authManager.serverURL = serverURL
-        return ChatViewModel(
+        return track(ChatViewModel(
             authManager: authManager,
             conversationID: conversationID,
             initialPrompt: initialPrompt,
@@ -9744,8 +9761,14 @@ final class ChatViewModelTests: XCTestCase {
             maxConsecutiveStreamResumes: maxConsecutiveStreamResumes,
             streamResumeLivenessSeconds: streamResumeLivenessSeconds,
             streamTextFlushInterval: streamTextFlushInterval,
+            errorReporter: ErrorReporter(spoolDirectory: nil),
             pathMonitor: pathMonitor ?? StubPathMonitor(isSatisfied: true)
-        )
+        ))
+    }
+
+    private func track(_ model: ChatViewModel) -> ChatViewModel {
+        trackedViewModels.append(WeakChatViewModelReference(model))
+        return model
     }
 
     private func makeAttachment(uploadState: ChatAttachmentUploadState) -> ChatAttachment {
@@ -9827,6 +9850,14 @@ final class ChatViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTFail("Timed out waiting for predicate")
+    }
+}
+
+private final class WeakChatViewModelReference {
+    weak var model: ChatViewModel?
+
+    init(_ model: ChatViewModel) {
+        self.model = model
     }
 }
 
