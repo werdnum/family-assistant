@@ -380,20 +380,6 @@ final class ChatViewModel {
         }
         syncCoordinator.delegate = self
         resyncOrchestrator = ResyncOrchestrator(host: self, breadcrumb: syncBreadcrumb)
-        // Bridge auth transitions into the coordinator so a token refresh surfaces
-        // as `.syncing`-adjacent degraded state and a rejection surfaces as the
-        // dedicated `.authRequired` presentation — never the generic error modal.
-        let coordinator = syncCoordinator
-        authObserverToken = authManager.addAuthStateObserver { [weak coordinator] signal in
-            switch signal {
-            case .refreshing:
-                coordinator?.apply(.authRefreshing)
-            case .ok:
-                coordinator?.apply(.authOK)
-            case .authRequired:
-                coordinator?.apply(.authRequired)
-            }
-        }
     }
 
     deinit {
@@ -414,7 +400,27 @@ final class ChatViewModel {
         }
     }
 
+    private func activateSync() {
+        guard authObserverToken == nil else { return }
+        syncCoordinator.start()
+        // Bridge auth transitions into the coordinator so a token refresh surfaces
+        // as `.syncing`-adjacent degraded state and a rejection surfaces as the
+        // dedicated `.authRequired` presentation — never the generic error modal.
+        let coordinator = syncCoordinator
+        authObserverToken = authManager.addAuthStateObserver { [weak coordinator] signal in
+            switch signal {
+            case .refreshing:
+                coordinator?.apply(.authRefreshing)
+            case .ok:
+                coordinator?.apply(.authOK)
+            case .authRequired:
+                coordinator?.apply(.authRequired)
+            }
+        }
+    }
+
     func bootstrap(initialPrompt: String? = nil) async {
+        activateSync()
         await loadProfiles()
         await refreshConversations()
         // Only load through the normal selection path when launch restored or
@@ -3096,6 +3102,14 @@ final class ChatViewModel {
         if let underlyingError, case AuthError.noCredentials = underlyingError {
             return
         }
+        // A cancelled operation is benign — the request was superseded or torn down
+        // (streams cancelled when `authRequired` latches, a conversation switch
+        // aborting an in-flight read, the model being discarded). Its `-999`
+        // "cancelled" must never become a user-facing modal. Suppress at this single
+        // choke point, like the terminal-auth case above.
+        if let underlyingError, Self.isCancellation(underlyingError) {
+            return
+        }
         let newlyPresented = errorMessage == nil
         errorMessage = message
         guard newlyPresented else {
@@ -3214,6 +3228,18 @@ final class ChatViewModel {
     /// A compact (code, domain) description of a stream error for telemetry. The
     /// URLError code is mapped to its symbolic name so the breadcrumb is readable
     /// at a glance (timedOut vs networkConnectionLost vs cancelled).
+    /// Whether an error is a cancellation (a superseded/torn-down operation), which
+    /// is benign and must never surface as a user-facing modal.
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return true
+        }
+        return false
+    }
+
     private static func describeStreamError(_ error: Error?) -> (code: String, domain: String) {
         guard let error else {
             return ("none", "none")
