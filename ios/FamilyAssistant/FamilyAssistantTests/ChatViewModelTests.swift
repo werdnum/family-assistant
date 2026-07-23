@@ -9868,6 +9868,78 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testReconcileRetryOfPersistedBubbleWithNewerMessagesKeepsTheBubble() async throws {
+        // A failed send already merged into persisted history — its bubble is a `msg_`
+        // row, not a `local_` placeholder — is retried AFTER newer messages exist. The
+        // reconcile must reload the FULL window: an incremental merge keyed off the
+        // latest persisted timestamp would never refetch the older removed row, so the
+        // bubble would vanish. The mock honors `after` (as the real server does) so the
+        // incremental path returns empty, making the regression observable.
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_persist/stream"):
+                // The reconcile resubscribe closes cleanly, so the retry falls through
+                // to a history reload.
+                return .text("")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_persist/messages"):
+                if Self.queryItems(from: request)["after"] != nil {
+                    // Incremental cursor at the newest message ⇒ nothing newer. This is
+                    // exactly why an incremental reconcile would drop the older bubble.
+                    return .json(
+                        #"{"conversation_id":"web_conv_persist","messages":[],"count":0,"total_messages":3,"has_more_before":false,"has_more_after":false}"#
+                    )
+                }
+                // Full load: the authoritative window with the persisted bubble.
+                return .json(
+                    #"{"conversation_id":"web_conv_persist","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Old reply","timestamp":"2026-06-08T12:00:01Z"},{"internal_id":3,"role":"user","content":"Newer","timestamp":"2026-06-08T12:05:00Z"}],"count":3,"total_messages":3,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_persist",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.05,
+            maxConsecutiveStreamResumes: 1
+        )
+        await model.loadMessages(conversationID: "web_conv_persist", userInitiated: false)
+        XCTAssertTrue(
+            model.messages.contains { $0.id == "msg_2" && $0.text == "Old reply" },
+            "precondition: the persisted assistant bubble is present before retry"
+        )
+
+        // The failed send resolves to the persisted `msg_2` bubble (finding F4 swap).
+        model.failedSends["turn-persist"] = ChatViewModel.FailedSend(
+            turnID: "turn-persist",
+            conversationID: "web_conv_persist",
+            assistantMessageID: "msg_2",
+            prompt: "Hi",
+            attachments: [],
+            profileID: "default_assistant",
+            previousSummary: nil,
+            postAccepted: true,
+            lastAppliedSeq: nil
+        )
+
+        await model.retryFailedSend(turnID: "turn-persist")
+        await model.sendTaskForTesting?.value
+
+        XCTAssertTrue(
+            model.messages.contains { $0.id == "msg_2" && $0.text == "Old reply" },
+            "the persisted failed bubble must be restored by the reconcile, not dropped"
+        )
+        XCTAssertTrue(
+            model.messages.contains { $0.text == "Newer" },
+            "the newer message is still present"
+        )
+        XCTAssertNil(model.failedSends["turn-persist"], "a successful reconcile clears the inline state")
+    }
+
     func testReconcileRetrySubscriptionDropMidTurnKeepsRenderingAndCompletes() async throws {
         // Finding F1: a reconcile (after-accept) retry whose subscription drops
         // mid-turn — while the durable turn is still running server-side — must NOT

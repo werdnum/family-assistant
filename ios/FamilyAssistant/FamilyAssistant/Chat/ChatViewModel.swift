@@ -2244,9 +2244,20 @@ final class ChatViewModel {
         conversationID id: String,
         assistantMessageID: String
     ) async {
+        // A retried bubble can be a persisted `msg_` row (a failed send already merged
+        // into history), not just a `local_` placeholder. The incremental merge below
+        // keys off `latestPersistedTimestamp()`, so once newer messages exist it would
+        // never refetch this older row we just removed — the bubble would vanish.
+        // Reload the full window in that case so the persisted turn is restored
+        // authoritatively with its final content.
+        let wasPersistedBubble = assistantMessageID.hasPrefix("msg_")
         removeLocalAssistantPlaceholder(assistantMessageID)
         await refreshRecentConversations(userInitiated: false)
-        await mergeNewMessages(conversationID: id, userInitiated: false)
+        if wasPersistedBubble {
+            await loadMessages(conversationID: id, userInitiated: false)
+        } else {
+            await mergeNewMessages(conversationID: id, userInitiated: false)
+        }
     }
 
     /// Reset shared streaming state, but only for the still-current send: a
