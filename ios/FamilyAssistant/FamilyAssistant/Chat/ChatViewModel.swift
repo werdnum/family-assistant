@@ -46,6 +46,15 @@ final class ChatViewModel {
     /// rate-limited (429). Distinct from the modal `errorMessage`: this never
     /// blocks the UI and is cleared when the thread reloads or the user acts again.
     var threadInlineMessage: String?
+    /// Whether the last conversation-list refresh (pull-to-refresh or background)
+    /// failed. Drives a list-scoped banner instead of a modal or the thread-scoped
+    /// `threadInlineMessage` (which never renders on the list column). Cleared on the
+    /// next successful list refresh. A rate-limit (429) that schedules a retry does
+    /// NOT set it — that isn't a failure, just a throttle that self-recovers.
+    private(set) var conversationsRefreshFailed = false
+    /// When the conversation list was last refreshed successfully, shown alongside the
+    /// failure banner ("Last updated …") so a stale list is diagnosable at a glance.
+    private(set) var conversationsLastRefreshedAt: Date?
     var stopWarningMessage: String?
     var composerFocusRequestID: UUID?
     /// Failed user sends keyed by DURABLE turn id, each retaining the inputs to
@@ -594,26 +603,18 @@ final class ChatViewModel {
     /// coordinator health, but never raises a modal (the popup this design removes);
     /// a user-initiated refresh (pull-to-refresh, bootstrap) keeps its existing
     /// modal/inline surface.
-    func refreshConversations(userInitiated: Bool = true) async {
+    func refreshConversations() async {
         isLoadingConversations = true
         do {
             conversations = try await apiClient.listConversations()
             errorMessage = nil
-            recordAdvisorySuccess(operation: .conversationsRefresh)
+            markConversationListRefreshed(operation: .conversationsRefresh)
         } catch {
-            if userInitiated {
-                handleUserReadFailure(
-                    operation: .conversationsRefresh,
-                    reason: .conversationsRefresh,
-                    error: error
-                )
-            } else {
-                handleAdvisoryReadFailure(
-                    operation: .conversationsRefresh,
-                    error: error,
-                    retry: { [weak self] in await self?.refreshConversations(userInitiated: false) }
-                )
-            }
+            handleConversationListRefreshFailure(
+                operation: .conversationsRefresh,
+                error: error,
+                retry: { [weak self] in await self?.refreshConversations() }
+            )
             errorReporter.report(error, component: "Chat.conversations")
         }
         isLoadingConversations = false
@@ -635,7 +636,7 @@ final class ChatViewModel {
     /// which a skewed clock could keep "newer" forever), after which the server
     /// row is authoritative. The whole list is sorted most-recent-first so a kept
     /// optimistic row stays at the top.
-    private func refreshRecentConversations(userInitiated: Bool = true) async {
+    private func refreshRecentConversations() async {
         do {
             let recent = try await apiClient.listRecentConversations()
             let recentIDs = Set(recent.map(\.conversationID))
@@ -655,23 +656,49 @@ final class ChatViewModel {
             let untouched = conversations.filter { !recentIDs.contains($0.conversationID) }
             conversations = (merged + untouched).sorted { $0.lastTimestamp > $1.lastTimestamp }
             errorMessage = nil
-            recordAdvisorySuccess(operation: .recentConversationsRefresh)
+            markConversationListRefreshed(operation: .recentConversationsRefresh)
         } catch {
-            if userInitiated {
-                handleUserReadFailure(
-                    operation: .recentConversationsRefresh,
-                    reason: .recentConversationsRefresh,
-                    error: error
-                )
-            } else {
-                handleAdvisoryReadFailure(
-                    operation: .recentConversationsRefresh,
-                    error: error,
-                    retry: { [weak self] in await self?.refreshRecentConversations(userInitiated: false) }
-                )
-            }
+            handleConversationListRefreshFailure(
+                operation: .recentConversationsRefresh,
+                error: error,
+                retry: { [weak self] in await self?.refreshRecentConversations() }
+            )
             errorReporter.report(error, component: "Chat.recentConversations")
         }
+    }
+
+    /// Record a successful conversation-list refresh: clear the failure banner, stamp
+    /// the freshness time, and record the per-operation advisory-health success.
+    private func markConversationListRefreshed(operation: ChatOperation) {
+        conversationsRefreshFailed = false
+        conversationsLastRefreshedAt = Date()
+        recordAdvisorySuccess(operation: operation)
+    }
+
+    /// Surface a conversation-list refresh failure on the LIST itself (a banner),
+    /// never a modal or the thread-scoped inline message (which does not render on the
+    /// list column). A rate-limit schedules exactly one retry and is not treated as a
+    /// failure; every other error shows the banner and counts toward advisory health,
+    /// so a persistent list outage still degrades the connection indicator.
+    private func handleConversationListRefreshFailure(
+        operation: ChatOperation,
+        error: Error,
+        retry: @escaping @MainActor () async -> Void
+    ) {
+        let surface = ChatErrorClassifier.classify(
+            ChatErrorContext(
+                operation: operation,
+                error: error,
+                userInitiated: false,
+                retryAfter: Self.retryAfterSeconds(from: error)
+            )
+        )
+        if case let .retryAfter(delay) = surface {
+            scheduleAdvisoryRetry(after: delay, retry: retry)
+            return
+        }
+        conversationsRefreshFailed = true
+        recordAdvisoryFailure(operation: operation)
     }
 
     /// Optimistically surface the active conversation in the list the instant the
@@ -1889,7 +1916,7 @@ final class ChatViewModel {
                 // optimistic mark before refreshing so the authoritative summary
                 // (with the reply preview) replaces the held row.
                 optimisticPendingByTurnID.removeValue(forKey: turnID)
-                await refreshRecentConversations(userInitiated: false)
+                await refreshRecentConversations()
                 await mergeNewMessages(conversationID: id, userInitiated: false)
                 if status == "cancelled" || status == "failed" || stopRequestedTurnIDs.contains(turnID) {
                     clearRecoverableSteers()
@@ -2252,7 +2279,7 @@ final class ChatViewModel {
         // authoritatively with its final content.
         let wasPersistedBubble = assistantMessageID.hasPrefix("msg_")
         removeLocalAssistantPlaceholder(assistantMessageID)
-        await refreshRecentConversations(userInitiated: false)
+        await refreshRecentConversations()
         if wasPersistedBubble {
             await loadMessages(conversationID: id, userInitiated: false)
         } else {
@@ -3144,7 +3171,7 @@ final class ChatViewModel {
         if let conversationID, conversationID == self.conversationID, !isSendActivelyStreaming {
             await mergeNewMessages(conversationID: conversationID, userInitiated: false)
         }
-        await refreshRecentConversations(userInitiated: false)
+        await refreshRecentConversations()
     }
 
     /// Whether the chat thread's message list should be realized into the view
@@ -3210,7 +3237,7 @@ final class ChatViewModel {
             return
         }
         await mergeNewMessages(conversationID: conversationID, userInitiated: false)
-        await refreshRecentConversations(userInitiated: false)
+        await refreshRecentConversations()
     }
 
     /// Handle one follow-stream event. Returns false when the loop should stop.
@@ -3244,7 +3271,7 @@ final class ChatViewModel {
                     recordAppliedSeq(seq)
                 }
                 await mergeNewMessages(conversationID: conversationID, userInitiated: false)
-                await refreshRecentConversations(userInitiated: false)
+                await refreshRecentConversations()
                 // Acknowledge the turn_ended seq so the server marks the reply
                 // delivered and suppresses the disconnect push. Fire-and-forget.
                 if event.type == .turnEnded, let seq = event.seq {
@@ -4747,7 +4774,7 @@ extension ChatViewModel: SyncStreamDelegate {
         // feeds the advisory-health classifier instead. This is also what makes a
         // buffered resync drain silent (finding 10): the drain routes through this
         // same handler.
-        await refreshRecentConversations(userInitiated: false)
+        await refreshRecentConversations()
     }
 
     func runCoalescedResync(reason: SyncCoordinator.RestartReason) {
@@ -4885,7 +4912,7 @@ extension ChatViewModel: ResyncHost {
     func applyListSnapshot() async {
         // Advisory (§4.4 step 4): a failed resume-time snapshot degrades from
         // per-channel health and breadcrumbs, but must never modal.
-        await refreshConversations(userInitiated: false)
+        await refreshConversations()
     }
 
     func applyMessagesSnapshot(conversationID: String) async {

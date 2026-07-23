@@ -140,6 +140,11 @@ private struct ConversationListView: View {
             get: { viewModel.conversationSelection },
             set: { viewModel.updateSelection($0) }
         )) {
+            if viewModel.conversationsRefreshFailed {
+                ConversationListRefreshBanner(
+                    lastRefreshed: viewModel.conversationsLastRefreshedAt
+                )
+            }
             if filteredConversations.isEmpty && !viewModel.isLoadingConversations {
                 ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
             } else {
@@ -159,6 +164,37 @@ private struct ConversationListView: View {
                 ProgressView("Loading chats...")
             }
         }
+    }
+}
+
+/// A non-blocking row shown atop the conversation list when a refresh failed. The
+/// list keeps its cached rows (iOS convention: a failed pull-to-refresh doesn't clear
+/// content); this surfaces the failure and the last-good time in-place, which a modal
+/// or the thread-scoped banner couldn't do on the list column.
+private struct ConversationListRefreshBanner: View {
+    let lastRefreshed: Date?
+
+    private var subtitle: String {
+        guard let lastRefreshed else {
+            return "Not yet refreshed"
+        }
+        return "Last updated \(lastRefreshed.formatted(date: .omitted, time: .standard))"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Couldn’t refresh")
+                    .font(.subheadline.weight(.medium))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("conversation-list-refresh-failed")
     }
 }
 

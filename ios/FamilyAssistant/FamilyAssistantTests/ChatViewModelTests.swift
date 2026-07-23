@@ -9410,23 +9410,23 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.syncPresentation, .live)
 
         // Two advisory failures stay silent; the third crosses the degraded floor.
-        await model.refreshConversations(userInitiated: false)
-        await model.refreshConversations(userInitiated: false)
+        await model.refreshConversations()
+        await model.refreshConversations()
         XCTAssertEqual(model.syncPresentation, .live, "below-threshold advisory failures stay silent")
-        await model.refreshConversations(userInitiated: false)
+        await model.refreshConversations()
         XCTAssertEqual(model.syncPresentation, .degraded)
         XCTAssertNil(model.errorMessage, "advisory reads never modal")
 
         // Recovery: the next good advisory read clears degraded immediately.
         failing.value = false
-        await model.refreshConversations(userInitiated: false)
+        await model.refreshConversations()
         XCTAssertEqual(model.syncPresentation, .live)
     }
 
-    func testPullToRefreshFailureKeepsUserInitiatedSurface() async throws {
-        // Pull-to-refresh (conversationsRefresh, user-initiated) must keep surfacing
-        // its failure — inline, tagged for measurement — rather than going silent
-        // like the advisory path.
+    func testConversationListRefreshFailureShowsListBannerNotModalOrThread() async throws {
+        // A conversation-list refresh failure (pull-to-refresh or background) surfaces
+        // on the LIST via `conversationsRefreshFailed` — never a modal or the
+        // thread-scoped inline message, which does not render on the list column.
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
             case ("GET", "/api/v1/chat/conversations"):
@@ -9435,24 +9435,34 @@ final class ChatViewModelTests: XCTestCase {
                 return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
             }
         }
+        let model = makeViewModel(conversationID: nil)
 
-        let spoolDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("vm-pull-refresh-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
-        let model = makeViewModelWithSpooledReporter(
-            conversationID: nil,
-            spoolDirectory: spoolDirectory
-        )
+        await model.refreshConversations()
 
-        await model.refreshConversations(userInitiated: true)
+        XCTAssertTrue(model.conversationsRefreshFailed, "the failure shows the list banner")
+        XCTAssertNil(model.errorMessage, "a list-refresh failure must not raise the modal")
+        XCTAssertNil(model.threadInlineMessage, "and must not use the thread-scoped banner")
+    }
 
-        let reports = try await waitForSpooledReports(
-            component: "Chat.inlineErrorPresented",
-            in: spoolDirectory
-        )
-        XCTAssertEqual(reports.first?.extraData?["operation"], "conversations_refresh")
-        XCTAssertEqual(reports.first?.extraData?["reason"], "user_read_failed")
-        XCTAssertNotNil(model.threadInlineMessage)
+    func testConversationListRefreshBannerClearsAndStampsTimeOnSuccess() async throws {
+        // The banner state machine: a failure sets the flag; the next successful
+        // refresh clears it and stamps the last-refreshed time for the banner subtitle.
+        let failing = AtomicFlag(true)
+        ChatMockBackendURLProtocol.respond { _ in
+            if failing.value {
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            }
+            return .json(#"{"conversations":[],"count":0}"#)
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+        XCTAssertTrue(model.conversationsRefreshFailed)
+
+        failing.value = false
+        await model.refreshConversations()
+        XCTAssertFalse(model.conversationsRefreshFailed, "a successful refresh clears the banner")
+        XCTAssertNotNil(model.conversationsLastRefreshedAt, "and stamps the last-refreshed time")
     }
 
     func testConversationReturning404IsTreatedAsGone() async throws {
@@ -9521,7 +9531,7 @@ final class ChatViewModelTests: XCTestCase {
             spoolDirectory: spoolDirectory
         )
 
-        await model.refreshConversations(userInitiated: false)
+        await model.refreshConversations()
         XCTAssertNil(model.errorMessage, "a 429 advisory read must not modal")
 
         try await waitUntil(timeout: 4) {
@@ -10253,7 +10263,7 @@ final class ChatViewModelTests: XCTestCase {
         // Interleave a failing conversations refresh with a succeeding approvals
         // poll after each. A global counter would never cross the threshold.
         for _ in 0 ..< 3 {
-            await model.refreshConversations(userInitiated: false)
+            await model.refreshConversations()
             await model.loadPendingConfirmationsForTesting()
         }
         XCTAssertEqual(
@@ -10263,7 +10273,7 @@ final class ChatViewModelTests: XCTestCase {
 
         // The failing operation's OWN success clears its counter → live again.
         conversationsFailing.value = false
-        await model.refreshConversations(userInitiated: false)
+        await model.refreshConversations()
         XCTAssertEqual(model.syncPresentation, .live)
     }
 
