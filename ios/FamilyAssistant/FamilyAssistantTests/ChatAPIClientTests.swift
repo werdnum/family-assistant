@@ -716,6 +716,38 @@ final class ChatAPIClientTests: XCTestCase {
     }
 }
 
+final class HangingStreamTests: XCTestCase {
+    func testFinishNotifiesEveryActiveObserverWithoutAWorkerWait() {
+        let stream = HangingStream()
+        let cancelledObserver = expectation(description: "cancelled observer")
+        cancelledObserver.isInverted = true
+        let firstActiveObserver = expectation(description: "first active observer")
+        let secondActiveObserver = expectation(description: "second active observer")
+
+        let cancelledID = stream.observeCompletion { _ in
+            cancelledObserver.fulfill()
+        }
+        _ = stream.observeCompletion { result in
+            XCTAssertTrue(result.finished)
+            XCTAssertEqual(String(decoding: result.data, as: UTF8.self), "tail")
+            firstActiveObserver.fulfill()
+        }
+        _ = stream.observeCompletion { result in
+            XCTAssertTrue(result.finished)
+            XCTAssertEqual(String(decoding: result.data, as: UTF8.self), "tail")
+            secondActiveObserver.fulfill()
+        }
+
+        stream.cancelObservation(cancelledID)
+        stream.finish(appending: "tail")
+
+        wait(
+            for: [cancelledObserver, firstActiveObserver, secondActiveObserver],
+            timeout: 0.1
+        )
+    }
+}
+
 /// Lock-guarded counter for tallying requests off the URLProtocol loading thread.
 private final class AtomicCounter: @unchecked Sendable {
     private let lock = NSLock()
@@ -760,9 +792,14 @@ final class ChatMockBackendURLProtocol: URLProtocol {
         request
     }
 
+    private struct HangingStreamObservation {
+        let controller: HangingStream
+        let id: UUID
+    }
+
     private let stopLock = NSLock()
     private var stopped = false
-    private var activeHangingStream: HangingStream?
+    private var activeHangingStream: HangingStreamObservation?
 
     override func startLoading() {
         guard let handler = Self.lock.withLock({ Self.handler }) else {
@@ -775,15 +812,13 @@ final class ChatMockBackendURLProtocol: URLProtocol {
             client?.urlProtocol(self, didReceive: response.urlResponse(for: request), cacheStoragePolicy: .notAllowed)
             if let controller = response.hangingStream {
                 // Hold the request open after the initial chunk so a turn can be
-                // observed mid-flight. Resolve on a background thread (not the
-                // loader thread) so other concurrent mock requests aren't starved.
-                stopLock.withLock { activeHangingStream = controller }
+                // observed mid-flight. Completion is callback-driven so held SSE
+                // requests do not occupy worker threads while they are idle.
                 if !response.data.isEmpty {
                     client?.urlProtocol(self, didLoad: response.data)
                 }
-                DispatchQueue.global().async { [weak self] in
+                let observationID = controller.observeCompletion { [weak self] result in
                     guard let self else { return }
-                    let result = controller.awaitCompletion()
                     if self.stopLock.withLock({ self.stopped }) {
                         return
                     }
@@ -795,6 +830,19 @@ final class ChatMockBackendURLProtocol: URLProtocol {
                     } else {
                         self.client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
                     }
+                }
+                let wasAlreadyStopped = stopLock.withLock {
+                    if stopped {
+                        return true
+                    }
+                    activeHangingStream = HangingStreamObservation(
+                        controller: controller,
+                        id: observationID
+                    )
+                    return false
+                }
+                if wasAlreadyStopped {
+                    controller.cancelObservation(observationID)
                 }
                 return
             }
@@ -813,47 +861,68 @@ final class ChatMockBackendURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {
-        stopLock.withLock { stopped = true }
-        // Release a held stream so its background waiter exits when the request
-        // is cancelled (e.g. a superseded send tearing down its subscription).
-        activeHangingStream?.cancel()
+        let observation = stopLock.withLock {
+            stopped = true
+            let observation = activeHangingStream
+            activeHangingStream = nil
+            return observation
+        }
+        if let observation {
+            observation.controller.cancelObservation(observation.id)
+        }
     }
 }
 
 /// Test handle for a stream the mock holds open until the test finishes it (or
 /// the request is cancelled), so a turn can be driven and observed mid-flight.
 final class HangingStream: @unchecked Sendable {
-    private let semaphore = DispatchSemaphore(value: 0)
+    typealias CompletionResult = (finished: Bool, data: Data)
+
     private let lock = NSLock()
-    private var finishData = Data()
-    private var didFinish = false
+    private var result: CompletionResult?
+    private var observers: [UUID: (CompletionResult) -> Void] = [:]
 
     /// Finish the held stream, optionally appending a final SSE chunk.
     func finish(appending text: String = "") {
-        lock.withLock {
-            finishData = Data(text.utf8)
-            didFinish = true
-        }
-        semaphore.signal()
+        resolve((finished: true, data: Data(text.utf8)))
     }
 
-    fileprivate func cancel() {
-        semaphore.signal()
+    fileprivate func observeCompletion(
+        _ completion: @escaping (CompletionResult) -> Void
+    ) -> UUID {
+        let id = UUID()
+        let completedResult = lock.withLock { () -> CompletionResult? in
+            if let result {
+                return result
+            }
+            observers[id] = completion
+            return nil
+        }
+        if let completedResult {
+            completion(completedResult)
+        }
+        return id
     }
 
-    /// Blocks (off the loader thread) until `finish` or `cancel` is called.
-    ///
-    /// Bounded by a generous timeout so a test that throws before its trailing
-    /// `finish()` (or a future test that forgets it) can't leak this worker thread
-    /// for the process lifetime — a real hazard in the app-hosted unit bundle,
-    /// where accumulated leaked workers can exhaust the pool and surface as
-    /// intermittent CI hangs. The bound never trips on the happy path because
-    /// `finish`/`cancel` signal immediately.
-    fileprivate func awaitCompletion() -> (finished: Bool, data: Data) {
-        guard semaphore.wait(timeout: .now() + 30) == .success else {
-            return (false, Data())
+    fileprivate func cancelObservation(_ id: UUID) {
+        _ = lock.withLock {
+            observers.removeValue(forKey: id)
         }
-        return lock.withLock { (didFinish, finishData) }
+    }
+
+    private func resolve(_ completedResult: CompletionResult) {
+        let completions = lock.withLock { () -> [(CompletionResult) -> Void] in
+            guard result == nil else {
+                return []
+            }
+            result = completedResult
+            let completions = Array(observers.values)
+            observers.removeAll()
+            return completions
+        }
+        for completion in completions {
+            completion(completedResult)
+        }
     }
 }
 
