@@ -2100,11 +2100,12 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.stopWarningMessage, "Stop could not be confirmed. Pending approvals from this turn may still be active.")
     }
 
-    func testStopQueuedBeforeRegistrationFailureTagsAlertAsStopTurnFailed() async throws {
+    func testStopQueuedBeforeRegistrationFailureSurfacesInlineNotModal() async throws {
         // A stop queued before registration, applied after startTurn succeeds,
         // whose retried cancel throws a non-retryable transport error surfaces
-        // through `appendStreamError`. That breadcrumb must be reason-tagged
-        // `stop_turn_failed`, not miscounted as a `stream_error`.
+        // INLINE on the stop-warning line (§4.5), never a modal: a
+        // `Chat.inlineErrorPresented` breadcrumb tagged operation=stop_turn, and
+        // NO `Chat.alertPresented`.
         let postedTurnID = AtomicString()
         let startRequests = AtomicCounter()
         let cancelRequests = AtomicCounter()
@@ -2151,11 +2152,17 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         let reports = try await waitForSpooledReports(
-            component: "Chat.alertPresented",
+            component: "Chat.inlineErrorPresented",
             in: spoolDirectory
         )
         XCTAssertEqual(reports.count, 1)
-        XCTAssertEqual(reports.first?.extraData?["reason"], "stop_turn_failed")
+        XCTAssertEqual(reports.first?.extraData?["operation"], "stop_turn")
+        XCTAssertEqual(reports.first?.extraData?["reason"], "action_failed")
+        XCTAssertNotNil(model.stopWarningMessage, "the stop failure surfaces on the stop-warning line")
+        XCTAssertNil(model.errorMessage, "a stop failure must not modal")
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" }
+        )
     }
 
     func testSteerBeforeRegistrationPostsAfterStartCompletes() async throws {
@@ -4078,38 +4085,42 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    func testSendFatalSubscribeErrorSurfacesError() async throws {
-        // Recovery must not paper over a genuinely fatal failure (e.g. auth):
-        // a 401 on the subscribe GET surfaces as an error rather than silently
-        // reloading history.
+    func testSendFatalSubscribeErrorSurfacesInlineNotModal() async throws {
+        // Recovery must not paper over a genuinely fatal (non-auth) subscribe
+        // failure: a 422 on the subscribe GET surfaces at the point of action (§4.5)
+        // — the bubble is marked failed with a retry affordance — rather than
+        // silently reloading history OR raising a modal. (A 401/403 is NOT fatal
+        // here; it routes to the auth flow — see testSubscription401RoutesToAuthFlow.)
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
             case ("POST", "/api/v1/chat/turns"):
                 return .json(
-                    #"{"turn_id":"turn-401","conversation_id":"web_conv_401","first_seq":0}"#
+                    #"{"turn_id":"turn-fatal","conversation_id":"web_conv_fatal","first_seq":0}"#
                 )
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
             default:
                 if request.httpMethod == "GET", path.hasSuffix("/stream") {
-                    return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                    return .json(#"{"detail":"unprocessable"}"#, statusCode: 422)
                 }
                 return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
             }
         }
 
-        let model = makeViewModel(conversationID: "web_conv_401")
+        let model = makeViewModel(conversationID: "web_conv_fatal")
         model.draftText = "Hi"
         await model.sendDraft()
         try await waitUntil { !model.isStreaming }
 
-        // The failure surfaces rather than being silently recovered. (Byte-stream
-        // errors validate against an empty body, so the message is the generic
-        // status text rather than the server's detail string.)
-        XCTAssertEqual(model.errorMessage, "Chat request failed with status 401.")
+        // The failure surfaces inline on the bubble, never as a modal.
+        XCTAssertNil(model.errorMessage, "a fatal send subscribe failure must not modal")
         let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
         XCTAssertEqual(assistant.status, .failed)
+        XCTAssertNotNil(
+            model.failedSend(for: assistant),
+            "a fatal send failure records a retry affordance resolvable on the bubble"
+        )
     }
 
     func testSendThenClosedMidTurnRecoversReplyOnReopen() async throws {
@@ -4304,10 +4315,11 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(resumeFromSeq, "2")
     }
 
-    func testSendStartTurnFailureSurfacesError() async throws {
+    func testSendStartTurnFailureSurfacesInlineNotModal() async throws {
         // If the turn never starts (POST /turns fails), there is no durable turn
-        // to recover, so the error must surface rather than silently reload an
-        // empty history. The user's prompt is preserved in the thread.
+        // to recover, so the error surfaces inline at the point of action (§4.5) —
+        // never a modal — rather than silently reloading an empty history. The
+        // user's prompt is preserved in the thread with a retry affordance.
         var sawStream = false
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
@@ -4330,10 +4342,11 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         XCTAssertFalse(sawStream)
-        XCTAssertEqual(model.errorMessage, "server is down")
+        XCTAssertNil(model.errorMessage, "a failed start must not raise the modal")
         XCTAssertEqual(model.messages.first?.text, "Hi")
         let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
         XCTAssertEqual(assistant.status, .failed)
+        XCTAssertNotNil(model.failedSend(for: assistant))
     }
 
     func testTurnStart401And403UseCentralSignInRequiredPath() async {
@@ -7741,7 +7754,13 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { model.messages.last?.text == "Hello, world" }
         XCTAssertTrue(model.isStreaming)
 
+        // Tear the send down before returning: `finish()` closes the stream without
+        // a turn_ended, which would otherwise leave the send's resume loop running
+        // (resubscribing on a backoff) into the next test and contend for the shared
+        // MainActor / URLProtocol loader in the app-hosted bundle.
         stream.finish()
+        model.cancelStream()
+        try await waitUntil { !model.isStreaming }
     }
 
     func testBufferedStreamTextIsFlushedSynchronouslyOnCancel() async throws {
@@ -8658,8 +8677,13 @@ final class ChatViewModelTests: XCTestCase {
 
         await model.removeDraftAttachment(attachment)
 
-        XCTAssertEqual(model.draftAttachments, [attachment])
-        XCTAssertTrue(model.errorMessage?.contains("Could not remove attachment") == true)
+        // The chip stays, and the failure surfaces inline on the chip (§4.5), not
+        // as a modal.
+        XCTAssertEqual(model.draftAttachments.map(\.id), [attachment.id])
+        XCTAssertNil(model.errorMessage, "a remove failure must not modal")
+        XCTAssertTrue(
+            model.draftAttachments.first?.errorMessage?.contains("Could not remove") == true
+        )
     }
 
     func testRemoveUploadingDraftAttachmentKeepsAttachmentUntilUploadFinishes() async {
@@ -8669,8 +8693,12 @@ final class ChatViewModelTests: XCTestCase {
 
         await model.removeDraftAttachment(attachment)
 
-        XCTAssertEqual(model.draftAttachments, [attachment])
-        XCTAssertEqual(model.errorMessage, "Wait for attachment upload to finish before removing.")
+        XCTAssertEqual(model.draftAttachments.map(\.id), [attachment.id])
+        XCTAssertNil(model.errorMessage, "the not-yet-uploaded guard surfaces inline, not a modal")
+        XCTAssertEqual(
+            model.draftAttachments.first?.errorMessage,
+            "Wait for upload to finish before removing."
+        )
     }
 
     func testDownloadAttachmentForSharingSurfacesFailure() async {
@@ -8825,6 +8853,56 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertTrue(model.pendingConfirmations.isEmpty)
         XCTAssertEqual(model.messages.first?.toolCalls.first?.status, .approved)
+    }
+
+    func testConfirmFailureSurfacesInlineOnCardNotModal() async throws {
+        // A failed tool confirmation surfaces on the confirmation card's own
+        // `errorMessage` (its point-of-action anchor), never a modal (§4.5), and
+        // emits a `Chat.inlineErrorPresented` breadcrumb tagged operation=confirm_tool.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/confirm_tool"):
+                return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let confirmation = ChatPendingConfirmation(
+            requestID: "req-fail",
+            toolName: "calendar",
+            toolCallID: "call-fail",
+            confirmationPrompt: "Approve?",
+            args: [:],
+            createdAt: nil,
+            expiresAt: nil,
+            timeoutSeconds: 60,
+            timeRemainingSeconds: 45
+        )
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-confirm-fail-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_confirm_fail",
+            spoolDirectory: spoolDirectory
+        )
+        model.pendingConfirmations = [confirmation]
+
+        await model.confirm(confirmation, approved: true)
+
+        XCTAssertNil(model.errorMessage, "a confirm failure must not modal")
+        XCTAssertNotNil(
+            model.pendingConfirmations.first?.errorMessage,
+            "the failure surfaces on the confirmation card"
+        )
+        let reports = try await waitForSpooledReports(
+            component: "Chat.inlineErrorPresented",
+            in: spoolDirectory
+        )
+        XCTAssertEqual(reports.first?.extraData?["operation"], "confirm_tool")
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" }
+        )
     }
 
     func testSendToolCallMidStreamDropSelfHealsViaLiveFollow() async throws {
@@ -9161,22 +9239,25 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(extra["url_error_code"], "networkConnectionLost")
     }
 
-    func testFatalStreamErrorEmitsAlertPresentedBreadcrumb() async throws {
-        // The fatal subscribe path surfaces the shared modal; it must emit exactly
-        // one reason-tagged `Chat.alertPresented` breadcrumb so the popup rate is
-        // measurable. Mirrors `testSendFatalSubscribeErrorSurfacesError`.
+    func testFatalStreamErrorEmitsInlineErrorPresentedBreadcrumb() async throws {
+        // The fatal subscribe path now surfaces inline at the point of action, not
+        // the shared modal (§4.5): it emits exactly one reason-tagged
+        // `Chat.inlineErrorPresented` breadcrumb and NO `Chat.alertPresented`, so
+        // the inline vs modal popup rates stay measurable.
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "GET", path) {
             case ("POST", "/api/v1/chat/turns"):
                 return .json(
-                    #"{"turn_id":"turn-alert-401","conversation_id":"web_conv_alert_401","first_seq":0}"#
+                    #"{"turn_id":"turn-alert-fatal","conversation_id":"web_conv_alert_fatal","first_seq":0}"#
                 )
             case ("GET", "/api/v1/chat/conversations"):
                 return .json(#"{"conversations":[],"count":0}"#)
             default:
                 if request.httpMethod == "GET", path.hasSuffix("/stream") {
-                    return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                    // A 422 is a genuinely fatal (non-auth) subscribe error that
+                    // surfaces inline; a 401/403 would route to the auth flow (F3).
+                    return .json(#"{"detail":"unprocessable"}"#, statusCode: 422)
                 }
                 return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
             }
@@ -9186,7 +9267,7 @@ final class ChatViewModelTests: XCTestCase {
             .appendingPathComponent("vm-alert-stream-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: spoolDirectory) }
         let model = makeViewModelWithSpooledReporter(
-            conversationID: "web_conv_alert_401",
+            conversationID: "web_conv_alert_fatal",
             spoolDirectory: spoolDirectory
         )
         model.draftText = "Hi"
@@ -9194,17 +9275,24 @@ final class ChatViewModelTests: XCTestCase {
         try await waitUntil { !model.isStreaming }
 
         let reports = try await waitForSpooledReports(
-            component: "Chat.alertPresented",
+            component: "Chat.inlineErrorPresented",
             in: spoolDirectory
         )
         XCTAssertEqual(reports.count, 1)
-        XCTAssertEqual(reports.first?.extraData?["reason"], "stream_error")
+        XCTAssertEqual(reports.first?.extraData?["reason"], "action_failed")
+        XCTAssertEqual(reports.first?.extraData?["operation"], "send_turn")
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "a send-path failure must not raise the modal"
+        )
     }
 
-    func testRecentConversationsRefreshFailureEmitsAlertPresentedBreadcrumb() async throws {
-        // The bootstrap conversation load succeeds; the activity-ping-triggered
-        // recent-list refresh then fails and raises the modal. The breadcrumb must
-        // be reason-tagged `recent_conversations_refresh`.
+    func testActivityPingRecentRefreshFailureIsAdvisoryNeverModal() async throws {
+        // M3 (§4.5): the bootstrap conversation load succeeds; the
+        // activity-ping-triggered recent-list refresh then fails. This refresh is a
+        // background advisory read — not user-initiated — so its failure must NOT
+        // raise the modal or a `Chat.alertPresented` breadcrumb (it used to). It
+        // still records the transport breadcrumb (Chat.recentConversations).
         let conversationsRequests = AtomicCounter()
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
@@ -9222,7 +9310,7 @@ final class ChatViewModelTests: XCTestCase {
                 )
             case ("GET", "/api/v1/chat/conversations"):
                 // First fetch (bootstrap) succeeds; the refresh triggered by the
-                // activity ping fails, raising the modal.
+                // activity ping fails — now advisory, never modal.
                 if conversationsRequests.increment() <= 1 {
                     return .json(#"{"conversations":[],"count":0}"#)
                 }
@@ -9241,17 +9329,23 @@ final class ChatViewModelTests: XCTestCase {
         )
         await model.bootstrap()
 
-        let reports = try await waitForSpooledReports(
-            component: "Chat.alertPresented",
-            in: spoolDirectory
+        // The transport breadcrumb confirms the advisory refresh ran and failed;
+        // give any (erroneous) modal breadcrumb time to spool before asserting none.
+        _ = try await waitForSpooledReports(component: "Chat.recentConversations", in: spoolDirectory)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertNil(model.errorMessage, "an advisory recent-list refresh must not modal")
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "an advisory recent-list refresh failure must not emit Chat.alertPresented"
         )
-        XCTAssertEqual(reports.first?.extraData?["reason"], "recent_conversations_refresh")
     }
 
-    func testPendingApprovalsPollFailureEmitsAlertPresentedBreadcrumb() async throws {
-        // The 15-second pending-approvals poll runs independently of the streams;
-        // its failure raises the shared modal and must be tagged
-        // `pending_approvals_poll`.
+    func testPendingApprovalsPollFailureNeverModals() async throws {
+        // Regression for prod cluster G (M3, §4.5): the ~15s pending-approvals poll
+        // is a background advisory read. Its failure — including under suspend/resume
+        // conditions where a 503 burst is common — must NEVER raise the shared modal
+        // or emit a `Chat.alertPresented` breadcrumb. Persistent failure surfaces as
+        // degraded health instead, verified in the advisory-degraded tests below.
         ChatMockBackendURLProtocol.respond { request in
             switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
             case ("GET", "/api/v1/profiles"):
@@ -9276,11 +9370,810 @@ final class ChatViewModelTests: XCTestCase {
         )
         await model.bootstrap()
 
+        // The poll's own breadcrumb (Chat.pendingApprovals) confirms the failing
+        // read ran; give it and any (erroneous) modal breadcrumb time to spool.
+        _ = try await waitForSpooledReports(component: "Chat.pendingApprovals", in: spoolDirectory)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertNil(model.errorMessage, "the approvals poll must never raise the modal")
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "an advisory approvals-poll failure must not emit Chat.alertPresented"
+        )
+    }
+
+    func testPersistentAdvisoryReadFailureDegradesThenClearsOnSuccess() async throws {
+        // §4.5: a run of advisory-read failures degrades coordinator presentation
+        // after N (=3) in a row, and the next advisory success clears it — so a
+        // silent-forever background failure is impossible while recovery is prompt.
+        let failing = AtomicFlag(true)
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                if failing.value {
+                    return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+                }
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-advisory-degrade-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+        model.syncCoordinator.apply(.followConnected(generation: model.syncCoordinator.followGeneration))
+        model.syncCoordinator.apply(.activityConnected(generation: model.syncCoordinator.activityGeneration))
+        XCTAssertEqual(model.syncPresentation, .live)
+
+        // Two advisory failures stay silent; the third crosses the degraded floor.
+        await model.refreshConversations(userInitiated: false)
+        await model.refreshConversations(userInitiated: false)
+        XCTAssertEqual(model.syncPresentation, .live, "below-threshold advisory failures stay silent")
+        await model.refreshConversations(userInitiated: false)
+        XCTAssertEqual(model.syncPresentation, .degraded)
+        XCTAssertNil(model.errorMessage, "advisory reads never modal")
+
+        // Recovery: the next good advisory read clears degraded immediately.
+        failing.value = false
+        await model.refreshConversations(userInitiated: false)
+        XCTAssertEqual(model.syncPresentation, .live)
+    }
+
+    func testPullToRefreshFailureKeepsUserInitiatedSurface() async throws {
+        // Pull-to-refresh (conversationsRefresh, user-initiated) must keep surfacing
+        // its failure — inline, tagged for measurement — rather than going silent
+        // like the advisory path.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-pull-refresh-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+
+        await model.refreshConversations(userInitiated: true)
+
         let reports = try await waitForSpooledReports(
-            component: "Chat.alertPresented",
+            component: "Chat.inlineErrorPresented",
             in: spoolDirectory
         )
-        XCTAssertTrue(reports.contains { $0.extraData?["reason"] == "pending_approvals_poll" })
+        XCTAssertEqual(reports.first?.extraData?["operation"], "conversations_refresh")
+        XCTAssertEqual(reports.first?.extraData?["reason"], "user_read_failed")
+        XCTAssertNotNil(model.threadInlineMessage)
+    }
+
+    func testConversationReturning404IsTreatedAsGone() async throws {
+        // §4.5: a 404 on a per-conversation read means the conversation was deleted.
+        // It is dropped from the held list and shown as gone inline, not surfaced as
+        // a transport error / modal.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations/web_conv_gone/messages"):
+                return .json(#"{"detail":"not found"}"#, statusCode: 404)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-gone-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_gone",
+            spoolDirectory: spoolDirectory
+        )
+        model.conversations = [
+            ChatConversationSummary(
+                conversationID: "web_conv_gone",
+                lastMessage: "Gone",
+                lastTimestamp: Date(),
+                messageCount: 1
+            ),
+        ]
+
+        await model.loadMessages(userInitiated: false)
+
+        XCTAssertFalse(
+            model.conversations.contains { $0.conversationID == "web_conv_gone" },
+            "a 404 conversation must be removed from the list"
+        )
+        XCTAssertNil(model.errorMessage, "a gone conversation must not raise the transport modal")
+        XCTAssertNotNil(model.threadInlineMessage, "the selected gone conversation shows a gone-state")
+    }
+
+    func testAdvisoryRead429SchedulesRetryHonoringRetryAfter() async throws {
+        // §4.5: a 429 on an advisory read schedules exactly one retry after the
+        // honored Retry-After (encoded here in the response detail). The retry then
+        // succeeds and the list converges, without any modal.
+        let attempts = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                if attempts.increment() <= 1 {
+                    return .json(#"{"detail":"0"}"#, statusCode: 429)
+                }
+                return .json(
+                    #"{"conversations":[{"conversation_id":"web_conv_after","last_message":"After","last_timestamp":"2026-07-21T00:00:00Z","message_count":1}],"count":1}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-429-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+
+        await model.refreshConversations(userInitiated: false)
+        XCTAssertNil(model.errorMessage, "a 429 advisory read must not modal")
+
+        try await waitUntil(timeout: 4) {
+            model.conversations.contains { $0.conversationID == "web_conv_after" }
+        }
+    }
+
+    func testThreadInlineMessageClearsOnConversationSwitch() async throws {
+        // The thread-scoped inline banner is bound to `threadInlineMessage`. It is
+        // scoped to its thread: switching conversations must clear it so a stale
+        // banner can't linger over an unrelated conversation.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations/web_conv_other/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_other","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_banner")
+        model.threadInlineMessage = "You no longer have access to this conversation."
+        XCTAssertNotNil(model.threadInlineMessage)
+
+        await model.selectConversation("web_conv_other")
+
+        XCTAssertNil(
+            model.threadInlineMessage,
+            "switching conversations clears the thread inline banner"
+        )
+    }
+
+    func testSendFailureSurfacesInlineWithNoModalAndOneBreadcrumb() async throws {
+        // §4.5 slice 2: a terminal send failure surfaces inline on the bubble —
+        // failed styling + retry affordance — with NO modal, NO `Chat.alertPresented`,
+        // and exactly ONE `Chat.inlineErrorPresented` breadcrumb.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(#"{"detail":"server is down"}"#, statusCode: 500)
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-inline-send-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: "web_conv_inline_send",
+            spoolDirectory: spoolDirectory
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertEqual(assistant.status, .failed, "the optimistic bubble takes the failed styling")
+        XCTAssertNotNil(model.failedSend(for: assistant), "a retry affordance is recorded on the bubble")
+        XCTAssertNil(model.errorMessage, "no modal is raised on the send path")
+
+        let inline = try await waitForSpooledReports(
+            component: "Chat.inlineErrorPresented",
+            in: spoolDirectory
+        )
+        XCTAssertEqual(inline.count, 1, "exactly one inline breadcrumb per failure")
+        XCTAssertEqual(inline.first?.extraData?["operation"], "send_turn")
+        XCTAssertEqual(inline.first?.extraData?["reason"], "action_failed")
+        XCTAssertFalse(
+            spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
+            "no Chat.alertPresented breadcrumb on the send path"
+        )
+    }
+
+    func testRetryBeforeAcceptRePostsSameTurnIDExactlyTwice() async throws {
+        // Before-accept retry (`POST /turns` was never accepted): retry re-POSTs
+        // with the SAME client turn_id, so the server dedupes and double-send is
+        // impossible. The first POST 500s; the retry (same id) succeeds and the
+        // turn streams to completion. Exactly two POSTs, same turn_id.
+        let postedTurnIDs = AtomicStringList()
+        let postCount = AtomicCounter()
+        var streamedTurnID = "turn-retry-before"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnIDs.append(turnID)
+                streamedTurnID = turnID
+                if postCount.increment() == 1 {
+                    return .json(#"{"detail":"server is down"}"#, statusCode: 500)
+                }
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_retry_before","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_retry_before/stream"):
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(streamedTurnID)","seq":0}
+
+                    event: text
+                    data: {"content":"Recovered"}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_retry_before/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_retry_before","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Recovered","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_retry_before")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        let failedAssistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        let retryPayload = try XCTUnwrap(model.failedSend(for: failedAssistant))
+        XCTAssertFalse(retryPayload.postAccepted, "a never-accepted POST retries by re-POSTing")
+
+        await model.retryFailedSend(turnID: retryPayload.turnID)
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(postCount.value, 2, "exactly two POSTs: original + one retry")
+        XCTAssertEqual(
+            Set(postedTurnIDs.values).count, 1,
+            "the retry re-POSTs the SAME turn_id, so the server dedupes and never double-sends"
+        )
+        XCTAssertNil(
+            model.failedSends[retryPayload.turnID],
+            "a successful retry clears the inline state"
+        )
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testRetryAffordanceIsRestrictedToTheAssistantBubble() {
+        // The user and assistant messages of a turn share the same `turnID`, so the
+        // retry affordance must resolve to the ASSISTANT bubble only. Otherwise the
+        // affordance would also render on the user bubble and `retryFailedSend` would
+        // select it (appended first), clearing the prompt instead of the failed
+        // reply.
+        let model = makeViewModel(conversationID: "web_conv_retry_role")
+        let turnID = "turn-shared-role"
+        let user = ChatMessage(
+            id: "local_user_role", role: .user, text: "Original prompt",
+            createdAt: Date(), toolCalls: [], attachments: [], isLoading: false,
+            status: .complete, processingProfileID: nil, errorTraceback: nil, turnID: turnID
+        )
+        let assistant = ChatMessage(
+            id: "local_assistant_role", role: .assistant, text: "Sorry, an error occurred.",
+            createdAt: Date(), toolCalls: [], attachments: [], isLoading: false,
+            status: .failed, processingProfileID: nil, errorTraceback: nil, turnID: turnID
+        )
+        model.messages = [user, assistant]
+        model.failedSends[turnID] = ChatViewModel.FailedSend(
+            turnID: turnID, conversationID: "web_conv_retry_role",
+            assistantMessageID: "local_assistant_role", prompt: "Original prompt",
+            attachments: [], profileID: "default", previousSummary: nil,
+            postAccepted: false, lastAppliedSeq: nil
+        )
+
+        XCTAssertNil(model.failedSend(for: user), "the user bubble must never expose a retry affordance")
+        XCTAssertNotNil(model.failedSend(for: assistant), "the assistant bubble carries the affordance")
+    }
+
+    func testStaleMessageLoadDoesNotLeakLoadingFlag() async {
+        // A delayed advisory message-load retry can land after the user switched
+        // conversations. The stale-selection guard returns early; `isLoadingMessages`
+        // must still reset, or the composer stays permanently disabled on the thread
+        // the user moved to.
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/v1/chat/conversations/conv_stale/messages" {
+                return .json(
+                    #"{"conversation_id":"conv_stale","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+        let model = makeViewModel(conversationID: "conv_current")
+
+        // Load a DIFFERENT (no-longer-selected) conversation, as a delayed retry
+        // would after the user switched away from `conv_stale`.
+        await model.loadMessages(conversationID: "conv_stale", userInitiated: false)
+
+        XCTAssertFalse(
+            model.isLoadingMessages,
+            "a stale-selection load must reset the loading flag, not brick the composer"
+        )
+    }
+
+    func testRetryAfterAcceptReconcilesWithoutSecondPost() async throws {
+        // After-accept retry (`POST /turns` succeeded but the follow stream died
+        // fatally): retry RECONCILES — resubscribe / reload history — rather than
+        // re-POSTing, because the turn is already durable server-side. Exactly one
+        // POST total.
+        let postCount = AtomicCounter()
+        let streamAttempts = AtomicCounter()
+        var streamedTurnID = "turn-retry-after"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                postCount.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_retry_after","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_retry_after/stream"):
+                let query = Self.queryItems(from: request)
+                // Only the send-and-watch subscribe (follow=false) is scripted;
+                // the always-on follow stream (follow=true) closes cleanly.
+                guard query["follow"] == "false" else {
+                    return .text("")
+                }
+                if streamAttempts.increment() == 1 {
+                    // Fatal (non-auth) subscribe failure after the POST was accepted.
+                    // A 401/403 would route to the auth flow (finding F3), so use a
+                    // 422 to exercise the inline reconcile-on-retry path.
+                    return .json(#"{"detail":"unprocessable"}"#, statusCode: 422)
+                }
+                // The reconcile resubscribe closes cleanly (interrupted) so the
+                // retry falls through to a history reload.
+                return .text("")
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_retry_after/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_retry_after","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Durable reply","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_retry_after",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.05
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        await model.sendTaskForTesting?.value
+
+        let failedAssistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        let retryPayload = try XCTUnwrap(model.failedSend(for: failedAssistant))
+        XCTAssertTrue(retryPayload.postAccepted, "an accepted POST retries by reconciling")
+
+        await model.retryFailedSend(turnID: retryPayload.turnID)
+        await model.sendTaskForTesting?.value
+
+        XCTAssertEqual(postCount.value, 1, "the reconcile retry does NOT re-POST the turn")
+        XCTAssertNil(
+            model.failedSends[retryPayload.turnID],
+            "a successful reconcile clears the inline state"
+        )
+        XCTAssertTrue(
+            model.messages.contains { $0.text == "Durable reply" },
+            "the reconcile surfaces the durable reply from history"
+        )
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testReconcileRetrySubscriptionDropMidTurnKeepsRenderingAndCompletes() async throws {
+        // Finding F1: a reconcile (after-accept) retry whose subscription drops
+        // mid-turn — while the durable turn is still running server-side — must NOT
+        // immediately retire the turn and reload an empty history (which would make
+        // the reply vanish). It resumes from the last applied seq, exactly like the
+        // primary send loop, and completes. The reply is never lost.
+        let postCount = AtomicCounter()
+        let reconcileStreamAttempts = AtomicCounter()
+        var streamedTurnID = "turn-f1"
+        var resumeFromSeq: String?
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            let query = Self.queryItems(from: request)
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                postCount.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_f1","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_f1/stream"):
+                guard query["follow"] == "false" else {
+                    return .text("")
+                }
+                let attempt = reconcileStreamAttempts.increment()
+                if attempt == 1 {
+                    // The ORIGINAL send: a fatal (non-auth) subscribe error records a
+                    // reconcile-on-retry affordance.
+                    return .json(#"{"detail":"unprocessable"}"#, statusCode: 422)
+                }
+                if attempt == 2 {
+                    // The reconcile retry's FIRST subscribe drops mid-turn (no
+                    // turn_ended): the durable turn is still running.
+                    return .text(
+                        """
+                        event: text
+                        data: {"turn_id":"\(streamedTurnID)","content":"Partial","seq":1}
+
+                        event: stream_dropped
+                        data: {}
+
+                        """
+                    )
+                }
+                // The reconcile resume finishes the durable turn.
+                resumeFromSeq = query["from_seq"]
+                return .text(
+                    """
+                    event: text
+                    data: {"turn_id":"\(streamedTurnID)","content":" reply","seq":2}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"complete","seq":3}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_f1/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_f1","messages":[{"internal_id":1,"role":"user","content":"Hi","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Partial reply","turn_id":"\#(streamedTurnID)","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_f1",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.05
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        await model.sendTaskForTesting?.value
+
+        let failed = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        let payload = try XCTUnwrap(model.failedSend(for: failed))
+        await model.retryFailedSend(turnID: payload.turnID)
+        await model.sendTaskForTesting?.value
+
+        XCTAssertEqual(postCount.value, 1, "reconcile never re-POSTs")
+        // The reconcile resumed from just past the last applied seq instead of
+        // retiring the turn and reloading empty history.
+        XCTAssertEqual(resumeFromSeq, "2")
+        XCTAssertTrue(
+            model.messages.contains { $0.text.contains("Partial reply") || $0.text.contains("reply") },
+            "the reconciled turn keeps rendering / completes — the reply never vanishes"
+        )
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testSubscription401WithRejectedRefreshRoutesToAuthFlowNoRetry() async throws {
+        // Finding F3: an accepted POST followed by a stream-GET 401 whose forced
+        // refresh is REJECTED routes to the auth flow (authRequired) — NOT a Retry
+        // button that would replay the unauthorized request. The bubble is finalized
+        // (no spinner). A known-good fresh token lets the POST succeed; the forced
+        // stream-401 refresh is rejected (scripted 401, and any leaked refresh token
+        // is cleared so the outcome is order-independent in the shared-keychain
+        // app-hosted bundle).
+        seedFreshValidToken()
+        // No refresh token: the forced stream-401 refresh short-circuits SYNCHRONOUSLY
+        // (latches authRequired, no network), so this test never depends on a scripted
+        // /api/auth/refresh round-trip that could interleave with the shared-keychain
+        // app-hosted bundle.
+        KeychainHelper.delete(key: "fa_refresh_token")
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-f3-rej","conversation_id":"web_conv_f3_rej","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_f3_rej")
+        // Register the coordinator's auth observer (as bootstrap would) so the
+        // send-path auth latch surfaces as `.authRequired`, without starting the
+        // activity stream this mock would 401 before the POST runs.
+        model.activateSyncForTesting()
+        model.draftText = "Hi"
+        await model.sendDraft()
+        // Await the send task deterministically rather than polling `isStreaming`
+        // with a fixed budget: under a loaded app-hosted bundle the MainActor send
+        // flow can legitimately finish later than a 4s poll window.
+        await model.sendTaskForTesting?.value
+
+        XCTAssertFalse(model.isStreaming)
+        XCTAssertNil(model.errorMessage, "a stream 401 must not raise the generic modal")
+        XCTAssertEqual(model.syncPresentation, .authRequired)
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertEqual(assistant.status, .failed, "the bubble is finalized, not left running")
+        XCTAssertFalse(assistant.isLoading, "no lingering spinner")
+        XCTAssertNil(
+            model.failedSend(for: assistant),
+            "no Retry affordance — re-auth drives recovery, not a replay of the 401"
+        )
+    }
+
+    func testSubscription401WithSuccessfulRefreshResumesTurn() async throws {
+        // Finding F3: an accepted POST followed by a stream-GET 401 whose forced
+        // refresh SUCCEEDS resumes the durable turn (one forced refresh, resume on
+        // success) and completes — no Retry button, no modal.
+        seedExpiringToken()
+        let streamAttempts = AtomicCounter()
+        let refreshCount = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"turn_id":"turn-f3-ok","conversation_id":"web_conv_f3_ok","first_seq":0}"#
+                )
+            case ("POST", "/api/auth/refresh"):
+                refreshCount.increment()
+                // `expires_in` keeps the refreshed token from being left EXPIRED in
+                // the shared keychain (app-hosted tests share global auth state), so
+                // this test can't leak an expired token into a later test.
+                return .json(
+                    #"{"api_token":"fresh-token","refresh_token":"fresh-refresh","expires_in":7200}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_f3_ok/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_f3_ok","messages":[{"internal_id":1,"role":"user","content":"Hi","turn_id":"turn-f3-ok","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"Recovered","turn_id":"turn-f3-ok","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                if request.httpMethod == "GET", path.hasSuffix("/stream") {
+                    // Only the send-and-watch subscribe (follow=false) is scripted to
+                    // 401-then-resume; the always-on follow stream closes cleanly.
+                    guard Self.queryItems(from: request)["follow"] == "false" else {
+                        return .text("")
+                    }
+                    if streamAttempts.increment() == 1 {
+                        return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+                    }
+                    return .text(
+                        """
+                        event: text
+                        data: {"turn_id":"turn-f3-ok","content":"Recovered","seq":1}
+
+                        event: turn_ended
+                        data: {"turn_id":"turn-f3-ok","status":"complete","seq":2}
+
+                        """
+                    )
+                }
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(
+            conversationID: "web_conv_f3_ok",
+            liveReconnectInitialDelaySeconds: 0.01,
+            liveReconnectMaxDelaySeconds: 0.05
+        )
+        model.draftText = "Hi"
+        await model.sendDraft()
+        await model.sendTaskForTesting?.value
+
+        XCTAssertGreaterThanOrEqual(refreshCount.value, 1, "exactly one forced refresh drives the resume")
+        XCTAssertNotEqual(model.syncPresentation, .authRequired, "a successful refresh is not authRequired")
+        XCTAssertNil(model.errorMessage)
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertNil(model.failedSend(for: assistant), "the resumed turn shows no Retry affordance")
+        XCTAssertTrue(
+            model.messages.contains { $0.text.contains("Recovered") },
+            "the turn resumed after the refresh and completed"
+        )
+    }
+
+    func testServerFailedTurnRetryAffordanceSurvivesMerge() async throws {
+        // Finding F4: a turn that FAILED server-side (turn_ended carrying an error)
+        // records its retry affordance under the DURABLE turn id, so it survives
+        // `mergeNewMessages` swapping the optimistic local_ bubble for its persisted
+        // msg_ row (which carries the same turn_id). The Retry affordance is still
+        // resolvable on the rendered bubble after the merge.
+        var streamedTurnID = "turn-f4"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                streamedTurnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(streamedTurnID)","conversation_id":"web_conv_f4","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_f4/stream"):
+                guard Self.queryItems(from: request)["follow"] == "false" else {
+                    return .text("")
+                }
+                return .text(
+                    """
+                    event: turn_ended
+                    data: {"turn_id":"\(streamedTurnID)","status":"failed","error":"The model failed.","seq":1}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/web_conv_f4/messages"):
+                // The persisted row for the failed turn carries the SAME turn_id.
+                return .json(
+                    #"{"conversation_id":"web_conv_f4","messages":[{"internal_id":1,"role":"user","content":"Hi","turn_id":"\#(streamedTurnID)","timestamp":"2026-06-08T12:00:00Z"},{"internal_id":2,"role":"assistant","content":"The model failed.","turn_id":"\#(streamedTurnID)","timestamp":"2026-06-08T12:00:01Z"}],"count":2,"total_messages":2,"has_more_before":false,"has_more_after":false}"#
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_f4")
+        model.draftText = "Hi"
+        await model.sendDraft()
+        await model.sendTaskForTesting?.value
+
+        // After the completion merge, the rendered assistant bubble is the persisted
+        // msg_ row — its local_ predecessor is gone. The retry affordance must still
+        // resolve on it via the durable turn id.
+        let rendered = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertFalse(rendered.id.hasPrefix("local_"), "the bubble was swapped for its persisted row")
+        XCTAssertEqual(rendered.turnID, streamedTurnID)
+        XCTAssertNotNil(
+            model.failedSend(for: rendered),
+            "the Retry affordance survives the optimistic→persisted bubble swap"
+        )
+    }
+
+    func testPerOperationAdvisoryDegradeIsNotMaskedByAnotherOperationSuccess() async throws {
+        // Finding F6: a persistently-failing endpoint interleaved with a succeeding
+        // poll must still reach degraded — a single global counter would let the
+        // succeeding poll reset it forever (silent-forever). Per-operation tracking:
+        // the conversations refresh fails 3× while the approvals poll succeeds
+        // between each; the failing operation still crosses the threshold. Its own
+        // success then clears it.
+        let conversationsFailing = AtomicFlag(true)
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                if conversationsFailing.value {
+                    return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+                }
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/confirmations/pending"):
+                return .json(#"{"confirmations":[]}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let spoolDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-f6-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: spoolDirectory) }
+        let model = makeViewModelWithSpooledReporter(
+            conversationID: nil,
+            spoolDirectory: spoolDirectory
+        )
+        model.syncCoordinator.apply(.followConnected(generation: model.syncCoordinator.followGeneration))
+        model.syncCoordinator.apply(.activityConnected(generation: model.syncCoordinator.activityGeneration))
+        XCTAssertEqual(model.syncPresentation, .live)
+
+        // Interleave a failing conversations refresh with a succeeding approvals
+        // poll after each. A global counter would never cross the threshold.
+        for _ in 0 ..< 3 {
+            await model.refreshConversations(userInitiated: false)
+            await model.loadPendingConfirmationsForTesting()
+        }
+        XCTAssertEqual(
+            model.syncPresentation, .degraded,
+            "the failing conversations refresh crosses the threshold despite the interleaved poll success"
+        )
+
+        // The failing operation's OWN success clears its counter → live again.
+        conversationsFailing.value = false
+        await model.refreshConversations(userInitiated: false)
+        XCTAssertEqual(model.syncPresentation, .live)
+    }
+
+    func testLongQuietToolCallProducesNoSpuriousSurfaces() async throws {
+        // §6.2 (M3): a turn that runs quietly for a long time — a slow tool call
+        // with no events — must not spawn any spurious surface: no inline error, no
+        // modal, and the presentation stays live (not degraded). Pinned with a
+        // hanging stream that emits turn_started then nothing.
+        let stream = HangingStream()
+        let postedTurnID = AtomicString()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                postedTurnID.set(turnID)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_quiet","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_quiet/stream"):
+                return .hangingStream(
+                    "event: turn_started\ndata: {\"turn_id\":\"\(postedTurnID.value ?? "")\",\"seq\":0}\n\n",
+                    controller: stream
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_quiet")
+        model.syncCoordinator.apply(.followConnected(generation: model.syncCoordinator.followGeneration))
+        model.syncCoordinator.apply(.activityConnected(generation: model.syncCoordinator.activityGeneration))
+        model.draftText = "Do something slow"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming && postedTurnID.value != nil }
+
+        // Let the turn run quietly for a while: no further events arrive.
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertTrue(model.isStreaming, "the quiet turn is still running")
+        XCTAssertNil(model.errorMessage, "no modal while a turn runs quietly")
+        XCTAssertNil(model.threadInlineMessage, "no inline banner while a turn runs quietly")
+        XCTAssertTrue(model.failedSends.isEmpty, "no failed-send affordance while a turn runs quietly")
+        XCTAssertEqual(model.syncPresentation, .live, "a quiet running turn does not degrade the indicator")
+
+        stream.finish()
+        model.cancelStream()
     }
 
     func testAlertPresentedBreadcrumbFiresOnlyOnNewPresentation() async throws {
@@ -9389,6 +10282,15 @@ final class ChatViewModelTests: XCTestCase {
 
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.syncPresentation, .authRequired)
+        // Finding F2: the optimistic assistant bubble must NOT be left running behind
+        // the sign-in screen — no lingering spinner. It is finalized to
+        // failed-non-running with no Retry (re-auth then re-send from the composer).
+        let assistant = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        XCTAssertEqual(assistant.status, .failed, "the bubble is finalized, not left .running")
+        XCTAssertFalse(assistant.isLoading, "no lingering spinner after a noCredentials send")
+        XCTAssertNil(model.failedSend(for: assistant), "no Retry — re-auth drives recovery")
+        // Give any (erroneous) modal breadcrumb time to spool before asserting absence.
+        try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(
             spooledReports(in: spoolDirectory).contains { $0.componentName == "Chat.alertPresented" },
             "a pre-turn noCredentials send must not raise the generic error modal"
@@ -9398,7 +10300,7 @@ final class ChatViewModelTests: XCTestCase {
     func testBufferedResyncDrainDoesNotModalOnFailingFollowUpRefresh() async throws {
         // Finding 10: a buffered turn_ended drained during a resync routes through
         // the steady-state handler, whose follow-up list/message refresh defaults to
-        // modal-raising. The drain must use the silent (`surfaceErrors: false`)
+        // modal-raising. The drain must use the silent (`userInitiated: false`)
         // variant, so a failing follow-up refresh degrades silently — no modal.
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
@@ -9796,6 +10698,18 @@ final class ChatViewModelTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "selectedProfileId")
     }
 
+    /// Force a known-good, non-expiring api token with NO refresh token, overriding
+    /// any state a prior test leaked into the shared keychain (app-hosted tests share
+    /// global auth state). Used by tests that must deterministically exercise a
+    /// forced-refresh rejection regardless of ordering.
+    private func seedFreshValidToken() {
+        KeychainHelper.save(key: "fa_api_token", string: "chat-view-model-token")
+        UserDefaults.standard.set(
+            ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+            forKey: "fa_token_expiry"
+        )
+    }
+
     /// Overwrite the fresh setUp token with one due for refresh, so the next
     /// authorized request drives `refreshIfNeeded` through its network path.
     private func seedExpiringToken() {
@@ -9884,6 +10798,22 @@ private final class AtomicCounter: @unchecked Sendable {
     }
 }
 
+/// Lock-guarded boolean flipped from the test body but read on the URLProtocol
+/// loading thread, so a stubbed endpoint can change its response mid-test.
+private final class AtomicFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag: Bool
+
+    init(_ initial: Bool) {
+        flag = initial
+    }
+
+    var value: Bool {
+        get { lock.withLock { flag } }
+        set { lock.withLock { flag = newValue } }
+    }
+}
+
 /// Lock-guarded optional string for capturing a value (e.g. a client-generated
 /// turn id) off the URLProtocol loading thread.
 private final class AtomicString: @unchecked Sendable {
@@ -9895,6 +10825,21 @@ private final class AtomicString: @unchecked Sendable {
     }
 
     var value: String? {
+        lock.withLock { stored }
+    }
+}
+
+/// Lock-guarded ordered list of strings for capturing every value a stubbed
+/// endpoint saw (e.g. the turn_id on each POST retry) off the loader thread.
+private final class AtomicStringList: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String] = []
+
+    func append(_ value: String) {
+        lock.withLock { stored.append(value) }
+    }
+
+    var values: [String] {
         lock.withLock { stored }
     }
 }

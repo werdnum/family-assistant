@@ -41,8 +41,45 @@ final class ChatViewModel {
     var errorMessage: String?
     var mobileShowsConversationList = false
     var steerErrorMessage: String?
+    /// Inline, non-modal feedback shown on the active thread when a user-initiated
+    /// read fails, a conversation's access changed (403), or a user action was
+    /// rate-limited (429). Distinct from the modal `errorMessage`: this never
+    /// blocks the UI and is cleared when the thread reloads or the user acts again.
+    var threadInlineMessage: String?
     var stopWarningMessage: String?
     var composerFocusRequestID: UUID?
+    /// Failed user sends keyed by DURABLE turn id, each retaining the inputs to
+    /// reissue (or reconcile) the SAME turn. Keying by turn id — not the local
+    /// assistant-bubble id — keeps the retry affordance attached across the
+    /// optimistic→persisted bubble swap `mergeNewMessages` performs: a server-failed
+    /// `turn_ended` records the failure, then the merge replaces the `local_` bubble
+    /// with its `msg_` row (which carries the same `turnID`), so the affordance must
+    /// resolve by turn identity rather than a bubble id that vanishes (finding F4). A
+    /// present entry drives the failed-bubble retry affordance (§4.5, §8.1 — the
+    /// decision was to REUSE the existing failed-bubble styling rather than add a
+    /// dedicated component). Cleared when the retry succeeds or the thread reloads.
+    var failedSends: [String: FailedSend] = [:]
+
+    /// The retry payload for a rendered bubble, resolved by its durable turn id.
+    /// Bubbles without a known turn id (pre-`turn_id` backends) cannot carry a
+    /// failed-send affordance and resolve to nil. The user and assistant messages of
+    /// a turn share the same `turnID`, so the affordance is restricted to the
+    /// assistant bubble — otherwise Retry would render onto (and clear) the user's
+    /// prompt.
+    func failedSend(for message: ChatMessage) -> FailedSend? {
+        guard message.role == .assistant, let turnID = message.turnID else {
+            return nil
+        }
+        return failedSends[turnID]
+    }
+
+    /// Drop the retry payload for the turn a rendered bubble belongs to, if any.
+    private func clearFailedSend(forAssistantMessageID assistantMessageID: String) {
+        guard let turnID = messages.first(where: { $0.id == assistantMessageID })?.turnID else {
+            return
+        }
+        failedSends.removeValue(forKey: turnID)
+    }
 
     var canSendDraft: Bool {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -105,6 +142,20 @@ final class ChatViewModel {
     // `deinit` so a discarded model's closure stops driving its dead coordinator.
     @ObservationIgnored private var authObserverToken: UUID?
     @ObservationIgnored private var pendingConfirmationsTask: Task<Void, Never>?
+    // Consecutive advisory-read failures tracked PER operation (list refresh,
+    // recent-list refresh, approvals poll, profile load, catch-up merges). A single
+    // global counter would let a persistently-failing endpoint be masked forever by
+    // an interleaved succeeding poll (a failing conversations refresh never crossing
+    // the threshold because the 15s approvals poll keeps resetting it), which
+    // violates the design's "silent-forever failure is impossible" (finding F6). So
+    // each operation owns its own run: degraded health = ANY operation at/over
+    // `advisoryDegradedThreshold`, and an operation's own success clears only its
+    // counter (recovery is per-endpoint).
+    @ObservationIgnored private var advisoryFailureCounts: [ChatOperation: Int] = [:]
+    @ObservationIgnored private let advisoryDegradedThreshold = 3
+    // Guards the one scheduled retry a 429 grants an advisory read, so a burst of
+    // rate-limited polls doesn't stack retries.
+    @ObservationIgnored private var advisoryRetryTask: Task<Void, Never>?
     // The durable state of the one in-flight send turn (see `ActiveTurnSession`).
     // Survives its transport task: cleared only on turn completion/reconciliation
     // (`finishStreaming` / `cancelStream` / conversation switch), never on a
@@ -334,6 +385,23 @@ final class ChatViewModel {
             pendingSteersByTurnID: pendingSteersByTurnID
         )
     }
+
+    /// Run the advisory pending-approvals poll once, so a test can interleave its
+    /// (succeeding) advisory read with another failing advisory operation and verify
+    /// per-operation degraded tracking (finding F6).
+    func loadPendingConfirmationsForTesting() async {
+        await loadPendingConfirmations()
+    }
+
+    /// Test-only: register the coordinator's auth observer (and start the path
+    /// monitor) the way `bootstrap()` does, WITHOUT starting the account-global
+    /// activity stream. Tests that exercise `sendDraft` in isolation (no
+    /// `bootstrap()`) need the observer registered so a send-path auth latch surfaces
+    /// as the coordinator's `.authRequired` presentation, but must not trip a mock
+    /// that 401s every `/stream` request before the send's POST runs.
+    func activateSyncForTesting() {
+        activateSync()
+    }
     #endif
 
     init(
@@ -520,22 +588,30 @@ final class ChatViewModel {
         }
     }
 
-    /// Refresh the full conversation list. `surfaceErrors: false` is the advisory
-    /// mode used by the foreground resync (§4.4/§4.6): a failure feeds the
-    /// breadcrumb and lets presentation degrade from per-channel health, but never
-    /// raises a modal — an advisory resume-time transient is exactly the popup this
-    /// design removes. User-initiated refresh and bootstrap keep the modal.
-    func refreshConversations(surfaceErrors: Bool = true) async {
+    /// Refresh the full conversation list. `userInitiated` selects the surface via
+    /// the central taxonomy (§4.5): a background (resync/push) refresh is advisory —
+    /// its failure feeds the breadcrumb and, after a persistent run, degrades
+    /// coordinator health, but never raises a modal (the popup this design removes);
+    /// a user-initiated refresh (pull-to-refresh, bootstrap) keeps its existing
+    /// modal/inline surface.
+    func refreshConversations(userInitiated: Bool = true) async {
         isLoadingConversations = true
         do {
             conversations = try await apiClient.listConversations()
             errorMessage = nil
+            recordAdvisorySuccess(operation: .conversationsRefresh)
         } catch {
-            if surfaceErrors {
-                presentErrorAlert(
-                    error.localizedDescription,
+            if userInitiated {
+                handleUserReadFailure(
+                    operation: .conversationsRefresh,
                     reason: .conversationsRefresh,
-                    underlyingError: error
+                    error: error
+                )
+            } else {
+                handleAdvisoryReadFailure(
+                    operation: .conversationsRefresh,
+                    error: error,
+                    retry: { [weak self] in await self?.refreshConversations(userInitiated: false) }
                 )
             }
             errorReporter.report(error, component: "Chat.conversations")
@@ -559,7 +635,7 @@ final class ChatViewModel {
     /// which a skewed clock could keep "newer" forever), after which the server
     /// row is authoritative. The whole list is sorted most-recent-first so a kept
     /// optimistic row stays at the top.
-    private func refreshRecentConversations(surfaceErrors: Bool = true) async {
+    private func refreshRecentConversations(userInitiated: Bool = true) async {
         do {
             let recent = try await apiClient.listRecentConversations()
             let recentIDs = Set(recent.map(\.conversationID))
@@ -579,12 +655,19 @@ final class ChatViewModel {
             let untouched = conversations.filter { !recentIDs.contains($0.conversationID) }
             conversations = (merged + untouched).sorted { $0.lastTimestamp > $1.lastTimestamp }
             errorMessage = nil
+            recordAdvisorySuccess(operation: .recentConversationsRefresh)
         } catch {
-            if surfaceErrors {
-                presentErrorAlert(
-                    error.localizedDescription,
+            if userInitiated {
+                handleUserReadFailure(
+                    operation: .recentConversationsRefresh,
                     reason: .recentConversationsRefresh,
-                    underlyingError: error
+                    error: error
+                )
+            } else {
+                handleAdvisoryReadFailure(
+                    operation: .recentConversationsRefresh,
+                    error: error,
+                    retry: { [weak self] in await self?.refreshRecentConversations(userInitiated: false) }
                 )
             }
             errorReporter.report(error, component: "Chat.recentConversations")
@@ -803,6 +886,11 @@ final class ChatViewModel {
         representedPersistedUserInputEchoCounts.removeAll()
         steerErrorMessage = nil
         stopWarningMessage = nil
+        // A failed send and its inline banner are scoped to the thread they
+        // occurred on; switching away or starting fresh clears both so a stale
+        // retry bubble / banner can't linger over an unrelated conversation.
+        failedSends.removeAll()
+        threadInlineMessage = nil
     }
 
     func changeProfile(to profileID: String) {
@@ -819,11 +907,17 @@ final class ChatViewModel {
         startNewConversation()
     }
 
-    func loadMessages(conversationID: String? = nil, surfaceErrors: Bool = true) async {
+    func loadMessages(conversationID: String? = nil, userInitiated: Bool = true) async {
         guard let id = conversationID ?? self.conversationID else {
             return
         }
         isLoadingMessages = true
+        // Reset on EVERY exit, including the stale-selection guards below: a
+        // conversation switch during the await returns early, and a leaked
+        // `isLoadingMessages` would permanently disable the composer on the thread
+        // the user moved to. Reachable when a delayed advisory retry lands after a
+        // switch.
+        defer { isLoadingMessages = false }
         do {
             let response = try await apiClient.getMessages(conversationID: id)
             // The user may have switched conversations during the network await;
@@ -835,20 +929,28 @@ final class ChatViewModel {
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
             await attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
+            recordAdvisorySuccess(operation: .messagesLoad)
         } catch {
             guard self.conversationID == id else {
                 return
             }
-            if surfaceErrors {
-                presentErrorAlert(
-                    error.localizedDescription,
+            if userInitiated {
+                handleUserReadFailure(
+                    operation: .messagesLoad,
                     reason: .messagesLoad,
-                    underlyingError: error
+                    conversationID: id,
+                    error: error
+                )
+            } else {
+                handleAdvisoryReadFailure(
+                    operation: .messagesLoad,
+                    conversationID: id,
+                    error: error,
+                    retry: { [weak self] in await self?.loadMessages(conversationID: id, userInitiated: false) }
                 )
             }
             errorReporter.report(error, component: "Chat.messages")
         }
-        isLoadingMessages = false
     }
 
     /// Tail-attach to a turn the server reports as still running in `active_turns`
@@ -974,11 +1076,11 @@ final class ChatViewModel {
                 }
             } catch {
                 if shouldSurfaceStopWarning(for: activeTurn) {
-                    presentErrorAlert(
-                        error.localizedDescription,
-                        reason: .stopTurnFailed,
-                        underlyingError: error
-                    )
+                    // Match `stopTurn`'s M3 inline surface: a stop failure shows on
+                    // the stop-warning line under the composer, never a modal (§4.5).
+                    let message = "Could not stop the assistant. \(error.localizedDescription)"
+                    stopWarningMessage = message
+                    recordInlineActionFailure(message, operation: .stopTurn)
                 }
                 errorReporter.report(error, component: "Chat.stopTurn")
             }
@@ -1158,10 +1260,10 @@ final class ChatViewModel {
     /// yet (e.g. the very first turn in a conversation).
     private func mergeNewMessages(
         conversationID id: String,
-        surfaceErrors: Bool = true
+        userInitiated: Bool = true
     ) async {
         guard let after = latestPersistedTimestamp() else {
-            await loadMessages(conversationID: id, surfaceErrors: surfaceErrors)
+            await loadMessages(conversationID: id, userInitiated: userInitiated)
             return
         }
         do {
@@ -1186,6 +1288,7 @@ final class ChatViewModel {
             }
             guard !delta.isEmpty else {
                 errorMessage = nil
+                recordAdvisorySuccess(operation: .messagesMerge)
                 return
             }
             // A send may have STARTED during the fetch await above: the entry guards
@@ -1210,12 +1313,21 @@ final class ChatViewModel {
             merged.append(contentsOf: rendered.filter { !existingIDs.contains($0.id) })
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(merged))
             errorMessage = nil
+            recordAdvisorySuccess(operation: .messagesMerge)
         } catch {
-            if surfaceErrors {
-                presentErrorAlert(
-                    error.localizedDescription,
+            if userInitiated {
+                handleUserReadFailure(
+                    operation: .messagesMerge,
                     reason: .messagesMerge,
-                    underlyingError: error
+                    conversationID: id,
+                    error: error
+                )
+            } else {
+                handleAdvisoryReadFailure(
+                    operation: .messagesMerge,
+                    conversationID: id,
+                    error: error,
+                    retry: { [weak self] in await self?.mergeNewMessages(conversationID: id, userInitiated: false) }
                 )
             }
             errorReporter.report(error, component: "Chat.mergeMessages")
@@ -1279,11 +1391,15 @@ final class ChatViewModel {
             // back to its default for an unknown profile id on send, so keeping a
             // possibly-stale selection is safe. Matches the web frontend.
             errorMessage = nil
+            recordAdvisorySuccess(operation: .profilesLoad)
         } catch {
-            presentErrorAlert(
-                error.localizedDescription,
-                reason: .profilesLoad,
-                underlyingError: error
+            // Profile load is an advisory read (§4.5): a failure is never modal. The
+            // held selection is kept and the backend falls back to its default on
+            // send, so a transient load failure degrades health rather than blocking.
+            handleAdvisoryReadFailure(
+                operation: .profilesLoad,
+                error: error,
+                retry: { [weak self] in await self?.loadProfiles() }
             )
             errorReporter.report(error, component: "Chat.profiles")
         }
@@ -1419,14 +1535,33 @@ final class ChatViewModel {
         /// The turn's events have rotated out of the hub buffer (410). Nothing to
         /// replay, but the reply is durably persisted; reload history.
         case reloadHistory
-        /// A genuinely fatal failure (e.g. auth) that recovery can't paper over.
-        case failed(String)
+        /// A genuinely fatal subscribe failure that recovery can't paper over. The
+        /// underlying error is preserved (not flattened to a string) so an auth
+        /// failure (a stream-GET 401/403 after an accepted POST) can route to the
+        /// re-auth flow instead of a Retry button (finding F3).
+        case failed(message: String, error: Error?)
 
         var isCompleted: Bool {
             if case .completed = self {
                 return true
             }
             return false
+        }
+
+        /// Custom equality: the `.failed` payload carries a non-`Equatable` `Error`,
+        /// and the resume loop only ever compares the resumable cases (`.dropped` /
+        /// `.interrupted`). Two `.failed` values compare by message alone.
+        static func == (lhs: TurnSubscriptionOutcome, rhs: TurnSubscriptionOutcome) -> Bool {
+            switch (lhs, rhs) {
+            case let (.completed(l), .completed(r)):
+                l == r
+            case (.dropped, .dropped), (.interrupted, .interrupted), (.reloadHistory, .reloadHistory):
+                true
+            case let (.failed(lMessage, _), .failed(rMessage, _)):
+                lMessage == rMessage
+            default:
+                false
+            }
         }
     }
 
@@ -1453,7 +1588,7 @@ final class ChatViewModel {
                 profileID: profileID,
                 attachments: attachments
             )
-        } catch let ChatAPIError.server(statusCode, _) where statusCode == 401 || statusCode == 403 {
+        } catch let ChatAPIError.server(statusCode, _, _) where statusCode == 401 || statusCode == 403 {
             // First attempt got a 401/403. Try one forced refresh; if it succeeds,
             // retry once. If the refresh fails or the retry also 401/403s, the error
             // bubbles up so the existing catch in runSendTurn latches signInRequired.
@@ -1470,7 +1605,7 @@ final class ChatViewModel {
                     // Terminal rejection (or superseded session): propagate as the
                     // original 401/403 so runSendTurn's catch latches signInRequired
                     // (epoch-fenced; a no-op for a stale send).
-                    throw ChatAPIError.server(statusCode: statusCode, detail: nil)
+                    throw ChatAPIError.server(statusCode: statusCode, detail: nil, retryAfter: nil)
                 default:
                     // Transient refresh failure: surface it via the normal path.
                     throw error
@@ -1555,11 +1690,10 @@ final class ChatViewModel {
                         do {
                             _ = try await self.requestStopWithRetry(turnToCancel)
                         } catch {
-                            self.presentErrorAlert(
-                                error.localizedDescription,
-                                reason: .stopTurnFailed,
-                                underlyingError: error
-                            )
+                            // Surface inline on the stop-warning line, not a modal.
+                            let message = "Could not stop the assistant. \(error.localizedDescription)"
+                            self.stopWarningMessage = message
+                            self.recordInlineActionFailure(message, operation: .stopTurn)
                             self.errorReporter.report(error, component: "Chat.stopTurn")
                         }
                     }
@@ -1579,9 +1713,14 @@ final class ChatViewModel {
                 // The retried turn finished durably but is not replayable from the
                 // hub. Don't subscribe; reload persisted history to surface it.
                 if start.incomplete {
-                    appendStreamError(
-                        "The assistant reply could not be recovered. Please try again.",
-                        assistantMessageID: assistantMessageID
+                    // Surface inline at the point of action (§4.5), never a modal.
+                    // The turn is durable server-side, so the retry affordance
+                    // reconciles (reloads history) rather than re-POSTing.
+                    presentInlineSendFailure(
+                        "The assistant reply could not be recovered. Tap retry to reload.",
+                        session: session,
+                        postAccepted: true,
+                        lastAppliedSeq: lastSeq
                     )
                 } else {
                     // Turn settled (durably complete): retire the optimistic mark
@@ -1602,11 +1741,13 @@ final class ChatViewModel {
                 do {
                     secured = try await requestStopWithRetry(ActiveChatTurn(turnID: turnID, conversationID: id))
                 } catch {
-                    appendStreamError(
-                        error.localizedDescription,
-                        assistantMessageID: assistantMessageID,
-                        reason: .stopTurnFailed
-                    )
+                    // The stop's retried cancel threw: surface inline on the
+                    // stop-warning line, never a modal (§4.5). The turn keeps
+                    // running, so leave the bubble as-is rather than marking failed.
+                    let message = "Could not stop the assistant. \(error.localizedDescription)"
+                    stopWarningMessage = message
+                    recordInlineActionFailure(message, operation: .stopTurn)
+                    errorReporter.report(error, component: "Chat.stopTurn")
                     finishStreaming(streamToken)
                     return
                 }
@@ -1672,6 +1813,16 @@ final class ChatViewModel {
             // those closes so a healthy resume after a real drop is immediate.
             var noProgressResumes = 0
             var resumeDelay = liveReconnectInitialDelaySeconds
+            // A stream-GET 401/403 after the accepted POST is not fatal on its own:
+            // force one credential refresh and, on success, resume the durable turn
+            // (finding F3). One attempt only — a repeated 401 after refresh is a real
+            // rejection that latched `authRequired` and must stop the loop.
+            var authRefreshAttempted = false
+            if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
+                authRefreshAttempted = true
+                outcome = await resolveAuthFailure(outcome)
+                session.lastAppliedSeq = lastSeq
+            }
             while outcome == .dropped || outcome == .interrupted {
                 guard !Task.isCancelled, currentStreamToken == streamToken,
                       noProgressResumes < maxConsecutiveStreamResumes
@@ -1695,6 +1846,14 @@ final class ChatViewModel {
                     lastSeq: &lastSeq
                 )
                 session.lastAppliedSeq = lastSeq
+                if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
+                    authRefreshAttempted = true
+                    outcome = await resolveAuthFailure(outcome)
+                    session.lastAppliedSeq = lastSeq
+                    guard !Task.isCancelled, currentStreamToken == streamToken else {
+                        return
+                    }
+                }
                 let heldOpen = Date().timeIntervalSince(resumeStartedAt) >= streamResumeLivenessSeconds
                 if lastSeq != seqBeforeResume || heldOpen {
                     noProgressResumes = 0
@@ -1725,8 +1884,8 @@ final class ChatViewModel {
                 // optimistic mark before refreshing so the authoritative summary
                 // (with the reply preview) replaces the held row.
                 optimisticPendingByTurnID.removeValue(forKey: turnID)
-                await refreshRecentConversations()
-                await mergeNewMessages(conversationID: id)
+                await refreshRecentConversations(userInitiated: false)
+                await mergeNewMessages(conversationID: id, userInitiated: false)
                 if status == "cancelled" || status == "failed" || stopRequestedTurnIDs.contains(turnID) {
                     clearRecoverableSteers()
                 } else {
@@ -1758,13 +1917,32 @@ final class ChatViewModel {
                     conversationID: id,
                     assistantMessageID: assistantMessageID
                 )
-            case .failed(let message):
+            case let .failed(message, error):
                 // A fatal subscribe failure ends this send. Clear any steer the
                 // user had in flight/awaiting echo (as the failed-completion path
                 // does) so a stranded text entry doesn't keep blocking re-sending
                 // the same steer as a normal draft.
                 clearRecoverableSteers()
-                appendStreamError(message, assistantMessageID: assistantMessageID)
+                session.lastAppliedSeq = lastSeq
+                if Self.authStatusForFailure(outcome) != nil {
+                    // A stream 401/403 whose forced refresh was rejected: the auth
+                    // layer latched `authRequired`, which drives the re-auth
+                    // affordance. Finalize the bubble (no lingering spinner) but
+                    // record NO Retry — retrying would just replay the unauthorized
+                    // request (finding F3).
+                    finalizeBubbleAuthRejected(message, assistantMessageID: assistantMessageID)
+                } else {
+                    // The POST was accepted (`startTurn` returned), so the turn is
+                    // durable server-side: surface inline with a reconcile-on-retry
+                    // affordance, never a modal (§4.5).
+                    presentInlineSendFailure(
+                        message,
+                        session: session,
+                        postAccepted: true,
+                        lastAppliedSeq: lastSeq,
+                        underlyingError: error
+                    )
+                }
             }
         } catch is CancellationError {
             // A suspend-cancel (real background) must preserve the turn for
@@ -1813,21 +1991,70 @@ final class ChatViewModel {
                 )
             }
             // A 401/403 on turn-start (revoked token) routes through the central
-            // signInRequired path: latch it with no generic modal.
-            let underlyingError: Error?
-            if case ChatAPIError.server(let statusCode, _) = error, statusCode == 401 || statusCode == 403 {
+            // signInRequired path: latch it via `markAuthRequiredIfCurrent` so the
+            // toolbar's authRequired affordance drives re-auth. Tagging the error as
+            // `AuthError.noCredentials` also makes `presentInlineSendFailure` suppress
+            // its inline retry, which would just re-POST into the same rejection
+            // (finding 7).
+            let underlyingError: Error
+            if case ChatAPIError.server(let statusCode, _, _) = error, statusCode == 401 || statusCode == 403 {
                 authManager.markAuthRequiredIfCurrent(capturedEpoch: startEpoch)
                 underlyingError = AuthError.noCredentials
             } else {
                 underlyingError = error
             }
-            appendStreamError(
+            // The prompt was never accepted, so retry can re-POST the SAME turn id
+            // without any risk of double-send (the server dedupes on it). Surface
+            // inline at the point of action with that retry affordance, not a modal.
+            presentInlineSendFailure(
                 error.localizedDescription,
-                assistantMessageID: assistantMessageID,
+                session: session,
+                postAccepted: startSucceeded,
+                lastAppliedSeq: lastSeq,
                 underlyingError: underlyingError
             )
         }
         finishStreaming(streamToken)
+    }
+
+    /// The HTTP status of a subscription-`.failed` outcome that must route to the
+    /// auth flow (a stream-GET 401/403 after an accepted POST), or nil for any
+    /// other fatal failure. A 401/403 here means the token the client believed
+    /// fresh was rejected mid-turn; a Retry button would just replay the
+    /// unauthorized request (finding F3).
+    private static func authStatusForFailure(_ outcome: TurnSubscriptionOutcome) -> Int? {
+        guard case .failed(_, let error) = outcome,
+              case ChatAPIError.server(let statusCode, _, _)? = error,
+              statusCode == 401 || statusCode == 403
+        else {
+            return nil
+        }
+        return statusCode
+    }
+
+    /// Resolve a subscription outcome that failed with an auth 401/403 by forcing
+    /// exactly one credential refresh through M1's epoch-fenced single-flight
+    /// `refreshIfNeeded(force:ownerEpoch:)`: on success the durable turn is
+    /// resumable, so return `.dropped` to feed the resume loop; on a terminal
+    /// rejection latch `authRequired` (matching the coordinator's stream loops) and
+    /// return the original `.failed` so the caller finalizes the bubble without a
+    /// Retry affordance. A transient refresh failure is likewise treated as
+    /// non-resumable rather than spinning the resume loop against a still-401
+    /// stream. Any non-auth failure passes through unchanged.
+    private func resolveAuthFailure(_ outcome: TurnSubscriptionOutcome) async -> TurnSubscriptionOutcome {
+        guard Self.authStatusForFailure(outcome) != nil else {
+            return outcome
+        }
+        let epoch = authManager.authEpoch
+        do {
+            try await authManager.refreshIfNeeded(force: true, ownerEpoch: epoch)
+            return .dropped
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            authManager.markAuthRequiredIfCurrent(capturedEpoch: epoch)
+            return outcome
+        } catch {
+            return outcome
+        }
     }
 
     /// Subscribe to a turn and consume its events, mapping connection failures to
@@ -1881,15 +2108,18 @@ final class ChatViewModel {
             return .interrupted
         } catch let error as ChatAPIError {
             let outcome: TurnSubscriptionOutcome
-            if case .server(let statusCode, _) = error, statusCode == 410 {
+            if case .server(let statusCode, _, _) = error, statusCode == 410 {
                 outcome = .reloadHistory
-            } else if case .server(let statusCode, _) = error, statusCode >= 500 {
+            } else if case .server(let statusCode, _, _) = error, statusCode >= 500 {
                 // The producer keeps running through a transient server error
                 // on the subscribe GET; treat it as resumable rather than
                 // failing the whole turn.
                 outcome = .dropped
             } else {
-                outcome = .failed(error.localizedDescription)
+                // Preserve the ChatAPIError so the caller can route a 401/403 to the
+                // auth flow (finding F3) rather than a Retry button that would just
+                // replay the unauthorized request.
+                outcome = .failed(message: error.localizedDescription, error: error)
             }
             reportStreamOutcome(
                 phase: "send-subscribe",
@@ -1981,7 +2211,7 @@ final class ChatViewModel {
                    let message = event.errorMessage,
                    !message.isEmpty
                 {
-                    appendStreamError(message, assistantMessageID: assistantMessageID)
+                    presentInlineTurnFailure(message, assistantMessageID: assistantMessageID)
                 }
                 return .completed(status: event.status)
             }
@@ -2003,8 +2233,8 @@ final class ChatViewModel {
         assistantMessageID: String
     ) async {
         removeLocalAssistantPlaceholder(assistantMessageID)
-        await refreshRecentConversations()
-        await mergeNewMessages(conversationID: id)
+        await refreshRecentConversations(userInitiated: false)
+        await mergeNewMessages(conversationID: id, userInitiated: false)
     }
 
     /// Reset shared streaming state, but only for the still-current send: a
@@ -2055,11 +2285,11 @@ final class ChatViewModel {
             guard shouldSurfaceStopWarning(for: activeTurn) else {
                 return
             }
-            presentErrorAlert(
-                error.localizedDescription,
-                reason: .stopTurnFailed,
-                underlyingError: error
-            )
+            // A stop failure surfaces inline at the point of action — the
+            // stop-warning line under the composer — never a modal (§4.5).
+            let message = "Could not stop the assistant. \(error.localizedDescription)"
+            stopWarningMessage = message
+            recordInlineActionFailure(message, operation: .stopTurn)
             errorReporter.report(error, component: "Chat.stopTurn")
             return
         }
@@ -2213,11 +2443,10 @@ final class ChatViewModel {
             do {
                 return try await self.requestStopWithRetry(turnToCancel)
             } catch {
-                self.presentErrorAlert(
-                    error.localizedDescription,
-                    reason: .cancelStopFailed,
-                    underlyingError: error
-                )
+                // Surface inline on the stop-warning line, not a modal (§4.5).
+                let message = "Could not stop the assistant. \(error.localizedDescription)"
+                self.stopWarningMessage = message
+                self.recordInlineActionFailure(message, operation: .stopTurn)
                 self.errorReporter.report(error, component: "Chat.stopTurn")
                 return false
             }
@@ -2246,11 +2475,11 @@ final class ChatViewModel {
                 return .accepted
             } catch let error as ChatAPIError {
                 switch error {
-                case .server(let statusCode, _) where statusCode == 409:
+                case .server(let statusCode, _, _) where statusCode == 409:
                     return hadAmbiguousFailure ? .error : .finished
-                case .server(let statusCode, _) where statusCode == 404:
+                case .server(let statusCode, _, _) where statusCode == 404:
                     lastWasNotFound = true
-                case .server(let statusCode, _) where statusCode < 500:
+                case .server(let statusCode, _, _) where statusCode < 500:
                     errorReporter.report(error, component: "Chat.steerTurn")
                     return .error
                 default:
@@ -2270,7 +2499,7 @@ final class ChatViewModel {
     }
 
     private static func isRetryableTurnControlError(_ error: ChatAPIError) -> Bool {
-        if case .server(let statusCode, _) = error {
+        if case .server(let statusCode, _, _) = error {
             return statusCode == 404 || statusCode >= 500
         }
         return false
@@ -2594,27 +2823,33 @@ final class ChatViewModel {
 
     func removeDraftAttachment(_ attachment: ChatAttachment) async {
         guard attachment.uploadState != .uploading else {
-            presentErrorAlert(
-                "Wait for attachment upload to finish before removing.",
-                reason: .attachmentRemoveFailed
-            )
+            // Inline on the attachment chip, never a modal (§4.5).
+            setDraftAttachmentError(attachment, "Wait for upload to finish before removing.")
             return
         }
         if let attachmentID = attachment.attachmentID {
             do {
                 try await apiClient.deleteAttachment(attachmentID: attachmentID)
             } catch {
-                presentErrorAlert(
-                    "Could not remove attachment. \(error.localizedDescription)",
-                    reason: .attachmentRemoveFailed,
-                    underlyingError: error
-                )
+                let message = "Could not remove. \(error.localizedDescription)"
+                setDraftAttachmentError(attachment, message)
+                recordInlineActionFailure(message, operation: .attachmentOp)
                 errorReporter.report(error, component: "Chat.removeAttachment")
                 return
             }
         }
         cleanupTemporaryImport(for: attachment)
         draftAttachments.removeAll { $0.id == attachment.id }
+    }
+
+    /// Set a draft attachment chip's inline error (the chip is the point-of-action
+    /// anchor for a failed remove / not-yet-uploaded state), leaving the chip in
+    /// place so the user can see and act on the failure without a modal.
+    private func setDraftAttachmentError(_ attachment: ChatAttachment, _ message: String) {
+        guard let index = draftAttachments.firstIndex(where: { $0.id == attachment.id }) else {
+            return
+        }
+        draftAttachments[index].errorMessage = message
     }
 
     func confirm(_ confirmation: ChatPendingConfirmation, approved: Bool) async {
@@ -2627,9 +2862,13 @@ final class ChatViewModel {
             updateToolConfirmation(toolCallID: confirmation.toolCallID, approved: approved)
             pendingConfirmations.removeAll { $0.requestID == confirmation.requestID }
         } catch {
+            // The confirmation card's own `errorMessage` is THE inline surface for
+            // a failed confirm (§4.5); it never modals. Tag the inline breadcrumb so
+            // its rate is measurable alongside the modal and send-failure rates.
             if let index = pendingConfirmations.firstIndex(where: { $0.requestID == confirmation.requestID }) {
                 pendingConfirmations[index].errorMessage = error.localizedDescription
             }
+            recordInlineActionFailure(error.localizedDescription, operation: .confirmTool)
             errorReporter.report(error, component: "Chat.confirmTool")
         }
     }
@@ -2745,11 +2984,14 @@ final class ChatViewModel {
         do {
             pendingConfirmations = try await apiClient.listPendingConfirmations()
             errorMessage = nil
+            recordAdvisorySuccess(operation: .pendingApprovalsPoll)
         } catch {
-            presentErrorAlert(
-                "Could not load pending approvals. \(error.localizedDescription)",
-                reason: .pendingApprovalsPoll,
-                underlyingError: error
+            // The ~15s approvals poll is a background advisory read (prod cluster G):
+            // its failure must NEVER modal (§4.5). A persistent run degrades
+            // coordinator health instead; recovery clears it on the next good poll.
+            handleAdvisoryReadFailure(
+                operation: .pendingApprovalsPoll,
+                error: error
             )
             errorReporter.report(error, component: "Chat.pendingApprovals")
         }
@@ -2877,9 +3119,9 @@ final class ChatViewModel {
         // the send transport is rendering into (same guard as applyMessagesSnapshot
         // and the other passive-refresh paths). The list refresh below is safe.
         if let conversationID, conversationID == self.conversationID, !isSendActivelyStreaming {
-            await mergeNewMessages(conversationID: conversationID, surfaceErrors: false)
+            await mergeNewMessages(conversationID: conversationID, userInitiated: false)
         }
-        await refreshRecentConversations(surfaceErrors: false)
+        await refreshRecentConversations(userInitiated: false)
     }
 
     /// Whether the chat thread's message list should be realized into the view
@@ -2944,16 +3186,15 @@ final class ChatViewModel {
         guard !isSendActivelyStreaming else {
             return
         }
-        await mergeNewMessages(conversationID: conversationID)
-        await refreshRecentConversations()
+        await mergeNewMessages(conversationID: conversationID, userInitiated: false)
+        await refreshRecentConversations(userInitiated: false)
     }
 
     /// Handle one follow-stream event. Returns false when the loop should stop.
     private func handleLiveEvent(
         _ event: ChatStreamEvent,
         conversationID: String,
-        client: ChatAPIClient,
-        surfaceErrors: Bool = true
+        client: ChatAPIClient
     ) async -> Bool {
         switch event.type {
         case .turnEnded, .message:
@@ -2979,8 +3220,8 @@ final class ChatViewModel {
                 if let seq = event.seq {
                     recordAppliedSeq(seq)
                 }
-                await mergeNewMessages(conversationID: conversationID, surfaceErrors: surfaceErrors)
-                await refreshRecentConversations(surfaceErrors: surfaceErrors)
+                await mergeNewMessages(conversationID: conversationID, userInitiated: false)
+                await refreshRecentConversations(userInitiated: false)
                 // Acknowledge the turn_ended seq so the server marks the reply
                 // delivered and suppresses the disconnect push. Fire-and-forget.
                 if event.type == .turnEnded, let seq = event.seq {
@@ -3100,6 +3341,29 @@ final class ChatViewModel {
         }
     }
 
+    /// The captured state of a send that failed at the point of action, enough to
+    /// retry it inline from the failed bubble (§4.5). Retry is dedupe-safe: the
+    /// server is idempotent on `turnID` (chat_api.py POST /turns), so a
+    /// before-accept retry re-POSTs the SAME id and can never double-send; an
+    /// after-accept failure retries by RECONCILING (resubscribe / reload history)
+    /// rather than re-POSTing, because the turn is already running server-side.
+    struct FailedSend: Equatable {
+        let turnID: String
+        let conversationID: String
+        let assistantMessageID: String
+        let prompt: String
+        let attachments: [ChatAttachment]
+        let profileID: String
+        let previousSummary: ChatConversationSummary?
+        /// Whether `POST /turns` was accepted before the failure. `false` ⇒ the
+        /// prompt was never persisted, so retry re-POSTs the same turn id;
+        /// `true` ⇒ the turn is durable, so retry reconciles without a re-POST.
+        let postAccepted: Bool
+        /// The highest applied seq at failure time, so an after-accept retry
+        /// resubscribes from just past it rather than replaying the whole turn.
+        let lastAppliedSeq: Int?
+    }
+
     /// The operation whose failure raised the shared "Chat Error" modal. Each
     /// case tags a `Chat.alertPresented` breadcrumb so the popup rate is directly
     /// measurable in production rather than inferred from transport breadcrumbs.
@@ -3111,10 +3375,7 @@ final class ChatViewModel {
         case profilesLoad = "profiles_load"
         case sendAttachmentsUploading = "send_attachments_uploading"
         case sendAttachmentFailed = "send_attachment_failed"
-        case stopTurnFailed = "stop_turn_failed"
-        case cancelStopFailed = "cancel_stop_failed"
         case attachmentImportFailed = "attachment_import_failed"
-        case attachmentRemoveFailed = "attachment_remove_failed"
         case attachmentDownloadFailed = "attachment_download_failed"
         case pendingApprovalsPoll = "pending_approvals_poll"
         case streamError = "stream_error"
@@ -3169,6 +3430,229 @@ final class ChatViewModel {
             extraData: extra,
             bypassDedupe: true
         )
+    }
+
+    /// Route an advisory (background) read failure through the central taxonomy
+    /// (§4.5). Advisory reads NEVER modal: the classifier's verdict is silent or a
+    /// per-conversation signal (403 access-changed / 404 gone) or a 429 retry, and a
+    /// persistent run of failures degrades the coordinator's advisory health instead
+    /// of ever popping a modal. The `retry` closure re-runs the same read after a
+    /// 429 `Retry-After`. Returns after recording health/breadcrumb; the caller
+    /// still emits its own per-operation transport breadcrumb.
+    private func handleAdvisoryReadFailure(
+        operation: ChatOperation,
+        conversationID: String? = nil,
+        error: Error,
+        retry: (@MainActor () async -> Void)? = nil
+    ) {
+        let surface = ChatErrorClassifier.classify(
+            ChatErrorContext(
+                operation: operation,
+                error: error,
+                userInitiated: false,
+                retryAfter: Self.retryAfterSeconds(from: error)
+            )
+        )
+        switch surface {
+        case .silent, .degradedHealth:
+            recordAdvisoryFailure(operation: operation)
+        case .authFlow:
+            // The auth layer already latched `authRequired`; nothing to surface.
+            break
+        case let .inlineFeedback(reason):
+            // 403 access-changed on a per-conversation read: inline on the thread,
+            // never a modal. Still counts as an advisory failure for health.
+            recordAdvisoryFailure(operation: operation)
+            presentInlineThreadFeedback(inlineMessage(for: reason, error: error), reason: reason, operation: operation)
+        case .conversationGone:
+            recordAdvisoryFailure(operation: operation)
+            if let conversationID {
+                handleConversationGone(conversationID: conversationID)
+            }
+        case let .retryAfter(delay):
+            // A 429: the advisory read is not failing health-wise, it is being
+            // throttled. Schedule exactly one retry after the honored delay.
+            scheduleAdvisoryRetry(after: delay, retry: retry)
+        case .modal:
+            // Advisory reads are classified to never modal; treat an unexpected
+            // modal verdict as a silent advisory failure rather than popping one.
+            recordAdvisoryFailure(operation: operation)
+        }
+    }
+
+    /// Route a user-initiated read failure (pull-to-refresh, bootstrap) through the
+    /// central taxonomy. The classifier keeps their existing modal/inline UX so this
+    /// slice does not regress the surfaces users have today, while tagging the
+    /// operation for measurement. A user read that resolves to `silent`/degraded
+    /// still keeps the modal it had before (the classifier only routes a
+    /// *background* read to silent).
+    private func handleUserReadFailure(
+        operation: ChatOperation,
+        reason: ChatAlertReason,
+        conversationID: String? = nil,
+        error: Error
+    ) {
+        let surface = ChatErrorClassifier.classify(
+            ChatErrorContext(
+                operation: operation,
+                error: error,
+                userInitiated: true,
+                retryAfter: Self.retryAfterSeconds(from: error)
+            )
+        )
+        switch surface {
+        case .authFlow:
+            break
+        case .conversationGone:
+            if let conversationID {
+                handleConversationGone(conversationID: conversationID)
+            }
+        case let .inlineFeedback(inlineReason):
+            presentInlineThreadFeedback(
+                inlineMessage(for: inlineReason, error: error),
+                reason: inlineReason,
+                operation: operation
+            )
+        case .modal, .silent, .degradedHealth, .retryAfter:
+            presentErrorAlert(error.localizedDescription, reason: reason, underlyingError: error)
+        }
+    }
+
+    /// Increment THIS operation's consecutive advisory-failure counter and, when any
+    /// operation is now at/over the threshold, drive the coordinator's advisory
+    /// health to degraded so a persistent background failure becomes visible (§4.5,
+    /// finding F6).
+    private func recordAdvisoryFailure(operation: ChatOperation) {
+        advisoryFailureCounts[operation, default: 0] += 1
+        syncAdvisoryHealth()
+    }
+
+    /// This operation's advisory read succeeded: clear ONLY its counter (recovery is
+    /// per-endpoint) and drop degraded health if no operation is still failing, so a
+    /// persistently-failing endpoint can't be masked by another endpoint's success
+    /// (finding F6).
+    private func recordAdvisorySuccess(operation: ChatOperation) {
+        advisoryFailureCounts[operation] = 0
+        syncAdvisoryHealth()
+    }
+
+    /// Reconcile the coordinator's advisory-health input with the per-operation
+    /// counters: degraded iff ANY operation has crossed the threshold.
+    private func syncAdvisoryHealth() {
+        let degraded = advisoryFailureCounts.values.contains { $0 >= advisoryDegradedThreshold }
+        if degraded, !syncCoordinator.advisoryHealthDegraded {
+            syncCoordinator.apply(.advisoryReadsFailing(true))
+        } else if !degraded, syncCoordinator.advisoryHealthDegraded {
+            syncCoordinator.apply(.advisoryReadsFailing(false))
+        }
+    }
+
+    /// Present non-modal inline feedback on the thread and emit the
+    /// `Chat.inlineErrorPresented` breadcrumb so inline popup rates are measurable
+    /// alongside modal rates (§4.5 / §7.4).
+    private func presentInlineThreadFeedback(
+        _ message: String,
+        reason: ChatErrorSurface.InlineReason,
+        operation: ChatOperation
+    ) {
+        threadInlineMessage = message
+        errorReporter.report(
+            message: message,
+            component: "Chat.inlineErrorPresented",
+            errorType: .component,
+            extraData: ["reason": reason.rawValue, "operation": operation.rawValue],
+            bypassDedupe: true
+        )
+    }
+
+    /// Emit the `Chat.inlineErrorPresented` breadcrumb for a user-initiated action
+    /// (stop / confirm / attachment op) whose failure is surfaced at its own
+    /// point-of-action anchor (a warning line, the confirmation card's
+    /// `errorMessage`, or an attachment chip) rather than the thread banner. Keeps
+    /// those inline surfaces measurable alongside the modal and thread-banner rates
+    /// without the classifier having to know each anchor.
+    private func recordInlineActionFailure(_ message: String, operation: ChatOperation) {
+        errorReporter.report(
+            message: message,
+            component: "Chat.inlineErrorPresented",
+            errorType: .component,
+            extraData: [
+                "reason": ChatErrorSurface.InlineReason.actionFailed.rawValue,
+                "operation": operation.rawValue,
+            ],
+            bypassDedupe: true
+        )
+    }
+
+    /// A conversation the client read 403/404 for no longer exists or is no longer
+    /// accessible: drop it from the held list and, when it is the selected thread,
+    /// surface a gone-state inline rather than a transport error.
+    private func handleConversationGone(conversationID: String) {
+        conversations.removeAll { $0.conversationID == conversationID }
+        if conversationID == self.conversationID {
+            presentInlineThreadFeedback(
+                "This conversation is no longer available.",
+                reason: .accessChanged,
+                operation: .messagesLoad
+            )
+        }
+    }
+
+    /// Schedule the single retry a 429 grants an advisory read after the honored
+    /// `Retry-After` (or a default when the header was absent). Coalesces so a burst
+    /// of throttled polls doesn't stack retries.
+    private func scheduleAdvisoryRetry(
+        after delay: TimeInterval?,
+        retry: (@MainActor () async -> Void)?
+    ) {
+        guard let retry else {
+            return
+        }
+        advisoryRetryTask?.cancel()
+        let seconds = delay ?? Self.defaultRetryAfterSeconds
+        advisoryRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else {
+                return
+            }
+            await retry()
+        }
+    }
+
+    /// The human-readable inline message for an inline surface verdict.
+    private func inlineMessage(for reason: ChatErrorSurface.InlineReason, error: Error) -> String {
+        switch reason {
+        case .accessChanged:
+            "You no longer have access to this conversation."
+        case .rateLimited:
+            "Too many requests. Please try again in a moment."
+        case .userReadFailed:
+            "Couldn't refresh. \(error.localizedDescription)"
+        case .actionFailed:
+            error.localizedDescription
+        }
+    }
+
+    /// The default backoff applied to a 429 whose response omitted `Retry-After`.
+    private static let defaultRetryAfterSeconds: TimeInterval = 5
+
+    /// The `Retry-After` (seconds) a server attached to a 429, if present. Prefers
+    /// the parsed `Retry-After` response header carried on `ChatAPIError.server`;
+    /// falls back to a numeric detail body (e.g. `"30"`) for servers that report the
+    /// backoff there instead. Nil ⇒ defer to the default backoff.
+    static func retryAfterSeconds(from error: Error) -> TimeInterval? {
+        guard case ChatAPIError.server(429, let detail, let retryAfter) = error else {
+            return nil
+        }
+        if let retryAfter {
+            return retryAfter
+        }
+        guard let detail,
+              let seconds = TimeInterval(detail.trimmingCharacters(in: .whitespaces))
+        else {
+            return nil
+        }
+        return seconds
     }
 
     /// Emit a breadcrumb when a send-and-watch subscription ends without a clean
@@ -3292,7 +3776,7 @@ final class ChatViewModel {
             return (urlErrorName(urlError.code), "URLError")
         }
         if let apiError = error as? ChatAPIError {
-            if case .server(let statusCode, _) = apiError {
+            if case .server(let statusCode, _, _) = apiError {
                 return ("http\(statusCode)", "ChatAPIError")
             }
             return ("validation", "ChatAPIError")
@@ -3384,7 +3868,10 @@ final class ChatViewModel {
                 pendingConfirmations.removeAll { $0.requestID == result.requestID }
             }
         case .error:
-            appendStreamError(event.errorMessage ?? "An error occurred.", assistantMessageID: assistantMessageID)
+            presentInlineTurnFailure(
+                event.errorMessage ?? "An error occurred.",
+                assistantMessageID: assistantMessageID
+            )
         case .turnEnded:
             messages[index].isLoading = false
             messages[index].status = .complete
@@ -3532,20 +4019,299 @@ final class ChatViewModel {
         underlyingError: Error? = nil
     ) {
         flushPendingTextNow()
-        if let index = messages.firstIndex(where: { $0.id == assistantMessageID }) {
-            messages[index].isLoading = false
-            messages[index].status = .failed
-            if messages[index].text.isEmpty {
-                messages[index].text = "Sorry, I encountered an error processing your message."
-            }
-            messages[index].text += "\n\n\(message)"
-        }
+        markAssistantBubbleFailed(assistantMessageID: assistantMessageID, message: message)
         // Thread the underlying error through so a pre-turn terminal auth failure
-        // (`AuthError.noCredentials`, e.g. startTurn failing on a rejected session)
-        // is suppressed by `presentErrorAlert` — the dedicated `authRequired`
-        // presentation already covers that UX; a generic error modal would be spurious.
+        // (`AuthError.noCredentials`) is suppressed by `presentErrorAlert` — the
+        // dedicated `authRequired` presentation already covers that UX; a generic
+        // error modal would be spurious (finding 7).
         presentErrorAlert(message, reason: reason, underlyingError: underlyingError)
         errorReporter.report(message: message, component: "Chat.stream")
+    }
+
+    /// Apply the shared failed-bubble styling: stop the loading spinner, flip the
+    /// bubble to `.failed`, and append the error text. Reused by both the modal
+    /// path (`appendStreamError`) and the inline send-failure path so the visual
+    /// treatment is identical (§8.1 decision).
+    private func markAssistantBubbleFailed(assistantMessageID: String, message: String) {
+        guard let index = messages.firstIndex(where: { $0.id == assistantMessageID }) else {
+            return
+        }
+        messages[index].isLoading = false
+        messages[index].status = .failed
+        if messages[index].text.isEmpty {
+            messages[index].text = "Sorry, I encountered an error processing your message."
+        }
+        messages[index].text += "\n\n\(message)"
+    }
+
+    /// Finalize the optimistic assistant bubble after a stream 401/403 whose forced
+    /// refresh was rejected (finding F3). The auth layer already latched
+    /// `authRequired`, which drives the re-auth affordance, so the bubble is flipped
+    /// to failed-non-running (no lingering spinner) but records NO Retry payload — a
+    /// retry would just replay the unauthorized request. Once the user re-auths, a
+    /// fresh send re-posts the same prompt from the composer.
+    private func finalizeBubbleAuthRejected(_ message: String, assistantMessageID: String) {
+        flushPendingTextNow()
+        markAssistantBubbleFailed(assistantMessageID: assistantMessageID, message: message)
+        clearFailedSend(forAssistantMessageID: assistantMessageID)
+        errorReporter.report(message: message, component: "Chat.stream")
+    }
+
+    /// Surface a terminal send failure INLINE at the point of action (§4.5): the
+    /// optimistic assistant bubble takes the existing failed styling and a retry
+    /// affordance, and NO modal is raised. Records the retry payload keyed by the
+    /// assistant bubble and emits the `Chat.inlineErrorPresented` breadcrumb so
+    /// inline failure rates are measurable alongside modal rates. `postAccepted`
+    /// selects the retry semantics: a never-accepted POST re-POSTs the same turn
+    /// id; an accepted one reconciles (see ``retryFailedSend``).
+    private func presentInlineSendFailure(
+        _ message: String,
+        session: ActiveTurnSession,
+        postAccepted: Bool,
+        lastAppliedSeq: Int?,
+        underlyingError: Error? = nil
+    ) {
+        // A pre-turn terminal auth failure (`AuthError.noCredentials`, e.g. startTurn
+        // failing on a rejected session) suppresses the retry/modal — the
+        // `authRequired` presentation covers the UX, and an inline "retry" would just
+        // re-POST into the same rejection (finding 7). But the optimistic assistant
+        // bubble must NOT be left `.running`/loading forever behind the sign-in
+        // screen: finalize it to failed-non-running (no spinner, no Retry). After
+        // re-auth the user re-sends from the composer (finding F2).
+        if let underlyingError, case AuthError.noCredentials = underlyingError {
+            finalizeBubbleAuthRejected(message, assistantMessageID: session.assistantMessageID)
+            return
+        }
+        flushPendingTextNow()
+        markAssistantBubbleFailed(assistantMessageID: session.assistantMessageID, message: message)
+        failedSends[session.turnID] = FailedSend(
+            turnID: session.turnID,
+            conversationID: session.conversationID,
+            assistantMessageID: session.assistantMessageID,
+            prompt: session.prompt,
+            attachments: session.attachments,
+            profileID: session.profileID,
+            previousSummary: session.previousSummary,
+            postAccepted: postAccepted,
+            lastAppliedSeq: lastAppliedSeq
+        )
+        errorReporter.report(
+            message: message,
+            component: "Chat.inlineErrorPresented",
+            errorType: .component,
+            extraData: [
+                "reason": ChatErrorSurface.InlineReason.actionFailed.rawValue,
+                "operation": ChatOperation.sendTurn.rawValue,
+            ],
+            bypassDedupe: true
+        )
+        errorReporter.report(message: message, component: "Chat.stream")
+    }
+
+    /// Surface a turn that FAILED server-side (a `turn_ended`/`error` event
+    /// carrying an error) inline on its bubble, never a modal (§4.5). The turn was
+    /// accepted and is durable, so the retry affordance reconciles (reloads
+    /// history) rather than re-POSTing. Falls back to marking the bubble failed
+    /// with no retry when no active session matches the bubble.
+    private func presentInlineTurnFailure(_ message: String, assistantMessageID: String) {
+        flushPendingTextNow()
+        markAssistantBubbleFailed(assistantMessageID: assistantMessageID, message: message)
+        if let session = activeTurnSession, session.assistantMessageID == assistantMessageID {
+            failedSends[session.turnID] = FailedSend(
+                turnID: session.turnID,
+                conversationID: session.conversationID,
+                assistantMessageID: assistantMessageID,
+                prompt: session.prompt,
+                attachments: session.attachments,
+                profileID: session.profileID,
+                previousSummary: session.previousSummary,
+                postAccepted: true,
+                lastAppliedSeq: session.lastAppliedSeq
+            )
+        }
+        errorReporter.report(
+            message: message,
+            component: "Chat.inlineErrorPresented",
+            errorType: .component,
+            extraData: [
+                "reason": ChatErrorSurface.InlineReason.actionFailed.rawValue,
+                "operation": ChatOperation.sendTurn.rawValue,
+            ],
+            bypassDedupe: true
+        )
+        errorReporter.report(message: message, component: "Chat.stream")
+    }
+
+    /// Retry a send that failed inline. Idempotent and never double-sends: a
+    /// never-accepted POST reissues the SAME turn id (the server dedupes on it),
+    /// while an accepted-but-interrupted send reconciles by reloading history and
+    /// reattaching to the durable turn rather than POSTing again (§4.5). Clears the
+    /// failed state on success.
+    func retryFailedSend(turnID: String) async {
+        guard let failed = failedSends[turnID] else {
+            return
+        }
+        failedSends.removeValue(forKey: turnID)
+        // Render the retry into whichever ASSISTANT bubble currently represents this
+        // turn — the original `local_` placeholder, or the persisted `msg_` row the
+        // merge swapped it for (finding F4). Resolve by turn id, not the stored
+        // (possibly-stale) assistant-bubble id. The role filter is required: the
+        // user and assistant messages of a turn share the same `turnID`, so an
+        // unfiltered lookup would select the user bubble (it is appended first) and
+        // clear the prompt instead of the failed reply.
+        let bubbleID = messages.first { $0.turnID == turnID && $0.role == .assistant }?.id
+            ?? failed.assistantMessageID
+        if let index = messages.firstIndex(where: { $0.id == bubbleID }) {
+            messages[index].status = .running
+            messages[index].isLoading = true
+            messages[index].text = ""
+        }
+        cancelStream()
+        let streamToken = UUID()
+        currentStreamToken = streamToken
+        let session = ActiveTurnSession(
+            turnID: failed.turnID,
+            conversationID: failed.conversationID,
+            assistantMessageID: bubbleID,
+            prompt: failed.prompt,
+            attachments: failed.attachments,
+            profileID: failed.profileID,
+            previousSummary: failed.previousSummary,
+            streamToken: streamToken,
+            lastAppliedSeq: failed.lastAppliedSeq
+        )
+        activeTurnSession = session
+        isStreaming = true
+        if failed.postAccepted {
+            // The turn is durable server-side: reconcile rather than re-POST.
+            // Resubscribe from just past the last applied seq to reattach to a
+            // turn still running, then reload persisted history for a settled one.
+            optimisticPendingByTurnID[failed.turnID] = failed.conversationID
+            streamTask = Task { [weak self] in
+                guard let self else { return }
+                await reconcileFailedSend(session)
+            }
+        } else {
+            // The prompt was never accepted: reissue the SAME turn id. The server
+            // dedupes on turn id, so this can never produce a second turn.
+            optimisticPendingByTurnID[failed.turnID] = failed.conversationID
+            streamTask = Task { [weak self] in
+                guard let self else { return }
+                await runSendTurn(session)
+            }
+        }
+    }
+
+    /// Reattach to (or reload) a durable turn a previously-accepted send lost the
+    /// transport for. Resubscribes from just past the last applied seq and, exactly
+    /// like ``runSendTurn``'s resume loop, keeps resuming across mid-turn drops
+    /// (`.dropped`/`.interrupted`) with a bounded no-progress budget — the turn is
+    /// still running server-side and the hub replays `seq >= from_seq`, so a dropped
+    /// retry subscription must NOT immediately retire the turn (finding F1). The turn
+    /// is only retired after a confirmed `turn_ended` (`.completed`) or an
+    /// authoritative settled-history reload once the resumes are exhausted. Never
+    /// re-POSTs the turn.
+    private func reconcileFailedSend(_ session: ActiveTurnSession) async {
+        defer { optimisticPendingByTurnID.removeValue(forKey: session.turnID) }
+        defer { clearSuspendedToken(session.streamToken) }
+        let id = session.conversationID
+        let turnID = session.turnID
+        let assistantMessageID = session.assistantMessageID
+        let streamToken = session.streamToken
+        let firstSeqFallback = (session.lastAppliedSeq ?? -1) + 1
+        var lastSeq: Int? = session.lastAppliedSeq
+        var outcome = await runTurnSubscription(
+            conversationID: id,
+            fromSeq: firstSeqFallback,
+            ackSeq: session.lastAppliedSeq,
+            turnID: turnID,
+            assistantMessageID: assistantMessageID,
+            lastSeq: &lastSeq
+        )
+        session.lastAppliedSeq = lastSeq
+
+        var noProgressResumes = 0
+        var resumeDelay = liveReconnectInitialDelaySeconds
+        // A stream-GET 401/403 on the reconcile subscribe routes to one forced
+        // credential refresh; on success the turn is resumable (finding F3).
+        var authRefreshAttempted = false
+        if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
+            authRefreshAttempted = true
+            outcome = await resolveAuthFailure(outcome)
+            session.lastAppliedSeq = lastSeq
+        }
+        while outcome == .dropped || outcome == .interrupted {
+            guard !Task.isCancelled, currentStreamToken == streamToken,
+                  noProgressResumes < maxConsecutiveStreamResumes
+            else {
+                break
+            }
+            if noProgressResumes > 0 {
+                try? await Task.sleep(for: .seconds(resumeDelay))
+                guard !Task.isCancelled, currentStreamToken == streamToken else {
+                    return
+                }
+            }
+            let seqBeforeResume = lastSeq
+            let resumeStartedAt = Date()
+            outcome = await runTurnSubscription(
+                conversationID: id,
+                fromSeq: lastSeq.map { $0 + 1 } ?? firstSeqFallback,
+                ackSeq: lastSeq,
+                turnID: turnID,
+                assistantMessageID: assistantMessageID,
+                lastSeq: &lastSeq
+            )
+            session.lastAppliedSeq = lastSeq
+            if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
+                authRefreshAttempted = true
+                outcome = await resolveAuthFailure(outcome)
+                session.lastAppliedSeq = lastSeq
+                guard !Task.isCancelled, currentStreamToken == streamToken else {
+                    return
+                }
+            }
+            let heldOpen = Date().timeIntervalSince(resumeStartedAt) >= streamResumeLivenessSeconds
+            if lastSeq != seqBeforeResume || heldOpen {
+                noProgressResumes = 0
+                resumeDelay = liveReconnectInitialDelaySeconds
+            } else {
+                noProgressResumes += 1
+                resumeDelay = min(resumeDelay * 2, liveReconnectMaxDelaySeconds)
+            }
+        }
+
+        guard !Task.isCancelled, currentStreamToken == streamToken else {
+            return
+        }
+
+        switch outcome {
+        case .completed:
+            completeStream(assistantMessageID: assistantMessageID)
+            await mergeNewMessages(conversationID: id, userInitiated: false)
+        case .reloadHistory, .dropped, .interrupted:
+            // The resumes are exhausted (or the hub rotated the turn out): the turn
+            // has settled, so it is now safe to retire it for the follow loop and
+            // surface the authoritative persisted reply.
+            markTurnEnded(turnID, status: nil)
+            await recoverByReloadingHistory(
+                conversationID: id,
+                assistantMessageID: assistantMessageID
+            )
+        case let .failed(message, error):
+            if Self.authStatusForFailure(outcome) != nil {
+                finalizeBubbleAuthRejected(message, assistantMessageID: assistantMessageID)
+            } else {
+                presentInlineSendFailure(
+                    message,
+                    session: session,
+                    postAccepted: true,
+                    lastAppliedSeq: lastSeq,
+                    underlyingError: error
+                )
+            }
+        }
+        finishStreaming(streamToken)
     }
 
     private func updateToolCall(
@@ -3896,31 +4662,12 @@ extension ChatViewModel: SyncStreamDelegate {
         conversationID: String,
         generation: Int
     ) async -> Bool {
-        await handleFollowEvent(
-            event,
-            conversationID: conversationID,
-            generation: generation,
-            surfaceErrors: true
-        )
-    }
-
-    private func handleFollowEvent(
-        _ event: ChatStreamEvent,
-        conversationID: String,
-        generation: Int,
-        surfaceErrors: Bool
-    ) async -> Bool {
         guard syncCoordinator.isCurrentFollow(generation) else {
             // A superseded generation's event: drop it (don't apply, don't stop
             // the loop — the loop is already being torn down by cancellation).
             return true
         }
-        return await handleLiveEvent(
-            event,
-            conversationID: conversationID,
-            client: apiClient,
-            surfaceErrors: surfaceErrors
-        )
+        return await handleLiveEvent(event, conversationID: conversationID, client: apiClient)
     }
 
     func followBufferRotated(generation: Int) {
@@ -3959,14 +4706,15 @@ extension ChatViewModel: SyncStreamDelegate {
     }
 
     func activityStreamDidSignal(generation: Int) async {
-        await activityStreamDidSignal(generation: generation, surfaceErrors: true)
-    }
-
-    private func activityStreamDidSignal(generation: Int, surfaceErrors: Bool) async {
         guard syncCoordinator.isCurrentActivity(generation) else {
             return
         }
-        await refreshRecentConversations(surfaceErrors: surfaceErrors)
+        // Advisory (§4.5): an activity-ping-triggered list refresh is background
+        // reconciliation, never user-initiated, so its failure must not modal — it
+        // feeds the advisory-health classifier instead. This is also what makes a
+        // buffered resync drain silent (finding 10): the drain routes through this
+        // same handler.
+        await refreshRecentConversations(userInitiated: false)
     }
 
     func runCoalescedResync(reason: SyncCoordinator.RestartReason) {
@@ -4104,7 +4852,7 @@ extension ChatViewModel: ResyncHost {
     func applyListSnapshot() async {
         // Advisory (§4.4 step 4): a failed resume-time snapshot degrades from
         // per-channel health and breadcrumbs, but must never modal.
-        await refreshConversations(surfaceErrors: false)
+        await refreshConversations(userInitiated: false)
     }
 
     func applyMessagesSnapshot(conversationID: String) async {
@@ -4119,7 +4867,7 @@ extension ChatViewModel: ResyncHost {
         guard !isSendActivelyStreaming else {
             return
         }
-        await mergeNewMessages(conversationID: conversationID, surfaceErrors: false)
+        await mergeNewMessages(conversationID: conversationID, userInitiated: false)
     }
 
     func drainFollowEvent(
@@ -4128,20 +4876,15 @@ extension ChatViewModel: ResyncHost {
         generation: Int
     ) async {
         // Same steady-state handler the coordinator's follow loop uses, so
-        // generation fencing and turn routing are identical to the live path.
-        // Advisory: the resync's own snapshots are authoritative, so a drained
-        // turn_ended's follow-up list/message refresh must never modal — pass
-        // surfaceErrors: false (a failed refresh degrades silently).
-        _ = await handleFollowEvent(
-            event,
-            conversationID: conversationID,
-            generation: generation,
-            surfaceErrors: false
-        )
+        // generation fencing and turn routing are identical to the live path. On M3
+        // that handler's follow-up list/message refreshes are already advisory
+        // (`userInitiated: false`), so a drained turn_ended's refresh degrades
+        // silently through the classifier — no modal (finding 10).
+        _ = await handleFollowEvent(event, conversationID: conversationID, generation: generation)
     }
 
     func drainActivitySignal(generation: Int) async {
-        await activityStreamDidSignal(generation: generation, surfaceErrors: false)
+        await activityStreamDidSignal(generation: generation)
     }
 
     func restartStreams() {

@@ -42,7 +42,7 @@ final class VoiceToolRunnerTests: XCTestCase {
 
     func testServerErrorWithDetailRelaysDetail() async throws {
         let executor = FakeToolExecutor()
-        executor.handler = { _, _ in throw ChatAPIError.server(statusCode: 400, detail: "bad city") }
+        executor.handler = { _, _ in throw ChatAPIError.server(statusCode: 400, detail: "bad city", retryAfter: nil) }
         let runner = VoiceToolRunner(executor: executor)
 
         let responses = await runner.run([call("get_weather")])
@@ -51,7 +51,7 @@ final class VoiceToolRunnerTests: XCTestCase {
 
     func testServerErrorWithoutDetailFallsBackToStatus() async throws {
         let executor = FakeToolExecutor()
-        executor.handler = { _, _ in throw ChatAPIError.server(statusCode: 500, detail: nil) }
+        executor.handler = { _, _ in throw ChatAPIError.server(statusCode: 500, detail: nil, retryAfter: nil) }
         let runner = VoiceToolRunner(executor: executor)
 
         let responses = await runner.run([call("noop")])

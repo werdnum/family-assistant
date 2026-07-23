@@ -579,12 +579,23 @@ various tasks with dark mode support and mobile optimization.
   read, create, edit, and delete notes on iOS, including changing whether a note is included in the
   assistant's system prompt. The native Voice tab asks for microphone permission, shows a microphone
   level meter while audio is being captured, and reports an error instead of connecting silently if
-  the microphone pipeline does not start. The **More** tab gathers the remaining long-tail
-  destinations — Events, History, Automations, Tools, and more — and a single **Settings** screen
-  with notification controls and sign-out. Use the tab bar to move between sections; each tab
-  remembers where you were. When enabled, iOS notifications can open the relevant tab or page, and
-  confirmation notifications are actionable: they include approve/reject actions, and tapping the
-  notification opens an in-app confirmation dialog showing the full request.
+  the microphone pipeline does not start. A small connection indicator in the Chat toolbar tells you
+  the live-updates state at a glance and offers the right fix in one tap: it distinguishes
+  *degraded* (updates are lagging — tap to reconnect) from *offline* (no connection — tap to
+  reconnect) from *sign-in required* (tap to sign in), instead of collapsing everything into one "no
+  connection" icon. Background sync failures no longer pop up error dialogs while you are reading;
+  they surface quietly through that indicator, so you get far fewer interrupting popups. If sending
+  a message fails, the failure now shows right on the message with a **Retry** button — tapping it
+  safely resends (it never sends twice, and if the reply was already running it just reconnects to
+  it) rather than showing a modal. When the app comes back to the foreground after being
+  backgrounded, the conversation list refreshes automatically, so a chat that changed (or a new one
+  that arrived) while you were away is up to date without a manual pull-to-refresh. The **More** tab
+  gathers the remaining long-tail destinations — Events, History, Automations, Tools, and more — and
+  a single **Settings** screen with notification controls and sign-out. Use the tab bar to move
+  between sections; each tab remembers where you were. When enabled, iOS notifications can open the
+  relevant tab or page, and confirmation notifications are actionable: they include approve/reject
+  actions, and tapping the notification opens an in-app confirmation dialog showing the full
+  request.
 
 - **Siri & Shortcuts (iOS):** The iOS app adds actions you can run with Siri or the **Shortcuts**
   app — no setup required. Just say or run:

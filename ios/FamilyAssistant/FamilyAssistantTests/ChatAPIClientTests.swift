@@ -359,7 +359,7 @@ final class ChatAPIClientTests: XCTestCase {
         do {
             _ = try await makeClient().connectEvents(conversationID: "web_conv_down")
             XCTFail("connectEvents should throw when the stream endpoint errors")
-        } catch ChatAPIError.server(let statusCode, _) {
+        } catch ChatAPIError.server(let statusCode, _, _) {
             XCTAssertEqual(statusCode, 500)
         }
         XCTAssertEqual(streamRequests, 1)
@@ -674,10 +674,57 @@ final class ChatAPIClientTests: XCTestCase {
                 attachments: []
             )
             XCTFail("Expected the non-idempotent turn start to throw on 401")
-        } catch ChatAPIError.server(let statusCode, _) {
+        } catch ChatAPIError.server(let statusCode, _, _) {
             XCTAssertEqual(statusCode, 401)
             XCTAssertEqual(postRequests.value, 1, "a turn start must never be refreshed-and-replayed")
             XCTAssertEqual(refreshRequests.value, 0)
+        }
+    }
+
+    func test429RetryAfterHeaderIsCarriedOnServerError() async throws {
+        // Finding F5: a 429's `Retry-After` header must be parsed onto
+        // `ChatAPIError.server` so the classifier can honor the server's backoff
+        // instead of the hard-coded default.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"detail":"slow down"}"#, statusCode: 429, headers: ["Retry-After": "30"])
+        }
+
+        do {
+            _ = try await makeClient().listConversations()
+            XCTFail("Expected a 429 to throw")
+        } catch let ChatAPIError.server(statusCode, _, retryAfter) {
+            XCTAssertEqual(statusCode, 429)
+            XCTAssertEqual(retryAfter, 30)
+            XCTAssertEqual(
+                ChatViewModel.retryAfterSeconds(from: ChatAPIError.server(
+                    statusCode: statusCode, detail: nil, retryAfter: retryAfter
+                )),
+                30,
+                "the parser reads the header value"
+            )
+        }
+    }
+
+    func test429WithoutHeaderFallsBackToNumericDetail() async throws {
+        // Finding F5: with no `Retry-After` header, a numeric JSON detail (e.g. "45")
+        // is still honored as the backoff.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"detail":"45"}"#, statusCode: 429)
+        }
+
+        do {
+            _ = try await makeClient().listConversations()
+            XCTFail("Expected a 429 to throw")
+        } catch let ChatAPIError.server(statusCode, _, retryAfter) {
+            XCTAssertEqual(statusCode, 429)
+            XCTAssertNil(retryAfter, "no header ⇒ no parsed header value")
+            XCTAssertEqual(
+                ChatViewModel.retryAfterSeconds(from: ChatAPIError.server(
+                    statusCode: statusCode, detail: "45", retryAfter: nil
+                )),
+                45,
+                "the numeric-detail fallback still applies"
+            )
         }
     }
 
@@ -939,8 +986,14 @@ struct ChatMockResponse {
     /// observe and drive a turn while it is still in flight.
     var hangingStream: HangingStream?
 
-    static func json(_ json: String, statusCode: Int = 200) -> ChatMockResponse {
-        ChatMockResponse(statusCode: statusCode, data: Data(json.utf8), headers: ["Content-Type": "application/json"])
+    static func json(
+        _ json: String,
+        statusCode: Int = 200,
+        headers extraHeaders: [String: String] = [:]
+    ) -> ChatMockResponse {
+        var headers = ["Content-Type": "application/json"]
+        headers.merge(extraHeaders) { _, new in new }
+        return ChatMockResponse(statusCode: statusCode, data: Data(json.utf8), headers: headers)
     }
 
     static func text(_ text: String, statusCode: Int = 200) -> ChatMockResponse {

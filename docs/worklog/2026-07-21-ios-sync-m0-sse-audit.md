@@ -62,3 +62,15 @@ Cloudflare idle kill near ~100 s; LAN ingress (nginx-class) idle kill near ~60 s
 `proxy_read_timeout` is default.
 
 Record the two artifacts (or the ingress fix that makes them pass) in this file when run.
+
+## Deployment posture (2026-07-21)
+
+Front-door timeout bumps are optional and evidence-driven, not a prerequisite. The origin already
+emits heartbeats at a 30 s cadence, which sits comfortably inside even Cloudflare's ~100 s idle
+window whenever those heartbeats actually traverse the front door — so an idle kill only happens
+when a proxy buffers or drops the stream, not because the cadence is too slow. And after M1–M3 the
+cost of an idle kill is bounded: it is one silent reconnect (resume from the last applied seq, no
+lost turn, no user-visible error). So the decision on whether any ingress change is worth making is
+deferred to data: the authenticated audit runs above plus production telemetry (the
+`Chat.streamDrop` / `Chat.liveStreamDrop` breadcrumbs) decide whether a front-door timeout bump buys
+anything measurable.
