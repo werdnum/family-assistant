@@ -192,6 +192,25 @@ final class SyncCoordinator {
     private let streamTerminationTimeoutSeconds: Double
     private let breadcrumb: ChatSyncBreadcrumb?
     private var lastReportedPresentation: Presentation = .degraded
+    private let channelWarningGraceSeconds: Double
+    /// While true, a channel-health warning (`.syncing`/`.degraded`) is held back so
+    /// the indicator keeps reading `.live`. Set on the first live→non-live channel
+    /// transition and cleared after `channelWarningGraceSeconds` (or immediately on
+    /// return to live), so a brief reconnect after a conversation switch / resync
+    /// handover — now sub-second — doesn't flash a warning on every thread open.
+    private var channelWarningSuppressed = false
+    /// Whether the channels are currently in the non-live state the grace guards, so
+    /// a re-entry while already non-live doesn't restart the grace once it elapsed.
+    private var channelWarningPending = false
+    /// Whether the channels were fully live at the previous applied event, so the
+    /// grace arms only on a live→non-live transition (a reconnect after being live)
+    /// and not on a cold-start establishment that has never connected.
+    private var channelWarningWasLive = false
+    // Main-actor-isolated (unlike the stream tasks, which the nonisolated teardown
+    // cancels): the grace task weakly captures `self` and only sleeps for the grace
+    // window, so leaving it to fire once more after teardown is harmless (the `guard
+    // let self` no-ops) and it needs no nonisolated cross-actor access.
+    @ObservationIgnored private var channelGraceTask: Task<Void, Never>?
     private var pendingResyncRestartReason: RestartReason?
 
     weak var delegate: SyncStreamDelegate?
@@ -211,6 +230,7 @@ final class SyncCoordinator {
             try? await Task.sleep(for: .seconds(seconds))
         },
         streamTerminationTimeoutSeconds: Double = 5,
+        channelWarningGraceSeconds: Double = 1.5,
         breadcrumb: ChatSyncBreadcrumb? = nil
     ) {
         self.authManager = authManager
@@ -219,6 +239,7 @@ final class SyncCoordinator {
         self.followReconnectMaxDelaySeconds = followReconnectMaxDelaySeconds
         self.reconnectDelay = reconnectDelay
         self.streamTerminationTimeoutSeconds = streamTerminationTimeoutSeconds
+        self.channelWarningGraceSeconds = channelWarningGraceSeconds
         self.breadcrumb = breadcrumb
     }
 
@@ -263,17 +284,132 @@ final class SyncCoordinator {
         if phase == .syncing {
             return .syncing
         }
-        // When no conversation is selected, only activity health matters.
-        // Otherwise both follow and activity must be connected for live.
-        // If delegate is not set, conservatively require both (treat as conversation selected).
-        let isNoConversation = delegate != nil && delegate?.currentConversationID() == nil
-        let isLive = isNoConversation
-            ? activityHealth == .connected
-            : followHealth == .connected && activityHealth == .connected
-        if isLive {
+        if channelsAreLive {
             return .live
         }
-        return .degraded
+        // Channels are not fully live. During the grace window after a live→non-live
+        // transition, keep reading `.live` so a brief reconnect (a conversation
+        // switch or a resync handover — now sub-second since the SSE head-flush fix)
+        // doesn't flash a warning on every thread open.
+        if channelWarningSuppressed {
+            return .live
+        }
+        // Past the grace: distinguish actively re-establishing from waiting to retry.
+        // A `.down` channel (a dropped stream in backoff, offline, or rejected auth)
+        // is waiting to retry → the wifi-bad `.degraded` warning. A channel merely
+        // `.reconnecting` (a deliberate replace, actively re-establishing) → the
+        // `.syncing` spinner.
+        if anyRelevantChannelDown {
+            return .degraded
+        }
+        return .syncing
+    }
+
+    /// Before a (re)open attempt in the follow loop, lift a `.down` channel to
+    /// `.reconnecting` so an actively-opening retry shows the spinner rather than the
+    /// wifi-bad "waiting to retry" warning. Generation-gated so a superseded loop
+    /// cannot touch the current channel; a `.connected` channel (a drop whose
+    /// surfacing was intentionally suppressed) is left untouched.
+    private func markFollowReopening(generation: Int) {
+        guard isCurrentFollow(generation), followHealth == .down else {
+            return
+        }
+        followHealth = .reconnecting
+        reportPresentationIfChanged()
+    }
+
+    /// Activity-channel counterpart of `markFollowReopening`.
+    private func markActivityReopening(generation: Int) {
+        guard isCurrentActivity(generation), activityHealth == .down else {
+            return
+        }
+        activityHealth = .reconnecting
+        reportPresentationIfChanged()
+    }
+
+    /// Re-evaluate presentation after the owner changes which conversation is
+    /// "relevant" (e.g. opening a saved conversation clears the launch-draft sentinel,
+    /// so `currentConversationID()` flips from nil to a real id). Relevance is read
+    /// from the delegate in `channelsAreLive`, so a change to it does not otherwise
+    /// flow through `apply`/report; without this the warning grace would miss the
+    /// live→non-live transition caused purely by the relevance flip (activity-only-live
+    /// launch draft → a conversation that also needs a follow stream) and flash the
+    /// warning while the follow stream is still being established.
+    func noteConversationRelevanceChanged() {
+        reportPresentationIfChanged()
+    }
+
+    /// Whether the channels relevant to the current selection are fully connected.
+    /// When no conversation is selected only activity health matters; otherwise both
+    /// follow and activity must be connected. A nil delegate is treated as a
+    /// conversation being selected (conservatively require both).
+    private var channelsAreLive: Bool {
+        let isNoConversation = delegate != nil && delegate?.currentConversationID() == nil
+        return isNoConversation
+            ? activityHealth == .connected
+            : followHealth == .connected && activityHealth == .connected
+    }
+
+    /// Whether any channel relevant to the current selection is `.down` (as opposed
+    /// to merely `.reconnecting`). Mirrors the selection logic in `channelsAreLive`.
+    private var anyRelevantChannelDown: Bool {
+        let isNoConversation = delegate != nil && delegate?.currentConversationID() == nil
+        return isNoConversation
+            ? activityHealth == .down
+            : followHealth == .down || activityHealth == .down
+    }
+
+    /// True while an immediate-precedence presentation state (background, auth,
+    /// offline, phase-syncing) owns the indicator, so the channel-warning grace
+    /// neither starts nor holds in those states.
+    private var immediatePresentationPrecedenceActive: Bool {
+        lifecycle == .background
+            || authState == .authRequired
+            || reachability == .unsatisfied
+            || phase == .syncing
+    }
+
+    /// Manages the channel-warning grace after each applied event. On a live→non-live
+    /// channel transition (a reconnect *after* being live — a conversation switch, a
+    /// resync handover, or a transient drop) it suppresses the warning and arms a task
+    /// that clears the suppression (and re-reports) once `channelWarningGraceSeconds`
+    /// elapses. On return to live (or when an immediate-precedence state takes over) it
+    /// cancels the pending grace and clears the hold so the next drop starts a fresh
+    /// window. A cold-start establishment — non-live before ever connecting — is not
+    /// suppressed: the honest state shows (in practice the initial resync `.syncing`
+    /// phase covers it), so the grace targets only the reconnect flapping it exists for.
+    private func refreshChannelWarningGrace() {
+        let live = channelsAreLive
+        if live || immediatePresentationPrecedenceActive {
+            channelGraceTask?.cancel()
+            channelGraceTask = nil
+            channelWarningPending = false
+            channelWarningSuppressed = false
+            channelWarningWasLive = live
+            return
+        }
+        // Non-live with no immediate-precedence state owning the indicator.
+        guard !channelWarningPending else {
+            // A grace is already running or has elapsed for this non-live spell.
+            return
+        }
+        guard channelWarningWasLive else {
+            // Cold start (never connected): show the honest state, don't suppress.
+            return
+        }
+        channelWarningPending = true
+        channelWarningSuppressed = true
+        channelWarningWasLive = false
+        let seconds = channelWarningGraceSeconds
+        channelGraceTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard let self, !Task.isCancelled else {
+                return
+            }
+            self.channelWarningSuppressed = false
+            self.channelGraceTask = nil
+            self.reportPresentationIfChanged()
+        }
     }
 
     func isCurrentFollow(_ generation: Int) -> Bool {
@@ -339,15 +475,16 @@ final class SyncCoordinator {
         let replacesExistingTask = followTask != nil
         if replacesExistingTask {
             bumpFollowGeneration(reason: reason)
-            // The old task's socket is being torn down; until the replacement task
-            // reports a real `followConnected`, the channel is not live. Leaving it
-            // `.connected` here would let presentation claim `.live` with no
-            // connected follow stream. Demote to `.reconnecting`; only a real
-            // connect promotes it back.
-            if followHealth == .connected {
-                followHealth = .reconnecting
-            }
         }
+        // Beginning an open attempt: the channel is actively (re)connecting until a
+        // real `followConnected` promotes it or a failure drops it. Mark
+        // `.reconnecting` (the spinner) rather than leaving it `.down` (the wifi-bad
+        // "waiting to retry" state). This both demotes a replaced live stream — until
+        // the replacement reports a real connect, presentation must not claim `.live`
+        // with no connected follow stream — and lifts a fresh first open (launch draft
+        // → saved conversation, or the first follow after sending a draft) out of
+        // `.down`, so a slow first connect shows the spinner, not the wifi-bad warning.
+        followHealth = .reconnecting
         followTask?.cancel()
         let generation = followGeneration
         if !replacesExistingTask {
@@ -372,6 +509,10 @@ final class SyncCoordinator {
                 // Capture the loop's auth epoch at the start; terminal 401 latch uses this
                 // to prevent a stale rejection from a superseded epoch deleting new creds.
                 let loopEpoch = self.authManager.authEpoch
+                // A retry after a `.down` drop is itself an active open attempt, so
+                // lift it to `.reconnecting` (spinner) before opening; only a genuine
+                // backoff wait between attempts stays `.down` (wifi-bad).
+                self.markFollowReopening(generation: generation)
                 var deliberateStop = false
                 var connected = false
                 var connectedAt: Date?
@@ -479,6 +620,15 @@ final class SyncCoordinator {
                 await reconnectDelay(delay)
                 delay = min(delay * 2, maxDelay)
             }
+            // The loop has terminally exited (a deliberate/auth stop, not a retry). An
+            // open attempt that was in flight will never complete, so a leftover
+            // `.reconnecting` becomes `.down`; a `.connected` channel (a clean stop
+            // whose surfacing was suppressed) is left as-is, and a replacement task
+            // under a newer generation is fenced by the guard.
+            if let self, self.isCurrentFollow(generation), self.followHealth == .reconnecting {
+                self.followHealth = .down
+                self.reportPresentationIfChanged()
+            }
         }
     }
 
@@ -492,13 +642,13 @@ final class SyncCoordinator {
         let replacesExistingTask = activityTask != nil
         if replacesExistingTask {
             bumpActivityGeneration(reason: reason)
-            // Same as the follow channel: a replaced activity task is no longer a
-            // live connection, so demote a `.connected` health to `.reconnecting`
-            // until the replacement reports a real `activityConnected`.
-            if activityHealth == .connected {
-                activityHealth = .reconnecting
-            }
         }
+        // Same as the follow channel: beginning an open attempt marks the channel
+        // `.reconnecting` (the spinner) until the replacement reports a real
+        // `activityConnected`. This demotes a replaced live stream and lifts a fresh
+        // first open out of `.down`, so an actively-opening stream shows the spinner
+        // rather than the wifi-bad "waiting to retry" warning.
+        activityHealth = .reconnecting
         activityTask?.cancel()
         let generation = activityGeneration
         if !replacesExistingTask {
@@ -518,6 +668,10 @@ final class SyncCoordinator {
                 // Capture the loop's auth epoch at the start; terminal 401 latch uses this
                 // to prevent a stale rejection from a superseded epoch deleting new creds.
                 let loopEpoch = self.authManager.authEpoch
+                // A retry after a `.down` drop is itself an active open attempt, so
+                // lift it to `.reconnecting` (spinner) before opening; only a genuine
+                // backoff wait between attempts stays `.down` (wifi-bad).
+                self.markActivityReopening(generation: generation)
                 var connectedAt: Date?
                 var streamError: Error?
                 do {
@@ -598,6 +752,12 @@ final class SyncCoordinator {
                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
                 await reconnectDelay(delay)
                 delay = min(delay * 2, maxDelay)
+            }
+            // Terminal exit: a leftover in-flight `.reconnecting` becomes `.down` (see
+            // the follow loop). Generation-gated so a replacement task is not clobbered.
+            if let self, self.isCurrentActivity(generation), self.activityHealth == .reconnecting {
+                self.activityHealth = .down
+                self.reportPresentationIfChanged()
             }
         }
     }
@@ -970,6 +1130,10 @@ final class SyncCoordinator {
     }
 
     private func reportPresentationIfChanged() {
+        // Update the channel-warning grace before reading `presentation`, so every
+        // path that reports (the `apply` reducer AND the direct-mutation stream
+        // cancels like `cancelFollowStream`) arms/clears the grace consistently.
+        refreshChannelWarningGrace()
         let currentPresentation = presentation
         guard currentPresentation != lastReportedPresentation else {
             return

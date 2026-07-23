@@ -704,6 +704,12 @@ final class ChatViewModel {
         // Clear the launch-draft sentinel when opening a saved conversation so
         // currentConversationID() returns the real id and the follow stream is managed.
         opensGeneratedLaunchDraft = false
+        // The relevance flip above (launch-draft → real conversation) changes what
+        // `channelsAreLive` requires — an activity-only-live launch draft now also
+        // needs a follow stream that has not started yet. Notify the coordinator so
+        // its warning grace arms on this live→non-live transition and holds `.live`
+        // through message loading instead of flashing the warning.
+        syncCoordinator.noteConversationRelevanceChanged()
         persistConversationID()
         mobileShowsConversationList = false
         // Mark loading synchronously, before the first suspension below, so the

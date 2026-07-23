@@ -22,13 +22,15 @@ final class SyncCoordinatorTests: XCTestCase {
 
     private func makeCoordinator(
         satisfied: Bool = true,
-        authManager: AuthManager? = nil
+        authManager: AuthManager? = nil,
+        channelWarningGraceSeconds: Double = 0.05
     ) -> (SyncCoordinator, StubPathMonitor, AuthManager) {
         let monitor = StubPathMonitor(isSatisfied: satisfied)
         let auth = authManager ?? AuthManager()
         let coordinator = SyncCoordinator(
             authManager: auth,
-            pathMonitor: monitor
+            pathMonitor: monitor,
+            channelWarningGraceSeconds: channelWarningGraceSeconds
         )
         return (coordinator, monitor, auth)
     }
@@ -70,16 +72,114 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.presentation, .live)
     }
 
-    func testCleanEOFFollowDropLeavesDegraded() {
+    func testCleanEOFFollowDropDegradesAfterGrace() async throws {
         let (coordinator, _, _) = makeCoordinator()
         coordinator.apply(.followConnected(generation: coordinator.followGeneration))
         coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
         XCTAssertEqual(coordinator.presentation, .live)
 
         coordinator.apply(.followDropped(generation: coordinator.followGeneration, cleanEOF: true))
-
         XCTAssertEqual(coordinator.followHealth, .down)
-        XCTAssertEqual(coordinator.presentation, .degraded)
+        // The warning grace briefly holds `.live` so a momentary drop doesn't flash a
+        // warning; a `.down` channel that outlasts the grace degrades to the wifi-bad
+        // state ("waiting to retry").
+        XCTAssertEqual(
+            coordinator.presentation, .live,
+            "the warning grace holds live immediately after a drop"
+        )
+        try await waitUntil { coordinator.presentation == .degraded }
+    }
+
+    func testReconnectingBeyondGraceShowsSpinnerNotWifiBad() async throws {
+        // A follow channel that is `.reconnecting` (actively re-establishing after a
+        // deliberate replace) is held `.live` during the grace so it does not flash on
+        // every thread open; if it outlasts the grace it shows the `.syncing` spinner
+        // ("actively trying"), never the scary wifi-bad `.degraded` — which is reserved
+        // for a `.down` channel waiting to retry.
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangFollowOpen = true
+        delegate.hangActivityOpen = true
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil {
+            delegate.followOpenCount >= 1 && delegate.activityOpenCount >= 1
+        }
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        XCTAssertEqual(coordinator.presentation, .live)
+
+        // Demote the follow channel to `.reconnecting` without restarting it, so the
+        // reconnecting state persists past the grace window (a live reconnect would
+        // auto-connect and return to `.live`; this isolates the reconnecting state).
+        coordinator.cancelFollowStream()
+        XCTAssertEqual(coordinator.followHealth, .reconnecting)
+        XCTAssertEqual(
+            coordinator.presentation, .live,
+            "the warning grace holds live immediately after a deliberate replace"
+        )
+
+        try await waitUntil { coordinator.presentation == .syncing }
+        XCTAssertEqual(coordinator.followHealth, .reconnecting)
+    }
+
+    func testReturningToLiveWithinGraceNeverFlashesWarning() async throws {
+        // The whole point of the grace: a switch that reconnects quickly must never
+        // surface a warning. With a long grace the reconnect lands first and cancels
+        // the pending grace, so presentation stays `.live` throughout.
+        let (coordinator, _, _) = makeCoordinator(channelWarningGraceSeconds: 10)
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangFollowOpen = true
+        delegate.hangActivityOpen = true
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil {
+            delegate.followOpenCount >= 1 && delegate.activityOpenCount >= 1
+        }
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        XCTAssertEqual(coordinator.presentation, .live)
+
+        coordinator.startFollowStream(conversationID: "conv-2")
+        try await waitUntil { delegate.followOpenCount >= 2 }
+        XCTAssertEqual(coordinator.presentation, .live)
+
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        XCTAssertEqual(coordinator.followHealth, .connected)
+        XCTAssertEqual(coordinator.presentation, .live)
+    }
+
+    func testRelevanceFlipToConversationArmsGraceInsteadOfFlashing() async throws {
+        // Opening a saved conversation from an activity-only-live launch draft flips
+        // what `channelsAreLive` requires: a follow stream is now needed but has not
+        // started. This live→non-live transition happens purely via the relevance
+        // change (not an `apply`), so the owner notifies the coordinator; the grace
+        // must then hold `.live` rather than flashing a warning during message load.
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangActivityOpen = true
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        try await waitUntil { delegate.activityOpenCount >= 1 }
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+        XCTAssertNil(delegate.currentConversationID())
+        XCTAssertEqual(coordinator.presentation, .live)
+
+        // Open a saved conversation: relevance now requires a follow stream too.
+        delegate.activeConversationID = "conv-1"
+        coordinator.noteConversationRelevanceChanged()
+        XCTAssertEqual(
+            coordinator.presentation, .live,
+            "opening a conversation must not flash a warning before follow connects"
+        )
+
+        // If the follow stream never connects, the warning still surfaces past the grace.
+        try await waitUntil { coordinator.presentation == .degraded }
     }
 
     func testSyncPhaseTakesPrecedenceOverChannelHealth() {
@@ -150,6 +250,70 @@ final class SyncCoordinatorTests: XCTestCase {
         )
         XCTAssertTrue(effects.isEmpty)
         XCTAssertEqual(coordinator.followHealth, .reconnecting)
+    }
+
+    func testFreshFollowStartMarksReconnectingNotDown() {
+        // A fresh follow open (no prior connected task) must mark the channel
+        // `.reconnecting` (actively opening → spinner) rather than leaving it `.down`
+        // (waiting to retry → wifi-bad), so a slow first connect shows the spinner.
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangFollowOpen = true
+        coordinator.delegate = delegate
+
+        XCTAssertEqual(coordinator.followHealth, .down)
+        coordinator.startFollowStream(conversationID: "conv-1")
+        XCTAssertEqual(
+            coordinator.followHealth, .reconnecting,
+            "an actively opening follow stream is reconnecting, not down"
+        )
+    }
+
+    func testFreshActivityStartMarksReconnectingNotDown() {
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangActivityOpen = true
+        coordinator.delegate = delegate
+
+        XCTAssertEqual(coordinator.activityHealth, .down)
+        coordinator.startActivityStream()
+        XCTAssertEqual(
+            coordinator.activityHealth, .reconnecting,
+            "an actively opening activity stream is reconnecting, not down"
+        )
+    }
+
+    func testFollowRetryOpenAfterDropShowsReconnecting() async throws {
+        // The backoff wait between attempts is `.down` (wifi-bad), but the retry open
+        // itself is an active attempt, so it must show `.reconnecting` (the spinner).
+        let reconnected = expectation(description: "follow reopened")
+        reconnected.expectedFulfillmentCount = 2
+        let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 0.01,
+            followReconnectMaxDelaySeconds: 0.01
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followOpenError = ChatAPIError.server(statusCode: 500, detail: nil)
+        delegate.followOpenErrorLimit = 1
+        delegate.hangFollowOpen = true
+        var healthAtRetryOpen: SyncCoordinator.ChannelHealth?
+        delegate.onFollowOpen = {
+            if delegate.followOpenCount == 2 {
+                healthAtRetryOpen = coordinator.followHealth
+            }
+            reconnected.fulfill()
+        }
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        await fulfillment(of: [reconnected], timeout: 2)
+
+        XCTAssertEqual(
+            healthAtRetryOpen, .reconnecting,
+            "the retry open after a drop shows the spinner, not the wifi-bad warning"
+        )
     }
 
     func testReplacingFollowStreamLeavesActivityGenerationUntouched() async throws {
@@ -637,10 +801,13 @@ final class SyncCoordinatorTests: XCTestCase {
     }
 
     func testReplacingFollowStreamDemotesConnectedHealthToReconnecting() async throws {
-        // Finding 3: replacing a live follow task must not leave followHealth
-        // `.connected` until the new task connects — presentation would otherwise
-        // claim `.live` with no connected follow stream. The health drops to
-        // `.reconnecting` on replace and is promoted back only by a real connect.
+        // Replacing a live follow task must not leave followHealth `.connected` until
+        // the new task connects — a late event from the cancelled task must not be
+        // mistaken for the new stream. The health drops to `.reconnecting` on replace
+        // and is promoted back only by a real connect. Presentation treats that brief
+        // `.reconnecting` as `.live` during the warning grace (then the `.syncing`
+        // spinner if it lingers), never `.degraded`; see
+        // `testReconnectingBeyondGraceShowsSpinnerNotWifiBad`.
         let (coordinator, _, _) = makeCoordinator()
         let delegate = RecordingSyncStreamDelegate()
         delegate.hangFollowOpen = true
@@ -654,7 +821,6 @@ final class SyncCoordinatorTests: XCTestCase {
 
         coordinator.startFollowStream(conversationID: "conv-1")
         XCTAssertEqual(coordinator.followHealth, .reconnecting)
-        XCTAssertNotEqual(coordinator.presentation, .live)
 
         coordinator.apply(.followConnected(generation: coordinator.followGeneration))
         XCTAssertEqual(coordinator.followHealth, .connected)
@@ -845,12 +1011,23 @@ final class SyncCoordinatorTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "fa_server_url")
     }
 
-    private func waitUntil(_ predicate: @escaping () -> Bool) async throws {
-        for _ in 0 ..< 10_000 {
+    private func waitUntil(
+        timeout: Duration = .seconds(5),
+        _ predicate: @escaping () -> Bool
+    ) async throws {
+        // Poll against a real wall-clock deadline with short real sleeps, so a
+        // condition gated on an actual timer (e.g. the coordinator's warning grace)
+        // is awaited deterministically rather than racing a fixed yield count that
+        // can drain before the timer fires.
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
             if predicate() {
                 return
             }
-            await Task.yield()
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        if predicate() {
+            return
         }
         XCTFail("Timed out waiting for predicate")
     }
