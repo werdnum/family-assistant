@@ -57,6 +57,10 @@ class BrowserSession:
     page: Page | None = field(default=None, repr=False)
     screen_width: int = SCREEN_WIDTH
     screen_height: int = SCREEN_HEIGHT
+    # IANA timezone (e.g. ``"Australia/Sydney"``) applied to the browser context so
+    # in-page JS (``new Date()``, ``Intl``) reports the user's local time. ``None``
+    # leaves the host default in place. Mirrors the remote browser-server backend.
+    timezone_id: str | None = None
     # Maps short refs (e.g. ``"e12"``) to CSS selectors that the
     # semantic DOM tools can hand back to Playwright. Populated by
     # browser_dom snapshots; cleared on navigation.
@@ -87,6 +91,7 @@ class BrowserSession:
             context = await create_stealth_context(
                 self.browser,
                 viewport={"width": self.screen_width, "height": self.screen_height},
+                timezone_id=self.timezone_id,
             )
             self.context = context
 
@@ -124,7 +129,8 @@ async def get_browser_session(exec_context: ToolExecutionContext) -> BrowserSess
     """Get or create a browser session for the given execution context."""
     session_key = exec_context.conversation_id or "default"
     if session_key not in _sessions:
-        _sessions[session_key] = BrowserSession()
+        tz = getattr(exec_context, "timezone", None)
+        _sessions[session_key] = BrowserSession(timezone_id=str(tz) if tz else None)
     return _sessions[session_key]
 
 
