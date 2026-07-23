@@ -305,6 +305,28 @@ final class SyncCoordinator {
         return .syncing
     }
 
+    /// Before a (re)open attempt in the follow loop, lift a `.down` channel to
+    /// `.reconnecting` so an actively-opening retry shows the spinner rather than the
+    /// wifi-bad "waiting to retry" warning. Generation-gated so a superseded loop
+    /// cannot touch the current channel; a `.connected` channel (a drop whose
+    /// surfacing was intentionally suppressed) is left untouched.
+    private func markFollowReopening(generation: Int) {
+        guard isCurrentFollow(generation), followHealth == .down else {
+            return
+        }
+        followHealth = .reconnecting
+        reportPresentationIfChanged()
+    }
+
+    /// Activity-channel counterpart of `markFollowReopening`.
+    private func markActivityReopening(generation: Int) {
+        guard isCurrentActivity(generation), activityHealth == .down else {
+            return
+        }
+        activityHealth = .reconnecting
+        reportPresentationIfChanged()
+    }
+
     /// Re-evaluate presentation after the owner changes which conversation is
     /// "relevant" (e.g. opening a saved conversation clears the launch-draft sentinel,
     /// so `currentConversationID()` flips from nil to a real id). Relevance is read
@@ -453,15 +475,16 @@ final class SyncCoordinator {
         let replacesExistingTask = followTask != nil
         if replacesExistingTask {
             bumpFollowGeneration(reason: reason)
-            // The old task's socket is being torn down; until the replacement task
-            // reports a real `followConnected`, the channel is not live. Leaving it
-            // `.connected` here would let presentation claim `.live` with no
-            // connected follow stream. Demote to `.reconnecting`; only a real
-            // connect promotes it back.
-            if followHealth == .connected {
-                followHealth = .reconnecting
-            }
         }
+        // Beginning an open attempt: the channel is actively (re)connecting until a
+        // real `followConnected` promotes it or a failure drops it. Mark
+        // `.reconnecting` (the spinner) rather than leaving it `.down` (the wifi-bad
+        // "waiting to retry" state). This both demotes a replaced live stream — until
+        // the replacement reports a real connect, presentation must not claim `.live`
+        // with no connected follow stream — and lifts a fresh first open (launch draft
+        // → saved conversation, or the first follow after sending a draft) out of
+        // `.down`, so a slow first connect shows the spinner, not the wifi-bad warning.
+        followHealth = .reconnecting
         followTask?.cancel()
         let generation = followGeneration
         if !replacesExistingTask {
@@ -486,6 +509,10 @@ final class SyncCoordinator {
                 // Capture the loop's auth epoch at the start; terminal 401 latch uses this
                 // to prevent a stale rejection from a superseded epoch deleting new creds.
                 let loopEpoch = self.authManager.authEpoch
+                // A retry after a `.down` drop is itself an active open attempt, so
+                // lift it to `.reconnecting` (spinner) before opening; only a genuine
+                // backoff wait between attempts stays `.down` (wifi-bad).
+                self.markFollowReopening(generation: generation)
                 var deliberateStop = false
                 var connected = false
                 var connectedAt: Date?
@@ -593,6 +620,15 @@ final class SyncCoordinator {
                 await reconnectDelay(delay)
                 delay = min(delay * 2, maxDelay)
             }
+            // The loop has terminally exited (a deliberate/auth stop, not a retry). An
+            // open attempt that was in flight will never complete, so a leftover
+            // `.reconnecting` becomes `.down`; a `.connected` channel (a clean stop
+            // whose surfacing was suppressed) is left as-is, and a replacement task
+            // under a newer generation is fenced by the guard.
+            if let self, self.isCurrentFollow(generation), self.followHealth == .reconnecting {
+                self.followHealth = .down
+                self.reportPresentationIfChanged()
+            }
         }
     }
 
@@ -606,13 +642,13 @@ final class SyncCoordinator {
         let replacesExistingTask = activityTask != nil
         if replacesExistingTask {
             bumpActivityGeneration(reason: reason)
-            // Same as the follow channel: a replaced activity task is no longer a
-            // live connection, so demote a `.connected` health to `.reconnecting`
-            // until the replacement reports a real `activityConnected`.
-            if activityHealth == .connected {
-                activityHealth = .reconnecting
-            }
         }
+        // Same as the follow channel: beginning an open attempt marks the channel
+        // `.reconnecting` (the spinner) until the replacement reports a real
+        // `activityConnected`. This demotes a replaced live stream and lifts a fresh
+        // first open out of `.down`, so an actively-opening stream shows the spinner
+        // rather than the wifi-bad "waiting to retry" warning.
+        activityHealth = .reconnecting
         activityTask?.cancel()
         let generation = activityGeneration
         if !replacesExistingTask {
@@ -632,6 +668,10 @@ final class SyncCoordinator {
                 // Capture the loop's auth epoch at the start; terminal 401 latch uses this
                 // to prevent a stale rejection from a superseded epoch deleting new creds.
                 let loopEpoch = self.authManager.authEpoch
+                // A retry after a `.down` drop is itself an active open attempt, so
+                // lift it to `.reconnecting` (spinner) before opening; only a genuine
+                // backoff wait between attempts stays `.down` (wifi-bad).
+                self.markActivityReopening(generation: generation)
                 var connectedAt: Date?
                 var streamError: Error?
                 do {
@@ -712,6 +752,12 @@ final class SyncCoordinator {
                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
                 await reconnectDelay(delay)
                 delay = min(delay * 2, maxDelay)
+            }
+            // Terminal exit: a leftover in-flight `.reconnecting` becomes `.down` (see
+            // the follow loop). Generation-gated so a replacement task is not clobbered.
+            if let self, self.isCurrentActivity(generation), self.activityHealth == .reconnecting {
+                self.activityHealth = .down
+                self.reportPresentationIfChanged()
             }
         }
     }

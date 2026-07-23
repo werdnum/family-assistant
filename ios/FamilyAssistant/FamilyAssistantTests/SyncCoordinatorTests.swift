@@ -252,6 +252,70 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.followHealth, .reconnecting)
     }
 
+    func testFreshFollowStartMarksReconnectingNotDown() {
+        // A fresh follow open (no prior connected task) must mark the channel
+        // `.reconnecting` (actively opening → spinner) rather than leaving it `.down`
+        // (waiting to retry → wifi-bad), so a slow first connect shows the spinner.
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangFollowOpen = true
+        coordinator.delegate = delegate
+
+        XCTAssertEqual(coordinator.followHealth, .down)
+        coordinator.startFollowStream(conversationID: "conv-1")
+        XCTAssertEqual(
+            coordinator.followHealth, .reconnecting,
+            "an actively opening follow stream is reconnecting, not down"
+        )
+    }
+
+    func testFreshActivityStartMarksReconnectingNotDown() {
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.hangActivityOpen = true
+        coordinator.delegate = delegate
+
+        XCTAssertEqual(coordinator.activityHealth, .down)
+        coordinator.startActivityStream()
+        XCTAssertEqual(
+            coordinator.activityHealth, .reconnecting,
+            "an actively opening activity stream is reconnecting, not down"
+        )
+    }
+
+    func testFollowRetryOpenAfterDropShowsReconnecting() async throws {
+        // The backoff wait between attempts is `.down` (wifi-bad), but the retry open
+        // itself is an active attempt, so it must show `.reconnecting` (the spinner).
+        let reconnected = expectation(description: "follow reopened")
+        reconnected.expectedFulfillmentCount = 2
+        let coordinator = SyncCoordinator(
+            authManager: AuthManager(),
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 0.01,
+            followReconnectMaxDelaySeconds: 0.01
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followOpenError = ChatAPIError.server(statusCode: 500, detail: nil)
+        delegate.followOpenErrorLimit = 1
+        delegate.hangFollowOpen = true
+        var healthAtRetryOpen: SyncCoordinator.ChannelHealth?
+        delegate.onFollowOpen = {
+            if delegate.followOpenCount == 2 {
+                healthAtRetryOpen = coordinator.followHealth
+            }
+            reconnected.fulfill()
+        }
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        await fulfillment(of: [reconnected], timeout: 2)
+
+        XCTAssertEqual(
+            healthAtRetryOpen, .reconnecting,
+            "the retry open after a drop shows the spinner, not the wifi-bad warning"
+        )
+    }
+
     func testReplacingFollowStreamLeavesActivityGenerationUntouched() async throws {
         // The two channels are counted separately: replacing the follow stream must
         // NOT invalidate a concurrent, still-valid activity connect. A shared
