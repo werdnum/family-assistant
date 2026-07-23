@@ -200,10 +200,34 @@ final class ChatViewModel {
         let text: String
     }
 
-    private enum ResyncStreamEstablishment<Stream> {
+    enum ResyncStreamEstablishment<Stream> {
         case connected(Stream?)
         case timeout
         case cancelled
+    }
+
+    @MainActor
+    private final class ResyncStreamEstablishmentRace<Stream> {
+        private var resolution: ResyncStreamEstablishment<Stream>?
+        private var continuation: CheckedContinuation<ResyncStreamEstablishment<Stream>, Never>?
+
+        func wait() async -> ResyncStreamEstablishment<Stream> {
+            if let resolution {
+                return resolution
+            }
+            return await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        }
+
+        func resolve(_ resolution: ResyncStreamEstablishment<Stream>) {
+            guard self.resolution == nil else {
+                return
+            }
+            self.resolution = resolution
+            continuation?.resume(returning: resolution)
+            continuation = nil
+        }
     }
 
     // How recently the last conversation must have been active for it to reopen
@@ -3984,95 +4008,91 @@ extension ChatViewModel: ResyncHost {
 
     func establishFollowStream(
         conversationID: String,
-        generation: Int
+        generation _: Int
     ) async -> AsyncThrowingStream<ChatStreamEvent, Error>? {
         // Reuse the delegate's connect (cursor-resumed, returns after headers). A
         // failed connect leaves this channel unbuffered; the coordinator's loop
         // reconnects it on handover.
         let timeout = resyncEstablishTimeoutSeconds
-        return await withTaskGroup(
-            of: ResyncStreamEstablishment<AsyncThrowingStream<ChatStreamEvent, Error>>.self,
-            returning: AsyncThrowingStream<ChatStreamEvent, Error>?.self
-        ) { group in
-            group.addTask { [weak self] in
-                guard let self else {
-                    return .connected(nil)
-                }
-                let stream = try? await self.openFollowStream(
-                    conversationID: conversationID,
-                    generation: generation
-                )
-                return .connected(stream)
-            }
-            group.addTask {
-                do {
-                    try await Task.sleep(for: .seconds(timeout))
-                    return .timeout
-                } catch {
-                    return .cancelled
-                }
-            }
-
-            guard let result = await group.next() else {
-                return nil
-            }
-            group.cancelAll()
-            switch result {
-            case let .connected(stream):
-                return stream
-            case .timeout:
-                syncBreadcrumb(
-                    "Chat.resyncStep",
-                    ["step": "establishFollow", "edge": "timeout"]
-                )
-                return nil
-            case .cancelled:
-                return nil
-            }
+        let client = apiClient
+        let fromSeq = followResumeFromSeq()
+        let ackSeq = highestAppliedSeq ?? -1
+        let result = await Self.raceResyncStreamEstablishment(timeoutSeconds: timeout) {
+            try? await client.connectEvents(
+                conversationID: conversationID,
+                fromSeq: fromSeq,
+                ackSeq: ackSeq
+            )
+        }
+        switch result {
+        case let .connected(stream):
+            return stream
+        case .timeout:
+            syncBreadcrumb(
+                "Chat.resyncStep",
+                ["step": "establishFollow", "edge": "timeout"]
+            )
+            return nil
+        case .cancelled:
+            return nil
         }
     }
 
     func establishActivityStream(
-        generation: Int
+        generation _: Int
     ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
         let timeout = resyncEstablishTimeoutSeconds
-        return await withTaskGroup(
-            of: ResyncStreamEstablishment<AsyncThrowingStream<ChatConversationActivity, Error>>.self,
-            returning: AsyncThrowingStream<ChatConversationActivity, Error>?.self
-        ) { group in
-            group.addTask { [weak self] in
-                guard let self else {
-                    return .connected(nil)
-                }
-                let stream = try? await self.openActivityStream(generation: generation)
-                return .connected(stream)
-            }
-            group.addTask {
-                do {
-                    try await Task.sleep(for: .seconds(timeout))
-                    return .timeout
-                } catch {
-                    return .cancelled
-                }
-            }
+        let client = apiClient
+        let result = await Self.raceResyncStreamEstablishment(timeoutSeconds: timeout) {
+            try? await client.connectActivityStream()
+        }
+        switch result {
+        case let .connected(stream):
+            return stream
+        case .timeout:
+            syncBreadcrumb(
+                "Chat.resyncStep",
+                ["step": "establishActivity", "edge": "timeout"]
+            )
+            return nil
+        case .cancelled:
+            return nil
+        }
+    }
 
-            guard let result = await group.next() else {
-                return nil
+    /// Race a stream connect against its establishment timeout without a
+    /// structured scope. The losing connect is cancelled but never awaited, so a
+    /// transport that ignores cancellation cannot extend the timeout. Both racers
+    /// and the resolver are main-actor isolated, making the one-shot continuation
+    /// handoff race-free.
+    static func raceResyncStreamEstablishment<Stream>(
+        timeoutSeconds: Double,
+        connect: @escaping @MainActor () async -> Stream?
+    ) async -> ResyncStreamEstablishment<Stream> {
+        let race = ResyncStreamEstablishmentRace<Stream>()
+        let connectTask = Task { @MainActor in
+            race.resolve(.connected(await connect()))
+        }
+        let timeoutTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(timeoutSeconds))
+            } catch {
+                return
             }
-            group.cancelAll()
-            switch result {
-            case let .connected(stream):
-                return stream
-            case .timeout:
-                syncBreadcrumb(
-                    "Chat.resyncStep",
-                    ["step": "establishActivity", "edge": "timeout"]
-                )
-                return nil
-            case .cancelled:
-                return nil
+            race.resolve(.timeout)
+        }
+        let resolution = await withTaskCancellationHandler {
+            await race.wait()
+        } onCancel: {
+            connectTask.cancel()
+            timeoutTask.cancel()
+            Task { @MainActor in
+                race.resolve(.cancelled)
             }
         }
+        connectTask.cancel()
+        timeoutTask.cancel()
+        return resolution
     }
 
     func applyListSnapshot() async {

@@ -247,6 +247,10 @@ final class ResyncOrchestrator {
         let runID = UUID()
         activeRunID = runID
         lastEnteredResyncStep = nil
+        let runGenerations = ResyncGenerations(
+            follow: host.resyncFollowGeneration,
+            activity: host.resyncActivityGeneration
+        )
         breadcrumb?("Chat.resync", ["phase": "start", "trigger": trigger.rawValue])
         host.resyncPhaseDidStart()
         defer {
@@ -305,7 +309,9 @@ final class ResyncOrchestrator {
                 ["last_step": lastEnteredResyncStep ?? "unknown"]
             )
             stopBuffering()
-            restartStreams(host: host, attempt: currentAttempt, runID: runID)
+            if generationsStillCurrent(runGenerations, host: host) {
+                restartStreams(host: host, attempt: currentAttempt, runID: runID)
+            }
         case .cancelled:
             stopBuffering()
         }

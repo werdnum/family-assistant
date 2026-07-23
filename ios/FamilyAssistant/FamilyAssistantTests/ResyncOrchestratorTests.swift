@@ -402,6 +402,60 @@ final class ResyncOrchestratorTests: XCTestCase {
         )
     }
 
+    func testOverallDeadlineDoesNotRestartStreamsAfterGenerationChange() async {
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        let neverOpen = AsyncGate()
+        host.onEstablishFollow = { [weak host] in
+            host?.generation = 2
+            await neverOpen.wait()
+        }
+        var breadcrumbs: [(component: String, extraData: [String: String])] = []
+        let orchestrator = ResyncOrchestrator(
+            host: host,
+            overallDeadlineSeconds: 0.05,
+            breadcrumb: { component, extraData in
+                breadcrumbs.append((component, extraData))
+            }
+        )
+
+        await orchestrator.request().value
+        neverOpen.open()
+
+        XCTAssertEqual(host.phaseFinishCount, 1)
+        XCTAssertFalse(host.isResyncPhaseActive, "The deadline must still clear the syncing phase.")
+        XCTAssertEqual(
+            host.restartStreamsCount, 0,
+            "A lifecycle generation change must keep background policy from reopening streams."
+        )
+        XCTAssertTrue(
+            breadcrumbs.contains {
+                $0.component == "Chat.resyncStuck"
+                    && $0.extraData["last_step"] == "establishFollow"
+            }
+        )
+    }
+
+    func testEstablishmentTimeoutDoesNotAwaitWedgedConnect() async {
+        let neverOpen = AsyncGate()
+        let startedAt = ContinuousClock.now
+
+        let result = await ChatViewModel.raceResyncStreamEstablishment(timeoutSeconds: 0.02) {
+            await neverOpen.wait()
+            return true
+        }
+        let elapsed = ContinuousClock.now - startedAt
+        neverOpen.open()
+
+        guard case .timeout = result else {
+            return XCTFail("Expected the timeout to win the establishment race.")
+        }
+        XCTAssertLessThan(
+            elapsed,
+            .seconds(1),
+            "The timeout must return without awaiting a connect that ignores cancellation."
+        )
+    }
+
     // MARK: - Subscribe-then-buffer ordering (§4.4 steps 4/6/7)
 
     func testLostWakeupActivityEventBeforeSnapshotIsAppliedAfterSnapshot() async {
