@@ -43,6 +43,7 @@ jobs:
       dockerfile_changes: ${{ steps.filter.outputs.dockerfile_changes }}
       gemini_client: ${{ steps.filter.outputs.gemini_client }}
       llm_integration: ${{ steps.filter.outputs.llm_integration }}
+      ios: ${{ steps.filter.outputs.ios }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -125,6 +126,10 @@ jobs:
               - 'tests/integration/test_google_embedding.py'
               - 'tests/cassettes/llm/**'
               - 'tests/cassettes/gemini/**'
+            ios:
+              - 'ios/**'
+              - '.github/workflows/ios-tests.yml'
+              - '.github/workflows/ci-with-devcontainer.yml'
   build-ci-container:
     needs: [prepare, detect-changes]
     if: needs.detect-changes.outputs.has_code_changes == 'true'
@@ -819,9 +824,14 @@ jobs:
           registry: ${{ env.REGISTRY }}
           image-prefix: ${{ env.IMAGE_PREFIX }}
 
+  test-ios:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ios == 'true'
+    uses: ./.github/workflows/ios-tests.yml
+
   # Require all test jobs to pass
   all-tests:
-    needs: [lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, test-llm-integration, smoke-test-main-image]
+    needs: [lint, test-frontend-unit, test-backend-sqlite, test-backend-postgres, test-playwright-sqlite, test-playwright-postgres, test-gemini-live, test-llm-integration, smoke-test-main-image, test-ios]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -862,6 +872,7 @@ jobs:
           check_job "test-gemini-live" "${{ needs.test-gemini-live.result }}" || FAILED=1
           check_job "test-llm-integration" "${{ needs.test-llm-integration.result }}" || FAILED=1
           check_job "smoke-test-main-image" "${{ needs.smoke-test-main-image.result }}" || FAILED=1
+          check_job "test-ios" "${{ needs.test-ios.result }}" || FAILED=1
 
           if [[ $FAILED -eq 1 ]]; then
             echo ""

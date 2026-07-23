@@ -10,8 +10,12 @@ struct FamilyAssistantApp: App {
     init() {
         #if DEBUG
         UITestConfiguration.applyIfNeeded()
-        #endif
+        let authManager = UITestConfiguration.isEnabled
+            ? AuthManager(websiteDataCleaner: {})
+            : AuthManager()
+        #else
         let authManager = AuthManager()
+        #endif
         _authManager = State(initialValue: authManager)
         _notificationManager = State(initialValue: NotificationManager())
 

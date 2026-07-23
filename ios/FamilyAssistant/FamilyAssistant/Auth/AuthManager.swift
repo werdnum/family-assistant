@@ -96,6 +96,8 @@ final class AuthManager {
     /// same task rather than blocking the main actor.
     @ObservationIgnored @MainActor private var inFlightRefresh: Task<Void, Error>?
 
+    @ObservationIgnored private let websiteDataCleaner: @MainActor () async -> Void
+
     private var codeVerifier: String?
     private var authSession: ASWebAuthenticationSession?
     private var contextProvider: PresentationContextProvider?
@@ -108,7 +110,8 @@ final class AuthManager {
         static let tokenExpiry = "fa_token_expiry"
     }
 
-    init() {
+    init(websiteDataCleaner: (@MainActor () async -> Void)? = nil) {
+        self.websiteDataCleaner = websiteDataCleaner ?? Self.clearWebsiteData
         serverURL = UserDefaults.standard.string(forKey: Keys.serverURL) ?? ""
         if KeychainHelper.readString(key: Keys.apiToken) != nil {
             isAuthenticated = true
@@ -444,7 +447,11 @@ final class AuthManager {
     /// Force a token refresh after a response-time 401, or refresh only when the
     /// stored token is due. Concurrent callers share the same in-flight operation.
     @MainActor
-    func refreshIfNeeded(force: Bool = false, ownerEpoch: Int? = nil) async throws {
+    func refreshIfNeeded(
+        force: Bool = false,
+        ownerEpoch: Int? = nil,
+        rejectedAccessToken: String? = nil
+    ) async throws {
         // A forced refresh is triggered by a specific operation (a stream connect,
         // turn start, or GET) that captured its auth epoch when it began. If the
         // session has since advanced (logout/re-login), that operation is stale: it
@@ -459,7 +466,11 @@ final class AuthManager {
         // refresh fences on its operation's captured epoch. Either way a
         // logout/re-login completing while the refresh suspends on the network
         // drops the superseded result rather than clobbering the newer session.
-        try await refreshIfNeeded(ownerEpoch: ownerEpoch ?? authEpoch, force: force)
+        try await refreshIfNeeded(
+            ownerEpoch: ownerEpoch ?? authEpoch,
+            force: force,
+            rejectedAccessToken: rejectedAccessToken
+        )
     }
 
     /// - Parameter ownerEpoch: when set by the private bootstrap path, rotated tokens are
@@ -480,7 +491,11 @@ final class AuthManager {
     ///   freshness check would no-op and the retry would resend the same rejected
     ///   token.
     @MainActor
-    private func refreshIfNeeded(ownerEpoch: Int?, force: Bool) async throws {
+    private func refreshIfNeeded(
+        ownerEpoch: Int?,
+        force: Bool,
+        rejectedAccessToken: String? = nil
+    ) async throws {
         // Capture the current epoch before awaiting any in-flight refresh, so we
         // can detect if a concurrent auth-state change happened and reject adopting
         // a stale refresh result.
@@ -500,6 +515,18 @@ final class AuthManager {
             if authEpoch != currentEpoch {
                 throw AuthError.noCredentials
             }
+            return
+        }
+
+        // A sibling request may have received the same rejected token but reached
+        // this method only after the first forced refresh completed. The request's
+        // token identifies that rejection as already recovered, avoiding a second
+        // refresh POST without requiring the 401 responses to arrive simultaneously.
+        if force,
+           let rejectedAccessToken,
+           let currentAccessToken = KeychainHelper.readString(key: Keys.apiToken),
+           currentAccessToken != rejectedAccessToken
+        {
             return
         }
 
@@ -702,13 +729,18 @@ final class AuthManager {
 
         // Clear WKWebView data before flipping the auth state, so a fast
         // re-login's fresh session cookie cannot be wiped by this cleanup.
+        await websiteDataCleaner()
+
+        isAuthenticated = false
+        authRequired = false
+    }
+
+    @MainActor
+    private static func clearWebsiteData() async {
         let dataStore = WKWebsiteDataStore.default()
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         let records = await dataStore.dataRecords(ofTypes: types)
         await dataStore.removeData(ofTypes: types, for: records)
-
-        isAuthenticated = false
-        authRequired = false
     }
 
     // MARK: - Helpers
