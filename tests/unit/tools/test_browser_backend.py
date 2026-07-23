@@ -11,6 +11,7 @@ import base64
 import json
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -101,6 +102,9 @@ def _make_mock_browser_server() -> tuple[httpx.AsyncClient, list[httpx.Request]]
     return client, seen
 
 
+_DEFAULT_TZ = ZoneInfo("Australia/Sydney")
+
+
 def _config(enabled: bool = True) -> BrowserHandoffConfig:
     return BrowserHandoffConfig(
         enabled=enabled,
@@ -131,6 +135,30 @@ async def test_remote_backend_screenshot_decodes_png() -> None:
     backend = RemoteBrowserBackend(_config(), "conv_shot", client=client)
     png = await backend.screenshot_png()
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_sends_timezone_in_create_session() -> None:
+    """The create-session request carries the configured IANA timezone so the
+    remote browser context reports the user's local time to in-page JS."""
+    client, seen = _make_mock_browser_server()
+    backend = RemoteBrowserBackend(
+        _config(), "conv_tz", client=client, timezone_id="Australia/Sydney"
+    )
+    await backend.goto("https://example.test/page")
+    create = next(r for r in seen if r.url.path == "/v1/sessions")
+    assert json.loads(create.content)["timezone_id"] == "Australia/Sydney"
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_omits_timezone_when_unset() -> None:
+    client, seen = _make_mock_browser_server()
+    backend = RemoteBrowserBackend(_config(), "conv_no_tz", client=client)
+    await backend.goto("https://example.test/page")
+    create = next(r for r in seen if r.url.path == "/v1/sessions")
+    assert "timezone_id" not in json.loads(create.content)
     await backend.close()
 
 
@@ -264,13 +292,20 @@ async def test_remote_backend_request_handoff_returns_url() -> None:
     await backend.close()
 
 
-def _exec_context(*, enabled: bool, profile_id: str | None) -> ToolExecutionContext:
+def _exec_context(
+    *,
+    enabled: bool,
+    profile_id: str | None,
+    timezone: ZoneInfo | None = _DEFAULT_TZ,
+    conversation_id: str = "conv_select",
+) -> ToolExecutionContext:
     app_config = SimpleNamespace(browser_handoff_config=_config(enabled=enabled))
     service = SimpleNamespace(app_config=app_config)
     ctx = SimpleNamespace(
         processing_service=service,
         processing_profile_id=profile_id,
-        conversation_id="conv_select",
+        conversation_id=conversation_id,
+        timezone=timezone,
     )
     return cast("ToolExecutionContext", cast("object", ctx))
 
@@ -280,6 +315,25 @@ async def test_get_browser_backend_uses_remote_for_handoff_profile() -> None:
     ctx = _exec_context(enabled=True, profile_id="browser_profile")
     backend = await get_browser_backend(ctx)
     assert isinstance(backend, RemoteBrowserBackend)
+    await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_get_browser_backend_forwards_context_timezone() -> None:
+    ctx = _exec_context(
+        enabled=True,
+        profile_id="browser_profile",
+        timezone=ZoneInfo("Australia/Sydney"),
+        conversation_id="conv_tz_select",
+    )
+    backend = await get_browser_backend(ctx)
+    assert isinstance(backend, RemoteBrowserBackend)
+    # Private read (SLF001): this asserts the one thing this test exists to check
+    # -- that get_browser_backend wired exec_context.timezone into the backend at
+    # construction. There is no public accessor for it, and observing it via the
+    # create-session body (covered by the tests above) would require driving a
+    # live session with network I/O, which this selection test deliberately avoids.
+    assert backend._timezone_id == "Australia/Sydney"  # noqa: SLF001
     await backend.close()
 
 

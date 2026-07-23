@@ -489,6 +489,7 @@ class RemoteBrowserBackend:
         config: BrowserHandoffConfig,
         conversation_id: str,
         client: httpx.AsyncClient | None = None,
+        timezone_id: str | None = None,
     ) -> None:
         if not config.service_url:
             raise BrowserBackendError(
@@ -497,6 +498,9 @@ class RemoteBrowserBackend:
         self._config = config
         self._conversation_id = conversation_id
         self._base_url = config.service_url.rstrip("/")
+        # IANA timezone (e.g. "Australia/Sydney") forwarded to browser-server so the
+        # remote browser context reports the user's local time to in-page JS.
+        self._timezone_id = timezone_id
         self._session_id: str | None = None
         # ``client`` is an injection seam for tests (e.g. httpx.MockTransport).
         self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
@@ -526,14 +530,17 @@ class RemoteBrowserBackend:
     async def _ensure_session(self) -> str:
         if self._session_id is not None:
             return self._session_id
+        payload: JsonDict = {
+            "conversation_id": self._conversation_id,
+            "interface_type": "research",
+            "initial_owner": "agent",
+        }
+        if self._timezone_id:
+            payload["timezone_id"] = self._timezone_id
         resp = await self._client.post(
             f"{self._base_url}/v1/sessions",
             headers=self._headers(),
-            json={
-                "conversation_id": self._conversation_id,
-                "interface_type": "research",
-                "initial_owner": "agent",
-            },
+            json=payload,
         )
         self._raise_for_status(resp, "create session")
         self._session_id = str(resp.json()["session_id"])
@@ -838,7 +845,9 @@ async def get_browser_backend(exec_context: ToolExecutionContext) -> BrowserBack
         session_key = exec_context.conversation_id or "default"
         backend = _remote_backends.get(session_key)
         if backend is None:
-            backend = RemoteBrowserBackend(config, session_key)
+            tz = getattr(exec_context, "timezone", None)
+            timezone_id = str(tz) if tz else None
+            backend = RemoteBrowserBackend(config, session_key, timezone_id=timezone_id)
             _remote_backends[session_key] = backend
         return backend
     session: BrowserSession = await get_browser_session(exec_context)
