@@ -1782,6 +1782,10 @@ final class ChatViewModel {
                 }
             }
 
+            // Capture the auth epoch BEFORE the GET so a 401/403 forced refresh is
+            // fenced on the session that made the request, not one re-read after the
+            // failure (a logout/re-login mid-flight would otherwise be missed).
+            let firstSubscribeEpoch = authManager.authEpoch
             var outcome = await runTurnSubscription(
                 conversationID: id,
                 fromSeq: start.firstSeq,
@@ -1820,7 +1824,7 @@ final class ChatViewModel {
             var authRefreshAttempted = false
             if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
                 authRefreshAttempted = true
-                outcome = await resolveAuthFailure(outcome)
+                outcome = await resolveAuthFailure(outcome, capturedEpoch: firstSubscribeEpoch)
                 session.lastAppliedSeq = lastSeq
             }
             while outcome == .dropped || outcome == .interrupted {
@@ -1837,6 +1841,7 @@ final class ChatViewModel {
                 }
                 let seqBeforeResume = lastSeq
                 let resumeStartedAt = Date()
+                let resumeSubscribeEpoch = authManager.authEpoch
                 outcome = await runTurnSubscription(
                     conversationID: id,
                     fromSeq: lastSeq.map { $0 + 1 } ?? start.firstSeq,
@@ -1848,7 +1853,7 @@ final class ChatViewModel {
                 session.lastAppliedSeq = lastSeq
                 if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
                     authRefreshAttempted = true
-                    outcome = await resolveAuthFailure(outcome)
+                    outcome = await resolveAuthFailure(outcome, capturedEpoch: resumeSubscribeEpoch)
                     session.lastAppliedSeq = lastSeq
                     guard !Task.isCancelled, currentStreamToken == streamToken else {
                         return
@@ -2041,16 +2046,23 @@ final class ChatViewModel {
     /// Retry affordance. A transient refresh failure is likewise treated as
     /// non-resumable rather than spinning the resume loop against a still-401
     /// stream. Any non-auth failure passes through unchanged.
-    private func resolveAuthFailure(_ outcome: TurnSubscriptionOutcome) async -> TurnSubscriptionOutcome {
+    /// - Parameter capturedEpoch: the auth epoch captured by the caller BEFORE the
+    ///   subscription GET began. Fencing the forced refresh and the terminal latch on
+    ///   this epoch (rather than re-reading `authEpoch` here, after the failure)
+    ///   ensures a logout/re-login that completed while the GET was in flight causes
+    ///   the stale rejection to be ignored rather than acting on the fresh session.
+    private func resolveAuthFailure(
+        _ outcome: TurnSubscriptionOutcome,
+        capturedEpoch: Int
+    ) async -> TurnSubscriptionOutcome {
         guard Self.authStatusForFailure(outcome) != nil else {
             return outcome
         }
-        let epoch = authManager.authEpoch
         do {
-            try await authManager.refreshIfNeeded(force: true, ownerEpoch: epoch)
+            try await authManager.refreshIfNeeded(force: true, ownerEpoch: capturedEpoch)
             return .dropped
         } catch AuthError.authRejected, AuthError.noCredentials {
-            authManager.markAuthRequiredIfCurrent(capturedEpoch: epoch)
+            authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
             return outcome
         } catch {
             return outcome
@@ -4148,6 +4160,14 @@ final class ChatViewModel {
     /// reattaching to the durable turn rather than POSTing again (§4.5). Clears the
     /// failed state on success.
     func retryFailedSend(turnID: String) async {
+        // Refuse while another turn is actively streaming: the retry tears down the
+        // current transport (`cancelStream()` below), which would cancel that
+        // unrelated in-flight reply. The Retry button is disabled in this state too;
+        // this guard defends paths that bypass it (accessibility actions, a race
+        // between render and tap).
+        guard !isStreaming else {
+            return
+        }
         guard let failed = failedSends[turnID] else {
             return
         }
@@ -4220,6 +4240,7 @@ final class ChatViewModel {
         let streamToken = session.streamToken
         let firstSeqFallback = (session.lastAppliedSeq ?? -1) + 1
         var lastSeq: Int? = session.lastAppliedSeq
+        let firstSubscribeEpoch = authManager.authEpoch
         var outcome = await runTurnSubscription(
             conversationID: id,
             fromSeq: firstSeqFallback,
@@ -4237,7 +4258,7 @@ final class ChatViewModel {
         var authRefreshAttempted = false
         if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
             authRefreshAttempted = true
-            outcome = await resolveAuthFailure(outcome)
+            outcome = await resolveAuthFailure(outcome, capturedEpoch: firstSubscribeEpoch)
             session.lastAppliedSeq = lastSeq
         }
         while outcome == .dropped || outcome == .interrupted {
@@ -4254,6 +4275,7 @@ final class ChatViewModel {
             }
             let seqBeforeResume = lastSeq
             let resumeStartedAt = Date()
+            let resumeSubscribeEpoch = authManager.authEpoch
             outcome = await runTurnSubscription(
                 conversationID: id,
                 fromSeq: lastSeq.map { $0 + 1 } ?? firstSeqFallback,
@@ -4265,7 +4287,7 @@ final class ChatViewModel {
             session.lastAppliedSeq = lastSeq
             if !authRefreshAttempted, Self.authStatusForFailure(outcome) != nil {
                 authRefreshAttempted = true
-                outcome = await resolveAuthFailure(outcome)
+                outcome = await resolveAuthFailure(outcome, capturedEpoch: resumeSubscribeEpoch)
                 session.lastAppliedSeq = lastSeq
                 guard !Task.isCancelled, currentStreamToken == streamToken else {
                     return

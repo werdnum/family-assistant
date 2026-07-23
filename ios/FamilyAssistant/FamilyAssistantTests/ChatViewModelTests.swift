@@ -9673,6 +9673,73 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testRetryIsIgnoredWhileAnotherTurnIsStreaming() async throws {
+        // Retrying an old failed bubble must NOT tear down a newer, actively-streaming
+        // turn: `retryFailedSend` calls `cancelStream()`, so it refuses while another
+        // turn is in flight (the Retry button is disabled in that state too).
+        let liveLeg = HangingStream()
+        let postCount = AtomicCounter()
+        var streamedTurnID = "turn-guard"
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                streamedTurnID = turnID
+                if postCount.increment() == 1 {
+                    // First send: the POST fails, producing a failed bubble.
+                    return .json(#"{"detail":"server is down"}"#, statusCode: 500)
+                }
+                // Second send: accepted, then streams indefinitely (hangs).
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_guard","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_guard/stream"):
+                return .hangingStream(
+                    "event: turn_started\ndata: {\"turn_id\":\"\(streamedTurnID)\",\"seq\":0}\n\n",
+                    controller: liveLeg
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_guard")
+
+        // First send fails -> a failed bubble carrying a Retry affordance.
+        model.draftText = "First"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+        let failed = try XCTUnwrap(model.messages.last { $0.role == .assistant })
+        let failedPayload = try XCTUnwrap(model.failedSend(for: failed))
+
+        // Second send is accepted and streams (hangs), so a turn is actively in flight.
+        model.draftText = "Second"
+        await model.sendDraft()
+        try await waitUntil { model.isStreaming }
+        let activeTurnID = try XCTUnwrap(model.activeTurnSessionForTesting?.turnID)
+        XCTAssertNotEqual(activeTurnID, failedPayload.turnID)
+
+        // Retrying the OLD failed turn while the second is streaming must be a no-op.
+        await model.retryFailedSend(turnID: failedPayload.turnID)
+
+        XCTAssertTrue(model.isStreaming, "the active turn must survive the ignored retry")
+        XCTAssertEqual(
+            model.activeTurnSessionForTesting?.turnID, activeTurnID,
+            "the retry must not replace the in-flight turn's session"
+        )
+        XCTAssertNotNil(
+            model.failedSends[failedPayload.turnID],
+            "the failed retry state is preserved so retry still works once streaming ends"
+        )
+
+        liveLeg.finish()
+        model.cancelStream()
+    }
+
     func testRetryAffordanceIsRestrictedToTheAssistantBubble() {
         // The user and assistant messages of a turn share the same `turnID`, so the
         // retry affordance must resolve to the ASSISTANT bubble only. Otherwise the

@@ -411,6 +411,11 @@ private struct MessageBubble: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.red)
+                // Retrying tears down the current transport before resubscribing, so
+                // it must not fire while a newer turn is actively streaming (it would
+                // cancel that unrelated in-flight reply). Mirrors the composer's
+                // send guard.
+                .disabled(viewModel.isStreaming)
                 .accessibilityIdentifier("chat-retry-\(message.id)")
             }
         }
