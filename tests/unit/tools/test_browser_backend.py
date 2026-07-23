@@ -328,6 +328,11 @@ async def test_get_browser_backend_forwards_context_timezone() -> None:
     )
     backend = await get_browser_backend(ctx)
     assert isinstance(backend, RemoteBrowserBackend)
+    # Private read (SLF001): this asserts the one thing this test exists to check
+    # -- that get_browser_backend wired exec_context.timezone into the backend at
+    # construction. There is no public accessor for it, and observing it via the
+    # create-session body (covered by the tests above) would require driving a
+    # live session with network I/O, which this selection test deliberately avoids.
     assert backend._timezone_id == "Australia/Sydney"  # noqa: SLF001
     await backend.close()
 
