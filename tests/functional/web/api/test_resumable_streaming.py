@@ -479,13 +479,15 @@ async def test_stream_on_empty_conversation_is_allowed(
 async def test_conversation_stream_flushes_response_head_immediately(
     test_client: AsyncClient,
 ) -> None:
-    """The conversation stream must emit a leading SSE comment immediately so a
+    """The conversation stream must emit a leading heartbeat immediately so a
     buffering front door (Envoy) forwards the response headers to the client
     without waiting for the first real event/heartbeat. For an idle stream that
     first byte would otherwise be the 30s heartbeat, so iOS ``URLSession.bytes``
     (which resolves on headers) stalls and the resync stream establishment times
-    out. A ``follow=false`` stream on an empty conversation closes right after the
-    flush, so the whole body is deterministically the comment."""
+    out. A ``heartbeat`` frame is used rather than a bare ``:`` comment because the
+    iOS parser would dispatch a spurious ``message`` event for a comment-only
+    frame. A ``follow=false`` stream on an empty conversation closes right after
+    the flush, so the whole body is deterministically the heartbeat."""
     conversation_id = f"conv_flush_{uuid.uuid4().hex[:8]}"
     response = await test_client.get(
         f"/api/v1/chat/conversations/{conversation_id}/stream",
@@ -496,7 +498,9 @@ async def test_conversation_stream_flushes_response_head_immediately(
     # leading flush; it can't be asserted the same way because it never closes
     # (httpx's ASGI test transport buffers an infinite response), so this
     # conversation-stream case covers the flush mechanism for both endpoints.
-    assert response.text.startswith(": connected\n\n"), repr(response.text)
+    assert response.text.startswith("event: heartbeat\ndata: {}\n\n"), repr(
+        response.text
+    )
 
 
 async def test_stream_on_multi_owner_conversation_returns_404(

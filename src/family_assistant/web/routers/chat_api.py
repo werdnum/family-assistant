@@ -1268,15 +1268,18 @@ async def api_chat_conversation_stream(
         # (re)subscribe or ``POST /v1/chat/ack`` after the client processes
         # turn_ended — never here on send.
         try:
-            # Flush the response head immediately. An idle ``follow=true`` stream's
-            # first real byte is the 30s heartbeat, and the production front door
-            # (Envoy) does not forward the response headers to the client until it
-            # receives that first upstream byte. iOS ``URLSession.bytes`` resolves on
-            # headers, so without an immediate byte the resync's stream establishment
-            # stalls until it times out (~8s) and the connection indicator is stuck
-            # degraded. A leading SSE comment (a ``:`` line) is ignored by every SSE
-            # client and costs nothing.
-            yield ": connected\n\n"
+            # Flush the response head immediately with an initial heartbeat. An idle
+            # ``follow=true`` stream's first real byte is otherwise the 30s heartbeat,
+            # and the production front door (Envoy) does not forward the response
+            # headers to the client until it receives that first upstream byte. iOS
+            # ``URLSession.bytes`` resolves on headers, so without an immediate byte
+            # the resync's stream establishment stalls until it times out (~8s) and
+            # the connection indicator is stuck degraded. A ``heartbeat`` frame (not a
+            # bare ``:`` comment) is used deliberately: the iOS SSE parser dispatches a
+            # default ``message`` event for a comment-only frame, which would trigger a
+            # spurious history/list reload on every reconnect, whereas ``heartbeat`` is
+            # an explicit no-op control frame every client already ignores.
+            yield "event: heartbeat\ndata: {}\n\n"
             # Replay the snapshot first; then tail live events from the queue.
             for replayed in handle.replayed_events:
                 if _should_emit(replayed.type, allowed_event_types):
@@ -1394,12 +1397,13 @@ async def api_chat_activity_stream(
 
     async def event_generator() -> AsyncGenerator[str]:
         try:
-            # Flush the response head immediately so a buffering front door forwards
-            # the headers to the client without waiting for the first heartbeat (see
-            # the follow-stream endpoint for the full rationale). The activity stream
-            # is idle even more often than the follow stream, so this matters here
-            # too: iOS establishes on headers and otherwise times out.
-            yield ": connected\n\n"
+            # Flush the response head immediately with an initial heartbeat so a
+            # buffering front door forwards the headers to the client without waiting
+            # for the first real heartbeat (see the follow-stream endpoint for the
+            # full rationale, including why a ``heartbeat`` frame is used rather than a
+            # bare ``:`` comment). The activity stream is idle even more often than the
+            # follow stream, so this matters here too.
+            yield "event: heartbeat\ndata: {}\n\n"
             while True:
                 queue_get = asyncio.ensure_future(handle.queue.get())
                 shutdown_wait = asyncio.ensure_future(shutdown_event.wait())
