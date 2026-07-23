@@ -66,6 +66,7 @@ final class ChatViewModel {
     // Injectable so tests can observe the diagnostic breadcrumbs emitted on a
     // stream drop without going through the shared singleton.
     @ObservationIgnored private let errorReporter: ErrorReporter
+    @ObservationIgnored private let syncBreadcrumb: ChatSyncBreadcrumb
     // Diagnostic logger for the SSE streaming paths. Pairs with the
     // ErrorReporter breadcrumbs emitted on a stream drop: os.Logger is the live
     // (tethered) view, ErrorReporter persists the same facts to the backend
@@ -199,6 +200,12 @@ final class ChatViewModel {
         let text: String
     }
 
+    private enum ResyncStreamEstablishment<Stream> {
+        case connected(Stream?)
+        case timeout
+        case cancelled
+    }
+
     // How recently the last conversation must have been active for it to reopen
     // on launch. Past this, launch lands on the conversation list instead of
     // restoring (then bouncing away from) a thread the user has moved on from.
@@ -233,6 +240,7 @@ final class ChatViewModel {
     // out the production delay.
     @ObservationIgnored private let liveReconnectInitialDelaySeconds: Double
     @ObservationIgnored private let liveReconnectMaxDelaySeconds: Double
+    @ObservationIgnored private let resyncEstablishTimeoutSeconds: Double
 
     // While a send is in flight the watch stream is resumed across mid-turn drops
     // (see `runSendTurn`). This caps the number of *consecutive* resumes that end
@@ -313,6 +321,7 @@ final class ChatViewModel {
         liveReconnectMaxDelaySeconds: Double = 30,
         maxConsecutiveStreamResumes: Int = 5,
         streamResumeLivenessSeconds: Double = 2,
+        resyncEstablishTimeoutSeconds: Double = 8,
         streamTextFlushInterval: Duration = .milliseconds(50),
         errorReporter: ErrorReporter = .shared,
         pathMonitor: PathMonitoring? = nil
@@ -321,6 +330,7 @@ final class ChatViewModel {
         self.liveReconnectMaxDelaySeconds = liveReconnectMaxDelaySeconds
         self.maxConsecutiveStreamResumes = maxConsecutiveStreamResumes
         self.streamResumeLivenessSeconds = streamResumeLivenessSeconds
+        self.resyncEstablishTimeoutSeconds = resyncEstablishTimeoutSeconds
         self.streamTextFlushInterval = streamTextFlushInterval
         self.errorReporter = errorReporter
         self.authManager = authManager
@@ -334,6 +344,7 @@ final class ChatViewModel {
                 bypassDedupe: true
             )
         }
+        self.syncBreadcrumb = syncBreadcrumb
         syncCoordinator = SyncCoordinator(
             authManager: authManager,
             pathMonitor: pathMonitor ?? NetworkPathMonitor(),
@@ -3978,13 +3989,90 @@ extension ChatViewModel: ResyncHost {
         // Reuse the delegate's connect (cursor-resumed, returns after headers). A
         // failed connect leaves this channel unbuffered; the coordinator's loop
         // reconnects it on handover.
-        try? await openFollowStream(conversationID: conversationID, generation: generation)
+        let timeout = resyncEstablishTimeoutSeconds
+        return await withTaskGroup(
+            of: ResyncStreamEstablishment<AsyncThrowingStream<ChatStreamEvent, Error>>.self,
+            returning: AsyncThrowingStream<ChatStreamEvent, Error>?.self
+        ) { group in
+            group.addTask { [weak self] in
+                guard let self else {
+                    return .connected(nil)
+                }
+                let stream = try? await self.openFollowStream(
+                    conversationID: conversationID,
+                    generation: generation
+                )
+                return .connected(stream)
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .seconds(timeout))
+                    return .timeout
+                } catch {
+                    return .cancelled
+                }
+            }
+
+            guard let result = await group.next() else {
+                return nil
+            }
+            group.cancelAll()
+            switch result {
+            case let .connected(stream):
+                return stream
+            case .timeout:
+                syncBreadcrumb(
+                    "Chat.resyncStep",
+                    ["step": "establishFollow", "edge": "timeout"]
+                )
+                return nil
+            case .cancelled:
+                return nil
+            }
+        }
     }
 
     func establishActivityStream(
         generation: Int
     ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
-        try? await openActivityStream(generation: generation)
+        let timeout = resyncEstablishTimeoutSeconds
+        return await withTaskGroup(
+            of: ResyncStreamEstablishment<AsyncThrowingStream<ChatConversationActivity, Error>>.self,
+            returning: AsyncThrowingStream<ChatConversationActivity, Error>?.self
+        ) { group in
+            group.addTask { [weak self] in
+                guard let self else {
+                    return .connected(nil)
+                }
+                let stream = try? await self.openActivityStream(generation: generation)
+                return .connected(stream)
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .seconds(timeout))
+                    return .timeout
+                } catch {
+                    return .cancelled
+                }
+            }
+
+            guard let result = await group.next() else {
+                return nil
+            }
+            group.cancelAll()
+            switch result {
+            case let .connected(stream):
+                return stream
+            case .timeout:
+                syncBreadcrumb(
+                    "Chat.resyncStep",
+                    ["step": "establishActivity", "edge": "timeout"]
+                )
+                return nil
+            case .cancelled:
+                return nil
+            }
+        }
     }
 
     func applyListSnapshot() async {

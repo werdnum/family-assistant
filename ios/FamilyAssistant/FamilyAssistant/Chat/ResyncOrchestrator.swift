@@ -148,6 +148,7 @@ final class ResyncOrchestrator {
 
     private let bufferCapacity: Int
     private let maxRestarts: Int
+    private let overallDeadlineSeconds: Double
     private let breadcrumb: ChatSyncBreadcrumb?
 
     /// Buffered stream events held (undispatched) while the snapshots are
@@ -169,16 +170,21 @@ final class ResyncOrchestrator {
     /// the stale one finishes (F2/F4).
     private var runningTarget: ResyncTarget?
     private var pendingSupersede = false
+    private var currentAttempt = 1
+    private var lastEnteredResyncStep: String?
+    private var activeRunID: UUID?
 
     init(
         host: ResyncHost,
         bufferCapacity: Int = 256,
         maxRestarts: Int = 3,
+        overallDeadlineSeconds: Double = 25,
         breadcrumb: ChatSyncBreadcrumb? = nil
     ) {
         self.host = host
         self.bufferCapacity = bufferCapacity
         self.maxRestarts = maxRestarts
+        self.overallDeadlineSeconds = overallDeadlineSeconds
         self.breadcrumb = breadcrumb
     }
 
@@ -238,10 +244,16 @@ final class ResyncOrchestrator {
         let startedAt = Date()
         var terminalOutcome = RunOutcome.aborted
         var overflowRestarts = 0
+        let runID = UUID()
+        activeRunID = runID
+        lastEnteredResyncStep = nil
         breadcrumb?("Chat.resync", ["phase": "start", "trigger": trigger.rawValue])
         host.resyncPhaseDidStart()
         defer {
-            runningTarget = nil
+            if activeRunID == runID {
+                activeRunID = nil
+                runningTarget = nil
+            }
             host.resyncPhaseDidFinish()
             breadcrumb?(
                 "Chat.resync",
@@ -254,11 +266,63 @@ final class ResyncOrchestrator {
             )
         }
 
-        while true {
-            pendingSupersede = false
-            let result = await runOneResync(host: host)
-            overflowRestarts += result.overflowRestarts
+        let race = RunRace()
+        let workTask = Task { [weak self, weak host] in
+            guard let self, let host else {
+                race.resolve(.cancelled)
+                return
+            }
+            let result = await self.runToCompletion(host: host, runID: runID)
+            race.resolve(.completed(result))
+        }
+        let deadlineSeconds = overallDeadlineSeconds
+        let deadlineTask = Task {
+            do {
+                try await Task.sleep(for: .seconds(deadlineSeconds))
+            } catch {
+                return
+            }
+            race.resolve(.deadline)
+        }
+        let resolution = await withTaskCancellationHandler {
+            await race.wait()
+        } onCancel: {
+            Task { @MainActor in
+                race.resolve(.cancelled)
+            }
+        }
+        workTask.cancel()
+        deadlineTask.cancel()
+
+        switch resolution {
+        case let .completed(result):
             terminalOutcome = result.outcome
+            overflowRestarts = result.overflowRestarts
+        case .deadline:
+            terminalOutcome = .degraded
+            breadcrumb?(
+                "Chat.resyncStuck",
+                ["last_step": lastEnteredResyncStep ?? "unknown"]
+            )
+            stopBuffering()
+            restartStreams(host: host, attempt: currentAttempt, runID: runID)
+        case .cancelled:
+            stopBuffering()
+        }
+    }
+
+    private func runToCompletion(host: ResyncHost, runID: UUID) async -> RunResult {
+        var overflowRestarts = 0
+        while true {
+            guard !Task.isCancelled else {
+                return RunResult(outcome: .aborted, overflowRestarts: overflowRestarts)
+            }
+            pendingSupersede = false
+            let result = await runOneResync(host: host, runID: runID)
+            overflowRestarts += result.overflowRestarts
+            guard !Task.isCancelled else {
+                return RunResult(outcome: .aborted, overflowRestarts: overflowRestarts)
+            }
             switch result.outcome {
             case .completed, .aborted, .degraded:
                 // A supersede request that arrived during this run (a differing
@@ -267,7 +331,7 @@ final class ResyncOrchestrator {
                 if pendingSupersede {
                     continue
                 }
-                return
+                return RunResult(outcome: result.outcome, overflowRestarts: overflowRestarts)
             case .superseded:
                 // A selection switch mid-attempt aborted the stale attempt without
                 // draining its follow buffer; re-run targeting the new selection.
@@ -278,11 +342,12 @@ final class ResyncOrchestrator {
 
     /// One full resync pass INCLUDING its bounded overflow restarts. Returns the
     /// terminal outcome for the `run()` supersede loop.
-    private func runOneResync(host: ResyncHost) async -> RunResult {
+    private func runOneResync(host: ResyncHost, runID: UUID) async -> RunResult {
         var attempt = 0
         while true {
+            currentAttempt = attempt + 1
             runningTarget = ResyncTarget(host: host)
-            let outcome = await attemptResync(host: host)
+            let outcome = await attemptResync(host: host, attempt: currentAttempt, runID: runID)
             switch outcome {
             case .completed:
                 return RunResult(
@@ -301,7 +366,7 @@ final class ResyncOrchestrator {
                     // channel is re-established; their reconnect + connect-time
                     // catch-up reconcile content (the loops fence by generation),
                     // and the indicator reflects real per-channel health.
-                    host.restartStreams()
+                    restartStreams(host: host, attempt: currentAttempt, runID: runID)
                     return RunResult(outcome: .degraded, overflowRestarts: attempt)
                 }
             }
@@ -311,6 +376,36 @@ final class ResyncOrchestrator {
     private struct RunResult {
         let outcome: RunOutcome
         let overflowRestarts: Int
+    }
+
+    private enum RunResolution {
+        case completed(RunResult)
+        case deadline
+        case cancelled
+    }
+
+    @MainActor
+    private final class RunRace {
+        private var resolution: RunResolution?
+        private var continuation: CheckedContinuation<RunResolution, Never>?
+
+        func wait() async -> RunResolution {
+            if let resolution {
+                return resolution
+            }
+            return await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        }
+
+        func resolve(_ resolution: RunResolution) {
+            guard self.resolution == nil else {
+                return
+            }
+            self.resolution = resolution
+            continuation?.resume(returning: resolution)
+            continuation = nil
+        }
     }
 
     private enum RunOutcome: String {
@@ -348,7 +443,7 @@ final class ResyncOrchestrator {
             && host.resyncActivityGeneration == generations.activity
     }
 
-    private func attemptResync(host: ResyncHost) async -> ResyncOutcome {
+    private func attemptResync(host: ResyncHost, attempt: Int, runID: UUID) async -> ResyncOutcome {
         resetBuffer()
         let generations = ResyncGenerations(
             follow: host.resyncFollowGeneration,
@@ -359,11 +454,25 @@ final class ResyncOrchestrator {
         // stream is established below. Idempotent across overflow restarts: the
         // coordinator's tasks are cleared on the first await, so a restart's call
         // returns at once.
+        reportStep("awaitTermination", edge: "enter", attempt: attempt, runID: runID)
         await host.awaitStreamTermination()
+        guard activeRunID == runID else {
+            return .aborted
+        }
+        reportStep("awaitTermination", edge: "exit", attempt: attempt, runID: runID)
 
+        reportStep("gateAuth", edge: "enter", attempt: attempt, runID: runID)
         do {
             try await host.gateAuthIfNeeded(generation: generations.follow)
+            guard activeRunID == runID else {
+                return .aborted
+            }
+            reportStep("gateAuth", edge: "exit", attempt: attempt, runID: runID)
         } catch let error as AuthError {
+            guard activeRunID == runID else {
+                return .aborted
+            }
+            reportStep("gateAuth", edge: "exit", attempt: attempt, runID: runID)
             switch error {
             case .transient:
                 // A TRANSIENT refresh failure (network error, 5xx) is NOT a
@@ -379,7 +488,7 @@ final class ResyncOrchestrator {
                 // streams the background policy just cancelled; leave reconnection to
                 // the next foreground resync instead.
                 if generationsStillCurrent(generations, host: host) {
-                    host.restartStreams()
+                    restartStreams(host: host, attempt: attempt, runID: runID)
                 }
                 return .aborted
             case .authRejected, .noCredentials, .invalidServerURL, .exchangeFailed:
@@ -389,12 +498,16 @@ final class ResyncOrchestrator {
                 return .aborted
             }
         } catch {
+            guard activeRunID == runID else {
+                return .aborted
+            }
+            reportStep("gateAuth", edge: "exit", attempt: attempt, runID: runID)
             // A non-`AuthError` failure from the gate is treated as transient for
             // the same reason: don't strand the torn-down loops. Same generation
             // guard as the transient case — don't reopen streams a background policy
             // cancelled mid-gate.
             if generationsStillCurrent(generations, host: host) {
-                host.restartStreams()
+                restartStreams(host: host, attempt: attempt, runID: runID)
             }
             return .aborted
         }
@@ -412,12 +525,27 @@ final class ResyncOrchestrator {
         await startBuffering(
             host: host,
             selectedConversationID: selectedConversationID,
-            generations: generations
+            generations: generations,
+            attempt: attempt,
+            runID: runID
         )
+
+        guard activeRunID == runID else {
+            return .aborted
+        }
+        guard !Task.isCancelled, generationsStillCurrent(generations, host: host) else {
+            stopBuffering()
+            return .aborted
+        }
 
         // Step 5: authoritative snapshots (full-replacement list + selected
         // conversation messages/active_turns).
+        reportStep("listSnapshot", edge: "enter", attempt: attempt, runID: runID)
         await host.applyListSnapshot()
+        guard activeRunID == runID else {
+            return .aborted
+        }
+        reportStep("listSnapshot", edge: "exit", attempt: attempt, runID: runID)
 
         if bufferOverflowed {
             return abortForOverflow()
@@ -443,7 +571,12 @@ final class ResyncOrchestrator {
         }
 
         if let selectedConversationID {
+            reportStep("messagesSnapshot", edge: "enter", attempt: attempt, runID: runID)
             await host.applyMessagesSnapshot(conversationID: selectedConversationID)
+            guard activeRunID == runID else {
+                return .aborted
+            }
+            reportStep("messagesSnapshot", edge: "exit", attempt: attempt, runID: runID)
         }
 
         if bufferOverflowed {
@@ -465,11 +598,17 @@ final class ResyncOrchestrator {
         if bufferOverflowed {
             return abortForOverflow()
         }
+        reportStep("drain", edge: "enter", attempt: attempt, runID: runID)
         await drainBuffer(
             host: host,
             selectedConversationID: selectedConversationID,
-            generations: generations
+            generations: generations,
+            runID: runID
         )
+        guard activeRunID == runID else {
+            return .aborted
+        }
+        reportStep("drain", edge: "exit", attempt: attempt, runID: runID)
 
         guard !Task.isCancelled, generationsStillCurrent(generations, host: host) else {
             return .aborted
@@ -478,12 +617,17 @@ final class ResyncOrchestrator {
         // Step 7: hand the live connections to the coordinator's reconnect loops.
         // The resync streams are already closed (stopBuffering cancelled them);
         // the loops reconnect immediately.
-        host.restartStreams()
+        restartStreams(host: host, attempt: attempt, runID: runID)
 
         // Fallback mitigation: the activity stream has no replay, so close the
         // residual window between the drain and the loop's activity reconnect with
         // one final full-replacement list refetch.
+        reportStep("finalListSnapshot", edge: "enter", attempt: attempt, runID: runID)
         await host.applyListSnapshot()
+        guard activeRunID == runID else {
+            return .aborted
+        }
+        reportStep("finalListSnapshot", edge: "exit", attempt: attempt, runID: runID)
 
         return .completed
     }
@@ -502,46 +646,61 @@ final class ResyncOrchestrator {
     private func startBuffering(
         host: ResyncHost,
         selectedConversationID: String?,
-        generations: ResyncGenerations
+        generations: ResyncGenerations,
+        attempt: Int,
+        runID: UUID
     ) async {
-        if let selectedConversationID,
-           let stream = await host.establishFollowStream(
-               conversationID: selectedConversationID,
-               generation: generations.follow
-           ) {
-            followBufferingTask = Task { [weak self] in
-                do {
-                    // Enqueue every delivered event: a finished stream drains its
-                    // buffered tail before ending, and a cancelled iterator over an
-                    // unfinished stream simply returns nil (loop ends) — so no
-                    // yielded-but-unbuffered event is dropped on handover.
-                    //
-                    // Reject a post-cancel delivery: cancellation is cooperative, so
-                    // an element already produced before `stopBuffering` cancelled
-                    // this task can still be delivered afterward. On the MainActor the
-                    // isCancelled check is atomic with element receipt (no await
-                    // between), so an overflow-restart that reset the shared buffer
-                    // cannot see this stale element appended to the next attempt's
-                    // buffer (it would otherwise be drained and re-rendered when the
-                    // replacement follow connection replays the same seq). A natural
-                    // stream finish is not cancellation, so tail draining is intact.
-                    for try await event in stream {
-                        if Task.isCancelled { break }
-                        self?.enqueue(.follow(event))
-                    }
-                } catch {
-                    // A drop during buffering is fine: the loop that takes over on
-                    // handover reconnects, and the snapshot already covers content.
-                }
+        if let selectedConversationID {
+            reportStep("establishFollow", edge: "enter", attempt: attempt, runID: runID)
+            let stream = await host.establishFollowStream(
+                conversationID: selectedConversationID,
+                generation: generations.follow
+            )
+            guard activeRunID == runID, !Task.isCancelled else {
+                return
             }
-        } else if selectedConversationID != nil {
-            bufferingDegraded = true
+            reportStep("establishFollow", edge: "exit", attempt: attempt, runID: runID)
+            if let stream {
+                followBufferingTask = Task { [weak self] in
+                    do {
+                        // Enqueue every delivered event: a finished stream drains its
+                        // buffered tail before ending, and a cancelled iterator over an
+                        // unfinished stream simply returns nil (loop ends) — so no
+                        // yielded-but-unbuffered event is dropped on handover.
+                        //
+                        // Reject a post-cancel delivery: cancellation is cooperative, so
+                        // an element already produced before `stopBuffering` cancelled
+                        // this task can still be delivered afterward. On the MainActor the
+                        // isCancelled check is atomic with element receipt (no await
+                        // between), so an overflow-restart that reset the shared buffer
+                        // cannot see this stale element appended to the next attempt's
+                        // buffer (it would otherwise be drained and re-rendered when the
+                        // replacement follow connection replays the same seq). A natural
+                        // stream finish is not cancellation, so tail draining is intact.
+                        for try await event in stream {
+                            if Task.isCancelled { break }
+                            self?.enqueue(.follow(event))
+                        }
+                    } catch {
+                        // A drop during buffering is fine: the loop that takes over on
+                        // handover reconnects, and the snapshot already covers content.
+                    }
+                }
+            } else {
+                bufferingDegraded = true
+            }
         }
 
-        if let stream = await host.establishActivityStream(generation: generations.activity) {
+        reportStep("establishActivity", edge: "enter", attempt: attempt, runID: runID)
+        let activityStream = await host.establishActivityStream(generation: generations.activity)
+        guard activeRunID == runID, !Task.isCancelled else {
+            return
+        }
+        reportStep("establishActivity", edge: "exit", attempt: attempt, runID: runID)
+        if let activityStream {
             activityBufferingTask = Task { [weak self] in
                 do {
-                    for try await _ in stream {
+                    for try await _ in activityStream {
                         if Task.isCancelled { break }
                         self?.enqueue(.activitySignal)
                     }
@@ -550,6 +709,32 @@ final class ResyncOrchestrator {
         } else {
             bufferingDegraded = true
         }
+    }
+
+    private func reportStep(_ step: String, edge: String, attempt: Int, runID: UUID) {
+        guard activeRunID == runID else {
+            return
+        }
+        if edge == "enter" {
+            lastEnteredResyncStep = step
+        }
+        breadcrumb?(
+            "Chat.resyncStep",
+            [
+                "step": step,
+                "edge": edge,
+                "attempt": String(attempt),
+            ]
+        )
+    }
+
+    private func restartStreams(host: ResyncHost, attempt: Int, runID: UUID) {
+        guard activeRunID == runID else {
+            return
+        }
+        reportStep("handoff", edge: "enter", attempt: attempt, runID: runID)
+        host.restartStreams()
+        reportStep("handoff", edge: "exit", attempt: attempt, runID: runID)
     }
 
     private func stopBuffering() {
@@ -568,9 +753,13 @@ final class ResyncOrchestrator {
     private func drainBuffer(
         host: ResyncHost,
         selectedConversationID: String?,
-        generations: ResyncGenerations
+        generations: ResyncGenerations,
+        runID: UUID
     ) async {
         while !buffer.isEmpty {
+            guard activeRunID == runID else {
+                return
+            }
             // A selection switch mid-drain (the per-event await let the user move to
             // another thread) supersedes this attempt: the remaining buffered follow
             // events belong to the OLD conversation, and during a resync
