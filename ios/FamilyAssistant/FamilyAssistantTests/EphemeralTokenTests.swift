@@ -105,7 +105,7 @@ final class EphemeralTokenTests: XCTestCase {
         do {
             _ = try await makeClient().fetchEphemeralToken(profileID: nil)
             XCTFail("Expected a server error.")
-        } catch let ChatAPIError.server(statusCode, detail) {
+        } catch let ChatAPIError.server(statusCode, detail, _) {
             XCTAssertEqual(statusCode, 500)
             XCTAssertEqual(detail, "Voice mode is not configured.")
         }

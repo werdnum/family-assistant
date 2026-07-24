@@ -150,6 +150,14 @@ final class SyncCoordinator {
         case syncStarted
         case syncFinished
         case pushHintReceived(conversationID: String?)
+        /// Advisory (background) reads are persistently failing (true) or have
+        /// recovered (false). Fed by the view model's per-operation failure
+        /// counter once it crosses the degraded threshold, and cleared on the next
+        /// advisory success, so a silent-forever advisory failure is impossible
+        /// (§4.5). Distinct from per-channel health: the SSE channels can read
+        /// `.connected` while background HTTP reads (list, approvals poll, profile
+        /// load, catch-up merges) keep failing.
+        case advisoryReadsFailing(Bool)
     }
 
     enum SyncEffect: Equatable {
@@ -173,6 +181,7 @@ final class SyncCoordinator {
     private var pendingReauthRestart = false
     private(set) var phase: ReconciliationPhase = .idle
     private(set) var cameFromBackground = false
+    private(set) var advisoryHealthDegraded = false
 
     // Per-channel generations. Each stream task captures its channel's generation
     // at start and stamps every delegate callback and health event with it; the
@@ -283,6 +292,15 @@ final class SyncCoordinator {
         }
         if phase == .syncing {
             return .syncing
+        }
+        // Persistent advisory-read failure degrades even when both SSE channels
+        // read healthy: the live token stream can be fine while background HTTP
+        // reads (list, approvals poll, profile load, catch-up) keep failing, and
+        // §4.5 requires that state be visible rather than silent-forever. This is a
+        // sustained, threshold-crossed condition (not a transient reconnect), so it
+        // sits above the channel-warning grace below.
+        if advisoryHealthDegraded {
+            return .degraded
         }
         if channelsAreLive {
             return .live
@@ -550,10 +568,16 @@ final class SyncCoordinator {
                     }
                 } catch {
                     streamError = error
-                    if case ChatAPIError.server(let statusCode, _) = error, statusCode == 410 {
+                    if case ChatAPIError.server(let statusCode, _, _) = error, statusCode == 410 {
                         self.delegate?.followBufferRotated(generation: generation)
                     }
-                    if case ChatAPIError.server(let statusCode, _) = error,
+                    // A response-time 401/403 on connect is a terminal auth failure,
+                    // not an ordinary transient drop: replaying the rejected token
+                    // would spin the backoff forever. Force one coalesced refresh; if
+                    // it succeeds retry the connect at once (skip the backoff sleep),
+                    // otherwise the delegate has latched `authRequired` and the loop
+                    // must stop.
+                    if case ChatAPIError.server(let statusCode, _, _) = error,
                        statusCode == 401 || statusCode == 403 {
                         if !authRefreshAlreadyAttempted {
                             authRefreshAlreadyAttempted = true
@@ -693,7 +717,12 @@ final class SyncCoordinator {
                     }
                 } catch {
                     streamError = error
-                    if case ChatAPIError.server(let statusCode, _) = error,
+                    // A response-time 401/403 on connect is a terminal auth failure
+                    // (see the follow loop): force one coalesced refresh and retry at
+                    // once on success, otherwise stop — the delegate has latched
+                    // `authRequired` and replaying the rejected token would spin the
+                    // backoff forever.
+                    if case ChatAPIError.server(let statusCode, _, _) = error,
                        statusCode == 401 || statusCode == 403 {
                         if !authRefreshAlreadyAttempted {
                             authRefreshAlreadyAttempted = true
@@ -1027,6 +1056,10 @@ final class SyncCoordinator {
             activityHealth = .down
             return []
 
+        case let .advisoryReadsFailing(failing):
+            advisoryHealthDegraded = failing
+            return []
+
         case .syncStarted:
             phase = .syncing
             return []
@@ -1107,7 +1140,7 @@ final class SyncCoordinator {
             return "cancelled"
         }
         if let apiError = error as? ChatAPIError,
-           case .server(let statusCode, _) = apiError {
+           case .server(let statusCode, _, _) = apiError {
             switch statusCode {
             case 410: return "http410"
             case 401: return "http401"

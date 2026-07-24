@@ -140,6 +140,11 @@ private struct ConversationListView: View {
             get: { viewModel.conversationSelection },
             set: { viewModel.updateSelection($0) }
         )) {
+            if viewModel.conversationsRefreshFailed {
+                ConversationListRefreshBanner(
+                    lastRefreshed: viewModel.conversationsLastRefreshedAt
+                )
+            }
             if filteredConversations.isEmpty && !viewModel.isLoadingConversations {
                 ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
             } else {
@@ -159,6 +164,37 @@ private struct ConversationListView: View {
                 ProgressView("Loading chats...")
             }
         }
+    }
+}
+
+/// A non-blocking row shown atop the conversation list when a refresh failed. The
+/// list keeps its cached rows (iOS convention: a failed pull-to-refresh doesn't clear
+/// content); this surfaces the failure and the last-good time in-place, which a modal
+/// or the thread-scoped banner couldn't do on the list column.
+private struct ConversationListRefreshBanner: View {
+    let lastRefreshed: Date?
+
+    private var subtitle: String {
+        guard let lastRefreshed else {
+            return "Not yet refreshed"
+        }
+        return "Last updated \(lastRefreshed.formatted(date: .omitted, time: .standard))"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Couldn’t refresh")
+                    .font(.subheadline.weight(.medium))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("conversation-list-refresh-failed")
     }
 }
 
@@ -207,6 +243,7 @@ private struct ChatThreadView: View {
                 messageScrollArea
             }
 
+            ThreadInlineBanner(viewModel: viewModel)
             Divider()
             ChatComposerView(viewModel: viewModel)
         }
@@ -401,6 +438,22 @@ private struct MessageBubble: View {
             if !message.attachments.isEmpty {
                 AttachmentStrip(attachments: message.attachments, viewModel: viewModel)
             }
+            if let failed = viewModel.failedSend(for: message) {
+                Button {
+                    Task { await viewModel.retryFailedSend(turnID: failed.turnID) }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                // Retrying tears down the current transport before resubscribing, so
+                // it must not fire while a newer turn is actively streaming (it would
+                // cancel that unrelated in-flight reply). Mirrors the composer's
+                // send guard.
+                .disabled(viewModel.isStreaming)
+                .accessibilityIdentifier("chat-retry-\(message.id)")
+            }
         }
         // One textSelection for the whole bubble. It applies to every Text in the
         // subtree, so per-element copies are redundant and only add layout work.
@@ -420,6 +473,12 @@ private struct MessageBubble: View {
         .padding(12)
         .background(isUser ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            if message.status == .failed {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.red.opacity(0.5), lineWidth: 1)
+            }
+        }
         // Cap the bubble to a single concrete width, then push it to its side with
         // alignment rather than a flexible Spacer. The old HStack + Spacer(minLength:)
         // + maxWidth:680 combination made the bubble width depend on a flexible
@@ -844,24 +903,32 @@ private struct DraftAttachmentStrip: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(viewModel.draftAttachments) { attachment in
-                    HStack(spacing: 6) {
-                        Image(systemName: icon(for: attachment))
-                        Text(attachment.name)
-                            .lineLimit(1)
-                        if attachment.uploadState == .uploading {
-                            ProgressView()
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Image(systemName: icon(for: attachment))
+                            Text(attachment.name)
+                                .lineLimit(1)
+                            if attachment.uploadState == .uploading {
+                                ProgressView()
+                            }
+                            if attachment.uploadState == .failed {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.red)
+                            }
+                            Button {
+                                Task { await viewModel.removeDraftAttachment(attachment) }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .disabled(attachment.uploadState == .uploading)
+                            .accessibilityLabel("Remove \(attachment.name)")
                         }
-                        if attachment.uploadState == .failed {
-                            Image(systemName: "exclamationmark.triangle.fill")
+                        if let error = attachment.errorMessage {
+                            Text(error)
                                 .foregroundStyle(.red)
+                                .lineLimit(2)
+                                .accessibilityIdentifier("draft-attachment-error-\(attachment.id)")
                         }
-                        Button {
-                            Task { await viewModel.removeDraftAttachment(attachment) }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .disabled(attachment.uploadState == .uploading)
-                        .accessibilityLabel("Remove \(attachment.name)")
                     }
                     .font(.caption)
                     .padding(.horizontal, 8)
@@ -995,6 +1062,37 @@ private struct PendingConfirmationsBanner: View {
             .padding(10)
             .background(Color.yellow.opacity(0.16))
             .accessibilityIdentifier("pending-confirmations-banner")
+        }
+    }
+}
+
+/// A small non-modal banner above the composer for the thread-scoped inline
+/// surfaces the classifier routes here (§4.5): a 403 access-changed, a 404-gone
+/// conversation, a user-initiated read that failed, or a rate-limited action.
+/// Distinct from the modal error alert — it never blocks the UI and is dismissible.
+private struct ThreadInlineBanner: View {
+    var viewModel: ChatViewModel
+
+    var body: some View {
+        if let message = viewModel.threadInlineMessage {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.circle")
+                    .foregroundStyle(.orange)
+                Text(message)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    viewModel.threadInlineMessage = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                }
+                .accessibilityLabel("Dismiss")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.orange.opacity(0.12))
+            .accessibilityIdentifier("chat-thread-inline-banner")
         }
     }
 }

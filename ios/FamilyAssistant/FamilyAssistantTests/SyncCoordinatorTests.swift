@@ -295,7 +295,7 @@ final class SyncCoordinatorTests: XCTestCase {
             followReconnectMaxDelaySeconds: 0.01
         )
         let delegate = RecordingSyncStreamDelegate()
-        delegate.followOpenError = ChatAPIError.server(statusCode: 500, detail: nil)
+        delegate.followOpenError = ChatAPIError.server(statusCode: 500, detail: nil, retryAfter: nil)
         delegate.followOpenErrorLimit = 1
         delegate.hangFollowOpen = true
         var healthAtRetryOpen: SyncCoordinator.ChannelHealth?
@@ -866,7 +866,7 @@ final class SyncCoordinatorTests: XCTestCase {
             reconnectDelay: { _ in delayCount += 1 }
         )
         let delegate = RecordingSyncStreamDelegate()
-        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
         coordinator.delegate = delegate
 
         coordinator.startFollowStream(conversationID: "conv-1")
@@ -905,7 +905,7 @@ final class SyncCoordinatorTests: XCTestCase {
             reconnectDelay: { _ in delayCount += 1 }
         )
         let delegate = RecordingSyncStreamDelegate()
-        delegate.activityOpenError = ChatAPIError.server(statusCode: 403, detail: nil)
+        delegate.activityOpenError = ChatAPIError.server(statusCode: 403, detail: nil, retryAfter: nil)
         coordinator.delegate = delegate
 
         coordinator.startActivityStream()
@@ -937,7 +937,7 @@ final class SyncCoordinatorTests: XCTestCase {
             reconnectDelay: { _ in delayCount += 1 }
         )
         let delegate = RecordingSyncStreamDelegate()
-        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
         delegate.followOpenErrorLimit = 1
         delegate.hangFollowOpen = true
         let reconnected = expectation(description: "follow stream reopened")
@@ -972,7 +972,7 @@ final class SyncCoordinatorTests: XCTestCase {
             reconnectDelay: { _ in delayCount += 1 }
         )
         let delegate = RecordingSyncStreamDelegate()
-        delegate.activityOpenError = ChatAPIError.server(statusCode: 401, detail: nil)
+        delegate.activityOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
         delegate.activityOpenErrorLimit = 1
         delegate.hangActivityOpen = true
         let reconnected = expectation(description: "activity stream reopened")
@@ -1030,6 +1030,50 @@ final class SyncCoordinatorTests: XCTestCase {
             return
         }
         XCTFail("Timed out waiting for predicate")
+    }
+
+    // MARK: - Advisory-read health (M3)
+
+    func testAdvisoryReadsFailingDegradesEvenWithHealthyChannels() {
+        // §4.5: persistent advisory-read failure must be visible even when both SSE
+        // channels read connected, so a silent-forever background failure is
+        // impossible.
+        let (coordinator, _, _) = makeCoordinator(satisfied: true)
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+        XCTAssertEqual(coordinator.presentation, .live)
+
+        coordinator.apply(.advisoryReadsFailing(true))
+
+        XCTAssertTrue(coordinator.advisoryHealthDegraded)
+        XCTAssertEqual(coordinator.presentation, .degraded)
+    }
+
+    func testAdvisoryReadsRecoveryClearsDegraded() {
+        let (coordinator, _, _) = makeCoordinator(satisfied: true)
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+        coordinator.apply(.advisoryReadsFailing(true))
+        XCTAssertEqual(coordinator.presentation, .degraded)
+
+        coordinator.apply(.advisoryReadsFailing(false))
+
+        XCTAssertFalse(coordinator.advisoryHealthDegraded)
+        XCTAssertEqual(coordinator.presentation, .live)
+    }
+
+    func testAdvisoryDegradedDoesNotOverrideAuthOrOffline() {
+        // Auth and offline are more specific than advisory health and must still
+        // win the presentation derivation.
+        let (coordinator, _, _) = makeCoordinator(satisfied: true)
+        coordinator.apply(.advisoryReadsFailing(true))
+
+        coordinator.apply(.authRequired)
+        XCTAssertEqual(coordinator.presentation, .authRequired)
+
+        coordinator.apply(.authOK)
+        coordinator.apply(.reachabilityChanged(.unsatisfied))
+        XCTAssertEqual(coordinator.presentation, .offline)
     }
 }
 

@@ -67,7 +67,7 @@ final class VoiceToolRunner {
                 name: call.name,
                 response: .object(["result": toolResult])
             )
-        } catch let ChatAPIError.server(statusCode, detail) {
+        } catch let ChatAPIError.server(statusCode, detail, _) {
             let message = detail ?? "Tool execution failed with status \(statusCode)."
             return errorResponse(for: call, message: message)
         } catch {

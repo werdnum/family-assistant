@@ -647,3 +647,44 @@ for genuinely wrong-state outcomes were fixed, one test-correctness gap closed, 
   consequence is briefly-open streams (wasteful, not corrupt), self-corrected by the next real
   background teardown — degraded, not broken, so accepted per behaviour-altitude over adding a
   lifecycle re-check to the effect dispatch.
+
+### 9.2 M3 review disposition (codex `gpt-5.6-sol`, 2026-07-22)
+
+A local codex pass on the M3 branch — after rebasing its error-taxonomy / inline-retry work onto the
+merged M1+M2 main — raised one P1 and four P2s about the new retry and 429 paths. Disposition per the
+same gates:
+
+- **[P1] Retry targeted the user bubble, not the assistant bubble — FIXED.** The user and assistant
+  messages of a turn share the same `turnID`, and the user row is appended first, so
+  `retryFailedSend`'s `messages.first { $0.turnID == turnID }` selected the *user* bubble — tapping
+  Retry cleared the prompt and rendered the resumed reply into it, leaving the actual failed bubble
+  untouched. `failedSend(for:)` likewise exposed the affordance on the user row. Both now filter for
+  `role == .assistant`. A common outcome (any Retry tap), so ideal behaviour is required. Covered by
+  `testRetryAffordanceIsRestrictedToTheAssistantBubble`.
+- **[P2] Delayed message-load retry could brick the composer — FIXED.** `loadMessages` set
+  `isLoadingMessages = true` but reset it only at the function tail; the stale-selection guards
+  (a conversation switch during the fetch await) returned early, leaking the flag and permanently
+  disabling the composer on the thread the user moved to — newly reachable via M3's delayed advisory
+  retry. Reset with a `defer` so every exit path clears it (also closes the latent pre-existing
+  version). Covered by `testStaleMessageLoadDoesNotLeakLoadingFlag`.
+- **[P2] User-initiated 429 read went to the modal — FIXED.** The classifier returned `.retryAfter`
+  for any advisory-read 429, but `handleUserReadFailure` maps `.retryAfter` to the generic "Chat
+  Error" modal, so a throttled pull-to-refresh popped a modal instead of the promised inline
+  rate-limit feedback (§4.5). The 429 branch now schedules the silent retry only for *background*
+  advisory reads and routes user-initiated reads (and actions) to `.inlineFeedback(.rateLimited)`.
+  Covered by `test429UserInitiatedAdvisoryReadStaysInline`.
+- **[P2] Approvals poll ignores `Retry-After` — ACCEPTED (documented).** A 429 on the ~15 s
+  pending-approvals poll routes `.retryAfter` with no retry closure, so the honored-delay retry is a
+  no-op and the loop re-polls on its fixed 15 s cadence rather than the server-requested delay. The
+  endpoint returning 429 is uncommon, and the existing behaviour (re-poll at 15 s) already
+  self-recovers — at worst one or two extra throttled requests before the delay elapses. Making the
+  fixed-cadence poll suppress itself until `Retry-After` is coordination machinery disproportionate
+  to that bounded, self-healing inefficiency, so accepted per the cost/benefit gate.
+- **[P2] Shared advisory-retry task cancels cross-operation retries — ACCEPTED (documented).** A
+  single `advisoryRetryTask` is deliberately coalesced (a burst of throttled polls must not stack
+  retries), so a 429 from one operation cancels another operation's scheduled retry. The worst case
+  (a one-shot profile-load retry lost to a concurrent list/message 429) degrades to the default
+  profile — reasonable, non-broken behaviour — and self-heals on the next foreground resync or
+  interaction. It requires two distinct advisory operations both throttled within one retry window;
+  keying retries per operation (up to N concurrent retry tasks) trades the deliberate coalescing for
+  a rare, recoverable degradation, so accepted per behaviour-altitude / cost-benefit.

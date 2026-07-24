@@ -102,7 +102,7 @@ struct ChatAPIClient {
         let (data, response) = try await urlSession.data(for: request)
         do {
             try validate(response: response, data: data)
-        } catch let ChatAPIError.server(statusCode, detail) where detail == nil {
+        } catch let ChatAPIError.server(statusCode, detail, _) where detail == nil {
             throw ChatAPIError.validation("Voice session request failed with status \(statusCode).")
         }
         return try JSONDecoder.chatDecoder.decode(EphemeralToken.self, from: data)
@@ -517,7 +517,11 @@ struct ChatAPIClient {
         try validate(response: response, data: data)
         let result = try JSONDecoder.chatDecoder.decode(ChatConfirmationActionResponse.self, from: data)
         if !result.success {
-            throw ChatAPIError.server(statusCode: 200, detail: result.message ?? "Confirmation request failed.")
+            throw ChatAPIError.server(
+                statusCode: 200,
+                detail: result.message ?? "Confirmation request failed.",
+                retryAfter: nil
+            )
         }
     }
 
@@ -660,8 +664,22 @@ struct ChatAPIClient {
         }
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let detail = try? JSONDecoder.chatDecoder.decode(ChatServerError.self, from: data).detail
-            throw ChatAPIError.server(statusCode: httpResponse.statusCode, detail: detail)
+            throw ChatAPIError.server(
+                statusCode: httpResponse.statusCode,
+                detail: detail,
+                retryAfter: Self.parseRetryAfter(httpResponse)
+            )
         }
+    }
+
+    /// Parse a `Retry-After` response header into seconds. Handles the delta-seconds
+    /// form (`"30"`); an HTTP-date form is ignored (returns nil) so the caller falls
+    /// back to its default backoff.
+    private static func parseRetryAfter(_ response: HTTPURLResponse) -> TimeInterval? {
+        guard let raw = response.value(forHTTPHeaderField: "Retry-After") else {
+            return nil
+        }
+        return TimeInterval(raw.trimmingCharacters(in: .whitespaces))
     }
 
     private func streamServerSentEvents(
@@ -941,7 +959,10 @@ enum ChatAPIError: LocalizedError, Equatable {
     case invalidServerURL
     case invalidResponse
     case validation(String)
-    case server(statusCode: Int, detail: String?)
+    /// A non-2xx HTTP response. `retryAfter` carries the parsed `Retry-After`
+    /// header (seconds) when the server attached one — chiefly on a 429 — so the
+    /// classifier can honor the server's backoff instead of a hard-coded default.
+    case server(statusCode: Int, detail: String?, retryAfter: TimeInterval?)
 
     var errorDescription: String? {
         switch self {
@@ -951,7 +972,7 @@ enum ChatAPIError: LocalizedError, Equatable {
             "The server returned an invalid response."
         case .validation(let message):
             message
-        case .server(let statusCode, let detail):
+        case .server(let statusCode, let detail, _):
             if let detail, !detail.isEmpty {
                 detail
             } else {
