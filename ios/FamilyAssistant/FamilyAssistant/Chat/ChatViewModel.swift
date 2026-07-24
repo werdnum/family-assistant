@@ -896,7 +896,17 @@ final class ChatViewModel {
         // whatever an existing thread we were viewing was pinned to.
         selectedProfileID = preferredProfileID
         persistConversationID()
-        startLiveEvents(reason: .newConversation)
+        // A brand-new conversation has no server-side row yet, so there is nothing
+        // to follow: opening a follow stream on this client-generated id would just
+        // 404-loop the reconnect backoff and pin the connection indicator to
+        // `.degraded` (a permanent "Live updates degraded" warning + reconnect
+        // spinner) even though the first send streams fine over its own transport.
+        // Mark it a generated launch draft — exactly like a fresh thread opened at
+        // launch (see init) — so `currentConversationID()` returns nil (liveness
+        // falls back to the account-global activity stream) and the follow stream is
+        // deferred until the first accepted turn makes the conversation server-backed
+        // (see `runSendTurn`, which flips this flag and starts following then).
+        opensGeneratedLaunchDraft = true
     }
 
     private func resetTurnControlState() {
