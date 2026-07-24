@@ -9,11 +9,29 @@ from pydantic import BaseModel
 
 from family_assistant.storage.context import DatabaseContext
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
+from family_assistant.web.frontend_telemetry import (
+    FrontendTelemetryRecord,
+    get_frontend_telemetry_buffer,
+)
 
 errors_api_router = APIRouter()
 
-# Logger for frontend JavaScript errors
+# Logger for frontend errors. ERROR-level reports land here (and, via
+# SQLAlchemyErrorHandler, in the error_logs table read by the engineer profile).
 frontend_logger = logging.getLogger("frontend.javascript")
+
+# Logger for non-error frontend telemetry (breadcrumbs). Kept below the
+# error_logs handler threshold so telemetry never pollutes the error log; the
+# in-memory ring buffer is the queryable lane (GET /api/errors/telemetry).
+telemetry_logger = logging.getLogger("frontend.telemetry")
+
+# Maps a report severity to the stdlib log level used for the telemetry lane.
+# Everything here is below ERROR, so none of it is persisted to error_logs.
+_TELEMETRY_LEVELS: dict[str, int] = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+}
 
 
 class ErrorLogResponse(BaseModel):
@@ -53,6 +71,12 @@ class FrontendErrorReport(BaseModel):
     error_type: str | None = (
         None  # uncaught, promise_rejection, component_error, manual
     )
+    # Severity axis, orthogonal to error_type. Absent or "error" routes to the
+    # error log (as today); "info"/"warning"/"debug" route to the telemetry ring
+    # buffer instead so breadcrumbs never pollute error_logs. The web frontend
+    # never sets this, so its reports (incl. component_error boundaries) stay in
+    # the error log; only clients that opt in (iOS breadcrumbs) get the new lane.
+    severity: str | None = None
     extra_data: dict | None = None
 
 
@@ -60,6 +84,13 @@ class FrontendErrorReportResponse(BaseModel):
     """Response model for frontend error report."""
 
     status: str
+
+
+class FrontendTelemetryResponse(BaseModel):
+    """Response for a page of buffered frontend telemetry (breadcrumbs)."""
+
+    records: list[dict]
+    count: int
 
 
 @errors_api_router.post("/")
@@ -71,6 +102,11 @@ async def report_frontend_error(
     This endpoint receives error reports from the web client and logs them
     using Python's logging system. The SQLAlchemyErrorHandler automatically
     stores ERROR-level logs in the database.
+
+    A non-error ``severity`` ("info"/"warning"/"debug") routes the report to the
+    in-memory telemetry ring buffer instead of the error log, so high-frequency
+    breadcrumbs do not drown genuine errors. Absent or "error" severity behaves
+    as before (logged at ERROR, persisted to error_logs).
 
     Note: This endpoint is intentionally unauthenticated to allow error
     capture before user login or when auth state is broken. The /api/* paths
@@ -86,12 +122,37 @@ async def report_frontend_error(
         "details": error_report.extra_data,
     }
 
-    frontend_logger.error(
+    severity = (error_report.severity or "error").strip().lower()
+    telemetry_level = _TELEMETRY_LEVELS.get(severity)
+    if telemetry_level is None:
+        # Error lane: unknown severities fall back here too, so a malformed value
+        # is never silently dropped from the error log.
+        frontend_logger.error(
+            error_report.message,
+            extra={"extra_data": extra_data},
+        )
+        return FrontendErrorReportResponse(status="reported")
+
+    # Telemetry lane: ring buffer (the queryable surface) plus a stdout line
+    # below the error_logs threshold.
+    get_frontend_telemetry_buffer().add(
+        FrontendTelemetryRecord(
+            timestamp=datetime.now(UTC),
+            severity=severity,
+            message=error_report.message,
+            component_name=error_report.component_name,
+            error_type=error_report.error_type,
+            url=error_report.url,
+            user_agent=error_report.user_agent,
+            extra_data=error_report.extra_data,
+        )
+    )
+    telemetry_logger.log(
+        telemetry_level,
         error_report.message,
         extra={"extra_data": extra_data},
     )
-
-    return FrontendErrorReportResponse(status="reported")
+    return FrontendErrorReportResponse(status="recorded")
 
 
 @errors_api_router.get("/")
@@ -130,6 +191,30 @@ async def get_errors(
         total_pages=total_pages,
         total_count=total_count,
         limit=limit,
+    )
+
+
+@errors_api_router.get("/telemetry")
+async def get_frontend_telemetry(
+    _: Annotated[dict, Depends(get_diagnostics_reader)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    since_minutes: Annotated[int | None, Query(ge=1)] = None,
+    component: str | None = None,
+) -> FrontendTelemetryResponse:
+    """Get recent non-error frontend telemetry (breadcrumbs) from the ring buffer.
+
+    This is the queryable lane for iOS sync breadcrumbs, kept separate from the
+    error log so it does not drown genuine errors. Registered before
+    ``/{error_id}`` so this static path is matched first.
+    """
+    records = get_frontend_telemetry_buffer().get_recent(
+        limit=limit,
+        since_minutes=since_minutes,
+        component=component,
+    )
+    return FrontendTelemetryResponse(
+        records=[r.to_dict() for r in records],
+        count=len(records),
     )
 
 

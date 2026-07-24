@@ -10,9 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.utils.logging_handler import SQLAlchemyErrorHandler
+from family_assistant.web.frontend_telemetry import reset_frontend_telemetry_buffer
 
 # The frontend.javascript logger that the API endpoint uses
 FRONTEND_LOGGER_NAME = "frontend.javascript"
+
+
+@pytest.fixture(autouse=True)
+def _reset_telemetry_buffer() -> None:
+    """The telemetry ring buffer is a process-global singleton; reset it around
+    each test so buffered breadcrumbs do not leak between tests."""
+    reset_frontend_telemetry_buffer()
 
 
 @pytest_asyncio.fixture
@@ -113,6 +121,117 @@ async def test_report_frontend_error_with_extra_data(
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "reported"
+
+
+@pytest.mark.asyncio
+async def test_info_severity_routes_to_telemetry_not_error_log(
+    web_only_assistant: Assistant,
+    frontend_error_handler: SQLAlchemyErrorHandler,
+) -> None:
+    """A breadcrumb (severity=info) is recorded in the telemetry buffer and does
+    NOT reach the error log, so it cannot drown genuine errors."""
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        breadcrumb_message = "iOS chat sync breadcrumb telemetry-only 24680"
+        response = await client.post(
+            "/api/errors/",
+            json={
+                "message": breadcrumb_message,
+                "url": "familyassistant://ios/Chat.streamDisconnect",
+                "component_name": "Chat.streamDisconnect",
+                "error_type": "component_error",
+                "severity": "info",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "recorded"
+
+        # It appears in the telemetry lane...
+        telemetry = await client.get("/api/errors/telemetry")
+        assert telemetry.status_code == 200
+        telemetry_messages = [r["message"] for r in telemetry.json()["records"]]
+        assert breadcrumb_message in telemetry_messages
+
+        # ...but NOT in the error log.
+        await frontend_error_handler.wait_for_pending_logs()
+        errors = await client.get(
+            "/api/errors/", params={"logger": "frontend.javascript", "days": 1}
+        )
+        assert errors.status_code == 200
+        error_messages = [e["message"] for e in errors.json()["errors"]]
+        assert breadcrumb_message not in error_messages
+
+
+@pytest.mark.asyncio
+async def test_explicit_error_severity_still_logs_to_error_log(
+    web_only_assistant: Assistant,
+    frontend_error_handler: SQLAlchemyErrorHandler,
+) -> None:
+    """An explicit severity=error report still lands in the error log (parity with
+    the default, absent-severity behaviour)."""
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        message = "Explicit error severity still logged 13579"
+        response = await client.post(
+            "/api/errors/",
+            json={
+                "message": message,
+                "url": "http://localhost:3000/",
+                "error_type": "manual",
+                "severity": "error",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "reported"
+
+        await frontend_error_handler.wait_for_pending_logs()
+        errors = await client.get(
+            "/api/errors/", params={"logger": "frontend.javascript", "days": 1}
+        )
+        error_messages = [e["message"] for e in errors.json()["errors"]]
+        assert message in error_messages
+
+        # And it is not duplicated into the telemetry lane.
+        telemetry = await client.get("/api/errors/telemetry")
+        telemetry_messages = [r["message"] for r in telemetry.json()["records"]]
+        assert message not in telemetry_messages
+
+
+@pytest.mark.asyncio
+async def test_get_frontend_telemetry_filters_by_component(
+    web_only_assistant: Assistant,
+) -> None:
+    """The telemetry read endpoint honours the component filter."""
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        for component in ("Chat.streamRestart", "Chat.resync"):
+            await client.post(
+                "/api/errors/",
+                json={
+                    "message": f"breadcrumb for {component}",
+                    "url": f"familyassistant://ios/{component}",
+                    "component_name": component,
+                    "error_type": "component_error",
+                    "severity": "info",
+                },
+            )
+
+        response = await client.get(
+            "/api/errors/telemetry", params={"component": "Chat.resync"}
+        )
+        assert response.status_code == 200
+        records = response.json()["records"]
+        assert records
+        assert {r["component_name"] for r in records} == {"Chat.resync"}
 
 
 @pytest.mark.asyncio

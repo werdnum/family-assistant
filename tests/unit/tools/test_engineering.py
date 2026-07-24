@@ -25,10 +25,16 @@ from family_assistant.tools.engineering import (
     _validate_source_path,  # noqa: PLC2701  # Testing private path validation
     create_github_issue,
     get_llm_request_history,
+    read_frontend_telemetry,
     read_source_file,
     search_source_code,
 )
 from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.web.frontend_telemetry import (
+    FrontendTelemetryRecord,
+    get_frontend_telemetry_buffer,
+    reset_frontend_telemetry_buffer,
+)
 
 
 @pytest.fixture
@@ -390,6 +396,73 @@ class TestGetLlmRequestHistory:
         assert data["filters"]["limit"] == 1
 
 
+# --- read_frontend_telemetry tests ---
+
+
+class TestReadFrontendTelemetry:
+    @pytest.fixture(autouse=True)
+    def clean_buffer(self) -> None:
+        reset_frontend_telemetry_buffer()
+
+    @pytest.mark.anyio
+    async def test_returns_empty_when_no_records(self) -> None:
+        result = await read_frontend_telemetry()
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 0
+        assert data["records"] == []
+
+    @pytest.mark.anyio
+    async def test_returns_records(self) -> None:
+        buffer = get_frontend_telemetry_buffer()
+        buffer.add(
+            FrontendTelemetryRecord(
+                timestamp=datetime.now(tz=UTC),
+                severity="info",
+                message="iOS chat sync breadcrumb",
+                component_name="Chat.streamDisconnect",
+                error_type="component_error",
+            )
+        )
+
+        result = await read_frontend_telemetry(limit=10, minutes=30)
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 1
+        assert data["records"][0]["component_name"] == "Chat.streamDisconnect"
+        assert data["records"][0]["severity"] == "info"
+
+    @pytest.mark.anyio
+    async def test_filters_by_component(self) -> None:
+        buffer = get_frontend_telemetry_buffer()
+        for component in ("Chat.streamRestart", "Chat.resync"):
+            buffer.add(
+                FrontendTelemetryRecord(
+                    timestamp=datetime.now(tz=UTC),
+                    severity="info",
+                    message=f"breadcrumb {component}",
+                    component_name=component,
+                )
+            )
+
+        result = await read_frontend_telemetry(component="Chat.resync")
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["count"] == 1
+        assert data["records"][0]["component_name"] == "Chat.resync"
+
+    @pytest.mark.anyio
+    async def test_limit_clamped_to_max(self) -> None:
+        result = await read_frontend_telemetry(limit=9999)
+
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["filters"]["limit"] == 500
+
+
 # --- Tool definitions tests ---
 
 
@@ -398,6 +471,7 @@ _ENGINEERING_TOOL_NAMES: frozenset[str] = frozenset({
     "search_source_code",
     "query_database",
     "read_error_logs",
+    "read_frontend_telemetry",
     "get_llm_request_history",
     "create_github_issue",
     "get_mcp_server_status",

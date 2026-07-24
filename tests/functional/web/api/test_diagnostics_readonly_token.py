@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 READONLY_ENDPOINTS = [
     "/api/errors/",
+    "/api/errors/telemetry",
     "/api/diagnostics/export",
     "/api/diagnostics/taint-audit",
 ]
