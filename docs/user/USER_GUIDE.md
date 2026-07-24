@@ -580,11 +580,14 @@ various tasks with dark mode support and mobile optimization.
   assistant's system prompt. The native Voice tab asks for microphone permission, shows a microphone
   level meter while audio is being captured, and reports an error instead of connecting silently if
   the microphone pipeline does not start. A small connection indicator in the Chat toolbar tells you
-  the live-updates state at a glance and offers the right fix in one tap: it distinguishes
-  *degraded* (updates are lagging — tap to reconnect) from *offline* (no connection — tap to
-  reconnect) from *sign-in required* (tap to sign in), instead of collapsing everything into one "no
-  connection" icon. Background sync failures no longer pop up error dialogs while you are reading;
-  they surface quietly through that indicator, so you get far fewer interrupting popups. If sending
+  the live-updates state at a glance and offers the right fix in one tap. It rides out a momentary
+  blip without flashing a warning, shows a spinner while it is actively reconnecting, and otherwise
+  distinguishes *degraded* (updates are lagging — tap to reconnect) from *offline* (no connection —
+  tap to reconnect) from *sign-in required* (tap to sign in), instead of collapsing everything into
+  one "no connection" icon. Background sync failures no longer pop up error dialogs while you are
+  reading; they surface quietly through that indicator — and, when the conversation list itself
+  can't refresh, through a small "Couldn't refresh — last updated …" note at the top of the list
+  rather than a dialog — so you get far fewer interrupting popups. If sending
   a message fails, the failure now shows right on the message with a **Retry** button — tapping it
   safely resends (it never sends twice, and if the reply was already running it just reconnects to
   it) rather than showing a modal. When the app comes back to the foreground after being
