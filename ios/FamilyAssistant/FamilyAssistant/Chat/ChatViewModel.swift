@@ -1715,12 +1715,6 @@ final class ChatViewModel {
                 ownerEpoch: startEpoch
             )
             startSucceeded = true
-            // The first send of a generated launch draft makes the conversation
-            // server-backed; start following it now so the channel reaches live.
-            if opensGeneratedLaunchDraft {
-                opensGeneratedLaunchDraft = false
-                startLiveEvents(reason: .newConversation)
-            }
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
                 if let stopConversationID = stopAfterRegistrationConversationID {
@@ -1741,6 +1735,18 @@ final class ChatViewModel {
                     }
                 }
                 return
+            }
+            // The first send of a generated launch draft makes the conversation
+            // server-backed; start following it now so the channel reaches live.
+            // Placed AFTER the supersession guard above: if a New Chat (or switch)
+            // replaced this send while its POST was in flight, the launch-draft flag
+            // now belongs to the NEW draft — consuming it here and following the
+            // current (still-unsaved) conversation would re-introduce the 404 follow
+            // loop this defer avoids. A superseded send returns above, leaving the
+            // flag for its owner's own first send.
+            if opensGeneratedLaunchDraft {
+                opensGeneratedLaunchDraft = false
+                startLiveEvents(reason: .newConversation)
             }
             registeredTurnIDs.insert(turnID)
             let pendingSteers = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
