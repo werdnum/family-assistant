@@ -427,11 +427,11 @@ See [docs/design/taint-history-epoch-amnesty.md](docs/design/taint-history-epoch
 ### Environment Variable for Read-Only Diagnostics Access
 
 - **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret that grants read-only access to the
-  error-log, diagnostics-export, taint-audit, and per-profile tool-inventory endpoints
-  (`GET /api/errors/`, `GET /api/errors/{id}`, `GET /api/diagnostics/export`,
-  `GET /api/diagnostics/taint-audit`, and `GET /api/debug/profiles/tools`) without a full user
-  session or API token. Intended for an external monitor or scraper that only needs to pull
-  diagnostics.
+  error-log, frontend-telemetry, diagnostics-export, taint-audit, and per-profile tool-inventory
+  endpoints (`GET /api/errors/`, `GET /api/errors/{id}`, `GET /api/errors/telemetry`,
+  `GET /api/diagnostics/export`, `GET /api/diagnostics/taint-audit`, and
+  `GET /api/debug/profiles/tools`) without a full user session or API token. Intended for an
+  external monitor or scraper that only needs to pull diagnostics.
 
   - When set, supply it as either `Authorization: Bearer <token>` or `X-API-Token: <token>`.
   - It only unlocks the diagnostics/error read endpoints and the tool-inventory endpoint (which
@@ -441,6 +441,22 @@ See [docs/design/taint-history-epoch-amnesty.md](docs/design/taint-history-epoch
   - The token is compared with a constant-time check. Leave the variable unset to disable the
     read-only path entirely (the endpoints then require normal authentication).
   - Example: `export DIAGNOSTICS_READONLY_TOKEN=$(openssl rand -hex 32)`
+
+### Frontend error reports vs. telemetry (breadcrumbs)
+
+Frontend clients POST to `POST /api/errors/`. The report's optional `severity` selects the lane:
+
+- Absent or `"error"` → **error lane**: logged at `ERROR` and persisted to `error_logs` (the table
+  the engineer profile reads via `read_error_logs` and a human reads via `GET /api/errors/`). The
+  web frontend never sets `severity`, so its reports — including React error-boundary catches that
+  use `error_type: "component_error"` — stay here.
+- `"info"` / `"warning"` / `"debug"` → **telemetry lane**: recorded in an in-memory ring buffer and
+  logged below the `error_logs` threshold, so high-frequency diagnostic breadcrumbs never drown
+  genuine errors. The iOS app sends its sync breadcrumbs (stream restarts/disconnects, resync
+  phases, transport events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader
+  gate as the error endpoints) or the engineer-profile `read_frontend_telemetry` tool. The buffer is
+  non-persistent (dropped on restart). See
+  [docs/design/ios-frontend-telemetry-lane.md](docs/design/ios-frontend-telemetry-lane.md).
 
 ### Global Tool Policy (`global_tools_policy`)
 

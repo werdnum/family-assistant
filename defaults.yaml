@@ -1643,6 +1643,7 @@ service_profiles:
           - **Source code**: Read files and search the codebase
           - **Database**: Execute SELECT queries to examine application state
           - **Error logs**: Read application error and warning logs
+          - **Frontend telemetry**: Read non-error client breadcrumbs (iOS sync stream restarts/disconnects, resync phases, transport events) from the in-memory ring buffer (read_frontend_telemetry). These are kept OUT of the error logs so they do not drown genuine errors — reach for this when investigating intermittent connection or sync problems
           - **LLM history**: Inspect recent LLM requests/responses
           - **Notes and documents**: Read stored notes and documents
           - **Automations**: View automation configurations and statistics
@@ -1689,6 +1690,7 @@ service_profiles:
               - "search_source_code"
               - "query_database"
               - "read_error_logs"
+              - "read_frontend_telemetry"
               - "get_llm_request_history"
               - "create_github_issue"
               - "get_mcp_server_status"

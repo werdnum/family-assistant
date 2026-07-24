@@ -39,6 +39,7 @@ from family_assistant.tools.infrastructure import (
 )
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.types import ToolDefinition, ToolResult
+from family_assistant.web.frontend_telemetry import get_frontend_telemetry_buffer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -440,6 +441,53 @@ async def get_llm_request_history(
             "filters": {
                 "limit": limit,
                 "minutes": minutes,
+            },
+        }
+    )
+
+
+async def read_frontend_telemetry(
+    limit: int = 50,
+    minutes: int | None = None,
+    component: str | None = None,
+) -> ToolResult:
+    """Read recent non-error frontend telemetry (breadcrumbs) from the ring buffer.
+
+    Frontend clients (notably the iOS app) emit diagnostic breadcrumbs — stream
+    restarts/disconnects, resync phases, per-operation transport events — that are
+    telemetry, not errors, so they are kept out of ``read_error_logs`` and held in a
+    separate in-memory ring buffer. Use this to investigate intermittent connection
+    or sync problems; use ``read_error_logs`` for genuine errors.
+
+    Args:
+        limit: Maximum number of records to return (default 50, max 500).
+        minutes: Optional filter to only include records from the last N minutes.
+        component: Optional exact-match filter on the reporting component
+            (e.g. "Chat.streamDisconnect", "Chat.resync").
+
+    Returns:
+        ToolResult with telemetry records, newest first.
+    """
+    logger.info(
+        "read_frontend_telemetry: limit=%d, minutes=%s, component=%s",
+        limit,
+        minutes,
+        component,
+    )
+
+    limit = max(1, min(limit, 500))
+
+    buffer = get_frontend_telemetry_buffer()
+    records = buffer.get_recent(limit=limit, since_minutes=minutes, component=component)
+
+    return ToolResult(
+        data={
+            "records": [r.to_dict() for r in records],
+            "count": len(records),
+            "filters": {
+                "limit": limit,
+                "minutes": minutes,
+                "component": component,
             },
         }
     )
@@ -1228,6 +1276,42 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "minutes": {
                         "type": "integer",
                         "description": "Optional filter to only include records from the last N minutes.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_frontend_telemetry",
+            "description": (
+                "Read recent non-error frontend telemetry (breadcrumbs) from the in-memory "
+                "ring buffer. Frontend clients (notably the iOS app) emit diagnostic "
+                "breadcrumbs for stream restarts/disconnects, resync phases, and per-operation "
+                "transport events. These are telemetry, not errors, so they are kept OUT of "
+                "read_error_logs and held here instead. Use this to investigate intermittent "
+                "connection or sync problems; use read_error_logs for genuine errors."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of records to return (default 50, max 500).",
+                        "default": 50,
+                    },
+                    "minutes": {
+                        "type": "integer",
+                        "description": "Optional filter to only include records from the last N minutes.",
+                    },
+                    "component": {
+                        "type": "string",
+                        "description": (
+                            "Optional exact-match filter on the reporting component "
+                            '(e.g. "Chat.streamDisconnect", "Chat.resync").'
+                        ),
                     },
                 },
                 "required": [],
