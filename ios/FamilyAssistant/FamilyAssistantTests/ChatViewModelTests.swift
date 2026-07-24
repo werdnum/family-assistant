@@ -797,6 +797,33 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.canSendDraft)
     }
 
+    func testStartNewConversationDefersFollowingUntilServerBacked() {
+        // A brand-new conversation has no server-side row yet. Opening a follow
+        // stream on its client-generated id would 404-loop the reconnect backoff and
+        // pin the connection indicator to `.degraded` (a permanent "Live updates
+        // degraded" warning + reconnect spinner) even while the first send streams
+        // fine over its own transport. `startNewConversation` must therefore defer
+        // following — like a fresh thread opened at launch — so `currentConversationID()`
+        // returns nil (liveness falls back to the account-global activity stream) until
+        // the first accepted turn makes the conversation server-backed.
+        let model = makeViewModel(conversationID: "existing_conv")
+        XCTAssertEqual(
+            model.currentConversationID(), "existing_conv",
+            "an existing, server-backed conversation is followed"
+        )
+
+        model.startNewConversation()
+
+        XCTAssertNil(
+            model.currentConversationID(),
+            "a brand-new conversation defers following (no 404 reconnect loop) until its first turn"
+        )
+        XCTAssertNil(
+            model.resyncSelectedConversationID,
+            "and is hidden from the foreground resync target too, so a foreground/reconnect before the first send does not 404 the resync snapshot on the client-only id"
+        )
+    }
+
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
         var streamedTurnID = "turn-send"
         ChatMockBackendURLProtocol.respond { request in

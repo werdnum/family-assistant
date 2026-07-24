@@ -896,7 +896,17 @@ final class ChatViewModel {
         // whatever an existing thread we were viewing was pinned to.
         selectedProfileID = preferredProfileID
         persistConversationID()
-        startLiveEvents(reason: .newConversation)
+        // A brand-new conversation has no server-side row yet, so there is nothing
+        // to follow: opening a follow stream on this client-generated id would just
+        // 404-loop the reconnect backoff and pin the connection indicator to
+        // `.degraded` (a permanent "Live updates degraded" warning + reconnect
+        // spinner) even though the first send streams fine over its own transport.
+        // Mark it a generated launch draft — exactly like a fresh thread opened at
+        // launch (see init) — so `currentConversationID()` returns nil (liveness
+        // falls back to the account-global activity stream) and the follow stream is
+        // deferred until the first accepted turn makes the conversation server-backed
+        // (see `runSendTurn`, which flips this flag and starts following then).
+        opensGeneratedLaunchDraft = true
     }
 
     private func resetTurnControlState() {
@@ -1706,10 +1716,21 @@ final class ChatViewModel {
             )
             startSucceeded = true
             // The first send of a generated launch draft makes the conversation
-            // server-backed; start following it now so the channel reaches live.
-            if opensGeneratedLaunchDraft {
+            // server-backed. Clear the launch-draft sentinel — gated on
+            // `id == self.conversationID` (this send is still for the displayed
+            // conversation), NOT the supersession guard below: a New Chat / switch
+            // moves `conversationID` to a DIFFERENT draft (the flag then belongs to
+            // that draft, and following the current unsaved id would re-introduce the
+            // 404 loop), but a background/suspend — which cancels this task WITHOUT
+            // changing `conversationID` — must still clear the flag so the
+            // now-server-backed turn reattaches and follows on foreground instead of
+            // staying stuck. Only eagerly (re)start the stream when this send is still
+            // current; otherwise the foreground resync establishes it.
+            if opensGeneratedLaunchDraft, id == self.conversationID {
                 opensGeneratedLaunchDraft = false
-                startLiveEvents(reason: .newConversation)
+                if !Task.isCancelled, currentStreamToken == streamToken {
+                    startLiveEvents(reason: .newConversation)
+                }
             }
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
@@ -4807,7 +4828,11 @@ extension ChatViewModel: ResyncHost {
     }
 
     var resyncSelectedConversationID: String? {
-        conversationID
+        // Mirror `currentConversationID()`: a generated launch draft has no server row
+        // yet, so the foreground resync must NOT snapshot/follow its client-only id
+        // (that 404s the follow + message-snapshot path and can degrade advisory
+        // health) until the first accepted turn makes it server-backed.
+        opensGeneratedLaunchDraft ? nil : conversationID
     }
 
     func awaitStreamTermination() async {
