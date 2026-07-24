@@ -110,7 +110,7 @@ _SDK_STATUS_CODE_TO_EXCEPTION: dict[int, type[LLMProviderError]] = {
     429: RateLimitError,
 }
 
-_DEEP_RESEARCH_TERMINAL_ERROR_STATUSES = {
+_INTERACTION_TERMINAL_ERROR_STATUSES = {
     "failed",
     "cancelled",
     "incomplete",
@@ -118,7 +118,7 @@ _DEEP_RESEARCH_TERMINAL_ERROR_STATUSES = {
 }
 
 
-def is_deep_research_terminal_error_status(status: str) -> bool:
+def is_interaction_terminal_error_status(status: str) -> bool:
     """Check if an Interaction status is a terminal (non-success) end state.
 
     Deliberately a deny-list, not an allow-list of "pending" statuses: the
@@ -128,7 +128,7 @@ def is_deep_research_terminal_error_status(status: str) -> bool:
     pending rather than failed. Mirrors the streaming path's own
     ``interaction.status_update`` handling.
     """
-    return status in _DEEP_RESEARCH_TERMINAL_ERROR_STATUSES
+    return status in _INTERACTION_TERMINAL_ERROR_STATUSES
 
 
 def is_deep_research_model(model: str) -> bool:
@@ -1555,16 +1555,18 @@ class GoogleGenAIClient(BaseLLMClient):
             create_kwargs["previous_interaction_id"] = resolved_previous_interaction_id
         return create_kwargs
 
-    def _classify_deep_research_delegation_error(self, e: Exception) -> Exception:
+    def _classify_agent_delegation_error(self, e: Exception) -> Exception:
         """Map an Interactions API exception to the delegation error taxonomy.
 
-        Used by the submit/poll/cancel primitives for the pollable-delegation
-        path (not the interactive streaming path, which raises
-        ``LLMProviderError`` subtypes via ``_map_interactions_error``
-        instead). Duck-types on ``status_code`` (SDK ``APIStatusError``),
-        mirroring ``_map_interactions_error``'s own pattern. Errors this
-        doesn't recognize (including non-HTTP transport errors with no
-        ``status_code``) are returned unwrapped — safe, since
+        Generic to any Interactions API agent (``agent=`` can be a Deep
+        Research model today, or e.g. an Antigravity managed agent in
+        future), not just Deep Research — used by the submit/poll/cancel
+        primitives for the pollable-delegation path (not the interactive
+        streaming path, which raises ``LLMProviderError`` subtypes via
+        ``_map_interactions_error`` instead). Duck-types on ``status_code``
+        (SDK ``APIStatusError``), mirroring ``_map_interactions_error``'s own
+        pattern. Errors this doesn't recognize (including non-HTTP transport
+        errors with no ``status_code``) are returned unwrapped — safe, since
         ``task_worker.py``'s default (fail-fast) handling already applies to
         anything that isn't a ``DelegationTransientError``.
         """
@@ -1591,6 +1593,14 @@ class GoogleGenAIClient(BaseLLMClient):
         Raises the generic delegation error taxonomy
         (``DelegationTransientError``/``DelegationPermanentError``/
         ``DelegationTaskNotFoundError``) rather than ``LLMProviderError``.
+
+        Deep-Research-specific (via ``_build_deep_research_create_kwargs``'s
+        ``agent_config``), unlike ``get_agent_interaction``/
+        ``cancel_agent_interaction`` below: submitting an interaction needs
+        agent-specific input shaping, but polling/cancelling one by id
+        doesn't — a future non-Deep-Research Interactions API agent (e.g.
+        Antigravity) would need its own ``start_*`` but could reuse those two
+        as-is.
         """
         create_kwargs = self._build_deep_research_create_kwargs(
             messages, previous_interaction_id=previous_interaction_id
@@ -1603,11 +1613,12 @@ class GoogleGenAIClient(BaseLLMClient):
                 ),
             )
         except Exception as e:
-            raise self._classify_deep_research_delegation_error(e) from e
+            raise self._classify_agent_delegation_error(e) from e
 
-    async def get_deep_research_interaction(self, interaction_id: str) -> Interaction:
-        """Fetch the current state of a Deep Research interaction (one poll).
+    async def get_agent_interaction(self, interaction_id: str) -> Interaction:
+        """Fetch the current state of any Interactions API agent run (one poll).
 
+        Generic by design — polling by id needs no agent-specific knowledge.
         Raises the generic delegation error taxonomy on failure (see
         ``start_deep_research_interaction``).
         """
@@ -1617,13 +1628,14 @@ class GoogleGenAIClient(BaseLLMClient):
                 await self.client.aio.interactions.get(interaction_id, stream=False),
             )
         except Exception as e:
-            raise self._classify_deep_research_delegation_error(e) from e
+            raise self._classify_agent_delegation_error(e) from e
 
-    async def cancel_deep_research_interaction(self, interaction_id: str) -> None:
-        """Best-effort cancellation of a Deep Research interaction.
+    async def cancel_agent_interaction(self, interaction_id: str) -> None:
+        """Best-effort cancellation of any Interactions API agent run.
 
-        Callers (e.g. ``DeepResearchProcessingService.cancel_async``) are
-        expected to swallow any exception this raises, mirroring
+        Generic by design (see ``get_agent_interaction``). Callers (e.g.
+        ``DeepResearchProcessingService.cancel_async``) are expected to
+        swallow any exception this raises, mirroring
         ``RemoteA2AService.cancel_async``.
         """
         await self.client.aio.interactions.cancel(interaction_id)
@@ -1693,7 +1705,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     status = getattr(chunk, "status", None) or getattr(
                         getattr(chunk, "interaction", None), "status", None
                     )
-                    if status in _DEEP_RESEARCH_TERMINAL_ERROR_STATUSES:
+                    if status in _INTERACTION_TERMINAL_ERROR_STATUSES:
                         raise ServiceUnavailableError(
                             f"Deep Research interaction {status}",
                             provider="google",

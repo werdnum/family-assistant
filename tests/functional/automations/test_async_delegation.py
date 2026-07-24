@@ -2848,7 +2848,7 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
     completed_interaction = AsyncMock()
     completed_interaction.status = "completed"
     completed_interaction.output_text = "Here is the research report."
-    llm_client.get_deep_research_interaction = AsyncMock(
+    llm_client.get_agent_interaction = AsyncMock(
         side_effect=[pending_interaction, completed_interaction]
     )
 

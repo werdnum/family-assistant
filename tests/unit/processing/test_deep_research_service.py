@@ -167,7 +167,7 @@ async def test_poll_async_pending_states() -> None:
     for status in ("in_progress", "requires_action"):
         interaction = AsyncMock()
         interaction.status = status
-        llm_client.get_deep_research_interaction = AsyncMock(return_value=interaction)
+        llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
         result = await service.poll_async("inter_x", None)
         assert result is PENDING
 
@@ -183,7 +183,7 @@ async def test_poll_async_unrecognized_status_stays_pending() -> None:
     llm_client = _google_client()
     interaction = AsyncMock()
     interaction.status = "queued"
-    llm_client.get_deep_research_interaction = AsyncMock(return_value=interaction)
+    llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
     service = _make_service(llm_client)
 
     result = await service.poll_async("inter_x", None)
@@ -198,7 +198,7 @@ async def test_poll_async_completed_returns_success() -> None:
     interaction = AsyncMock()
     interaction.status = "completed"
     interaction.output_text = "The final research report."
-    llm_client.get_deep_research_interaction = AsyncMock(return_value=interaction)
+    llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
     service = _make_service(llm_client)
 
     result = await service.poll_async("inter_x", None)
@@ -219,7 +219,7 @@ async def test_poll_async_terminal_error_states_return_error_result(
     llm_client = _google_client()
     interaction = AsyncMock()
     interaction.status = status
-    llm_client.get_deep_research_interaction = AsyncMock(return_value=interaction)
+    llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
     service = _make_service(llm_client)
 
     result = await service.poll_async("inter_x", None)
@@ -233,21 +233,19 @@ async def test_poll_async_terminal_error_states_return_error_result(
 async def test_cancel_async_calls_through() -> None:
     """cancel_async delegates to the client's cancel primitive."""
     llm_client = _google_client()
-    llm_client.cancel_deep_research_interaction = AsyncMock(return_value=None)
+    llm_client.cancel_agent_interaction = AsyncMock(return_value=None)
     service = _make_service(llm_client)
 
     await service.cancel_async("inter_x")
 
-    llm_client.cancel_deep_research_interaction.assert_called_once_with("inter_x")
+    llm_client.cancel_agent_interaction.assert_called_once_with("inter_x")
 
 
 @pytest.mark.asyncio
 async def test_cancel_async_swallows_errors() -> None:
     """A failed cancel is logged, not raised (must never abort the caller)."""
     llm_client = _google_client()
-    llm_client.cancel_deep_research_interaction = AsyncMock(
-        side_effect=RuntimeError("boom")
-    )
+    llm_client.cancel_agent_interaction = AsyncMock(side_effect=RuntimeError("boom"))
     service = _make_service(llm_client)
 
     await service.cancel_async("inter_x")  # must not raise

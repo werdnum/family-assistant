@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
-    is_deep_research_terminal_error_status,
+    is_interaction_terminal_error_status,
 )
 from family_assistant.processing.protocol import (
     PENDING,
@@ -140,14 +140,12 @@ class DeepResearchProcessingService(ProcessingService):
         still pending instead of failing the delegation outright.
         """
         _ = remote_context_id
-        interaction = await self._google_client().get_deep_research_interaction(
-            remote_task_id
-        )
+        interaction = await self._google_client().get_agent_interaction(remote_task_id)
         if interaction.status == "completed":
             return ChatInteractionResult.success(
                 text_reply=interaction.output_text or ""
             )
-        if is_deep_research_terminal_error_status(interaction.status):
+        if is_interaction_terminal_error_status(interaction.status):
             return ChatInteractionResult.error(
                 text_reply=f"Deep research {interaction.status}.",
                 error_traceback=f"Deep Research interaction {remote_task_id} ended with status {interaction.status!r}.",
@@ -157,7 +155,7 @@ class DeepResearchProcessingService(ProcessingService):
     async def cancel_async(self, remote_task_id: str) -> None:
         """Best-effort cancellation; mirrors ``RemoteA2AService.cancel_async``."""
         try:
-            await self._google_client().cancel_deep_research_interaction(remote_task_id)
+            await self._google_client().cancel_agent_interaction(remote_task_id)
         except Exception as exc:  # noqa: BLE001 - best-effort, must never raise
             logger.warning(
                 "Failed to cancel Deep Research interaction %s on '%s': %s",

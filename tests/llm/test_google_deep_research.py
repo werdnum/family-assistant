@@ -746,7 +746,7 @@ async def test_start_deep_research_interaction_passes_previous_interaction_id(
 
 
 @pytest.mark.asyncio
-async def test_get_deep_research_interaction_polls_without_streaming(
+async def test_get_agent_interaction_polls_without_streaming(
     mock_genai_client: MagicMock,
 ) -> None:
     """A single poll calls interactions.get with stream=False."""
@@ -757,7 +757,7 @@ async def test_get_deep_research_interaction_polls_without_streaming(
     mock_interaction.output_text = "The final report."
     mock_genai_client.aio.interactions.get = AsyncMock(return_value=mock_interaction)
 
-    result = await client.get_deep_research_interaction("inter_poll_1")
+    result = await client.get_agent_interaction("inter_poll_1")
 
     assert result is mock_interaction
     mock_genai_client.aio.interactions.get.assert_called_once_with(
@@ -766,7 +766,7 @@ async def test_get_deep_research_interaction_polls_without_streaming(
 
 
 @pytest.mark.asyncio
-async def test_cancel_deep_research_interaction_calls_cancel(
+async def test_cancel_agent_interaction_calls_cancel(
     mock_genai_client: MagicMock,
 ) -> None:
     """Cancellation delegates directly to the SDK's cancel endpoint."""
@@ -774,13 +774,13 @@ async def test_cancel_deep_research_interaction_calls_cancel(
 
     mock_genai_client.aio.interactions.cancel = AsyncMock(return_value=None)
 
-    await client.cancel_deep_research_interaction("inter_cancel_1")
+    await client.cancel_agent_interaction("inter_cancel_1")
 
     mock_genai_client.aio.interactions.cancel.assert_called_once_with("inter_cancel_1")
 
 
 @pytest.mark.asyncio
-async def test_get_deep_research_interaction_maps_404_to_task_not_found(
+async def test_get_agent_interaction_maps_404_to_task_not_found(
     mock_genai_client: MagicMock,
 ) -> None:
     """A 404 on poll is a cue to re-submit, not a permanent failure."""
@@ -791,7 +791,7 @@ async def test_get_deep_research_interaction_maps_404_to_task_not_found(
     mock_genai_client.aio.interactions.get = AsyncMock(side_effect=sdk_error)
 
     with pytest.raises(DelegationTaskNotFoundError):
-        await client.get_deep_research_interaction("inter_missing")
+        await client.get_agent_interaction("inter_missing")
 
 
 @pytest.mark.asyncio
@@ -813,7 +813,7 @@ async def test_start_deep_research_interaction_maps_4xx_to_permanent(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code", [429, 500, 503])
-async def test_get_deep_research_interaction_maps_429_5xx_to_transient(
+async def test_get_agent_interaction_maps_429_5xx_to_transient(
     mock_genai_client: MagicMock,
     status_code: int,
 ) -> None:
@@ -825,13 +825,13 @@ async def test_get_deep_research_interaction_maps_429_5xx_to_transient(
     mock_genai_client.aio.interactions.get = AsyncMock(side_effect=sdk_error)
 
     with pytest.raises(DelegationTransientError) as exc_info:
-        await client.get_deep_research_interaction("inter_flaky")
+        await client.get_agent_interaction("inter_flaky")
     # A 4xx transient must not also satisfy the permanent subclass check.
     assert not isinstance(exc_info.value, DelegationPermanentError)
 
 
 @pytest.mark.asyncio
-async def test_get_deep_research_interaction_unrecognized_error_propagates_unwrapped(
+async def test_get_agent_interaction_unrecognized_error_propagates_unwrapped(
     mock_genai_client: MagicMock,
 ) -> None:
     """An error with no recognizable status_code is not wrapped (fails fast by default)."""
@@ -841,4 +841,4 @@ async def test_get_deep_research_interaction_unrecognized_error_propagates_unwra
     mock_genai_client.aio.interactions.get = AsyncMock(side_effect=original)
 
     with pytest.raises(ValueError, match="some unrelated bug"):
-        await client.get_deep_research_interaction("inter_bug")
+        await client.get_agent_interaction("inter_bug")

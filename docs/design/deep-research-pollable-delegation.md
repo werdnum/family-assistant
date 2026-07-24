@@ -69,10 +69,10 @@ system prompt + `previous_interaction_id` resolution) was extracted into
   initial (non-terminal) state instead of blocking on the stream. `previous_interaction_id` is
   explicitly overridable (submit_async supplies it from a DB lookup; there's no message history to
   scan for a fresh delegation).
-- `get_deep_research_interaction(interaction_id)` — `interactions.get(id, stream=False)`, one poll.
-- `cancel_deep_research_interaction(interaction_id)` — `interactions.cancel(id)`.
+- `get_agent_interaction(interaction_id)` — `interactions.get(id, stream=False)`, one poll.
+- `cancel_agent_interaction(interaction_id)` — `interactions.cancel(id)`.
 
-A new `_classify_deep_research_delegation_error` duck-types on `status_code` (mirroring the existing
+A new `_classify_agent_delegation_error` duck-types on `status_code` (mirroring the existing
 `_map_interactions_error` pattern): 404 → `DelegationTaskNotFoundError`, 400/401/403 →
 `DelegationPermanentError`, 429/5xx → `DelegationTransientError`. Anything else propagates unwrapped
 — `task_worker.py`'s fail-fast default already handles an unrecognized exception correctly with no
@@ -145,12 +145,24 @@ merge. Both new fields were added to this list.
   blocking, real-time-streaming turn — that streaming is the point for a live chat session.
 - **Server-side `agent_config`/visualization changes.** Unrelated to this change; see
   `gemini-deep-research-tiers.md`.
+- **Generalizing beyond Deep Research now.** The installed `google-genai` SDK's `AgentOption`
+  already lists other Interactions API agents (e.g. an Antigravity managed agent), reachable through
+  the same `interactions.create(agent=..., background=True, ...)` transport. `get_agent_interaction`
+  / `cancel_agent_interaction` / `_classify_agent_delegation_error` are named generically (rather
+  than `*_deep_research_*`) precisely so a future agent can reuse them as-is — polling/cancelling/
+  classifying an interaction by id needs no agent-specific knowledge.
+  `start_deep_research_interaction` stays Deep-Research-named because submitting one does need
+  agent-specific input shaping (`_build_deep_research_create_kwargs`'s `agent_config`); a second
+  agent would get its own `start_*` method and registry predicate (alongside
+  `is_deep_research_model`), not a change to this one. No further abstraction (a shared base class,
+  a config-driven dispatch table, etc.) is justified until there's a second real implementer to
+  generalize from.
 
 ## Testing
 
 - `tests/llm/test_google_deep_research.py` — unit tests for `start_deep_research_interaction` /
-  `get_deep_research_interaction` / `cancel_deep_research_interaction` and the error-classification
-  helper, mocking `client.aio.interactions.*`.
+  `get_agent_interaction` / `cancel_agent_interaction` and the error-classification helper, mocking
+  `client.aio.interactions.*`.
 - `tests/unit/processing/test_deep_research_service.py` — unit tests for
   `DeepResearchProcessingService.submit_async` / `poll_async` / `cancel_async`, including the
   resume-chaining lookup against a real (test) database.
