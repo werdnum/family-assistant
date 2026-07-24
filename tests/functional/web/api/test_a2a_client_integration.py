@@ -212,7 +212,9 @@ def test_inbound_a2a_without_taint_metadata_defaults_to_peer_floor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_remote_a2a_async_submit_preserves_runtime_taint_metadata() -> None:
+async def test_remote_a2a_async_submit_preserves_runtime_taint_metadata(
+    api_db_context: DatabaseContext,
+) -> None:
     source = TaintSource(
         source_type=TaintSourceType.EMAIL,
         source_id="message-123",
@@ -234,6 +236,8 @@ async def test_remote_a2a_async_submit_preserves_runtime_taint_metadata() -> Non
         [text_content("Summarize this email")],
         conversation_id="tainted-conversation",
         subconversation_id=None,
+        user_name="Test User",
+        db_context=api_db_context,
         initial_taint_sources=[source],
     )
 
@@ -473,6 +477,7 @@ class TestRemoteA2AServiceAsync:
         remote_service: RemoteA2AService,
         app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
+        api_db_context: DatabaseContext,
     ) -> None:
         api_mock_llm_client.default_response = MockLLMOutput(content="remote async")
 
@@ -480,6 +485,8 @@ class TestRemoteA2AServiceAsync:
             [text_content("go")],
             conversation_id="conv-async",
             subconversation_id="sub-async",
+            user_name="Test User",
+            db_context=api_db_context,
         )
         # The client sends no task id (A2A §3.4.2); the server assigns one.
         assert submission.remote_task_id
@@ -505,6 +512,7 @@ class TestRemoteA2AServiceAsync:
         remote_service: RemoteA2AService,
         app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
+        api_db_context: DatabaseContext,
     ) -> None:
         # Gate the LLM so the remote task stays non-terminal across the poll.
         # No cancellation here, so this is safe on SQLite (the parked background
@@ -516,6 +524,8 @@ class TestRemoteA2AServiceAsync:
             [text_content("slow")],
             conversation_id="conv-pending",
             subconversation_id=None,
+            user_name="Test User",
+            db_context=api_db_context,
         )
         pending = await remote_service.poll_async(
             submission.remote_task_id, submission.remote_context_id
@@ -552,6 +562,7 @@ class TestRemoteA2AServiceAsync:
         remote_service: RemoteA2AService,
         app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
+        api_db_context: DatabaseContext,
     ) -> None:
         # Postgres-only: cancellation tears down the background task's DB
         # connection (see the server-side cancel test).
@@ -562,6 +573,8 @@ class TestRemoteA2AServiceAsync:
             [text_content("slow")],
             conversation_id="conv-cancel",
             subconversation_id=None,
+            user_name="Test User",
+            db_context=api_db_context,
         )
         await remote_service.cancel_async(submission.remote_task_id)
 

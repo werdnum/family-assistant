@@ -24,11 +24,6 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import func, select, update
 
 # Removed storage import - using repository pattern
-from family_assistant.a2a.client import (
-    A2AClientError,
-    A2APermanentError,
-    A2ATaskNotFoundError,
-)
 from family_assistant.actions import (
     ActionType,
     WakeLlmProfileError,
@@ -42,6 +37,9 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import (
     PENDING,
+    DelegationPermanentError,
+    DelegationTaskNotFoundError,
+    DelegationTransientError,
     PollableDelegationService,
     ProcessingService,
     RemoteSubmission,
@@ -378,7 +376,7 @@ class DelegationPollPayload(TypedDict):
 
 
 # Task type for the per-run, self-rescheduling poll of an awaiting_remote
-# delegation (the submit-then-poll A2A path).
+# delegation (the submit-then-poll path shared by every PollableDelegationService).
 DELEGATION_POLL_TASK_TYPE = "delegation_poll"
 SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE = "schedule_automation_advance"
 SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY = "_schedule_automation_advance"
@@ -430,21 +428,20 @@ def _parse_payload_datetime(value: str, field_name: str) -> datetime:
 
 
 def _poll_interval_for(target_service: PollableDelegationService) -> float:
-    """Base poll interval for a remote target (config override or default)."""
-    return getattr(
-        target_service.service_config,
-        "poll_interval_seconds",
-        DELEGATION_POLL_INTERVAL_SECONDS,
-    )
+    """Base poll interval for a target (config override or default).
+
+    ``getattr``'s default only covers a missing attribute; a config that
+    declares the field but leaves it ``None`` (e.g. an untuned
+    ``ProcessingServiceConfig``) must fall back the same way.
+    """
+    value = getattr(target_service.service_config, "poll_interval_seconds", None)
+    return value if value is not None else DELEGATION_POLL_INTERVAL_SECONDS
 
 
 def _max_async_for(target_service: PollableDelegationService) -> float:
-    """Wall-clock cap for a remote target (config override or default)."""
-    return getattr(
-        target_service.service_config,
-        "max_async_seconds",
-        DELEGATION_MAX_ASYNC_SECONDS,
-    )
+    """Wall-clock cap for a target (config override or default). See above."""
+    value = getattr(target_service.service_config, "max_async_seconds", None)
+    return value if value is not None else DELEGATION_MAX_ASYNC_SECONDS
 
 
 def _submit_grace_for(target_service: PollableDelegationService) -> float:
@@ -1338,6 +1335,8 @@ class TaskWorker:
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
+                user_name=run["user_name"] or exec_context.user_name,
+                db_context=exec_context.db_context,
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
         except Exception as exc:
@@ -1359,17 +1358,20 @@ class TaskWorker:
     ) -> None:
         """Classify a failed (re-)submit: poll to reconcile, or fail fast.
 
-        A transient transport failure (``A2AClientError`` that is not permanent)
-        keeps the run ``awaiting_remote`` and schedules a poll: the request may
-        have reached the remote (response lost), so a poll re-attaches, or — if
-        the task was never created — finds it missing and re-submits. A permanent
-        error (bad auth / protocol) or an unexpected non-A2A error (e.g. a code or
-        conversion bug) fails the run fast with the real error rather than waiting
-        out the cap. ``poll_delay_seconds`` overrides the transient-retry poll
-        delay (e.g. to preserve a not-found re-submit's backoff).
+        A transient failure (``DelegationTransientError`` that is not
+        permanent) keeps the run ``awaiting_remote`` and schedules a poll: the
+        request may have reached the target (response lost), so a poll
+        re-attaches, or — if the task was never created — finds it missing and
+        re-submits. A permanent error (bad auth / protocol) or an unexpected
+        error outside this hierarchy (e.g. a code or conversion bug) fails the
+        run fast with the real error rather than waiting out the cap.
+        ``poll_delay_seconds`` overrides the transient-retry poll delay (e.g.
+        to preserve a not-found re-submit's backoff).
         """
         delegation_id = run["delegation_id"]
-        if isinstance(exc, A2AClientError) and not isinstance(exc, A2APermanentError):
+        if isinstance(exc, DelegationTransientError) and not isinstance(
+            exc, DelegationPermanentError
+        ):
             logger.warning(
                 "Submit for delegation %s failed transiently; scheduling a poll "
                 "to reconcile.",
@@ -1439,12 +1441,14 @@ class TaskWorker:
     ) -> None:
         """Re-submit an ``awaiting_remote`` run, creating a fresh remote task.
 
-        Recovers a run whose submit response was lost (NULL id) or whose remote
-        task the remote no longer has (poll returned not-found). Per A2A spec
-        §3.4.2 the re-submit carries no client task id, so the remote assigns a
-        new id which is reconciled in. This abandons any orphaned earlier task
-        and is the accepted narrow duplicate-on-recovery window (a remote that
-        actually created a task from a lost-response submit). ``poll_delay_seconds``
+        Recovers a run whose submit response was lost (NULL id) or whose target
+        no longer has the task (poll returned not-found). Per the
+        ``PollableDelegationService`` contract the re-submit carries no
+        client-supplied task id (for A2A targets specifically, this also
+        matches spec §3.4.2), so the target assigns a new id which is
+        reconciled in. This abandons any orphaned earlier task and is the
+        accepted narrow duplicate-on-recovery window (a target that actually
+        created a task from a lost-response submit). ``poll_delay_seconds``
         overrides the next poll's delay (used to apply backoff on a not-found
         re-submit).
         """
@@ -1454,6 +1458,8 @@ class TaskWorker:
                 content_parts,
                 conversation_id=run["conversation_id"],
                 subconversation_id=run["subconversation_id"],
+                user_name=run["user_name"] or exec_context.user_name,
+                db_context=exec_context.db_context,
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
             )
         except Exception as exc:
@@ -1626,8 +1632,8 @@ class TaskWorker:
             result = await target_service.poll_async(
                 remote_task_id, run["remote_context_id"]
             )
-        except A2ATaskNotFoundError:
-            # The remote has no such task — it lost the task (e.g. a restart).
+        except DelegationTaskNotFoundError:
+            # The target has no such task — it lost the task (e.g. a restart).
             # Within the cap, re-submit to recreate it (a new remote-assigned id
             # is reconciled in); past the cap, give up rather than starting fresh
             # remote work.
@@ -1641,10 +1647,10 @@ class TaskWorker:
                 run,
                 target_service,
                 clock,
-                "the remote reports its task is not found",
+                "the target reports its task is not found",
             )
             return
-        except A2APermanentError:
+        except DelegationPermanentError:
             # Definitive negative (bad auth / protocol error): the task will
             # never complete. Fail with the real error.
             error = traceback.format_exc()
@@ -1657,7 +1663,7 @@ class TaskWorker:
                 exec_context, delegation_id=delegation_id, error=error
             )
             return
-        except A2AClientError:
+        except DelegationTransientError:
             # Transient transport error; reschedule and let the wall-clock cap
             # eventually give up if it persists.
             logger.warning(

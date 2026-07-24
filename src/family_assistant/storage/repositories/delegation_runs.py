@@ -181,6 +181,37 @@ class DelegationRunsRepository(BaseRepository):
         row = await self._db.fetch_one(stmt)
         return row is not None
 
+    async def get_latest_completed_run(
+        self,
+        *,
+        conversation_id: str,
+        subconversation_id: str,
+        target_service_id: str,
+    ) -> DelegationRunDict | None:
+        """Return the most recent ``completed`` run for this delegated lineage.
+
+        Used by a pollable local target (e.g. Deep Research) to chain a
+        resumed delegation onto its prior run's remote state: a resume reuses
+        the same ``subconversation_id`` (see ``_resolve_resume_subconversation``
+        in ``tools/services.py``), and at most one lineage can occupy a given
+        subconversation at a time, so this is unambiguous. Only ``completed``
+        (not ``failed``) runs are eligible — chaining from a failed run's
+        remote state doesn't make sense.
+        """
+        stmt = (
+            select(delegation_runs_table)
+            .where(delegation_runs_table.c.conversation_id == conversation_id)
+            .where(delegation_runs_table.c.subconversation_id == subconversation_id)
+            .where(delegation_runs_table.c.target_service_id == target_service_id)
+            .where(delegation_runs_table.c.status == "completed")
+            .order_by(delegation_runs_table.c.created_at.desc())
+            .limit(1)
+        )
+        row = await self._db.fetch_one(stmt)
+        if row is None:
+            return None
+        return self._row_to_dict(row)
+
     async def mark_running(
         self, delegation_id: str, started_at: datetime
     ) -> DelegationRunDict | None:

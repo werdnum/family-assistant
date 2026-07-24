@@ -141,6 +141,8 @@ class RemoteA2AService:
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        user_name: str,
+        db_context: DatabaseContext,
         initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> RemoteSubmission:
         """Submit to the remote agent without blocking; the remote assigns the id.
@@ -151,7 +153,11 @@ class RemoteA2AService:
         poll. If the remote returned a terminal task on submit (a synchronous
         agent that ignored ``blocking=false``), the converted result is returned
         in ``terminal_result`` so the caller can complete without polling.
+        ``user_name`` and ``db_context`` are unused: the remote agent's own
+        context_id already carries continuity, unlike a local pollable target.
         """
+        _ = user_name
+        _ = db_context
         context_id = self._context_id(conversation_id, subconversation_id)
         logger.info(
             "Submitting async request to remote A2A agent '%s' (context_id=%s)",

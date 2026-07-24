@@ -142,6 +142,12 @@ class ProcessingConfig(BaseModel):
     allow_wake_llm: bool = True
     enable_computer_use: bool = False
     computer_use_excluded_functions: list[str] = Field(default_factory=list)
+    # Submit-then-poll tuning for a pollable local profile (e.g. Deep
+    # Research) delegated to via delegate_to_service. Ignored by ordinary
+    # local profiles, which are never pollable. Mirrors RemoteA2AConfig's
+    # fields of the same name; unset means "use the worker's module defaults".
+    poll_interval_seconds: float | None = Field(default=None, gt=0)
+    max_async_seconds: float | None = Field(default=None, gt=0)
 
 
 class ToolsConfig(BaseModel):

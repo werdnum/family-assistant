@@ -16,6 +16,11 @@ from family_assistant.llm.base import (
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.processing.protocol import (
+    DelegationPermanentError,
+    DelegationTaskNotFoundError,
+    DelegationTransientError,
+)
 
 _SDK_INTERACTIONS_MODULE = importlib.import_module(
     "google.genai._gaos.resources.interactions"
@@ -691,3 +696,149 @@ async def test_deep_research_image_delta_is_skipped(
     assert content_events[0].content == "After image"
     done_events = [e for e in events if e.type == "done"]
     assert len(done_events) == 1
+
+
+# --- Pollable-delegation primitives (submit-then-poll, no streaming) ---
+
+
+@pytest.mark.asyncio
+async def test_start_deep_research_interaction_does_not_stream(
+    mock_genai_client: MagicMock,
+) -> None:
+    """The non-blocking submit calls create with stream=False and returns immediately."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    mock_interaction = MagicMock()
+    mock_interaction.id = "inter_submit_1"
+    mock_interaction.status = "in_progress"
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
+
+    result = await client.start_deep_research_interaction([
+        UserMessage(content="Research quantum computing.")
+    ])
+
+    assert result is mock_interaction
+    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
+    assert call_kwargs["stream"] is False
+    assert call_kwargs["background"] is True
+    assert "Research quantum computing." in call_kwargs["input"]
+    assert "previous_interaction_id" not in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_start_deep_research_interaction_passes_previous_interaction_id(
+    mock_genai_client: MagicMock,
+) -> None:
+    """An explicit previous_interaction_id overrides history scanning."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    mock_interaction = MagicMock()
+    mock_interaction.id = "inter_submit_2"
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
+
+    await client.start_deep_research_interaction(
+        [UserMessage(content="Follow-up question.")],
+        previous_interaction_id="inter_chain_from",
+    )
+
+    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
+    assert call_kwargs["previous_interaction_id"] == "inter_chain_from"
+
+
+@pytest.mark.asyncio
+async def test_get_deep_research_interaction_polls_without_streaming(
+    mock_genai_client: MagicMock,
+) -> None:
+    """A single poll calls interactions.get with stream=False."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    mock_interaction = MagicMock()
+    mock_interaction.status = "completed"
+    mock_interaction.output_text = "The final report."
+    mock_genai_client.aio.interactions.get = AsyncMock(return_value=mock_interaction)
+
+    result = await client.get_deep_research_interaction("inter_poll_1")
+
+    assert result is mock_interaction
+    mock_genai_client.aio.interactions.get.assert_called_once_with(
+        "inter_poll_1", stream=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_deep_research_interaction_calls_cancel(
+    mock_genai_client: MagicMock,
+) -> None:
+    """Cancellation delegates directly to the SDK's cancel endpoint."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    mock_genai_client.aio.interactions.cancel = AsyncMock(return_value=None)
+
+    await client.cancel_deep_research_interaction("inter_cancel_1")
+
+    mock_genai_client.aio.interactions.cancel.assert_called_once_with("inter_cancel_1")
+
+
+@pytest.mark.asyncio
+async def test_get_deep_research_interaction_maps_404_to_task_not_found(
+    mock_genai_client: MagicMock,
+) -> None:
+    """A 404 on poll is a cue to re-submit, not a permanent failure."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    sdk_error = Exception("no such interaction")
+    sdk_error.status_code = 404  # type: ignore[attr-defined]
+    mock_genai_client.aio.interactions.get = AsyncMock(side_effect=sdk_error)
+
+    with pytest.raises(DelegationTaskNotFoundError):
+        await client.get_deep_research_interaction("inter_missing")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 401, 403])
+async def test_start_deep_research_interaction_maps_4xx_to_permanent(
+    mock_genai_client: MagicMock,
+    status_code: int,
+) -> None:
+    """Bad-auth/bad-request submit failures fail fast rather than retry."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    sdk_error = Exception("bad request")
+    sdk_error.status_code = status_code  # type: ignore[attr-defined]
+    mock_genai_client.aio.interactions.create = AsyncMock(side_effect=sdk_error)
+
+    with pytest.raises(DelegationPermanentError):
+        await client.start_deep_research_interaction([UserMessage(content="Test")])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+async def test_get_deep_research_interaction_maps_429_5xx_to_transient(
+    mock_genai_client: MagicMock,
+    status_code: int,
+) -> None:
+    """Rate-limit/server errors on poll are retried, not failed."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    sdk_error = Exception("try again")
+    sdk_error.status_code = status_code  # type: ignore[attr-defined]
+    mock_genai_client.aio.interactions.get = AsyncMock(side_effect=sdk_error)
+
+    with pytest.raises(DelegationTransientError) as exc_info:
+        await client.get_deep_research_interaction("inter_flaky")
+    # A 4xx transient must not also satisfy the permanent subclass check.
+    assert not isinstance(exc_info.value, DelegationPermanentError)
+
+
+@pytest.mark.asyncio
+async def test_get_deep_research_interaction_unrecognized_error_propagates_unwrapped(
+    mock_genai_client: MagicMock,
+) -> None:
+    """An error with no recognizable status_code is not wrapped (fails fast by default)."""
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    original = ValueError("some unrelated bug")
+    mock_genai_client.aio.interactions.get = AsyncMock(side_effect=original)
+
+    with pytest.raises(ValueError, match="some unrelated bug"):
+        await client.get_deep_research_interaction("inter_bug")

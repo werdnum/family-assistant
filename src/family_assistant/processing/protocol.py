@@ -78,6 +78,32 @@ class PendingPoll(enum.Enum):
 PENDING = PendingPoll.PENDING
 
 
+class DelegationTransientError(Exception):
+    """A submit/poll failure that may succeed on retry.
+
+    Network/timeout/5xx-shaped failures: the request may have landed, or the
+    remote may recover, so the worker keeps the run ``awaiting_remote`` and
+    polls/retries rather than failing it.
+    """
+
+
+class DelegationPermanentError(DelegationTransientError):
+    """A deterministic submit/poll failure that will not succeed on retry.
+
+    A definitive negative response from the target (bad auth / bad request /
+    protocol error). The worker fails the delegation fast with this rather
+    than polling until the wall-clock cap.
+    """
+
+
+class DelegationTaskNotFoundError(DelegationPermanentError):
+    """The target reports no such task (e.g. HTTP 404 or an unknown-id error).
+
+    Distinct because, for a run whose submit may not have landed, this is a
+    cue to (idempotently) re-submit rather than fail.
+    """
+
+
 @dataclass
 class RemoteSubmission:
     """Result of submitting a request to a remote service without blocking.
@@ -118,13 +144,19 @@ class PollableDelegationService(Protocol):
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        user_name: str,
+        db_context: DatabaseContext,
         initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> RemoteSubmission:
         """Submit without a client-supplied task id; the remote assigns one.
 
         Per A2A spec §3.4.2 a client must not supply a task id when creating a
         task, so the returned :class:`RemoteSubmission` carries the remote's
-        assigned id for the caller to persist and poll.
+        assigned id for the caller to persist and poll. ``user_name`` and
+        ``db_context`` are available for implementations (e.g. local services
+        with no network task of their own) that need to render a prompt
+        template or look up prior delegation state; remote implementations may
+        ignore them.
         """
         ...
 

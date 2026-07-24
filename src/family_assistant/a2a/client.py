@@ -41,6 +41,15 @@ from family_assistant.a2a.types import (
     TaskState,
     TaskStatus,
 )
+from family_assistant.processing.protocol import (
+    DelegationPermanentError as A2APermanentError,
+)
+from family_assistant.processing.protocol import (
+    DelegationTaskNotFoundError as A2ATaskNotFoundError,
+)
+from family_assistant.processing.protocol import (
+    DelegationTransientError as A2AClientError,
+)
 
 if TYPE_CHECKING:
     from family_assistant.a2a.auth import A2AAuthConfig
@@ -60,32 +69,6 @@ TERMINAL_TASK_STATES = {
     TaskState.auth_required,
     TaskState.input_required,
 }
-
-
-class A2AClientError(Exception):
-    """Base error for A2A client operations.
-
-    Treated as *transient* by the delegation worker (network/timeout/5xx): the
-    request may have landed, or the remote may recover, so the run is kept
-    awaiting and polled/retried.
-    """
-
-
-class A2APermanentError(A2AClientError):
-    """A deterministic A2A failure that will not succeed on retry.
-
-    A definitive negative response from the remote — HTTP 4xx (bad auth / bad
-    request) or a JSON-RPC error. The worker fails the delegation fast with this
-    rather than polling until the cap.
-    """
-
-
-class A2ATaskNotFoundError(A2APermanentError):
-    """The remote reports no such task (HTTP 404 or JSON-RPC task-not-found).
-
-    Distinct because, for a run whose submit may not have landed, this is a cue
-    to (idempotently) re-submit with the stored task id rather than fail.
-    """
 
 
 # JSON-RPC error code the A2A spec / FA server use for an unknown task id.

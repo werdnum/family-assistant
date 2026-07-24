@@ -587,18 +587,17 @@ various tasks with dark mode support and mobile optimization.
   one "no connection" icon. Background sync failures no longer pop up error dialogs while you are
   reading; they surface quietly through that indicator — and, when the conversation list itself
   can't refresh, through a small "Couldn't refresh — last updated …" note at the top of the list
-  rather than a dialog — so you get far fewer interrupting popups. If sending
-  a message fails, the failure now shows right on the message with a **Retry** button — tapping it
-  safely resends (it never sends twice, and if the reply was already running it just reconnects to
-  it) rather than showing a modal. When the app comes back to the foreground after being
-  backgrounded, the conversation list refreshes automatically, so a chat that changed (or a new one
-  that arrived) while you were away is up to date without a manual pull-to-refresh. The **More** tab
-  gathers the remaining long-tail destinations — Events, History, Automations, Tools, and more — and
-  a single **Settings** screen with notification controls and sign-out. Use the tab bar to move
-  between sections; each tab remembers where you were. When enabled, iOS notifications can open the
-  relevant tab or page, and confirmation notifications are actionable: they include approve/reject
-  actions, and tapping the notification opens an in-app confirmation dialog showing the full
-  request.
+  rather than a dialog — so you get far fewer interrupting popups. If sending a message fails, the
+  failure now shows right on the message with a **Retry** button — tapping it safely resends (it
+  never sends twice, and if the reply was already running it just reconnects to it) rather than
+  showing a modal. When the app comes back to the foreground after being backgrounded, the
+  conversation list refreshes automatically, so a chat that changed (or a new one that arrived)
+  while you were away is up to date without a manual pull-to-refresh. The **More** tab gathers the
+  remaining long-tail destinations — Events, History, Automations, Tools, and more — and a single
+  **Settings** screen with notification controls and sign-out. Use the tab bar to move between
+  sections; each tab remembers where you were. When enabled, iOS notifications can open the relevant
+  tab or page, and confirmation notifications are actionable: they include approve/reject actions,
+  and tapping the notification opens an in-app confirmation dialog showing the full request.
 
 - **Siri & Shortcuts (iOS):** The iOS app adds actions you can run with Siri or the **Shortcuts**
   app — no setup required. Just say or run:
@@ -731,13 +730,14 @@ various tasks with dark mode support and mobile optimization.
   `delegation_...` reference and keeps the main conversation available. When the delegated profile
   finishes, it wakes the original assistant profile, which reviews the result and posts the
   follow-up in the same conversation. You can ask for the status of that delegation reference later.
-  This works the same way for specialized profiles that run on a separate (remote) agent — they may
-  take a while, but the result is still delivered back to this conversation automatically when
-  ready. This is separate from spawned worker tasks, which are isolated coding or computing jobs and
-  use worker task IDs instead. Each delegation is normally an independent conversation with the
-  specialist, but the assistant can also continue an earlier finished delegation so the specialist
-  keeps its previous context — handy for an iterative back-and-forth (for example, a follow-up
-  question to an earlier research delegation).
+  This works the same way for specialized profiles that run on a separate (remote) agent, or that
+  simply take a long time themselves (for example, deep research) — they may take a while, but the
+  result is still delivered back to this conversation automatically when ready. This is separate
+  from spawned worker tasks, which are isolated coding or computing jobs and use worker task IDs
+  instead. Each delegation is normally an independent conversation with the specialist, but the
+  assistant can also continue an earlier finished delegation so the specialist keeps its previous
+  context — handy for an iterative back-and-forth (for example, a follow-up question to an earlier
+  research delegation).
 
 - **Push Notifications:** The assistant can notify you even when the app isn't open.
 
