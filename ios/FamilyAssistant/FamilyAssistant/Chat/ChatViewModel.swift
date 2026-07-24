@@ -956,6 +956,11 @@ final class ChatViewModel {
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
             await attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
+            // A prior failed load of THIS thread may have left a stale inline banner
+            // (e.g. an access-changed 403 or a load error). The thread just reloaded
+            // successfully, so clear it — matching the documented "cleared when the
+            // thread reloads" contract; otherwise it lingers over fresh content.
+            threadInlineMessage = nil
             recordAdvisorySuccess(operation: .messagesLoad)
         } catch {
             guard self.conversationID == id else {

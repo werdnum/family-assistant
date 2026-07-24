@@ -9568,6 +9568,36 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testThreadInlineMessageClearsOnSuccessfulReload() async throws {
+        // The thread-scoped inline banner (from a prior failed / access-changed load)
+        // must clear when the SAME thread reloads successfully, per its documented
+        // contract ("cleared when the thread reloads") — not only on a conversation
+        // switch — so it can't linger over freshly reloaded content.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations/web_conv_reload/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_reload","messages":[{"internal_id":1,"role":"assistant","content":"Hello","timestamp":"2026-06-08T12:00:00Z"}],"count":1,"total_messages":1,"has_more_before":false,"has_more_after":false}"#
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_reload")
+        model.threadInlineMessage = "You no longer have access to this conversation."
+        XCTAssertNotNil(model.threadInlineMessage)
+
+        await model.loadMessages(conversationID: "web_conv_reload", userInitiated: true)
+
+        XCTAssertNil(
+            model.threadInlineMessage,
+            "a successful reload of the same thread clears the stale inline banner"
+        )
+    }
+
     func testSendFailureSurfacesInlineWithNoModalAndOneBreadcrumb() async throws {
         // §4.5 slice 2: a terminal send failure surfaces inline on the bubble —
         // failed styling + retry affordance — with NO modal, NO `Chat.alertPresented`,
