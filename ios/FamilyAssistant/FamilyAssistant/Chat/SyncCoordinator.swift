@@ -579,10 +579,24 @@ final class SyncCoordinator {
                     // must stop.
                     if case ChatAPIError.server(let statusCode, _, _) = error,
                        statusCode == 401 || statusCode == 403 {
+                        // A superseded loop (replaced by a newer `startFollowStream`,
+                        // which bumps the follow generation but NOT the auth epoch)
+                        // must not act on its stale 401: a forced refresh or
+                        // `authRequired` latch fences only on the still-current auth
+                        // epoch, so it would spuriously sign the user out — and tear
+                        // down health — under the replacement stream. Stop this stale
+                        // loop silently. Re-checked after the refresh await, since a
+                        // replacement can land while the coalesced refresh is suspended.
+                        guard self.isCurrentFollow(generation) else {
+                            break
+                        }
                         if !authRefreshAlreadyAttempted {
                             authRefreshAlreadyAttempted = true
                             do {
                                 try await self.authManager.refreshIfNeeded(force: true, ownerEpoch: loopEpoch)
+                                guard self.isCurrentFollow(generation) else {
+                                    break
+                                }
                                 self.reportStreamDisconnect(
                                     channel: "follow",
                                     generation: generation,
@@ -593,6 +607,9 @@ final class SyncCoordinator {
                                 )
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
+                                guard self.isCurrentFollow(generation) else {
+                                    break
+                                }
                                 self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                                 deliberateStop = true
                             } catch {
@@ -724,10 +741,21 @@ final class SyncCoordinator {
                     // backoff forever.
                     if case ChatAPIError.server(let statusCode, _, _) = error,
                        statusCode == 401 || statusCode == 403 {
+                        // See the follow loop: a superseded activity loop (its
+                        // generation bumped by a replacement, auth epoch unchanged)
+                        // must not force a refresh or latch `authRequired`, which would
+                        // spuriously sign the user out under the replacement stream.
+                        // Re-checked after the refresh await.
+                        guard self.isCurrentActivity(generation) else {
+                            break
+                        }
                         if !authRefreshAlreadyAttempted {
                             authRefreshAlreadyAttempted = true
                             do {
                                 try await self.authManager.refreshIfNeeded(force: true, ownerEpoch: loopEpoch)
+                                guard self.isCurrentActivity(generation) else {
+                                    break
+                                }
                                 self.reportStreamDisconnect(
                                     channel: "activity",
                                     generation: generation,
@@ -737,6 +765,9 @@ final class SyncCoordinator {
                                 )
                                 continue
                             } catch AuthError.authRejected, AuthError.noCredentials {
+                                guard self.isCurrentActivity(generation) else {
+                                    break
+                                }
                                 self.authManager.markAuthRequiredIfCurrent(capturedEpoch: loopEpoch)
                                 self.apply(.activityDropped(generation: generation, cleanEOF: false))
                                 self.reportStreamDisconnect(

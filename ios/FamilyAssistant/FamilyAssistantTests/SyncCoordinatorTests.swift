@@ -880,6 +880,97 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
     }
 
+    func testSupersededFollowLoop401DoesNotLatchAuthRequired() async {
+        // A follow loop replaced mid-flight (a conversation switch bumps the follow
+        // generation but NOT the auth epoch) must not let its stale 401 force a
+        // refresh or latch `authRequired` — that would sign the user out under the
+        // replacement stream. Only the CURRENT loop's rejection may latch.
+        seedStoredAuth()
+        let authManager = makeAuthManager()
+        let mustNotLatch = expectation(description: "authRequired must not latch for a superseded loop")
+        mustNotLatch.isInverted = true
+        authManager.addAuthStateObserver { signal in
+            if case .authRequired = signal {
+                mustNotLatch.fulfill()
+            }
+        }
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { _ in
+            _ = refreshRequests.increment()
+            return .json(#"{"detail":"rejected"}"#, statusCode: 401)
+        }
+        let coordinator = SyncCoordinator(
+            authManager: authManager,
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60,
+            reconnectDelay: { _ in }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        // Only the first (soon-superseded) open 401s; the replacement's open hangs
+        // (connected), so nothing legitimately latches.
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+        delegate.followOpenErrorLimit = 1
+        delegate.hangFollowOpen = true
+        // Supersede the first loop the instant it opens, before it processes its 401.
+        delegate.onFollowOpen = {
+            if delegate.followOpenCount == 1 {
+                coordinator.startFollowStream(conversationID: "conv-2")
+            }
+        }
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        await fulfillment(of: [mustNotLatch], timeout: 1.0)
+
+        XCTAssertFalse(authManager.authRequired, "a superseded loop's 401 must not latch authRequired")
+        XCTAssertEqual(refreshRequests.value, 0, "a superseded loop must not force a refresh")
+        XCTAssertNotNil(KeychainHelper.readString(key: "fa_api_token"), "credentials must survive")
+    }
+
+    func testSupersededActivityLoop401DoesNotLatchAuthRequired() async {
+        // Activity-channel counterpart: a replaced activity loop's stale 401 must not
+        // latch `authRequired` under the replacement stream.
+        seedStoredAuth()
+        let authManager = makeAuthManager()
+        let mustNotLatch = expectation(description: "authRequired must not latch for a superseded loop")
+        mustNotLatch.isInverted = true
+        authManager.addAuthStateObserver { signal in
+            if case .authRequired = signal {
+                mustNotLatch.fulfill()
+            }
+        }
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { _ in
+            _ = refreshRequests.increment()
+            return .json(#"{"detail":"rejected"}"#, statusCode: 401)
+        }
+        let coordinator = SyncCoordinator(
+            authManager: authManager,
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 60,
+            followReconnectMaxDelaySeconds: 60,
+            reconnectDelay: { _ in }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activityOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+        delegate.activityOpenErrorLimit = 1
+        delegate.hangActivityOpen = true
+        delegate.onActivityOpen = {
+            if delegate.activityOpenCount == 1 {
+                coordinator.startActivityStream()
+            }
+        }
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        await fulfillment(of: [mustNotLatch], timeout: 1.0)
+
+        XCTAssertFalse(authManager.authRequired, "a superseded loop's 401 must not latch authRequired")
+        XCTAssertEqual(refreshRequests.value, 0, "a superseded loop must not force a refresh")
+        XCTAssertNotNil(KeychainHelper.readString(key: "fa_api_token"), "credentials must survive")
+    }
+
     func testActivityConnect403WithRejectedRefreshStopsAndLatchesAuthRequired() async {
         seedStoredAuth()
         let monitor = StubPathMonitor(isSatisfied: true)
