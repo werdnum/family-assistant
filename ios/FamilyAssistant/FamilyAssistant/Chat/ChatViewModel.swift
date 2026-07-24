@@ -1715,6 +1715,23 @@ final class ChatViewModel {
                 ownerEpoch: startEpoch
             )
             startSucceeded = true
+            // The first send of a generated launch draft makes the conversation
+            // server-backed. Clear the launch-draft sentinel — gated on
+            // `id == self.conversationID` (this send is still for the displayed
+            // conversation), NOT the supersession guard below: a New Chat / switch
+            // moves `conversationID` to a DIFFERENT draft (the flag then belongs to
+            // that draft, and following the current unsaved id would re-introduce the
+            // 404 loop), but a background/suspend — which cancels this task WITHOUT
+            // changing `conversationID` — must still clear the flag so the
+            // now-server-backed turn reattaches and follows on foreground instead of
+            // staying stuck. Only eagerly (re)start the stream when this send is still
+            // current; otherwise the foreground resync establishes it.
+            if opensGeneratedLaunchDraft, id == self.conversationID {
+                opensGeneratedLaunchDraft = false
+                if !Task.isCancelled, currentStreamToken == streamToken {
+                    startLiveEvents(reason: .newConversation)
+                }
+            }
             let stopAfterRegistrationConversationID = stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
             guard !Task.isCancelled, currentStreamToken == streamToken else {
                 if let stopConversationID = stopAfterRegistrationConversationID {
@@ -1735,18 +1752,6 @@ final class ChatViewModel {
                     }
                 }
                 return
-            }
-            // The first send of a generated launch draft makes the conversation
-            // server-backed; start following it now so the channel reaches live.
-            // Placed AFTER the supersession guard above: if a New Chat (or switch)
-            // replaced this send while its POST was in flight, the launch-draft flag
-            // now belongs to the NEW draft — consuming it here and following the
-            // current (still-unsaved) conversation would re-introduce the 404 follow
-            // loop this defer avoids. A superseded send returns above, leaving the
-            // flag for its owner's own first send.
-            if opensGeneratedLaunchDraft {
-                opensGeneratedLaunchDraft = false
-                startLiveEvents(reason: .newConversation)
             }
             registeredTurnIDs.insert(turnID)
             let pendingSteers = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
@@ -4823,7 +4828,11 @@ extension ChatViewModel: ResyncHost {
     }
 
     var resyncSelectedConversationID: String? {
-        conversationID
+        // Mirror `currentConversationID()`: a generated launch draft has no server row
+        // yet, so the foreground resync must NOT snapshot/follow its client-only id
+        // (that 404s the follow + message-snapshot path and can degrade advisory
+        // health) until the first accepted turn makes it server-backed.
+        opensGeneratedLaunchDraft ? nil : conversationID
     }
 
     func awaitStreamTermination() async {

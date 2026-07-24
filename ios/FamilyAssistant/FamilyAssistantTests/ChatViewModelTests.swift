@@ -818,6 +818,10 @@ final class ChatViewModelTests: XCTestCase {
             model.currentConversationID(),
             "a brand-new conversation defers following (no 404 reconnect loop) until its first turn"
         )
+        XCTAssertNil(
+            model.resyncSelectedConversationID,
+            "and is hidden from the foreground resync target too, so a foreground/reconnect before the first send does not 404 the resync snapshot on the client-only id"
+        )
     }
 
     func testSendDraftStreamsAssistantTextAndReloadsPersistedMessages() async throws {
