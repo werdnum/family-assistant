@@ -13,6 +13,11 @@ import os
 ///
 /// Hard crashes (Swift traps, signals) are intentionally out of scope: Apple already captures those
 /// for TestFlight builds. See `docs/design/ios_error_reporting.md`.
+///
+/// Each report carries a severity (derived from its ``ErrorType``). Real errors (`.handled`,
+/// `.uncaught`) land in the backend error log; diagnostic breadcrumbs (`.component`) are routed to
+/// a separate telemetry lane so they do not drown genuine errors in the engineer's error view. See
+/// `docs/design/ios-frontend-telemetry-lane.md`.
 final class ErrorReporter: @unchecked Sendable {
     static let shared = ErrorReporter()
 
@@ -20,6 +25,20 @@ final class ErrorReporter: @unchecked Sendable {
         case uncaught
         case handled = "manual"
         case component = "component_error"
+
+        /// Severity lane the backend routes this report to. `.component` is used
+        /// exclusively for diagnostic breadcrumbs (transport events, resync phases,
+        /// alert/inline-error counters, the sign-in watchdog note), so it goes to the
+        /// telemetry ring buffer ("info") rather than the error log. Real caught
+        /// errors (`.handled`) and uncaught exceptions stay in the error lane.
+        var severity: String {
+            switch self {
+            case .component:
+                return "info"
+            case .handled, .uncaught:
+                return "error"
+            }
+        }
     }
 
     private let session: URLSession
@@ -275,6 +294,7 @@ final class ErrorReporter: @unchecked Sendable {
             userAgent: Self.userAgent,
             componentName: component,
             errorType: errorType.rawValue,
+            severity: errorType.severity,
             extraData: Self.metadata().merging(extraData) { _, new in new }
         )
     }
@@ -334,6 +354,7 @@ struct ErrorReportPayload: Codable, Sendable {
     let userAgent: String?
     let componentName: String?
     let errorType: String?
+    let severity: String?
     let extraData: [String: String]?
 
     enum CodingKeys: String, CodingKey {
@@ -343,6 +364,7 @@ struct ErrorReportPayload: Codable, Sendable {
         case userAgent = "user_agent"
         case componentName = "component_name"
         case errorType = "error_type"
+        case severity
         case extraData = "extra_data"
     }
 }

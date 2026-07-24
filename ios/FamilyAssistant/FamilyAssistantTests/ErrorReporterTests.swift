@@ -45,11 +45,50 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(payload.message, "Boom")
         XCTAssertEqual(payload.componentName, "Notes.editor.save")
         XCTAssertEqual(payload.errorType, "manual")
+        XCTAssertEqual(payload.severity, "error")
         XCTAssertEqual(payload.url, "familyassistant://ios/Notes.editor.save")
         XCTAssertEqual(payload.extraData?["platform"], "ios")
         XCTAssertEqual(payload.extraData?["error_type_name"], "NotesAPIError")
         XCTAssertEqual(try XCTUnwrap(payload.userAgent).hasPrefix("FamilyAssistant-iOS/"), true)
         XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
+    func testComponentBreadcrumbCarriesInfoSeverity() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure { self.baseURL }
+
+        // A `.component` report is a diagnostic breadcrumb; it must carry "info"
+        // severity so the backend routes it to the telemetry lane, not the error log.
+        await reporter.deliver(
+            message: "iOS chat sync breadcrumb",
+            component: "Chat.streamDisconnect",
+            errorType: .component,
+            stack: nil,
+            extraData: [:],
+            bypassDedupe: true
+        )
+
+        let payload = try XCTUnwrap(MockErrorURLProtocol.decodedBodies.first)
+        XCTAssertEqual(payload.errorType, "component_error")
+        XCTAssertEqual(payload.severity, "info")
+    }
+
+    func testUncaughtReportCarriesErrorSeverity() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure { self.baseURL }
+
+        await reporter.deliver(
+            message: "NSInvalidArgumentException",
+            component: "UncaughtException",
+            errorType: .uncaught,
+            stack: nil,
+            extraData: [:]
+        )
+
+        let payload = try XCTUnwrap(MockErrorURLProtocol.decodedBodies.first)
+        XCTAssertEqual(payload.severity, "error")
     }
 
     func testDeliverDeduplicatesWithinWindow() async throws {
