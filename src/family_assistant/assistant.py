@@ -62,11 +62,15 @@ from family_assistant.indexing.message_history_indexer import (
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.providers.google_genai_client import is_deep_research_model
 from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.processing import (
     DelegatableService,
     ProcessingService,
     ProcessingServiceConfig,
+)
+from family_assistant.processing.deep_research_service import (
+    DeepResearchProcessingService,
 )
 from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
 from family_assistant.services.api_backend import HttpApiBackend
@@ -1199,6 +1203,8 @@ class Assistant:
                 allow_wake_llm=profile_proc_conf.allow_wake_llm,
                 note_registry=note_registry,
                 greeting_wav_path=profile_proc_conf.greeting_wav_path,
+                poll_interval_seconds=profile_proc_conf.poll_interval_seconds,
+                max_async_seconds=profile_proc_conf.max_async_seconds,
             )
 
             home_assistant_client_for_profile = self.home_assistant_clients.get(
@@ -1239,7 +1245,16 @@ class Assistant:
                             f"Failed to create camera backend for profile '{profile_id}'"
                         )
 
-            processing_service_instance = ProcessingService(
+            # Deep Research profiles get the pollable subclass so a delegated
+            # run submits/polls instead of holding a worker for the whole
+            # (potentially very long) research run. Direct chat use is
+            # unaffected — handle_chat_interaction is inherited unchanged.
+            processing_service_class = (
+                DeepResearchProcessingService
+                if is_deep_research_model(profile_llm_model)
+                else ProcessingService
+            )
+            processing_service_instance = processing_service_class(
                 llm_client=llm_client_for_profile,
                 tools_provider=profile_tools_provider,
                 service_config=service_config,

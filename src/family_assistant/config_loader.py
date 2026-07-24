@@ -766,6 +766,8 @@ def resolve_service_profile(
             "allow_wake_llm",
             "enable_computer_use",
             "computer_use_excluded_functions",
+            "poll_interval_seconds",
+            "max_async_seconds",
         ]
         for key in scalar_keys:
             if (

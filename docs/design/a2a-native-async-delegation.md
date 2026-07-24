@@ -2,12 +2,19 @@
 
 ## Status
 
-Implemented (two-sided async; see the addendum). A background send lost to a server restart leaves
-its `a2a_tasks` row non-terminal; the delegating client recovers it via its `max_async_seconds` cap
-(poll → cap → `tasks/cancel`, which marks the row `canceled` — protected from a late overwrite by
-`update_task_status`'s terminal-CAS guard). An age-based server-side reaper was deliberately not
-added: it cannot distinguish a legitimately long-running send from a lost one without a heartbeat,
-and would false-fail the former (permanently, given the CAS guard).
+Implemented (two-sided async; see the addendum). `PollableDelegationService` and its
+`DelegationTransientError`/`DelegationPermanentError`/`DelegationTaskNotFoundError` taxonomy
+(originally A2A-specific exception classes) were later generalized to a second, local implementer —
+see [deep-research-pollable-delegation.md](deep-research-pollable-delegation.md). The design below
+is written against the original A2A-only implementation; the mechanism it describes is now
+provider-agnostic.
+
+A background send lost to a server restart leaves its `a2a_tasks` row non-terminal; the delegating
+client recovers it via its `max_async_seconds` cap (poll → cap → `tasks/cancel`, which marks the row
+`canceled` — protected from a late overwrite by `update_task_status`'s terminal-CAS guard). An
+age-based server-side reaper was deliberately not added: it cannot distinguish a legitimately
+long-running send from a lost one without a heartbeat, and would false-fail the former (permanently,
+given the CAS guard).
 
 **Task-id ownership (A2A spec §3.4.2).** The client does **not** pre-generate or send a task id on
 the initial `message/send`; per the spec a client-supplied `taskId` must reference an *existing*

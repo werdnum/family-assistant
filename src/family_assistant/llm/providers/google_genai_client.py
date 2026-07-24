@@ -23,6 +23,7 @@ import aiofiles
 from google import genai
 from google.genai import types
 from google.genai.client import DebugConfig
+from google.genai.interactions import Interaction
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ValidationError
@@ -54,6 +55,11 @@ from family_assistant.llm.messages import (
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
+from family_assistant.processing.protocol import (
+    DelegationPermanentError,
+    DelegationTaskNotFoundError,
+    DelegationTransientError,
+)
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.types import ToolDefinition, normalize_json_schema_type
 
@@ -104,12 +110,30 @@ _SDK_STATUS_CODE_TO_EXCEPTION: dict[int, type[LLMProviderError]] = {
     429: RateLimitError,
 }
 
-_DEEP_RESEARCH_TERMINAL_ERROR_STATUSES = {
+_INTERACTION_TERMINAL_ERROR_STATUSES = {
     "failed",
     "cancelled",
     "incomplete",
     "budget_exceeded",
 }
+
+
+def is_interaction_terminal_error_status(status: str) -> bool:
+    """Check if an Interaction status is a terminal (non-success) end state.
+
+    Deliberately a deny-list, not an allow-list of "pending" statuses: the
+    Interactions API can report statuses this SDK doesn't enumerate (e.g. a
+    capacity-queueing "queued" state alongside the known ``in_progress``/
+    ``requires_action``), and any such status must be treated as still
+    pending rather than failed. Mirrors the streaming path's own
+    ``interaction.status_update`` handling.
+    """
+    return status in _INTERACTION_TERMINAL_ERROR_STATUSES
+
+
+def is_deep_research_model(model: str) -> bool:
+    """Check if a model identifier corresponds to a Deep Research agent."""
+    return "deep-research" in model
 
 
 def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
@@ -960,7 +984,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
     def _is_deep_research_model(self, model: str) -> bool:
         """Check if model identifier corresponds to deep research agent."""
-        return "deep-research" in model
+        return is_deep_research_model(model)
 
     async def generate_response(
         self,
@@ -1432,6 +1456,190 @@ class GoogleGenAIClient(BaseLLMClient):
             return self._generate_deep_research_stream(messages)
         return self._generate_response_stream(messages, tools, tool_choice)
 
+    def _build_deep_research_create_kwargs(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        previous_interaction_id: str | None = None,
+        # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+    ) -> dict[str, Any]:
+        """Build ``interactions.create`` kwargs for a Deep Research call.
+
+        Extracts the input text from the trailing run of user messages plus
+        any system prompt, and resolves ``previous_interaction_id`` for
+        multi-turn continuation. If not given explicitly, it's scanned from
+        the last assistant message's provider metadata (the interactive chat
+        path's own history); an explicit value (e.g. from a delegation run's
+        stored interaction id) overrides that scan. Does not set ``stream``
+        — callers choose streaming (interactive) or not (submit-then-poll).
+        """
+        resolved_previous_interaction_id = previous_interaction_id
+
+        # Collect all contiguous trailing user messages for input
+        # This handles cases where user sends multiple messages in a row
+        user_input_parts = []
+        for msg in reversed(messages):
+            if msg.role == "user":
+                # Extract text content from message
+                msg_text = ""
+                if isinstance(msg.content, str):
+                    msg_text = msg.content
+                elif isinstance(msg.content, list):
+                    text_fragments = []
+                    for part in msg.content:
+                        if isinstance(part, TextContentPart):
+                            text_fragments.append(part.text)
+                        elif isinstance(part, str):
+                            text_fragments.append(part)
+                    msg_text = "\n".join(text_fragments)
+
+                if msg_text:
+                    user_input_parts.insert(0, msg_text)
+            else:
+                # Stop at the first non-user message
+                break
+
+        input_text = "\n\n".join(user_input_parts)
+
+        if resolved_previous_interaction_id is None:
+            # Check for previous interaction ID in assistant history
+            # Iterate through messages to find the last assistant message with provider metadata
+            for msg in reversed(messages):
+                if (
+                    msg.role == "assistant"
+                    and isinstance(msg, AssistantMessage)
+                    and msg.provider_metadata
+                ):
+                    pm = msg.provider_metadata
+                    if isinstance(pm, GeminiProviderMetadata) and pm.interaction_id:
+                        resolved_previous_interaction_id = pm.interaction_id
+                        break
+                    elif isinstance(pm, dict) and pm.get("interaction_id"):
+                        resolved_previous_interaction_id = pm.get("interaction_id")
+                        break
+
+        # Prepend system prompt if present (Deep Research takes input string)
+        system_prompt = ""
+        for msg in messages:
+            if msg.role == "system" and msg.content:
+                system_prompt += f"{_system_prefixed_content(msg.content)}\n\n"
+
+        if system_prompt:
+            input_text = system_prompt + input_text
+
+        if not input_text:
+            raise InvalidRequestError(
+                "Deep Research requires non-empty input",
+                provider="google",
+                model=self.model_name,
+            )
+
+        logger.info(
+            f"Starting Deep Research interaction. Model: {self.model_name}, "
+            f"Prev ID: {resolved_previous_interaction_id}"
+        )
+
+        agent_name = self.model_name.replace("models/", "")
+
+        create_kwargs = {
+            "input": input_text,
+            "agent": agent_name,
+            "background": True,
+            "agent_config": {
+                "type": "deep-research",
+                "thinking_summaries": "auto",
+                "visualization": "auto",
+            },
+        }
+        if resolved_previous_interaction_id:
+            create_kwargs["previous_interaction_id"] = resolved_previous_interaction_id
+        return create_kwargs
+
+    def _classify_agent_delegation_error(self, e: Exception) -> Exception:
+        """Map an Interactions API exception to the delegation error taxonomy.
+
+        Generic to any Interactions API agent (``agent=`` can be a Deep
+        Research model today, or e.g. an Antigravity managed agent in
+        future), not just Deep Research — used by the submit/poll/cancel
+        primitives for the pollable-delegation path (not the interactive
+        streaming path, which raises ``LLMProviderError`` subtypes via
+        ``_map_interactions_error`` instead). Duck-types on ``status_code``
+        (SDK ``APIStatusError``), mirroring ``_map_interactions_error``'s own
+        pattern. Errors this doesn't recognize (including non-HTTP transport
+        errors with no ``status_code``) are returned unwrapped — safe, since
+        ``task_worker.py``'s default (fail-fast) handling already applies to
+        anything that isn't a ``DelegationTransientError``.
+        """
+        status_code: int | None = getattr(e, "status_code", None)
+        if status_code == 404:
+            return DelegationTaskNotFoundError(str(e))
+        if status_code in {400, 401, 403}:
+            return DelegationPermanentError(str(e))
+        if status_code == 429 or (status_code is not None and status_code >= 500):
+            return DelegationTransientError(str(e))
+        return e
+
+    async def start_deep_research_interaction(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        previous_interaction_id: str | None = None,
+    ) -> Interaction:
+        """Start a Deep Research interaction without waiting for it to finish.
+
+        Used by the pollable-delegation path: submits in the background and
+        returns immediately with the interaction's initial (non-terminal)
+        state instead of streaming until the whole research run completes.
+        Raises the generic delegation error taxonomy
+        (``DelegationTransientError``/``DelegationPermanentError``/
+        ``DelegationTaskNotFoundError``) rather than ``LLMProviderError``.
+
+        Deep-Research-specific (via ``_build_deep_research_create_kwargs``'s
+        ``agent_config``), unlike ``get_agent_interaction``/
+        ``cancel_agent_interaction`` below: submitting an interaction needs
+        agent-specific input shaping, but polling/cancelling one by id
+        doesn't — a future non-Deep-Research Interactions API agent (e.g.
+        Antigravity) would need its own ``start_*`` but could reuse those two
+        as-is.
+        """
+        create_kwargs = self._build_deep_research_create_kwargs(
+            messages, previous_interaction_id=previous_interaction_id
+        )
+        try:
+            return cast(
+                "Interaction",
+                await self.client.aio.interactions.create(
+                    **create_kwargs, stream=False
+                ),
+            )
+        except Exception as e:
+            raise self._classify_agent_delegation_error(e) from e
+
+    async def get_agent_interaction(self, interaction_id: str) -> Interaction:
+        """Fetch the current state of any Interactions API agent run (one poll).
+
+        Generic by design — polling by id needs no agent-specific knowledge.
+        Raises the generic delegation error taxonomy on failure (see
+        ``start_deep_research_interaction``).
+        """
+        try:
+            return cast(
+                "Interaction",
+                await self.client.aio.interactions.get(interaction_id, stream=False),
+            )
+        except Exception as e:
+            raise self._classify_agent_delegation_error(e) from e
+
+    async def cancel_agent_interaction(self, interaction_id: str) -> None:
+        """Best-effort cancellation of any Interactions API agent run.
+
+        Generic by design (see ``get_agent_interaction``). Callers (e.g.
+        ``DeepResearchProcessingService.cancel_async``) are expected to
+        swallow any exception this raises, mirroring
+        ``RemoteA2AService.cancel_async``.
+        """
+        await self.client.aio.interactions.cancel(interaction_id)
+
     async def _generate_deep_research_stream(
         self,
         messages: Sequence[LLMMessage],
@@ -1448,88 +1656,8 @@ class GoogleGenAIClient(BaseLLMClient):
 
         content_yielded = False
         try:
-            # 1. Extract input and history context
-            previous_interaction_id = None
-
-            # Collect all contiguous trailing user messages for input
-            # This handles cases where user sends multiple messages in a row
-            user_input_parts = []
-            for msg in reversed(messages):
-                if msg.role == "user":
-                    # Extract text content from message
-                    msg_text = ""
-                    if isinstance(msg.content, str):
-                        msg_text = msg.content
-                    elif isinstance(msg.content, list):
-                        text_fragments = []
-                        for part in msg.content:
-                            if isinstance(part, TextContentPart):
-                                text_fragments.append(part.text)
-                            elif isinstance(part, str):
-                                text_fragments.append(part)
-                        msg_text = "\n".join(text_fragments)
-
-                    if msg_text:
-                        user_input_parts.insert(0, msg_text)
-                else:
-                    # Stop at the first non-user message
-                    break
-
-            input_text = "\n\n".join(user_input_parts)
-
-            # Check for previous interaction ID in assistant history
-            # Iterate through messages to find the last assistant message with provider metadata
-            for msg in reversed(messages):
-                if (
-                    msg.role == "assistant"
-                    and isinstance(msg, AssistantMessage)
-                    and msg.provider_metadata
-                ):
-                    pm = msg.provider_metadata
-                    if isinstance(pm, GeminiProviderMetadata) and pm.interaction_id:
-                        previous_interaction_id = pm.interaction_id
-                        break
-                    elif isinstance(pm, dict) and pm.get("interaction_id"):
-                        previous_interaction_id = pm.get("interaction_id")
-                        break
-
-            # Prepend system prompt if present (Deep Research takes input string)
-            system_prompt = ""
-            for msg in messages:
-                if msg.role == "system" and msg.content:
-                    system_prompt += f"{_system_prefixed_content(msg.content)}\n\n"
-
-            if system_prompt:
-                input_text = system_prompt + input_text
-
-            if not input_text:
-                raise InvalidRequestError(
-                    "Deep Research requires non-empty input",
-                    provider="google",
-                    model=self.model_name,
-                )
-
-            # 2. Start interaction
-            logger.info(
-                f"Starting Deep Research interaction. Model: {self.model_name}, "
-                f"Prev ID: {previous_interaction_id}"
-            )
-
-            agent_name = self.model_name.replace("models/", "")
-
-            create_kwargs = {
-                "input": input_text,
-                "agent": agent_name,
-                "background": True,
-                "stream": True,
-                "agent_config": {
-                    "type": "deep-research",
-                    "thinking_summaries": "auto",
-                    "visualization": "auto",
-                },
-            }
-            if previous_interaction_id:
-                create_kwargs["previous_interaction_id"] = previous_interaction_id
+            create_kwargs = self._build_deep_research_create_kwargs(messages)
+            create_kwargs["stream"] = True
 
             stream = cast(
                 "AsyncIterator[Any]",
@@ -1577,7 +1705,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     status = getattr(chunk, "status", None) or getattr(
                         getattr(chunk, "interaction", None), "status", None
                     )
-                    if status in _DEEP_RESEARCH_TERMINAL_ERROR_STATUSES:
+                    if status in _INTERACTION_TERMINAL_ERROR_STATUSES:
                         raise ServiceUnavailableError(
                             f"Deep Research interaction {status}",
                             provider="google",

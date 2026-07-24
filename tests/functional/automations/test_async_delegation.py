@@ -11,16 +11,26 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select, update
 
-from family_assistant.a2a.client import (
-    A2AClientError,
-    A2APermanentError,
-    A2ATaskNotFoundError,
-)
-from family_assistant.config_models import ToolsConfig
+from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
-from family_assistant.processing import PENDING, RemoteSubmission
-from family_assistant.processing.types import ChatInteractionResult
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.processing import (
+    PENDING,
+    DelegationPermanentError,
+    DelegationTaskNotFoundError,
+    DelegationTransientError,
+    PollableDelegationService,
+    RemoteSubmission,
+)
+from family_assistant.processing.deep_research_service import (
+    DeepResearchProcessingService,
+)
+from family_assistant.processing.types import (
+    ChatInteractionResult,
+    ProcessingServiceConfig,
+)
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintMetadata,
@@ -2305,9 +2315,11 @@ class FakePollableService:
         *,
         conversation_id: str,
         subconversation_id: str | None,
+        user_name: str,
+        db_context: object,
         initial_taint_sources: object | None = None,
     ) -> RemoteSubmission:
-        _ = (content_parts, initial_taint_sources)
+        _ = (content_parts, initial_taint_sources, user_name, db_context)
         error = self._submit_error
         if self._submit_errors is not None:
             error = self._submit_errors.pop(0) if self._submit_errors else None
@@ -2506,7 +2518,7 @@ async def test_pollable_delegation_transient_submit_error_recovers_via_poll(
 ) -> None:
     # A transient submit error (the request may have landed but the response was
     # lost): keep the run awaiting_remote and schedule a poll to reconcile.
-    target = FakePollableService(submit_error=A2AClientError("response lost"))
+    target = FakePollableService(submit_error=DelegationTransientError("response lost"))
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
     )
@@ -2539,7 +2551,7 @@ async def test_pollable_delegation_deterministic_submit_error_fails_fast(
 ) -> None:
     # A deterministic submit error (bad auth / protocol error): fail fast with
     # the real error instead of polling until the cap.
-    target = FakePollableService(submit_error=A2APermanentError("bad auth"))
+    target = FakePollableService(submit_error=DelegationPermanentError("bad auth"))
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
     )
@@ -2746,6 +2758,154 @@ async def test_pollable_delegation_polls_to_completion(
     assert "remote done" in chat_interface.send_message.await_args.kwargs["text"]
 
 
+class _NoToolsProvider:
+    """Minimal ToolsProvider for a real ProcessingService that never calls tools."""
+
+    async def get_tool_definitions(self) -> list:
+        return []
+
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: dict,
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str:
+        raise AssertionError("a Deep Research profile should never call a tool")
+
+    async def close(self) -> None:
+        pass
+
+
+def _deep_research_target_service(
+    llm_client: GoogleGenAIClient,
+) -> DeepResearchProcessingService:
+    """A real DeepResearchProcessingService, registered as a delegation target.
+
+    Proves DeepResearchProcessingService actually satisfies the
+    PollableDelegationService protocol end-to-end through TaskWorker, not just
+    in isolation (see tests/unit/processing/test_deep_research_service.py).
+    """
+    config = ProcessingServiceConfig(
+        prompts={"system_prompt": "You are a research assistant for {user_name}."},
+        timezone=ZoneInfo("UTC"),
+        max_history_messages=10,
+        history_max_age_hours=24,
+        tools_config=ToolsConfig(),
+        delegation_security_level=DelegationSecurityLevel.CONFIRM,
+        id="target_profile",
+        allowed_delegation_sources=["source_profile"],
+    )
+    return DeepResearchProcessingService(
+        llm_client=llm_client,
+        tools_provider=_NoToolsProvider(),
+        service_config=config,
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_deep_research_is_pollable_but_ordinary_local_profile_is_not() -> None:
+    """Only a Deep Research profile satisfies PollableDelegationService.
+
+    Pins the exact hazard the subclass exists to avoid: since the Protocol is
+    runtime_checkable (structural), unconditionally adding submit_async et al.
+    to the base ProcessingService would silently make every local delegation
+    target "pollable".
+    """
+    deep_research = _deep_research_target_service(
+        GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+    )
+    assert isinstance(deep_research, PollableDelegationService)
+
+    ordinary = FakeDelegatableService()
+    assert not isinstance(ordinary, PollableDelegationService)
+
+
+@pytest.mark.asyncio
+async def test_deep_research_delegation_polls_to_completion_and_notifies(
+    db_engine: AsyncEngine,
+) -> None:
+    """A Deep Research delegation submits, polls while pending, then delivers.
+
+    End-to-end through the real submit-then-poll worker path: no
+    handle_chat_interaction call is made (that would block the worker for the
+    whole research run), and the delegating conversation is notified only once
+    the interaction reaches a terminal state.
+    """
+    llm_client = GoogleGenAIClient(
+        api_key="test", model="deep-research-preview-04-2026"
+    )
+    submitted_interaction = AsyncMock()
+    submitted_interaction.id = "inter_e2e_1"
+    llm_client.start_deep_research_interaction = AsyncMock(
+        return_value=submitted_interaction
+    )
+    pending_interaction = AsyncMock()
+    pending_interaction.status = "in_progress"
+    completed_interaction = AsyncMock()
+    completed_interaction.status = "completed"
+    completed_interaction.output_text = "Here is the research report."
+    llm_client.get_agent_interaction = AsyncMock(
+        side_effect=[pending_interaction, completed_interaction]
+    )
+
+    target = _deep_research_target_service(llm_client)
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _delegation_payload(delegation_id),
+        )
+
+    async with DatabaseContext(engine=db_engine) as db_context:
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+        assert run["remote_task_id"] == "inter_e2e_1"
+    llm_client.start_deep_research_interaction.assert_awaited_once()
+    chat_interface.send_message.assert_not_awaited()
+
+    poll_payload = _delegation_payload(delegation_id)
+    # First poll: still in_progress -> reschedules, no notification yet.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            poll_payload,
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "awaiting_remote"
+    chat_interface.send_message.assert_not_awaited()
+
+    # Second poll: completed -> finalize and notify with the research output.
+    async with DatabaseContext(engine=db_engine) as db_context:
+        await worker.handle_delegation_poll(
+            _tool_context(db_context, processing_service, chat_interface),
+            poll_payload,
+        )
+        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+        assert run is not None
+        assert run["status"] == "completed"
+        assert run["result_text"] == "Here is the research report."
+    chat_interface.send_message.assert_awaited_once()
+    assert (
+        "Here is the research report."
+        in chat_interface.send_message.await_args.kwargs["text"]
+    )
+
+
 @pytest.mark.asyncio
 async def test_pollable_delegation_synchronous_remote_completes_on_submit(
     db_engine: AsyncEngine,
@@ -2911,7 +3071,7 @@ async def test_pollable_delegation_poll_transient_error_reschedules(
 ) -> None:
     target = FakePollableService(
         poll_results=[
-            A2AClientError("network blip"),
+            DelegationTransientError("network blip"),
             ChatInteractionResult.success(text_reply="recovered"),
         ]
     )
@@ -2932,7 +3092,7 @@ async def test_pollable_delegation_poll_transient_error_reschedules(
         )
 
     poll_payload = _delegation_payload(delegation_id)
-    # Transient A2AClientError -> stays awaiting_remote and reschedules.
+    # Transient DelegationTransientError -> stays awaiting_remote and reschedules.
     async with DatabaseContext(engine=db_engine) as db_context:
         await worker.handle_delegation_poll(
             _tool_context(db_context, processing_service, chat_interface),
@@ -2959,7 +3119,7 @@ async def test_pollable_delegation_poll_permanent_error_fails_fast(
     db_engine: AsyncEngine,
 ) -> None:
     target = FakePollableService(
-        poll_results=[A2APermanentError("bad auth / protocol error")]
+        poll_results=[DelegationPermanentError("bad auth / protocol error")]
     )
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
@@ -2996,7 +3156,9 @@ async def test_pollable_delegation_poll_not_found_resubmits(
     # The remote reports its task is not found (it lost the task, e.g. a restart).
     # Rather than failing, the worker re-submits (no client id; the remote assigns
     # a fresh one), reconciles the new id, and keeps polling.
-    target = FakePollableService(poll_results=[A2ATaskNotFoundError("task not found")])
+    target = FakePollableService(
+        poll_results=[DelegationTaskNotFoundError("task not found")]
+    )
     processing_service = _source_processing_service(
         cast("FakeDelegatableService", target)
     )
@@ -3049,7 +3211,7 @@ async def test_pollable_delegation_recovers_when_submit_never_landed(
     # run polls through to completion — a momentary outage during submit must not
     # become a permanent failure.
     target = FakePollableService(
-        submit_errors=[A2AClientError("connection reset"), None],
+        submit_errors=[DelegationTransientError("connection reset"), None],
         poll_results=[
             ChatInteractionResult.success(text_reply="recovered after resubmit"),
         ],

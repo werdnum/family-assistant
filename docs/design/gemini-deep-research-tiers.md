@@ -66,3 +66,11 @@ profile now targets the documented regular tier.
 - Telegram and email-intake surfaces do not yet route to `/research_max`. They will pick it up
   automatically via slash-command matching, but we haven't audited whether the longer latency is
   acceptable on the Telegram bot's response deadlines.
+
+## Addendum: delegation is now submit-then-poll
+
+When `research`/`research_max` are used as a `delegate_to_service` target (rather than a direct
+`/research` chat), the delegation worker submits the interaction and polls it to terminal instead of
+blocking a worker for the whole research run — see
+[deep-research-pollable-delegation.md](deep-research-pollable-delegation.md). Direct chat usage is
+unaffected and still streams via the transport described above.

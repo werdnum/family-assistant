@@ -791,6 +791,10 @@ service_profiles:
     processing_config:
       provider: "google"
       llm_model: "deep-research-max-preview-04-2026"
+      # The max tier can plausibly run close to or past the delegation
+      # worker's default 3600s (1hr) wall-clock cap; give it more room before
+      # a delegated run is reaped as orphaned.
+      max_async_seconds: 7200
       prompts:
         system_prompt: "You are a research assistant interacting with {user_name}. Please focus on providing comprehensive and accurate information. After any tool calls you make, your final text response will be sent directly to {user_name}. Do NOT use the 'send_message_to_user' tool to respond to {user_name} - that tool is only for sending messages to OTHER users."
     tools_policy:

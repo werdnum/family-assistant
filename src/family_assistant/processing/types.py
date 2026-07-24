@@ -232,6 +232,12 @@ class ProcessingServiceConfig:
     allow_wake_llm: bool = True
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
+    # Submit-then-poll tuning for a pollable local profile (e.g. Deep
+    # Research) delegated to via delegate_to_service. None means "use the
+    # worker's module defaults" (mirrors RemoteServiceConfig's fields of the
+    # same name, but optional here since most local profiles aren't pollable).
+    poll_interval_seconds: float | None = None
+    max_async_seconds: float | None = None
 
     def __post_init__(self) -> None:
         """Validate runtime invariants for processing config."""
