@@ -118,6 +118,19 @@ _DEEP_RESEARCH_TERMINAL_ERROR_STATUSES = {
 }
 
 
+def is_deep_research_terminal_error_status(status: str) -> bool:
+    """Check if an Interaction status is a terminal (non-success) end state.
+
+    Deliberately a deny-list, not an allow-list of "pending" statuses: the
+    Interactions API can report statuses this SDK doesn't enumerate (e.g. a
+    capacity-queueing "queued" state alongside the known ``in_progress``/
+    ``requires_action``), and any such status must be treated as still
+    pending rather than failed. Mirrors the streaming path's own
+    ``interaction.status_update`` handling.
+    """
+    return status in _DEEP_RESEARCH_TERMINAL_ERROR_STATUSES
+
+
 def is_deep_research_model(model: str) -> bool:
     """Check if a model identifier corresponds to a Deep Research agent."""
     return "deep-research" in model

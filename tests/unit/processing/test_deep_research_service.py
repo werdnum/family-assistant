@@ -173,6 +173,25 @@ async def test_poll_async_pending_states() -> None:
 
 
 @pytest.mark.asyncio
+async def test_poll_async_unrecognized_status_stays_pending() -> None:
+    """A status this SDK doesn't enumerate (e.g. capacity-queueing) must not fail the run.
+
+    poll_async deny-lists known terminal-error statuses rather than
+    allow-listing "pending" ones, so an unrecognized status like "queued"
+    is treated as still pending instead of failing the delegation outright.
+    """
+    llm_client = _google_client()
+    interaction = AsyncMock()
+    interaction.status = "queued"
+    llm_client.get_deep_research_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(llm_client)
+
+    result = await service.poll_async("inter_x", None)
+
+    assert result is PENDING
+
+
+@pytest.mark.asyncio
 async def test_poll_async_completed_returns_success() -> None:
     """A completed interaction becomes a successful ChatInteractionResult."""
     llm_client = _google_client()

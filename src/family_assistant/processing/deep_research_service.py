@@ -18,7 +18,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from family_assistant.llm.messages import SystemMessage, UserMessage
-from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.google_genai_client import (
+    GoogleGenAIClient,
+    is_deep_research_terminal_error_status,
+)
 from family_assistant.processing.protocol import (
     PENDING,
     DelegationTransientError,
@@ -128,21 +131,28 @@ class DeepResearchProcessingService(ProcessingService):
         remote_task_id: str,
         remote_context_id: str | None,
     ) -> ChatInteractionResult | PendingPoll:
-        """Poll the interaction once; PENDING until it reaches a terminal state."""
+        """Poll the interaction once; PENDING until it reaches a terminal state.
+
+        Classifies by deny-listing known terminal-error statuses (mirrors the
+        streaming path's own ``interaction.status_update`` handling) rather
+        than allow-listing "pending" ones, so a status this SDK doesn't
+        enumerate (e.g. a capacity-queueing ``queued`` state) is treated as
+        still pending instead of failing the delegation outright.
+        """
         _ = remote_context_id
         interaction = await self._google_client().get_deep_research_interaction(
             remote_task_id
         )
-        if interaction.status in {"in_progress", "requires_action"}:
-            return PENDING
         if interaction.status == "completed":
             return ChatInteractionResult.success(
                 text_reply=interaction.output_text or ""
             )
-        return ChatInteractionResult.error(
-            text_reply=f"Deep research {interaction.status}.",
-            error_traceback=f"Deep Research interaction {remote_task_id} ended with status {interaction.status!r}.",
-        )
+        if is_deep_research_terminal_error_status(interaction.status):
+            return ChatInteractionResult.error(
+                text_reply=f"Deep research {interaction.status}.",
+                error_traceback=f"Deep Research interaction {remote_task_id} ended with status {interaction.status!r}.",
+            )
+        return PENDING
 
     async def cancel_async(self, remote_task_id: str) -> None:
         """Best-effort cancellation; mirrors ``RemoteA2AService.cancel_async``."""
