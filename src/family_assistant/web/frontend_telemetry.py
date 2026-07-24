@@ -12,10 +12,47 @@ process restart drops it, which is acceptable for live-debugging telemetry.
 """
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
+
+# Per-record size caps. POST /api/errors/ is intentionally unauthenticated, so a
+# remote caller controls every telemetry field. The entry-count cap (maxlen)
+# alone does not bound memory — 500 multi-megabyte records would still exhaust
+# it — so each record is clamped on insertion. Truncating (rather than rejecting)
+# keeps a legitimate-but-large breadcrumb usefully present without letting it
+# blow up retained memory.
+MAX_MESSAGE_CHARS = 2_000
+_MAX_FIELD_CHARS = 256
+_MAX_URL_CHARS = 512
+MAX_EXTRA_DATA_CHARS = 4_096
+
+
+def _truncate(value: str | None, limit: int) -> str | None:
+    """Truncate an over-long string to ``limit`` chars with an ellipsis marker."""
+    if value is None or len(value) <= limit:
+        return value
+    return value[:limit] + "…[truncated]"
+
+
+def _clamp_extra_data(
+    # ast-grep-ignore: no-dict-any - Freeform extra_data attached by the client
+    extra_data: dict[str, Any] | None,
+    # ast-grep-ignore: no-dict-any - JSON-serializable clamped output
+) -> dict[str, Any] | None:
+    """Bound the retained size of freeform ``extra_data``.
+
+    A cheap ``repr`` length check avoids serializing huge payloads twice; when
+    the estimate exceeds the cap the whole blob is dropped for a size marker so
+    one oversized report cannot dominate the buffer's memory.
+    """
+    if extra_data is None:
+        return None
+    approx_size = len(repr(extra_data))
+    if approx_size <= MAX_EXTRA_DATA_CHARS:
+        return extra_data
+    return {"_truncated": True, "_approx_size": approx_size}
 
 
 @dataclass
@@ -63,9 +100,23 @@ class FrontendTelemetryBuffer:
         self._buffer = deque(maxlen=self.max_size)
 
     def add(self, record: FrontendTelemetryRecord) -> None:
-        """Add a telemetry record. Thread-safe; evicts the oldest entry when full."""
+        """Add a telemetry record. Thread-safe; evicts the oldest entry when full.
+
+        Each field is clamped to a size cap first, so a single attacker-controlled
+        report cannot dominate the buffer's retained memory.
+        """
+        clamped = replace(
+            record,
+            message=_truncate(record.message, MAX_MESSAGE_CHARS) or "",
+            component_name=_truncate(record.component_name, _MAX_FIELD_CHARS),
+            error_type=_truncate(record.error_type, _MAX_FIELD_CHARS),
+            severity=_truncate(record.severity, _MAX_FIELD_CHARS) or "",
+            url=_truncate(record.url, _MAX_URL_CHARS),
+            user_agent=_truncate(record.user_agent, _MAX_FIELD_CHARS),
+            extra_data=_clamp_extra_data(record.extra_data),
+        )
         with self._lock:
-            self._buffer.append(record)
+            self._buffer.append(clamped)
 
     def get_recent(
         self,

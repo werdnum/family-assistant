@@ -1389,7 +1389,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED (unlike read_error_logs): the telemetry lane is fed
+        # ENTIRELY by the intentionally-unauthenticated POST /api/errors/, so a
+        # remote caller controls every field verbatim. Marking it untrusted makes
+        # the taint resolver treat these results as an external source, so a
+        # breadcrumb carrying prompt-injection text cannot reach the engineer as
+        # trusted content.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "create_github_issue": _metadata(
         ToolTag.EXTERNAL_COMM,

@@ -18,7 +18,11 @@ from family_assistant.llm.request_buffer import (
     get_request_buffer,
     reset_request_buffer,
 )
-from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
+from family_assistant.tools import (
+    AVAILABLE_FUNCTIONS,
+    LOCAL_TOOL_METADATA_BY_NAME,
+    TOOLS_DEFINITION,
+)
 from family_assistant.tools.engineering import (
     ENGINEERING_TOOLS_DEFINITION,
     _is_select_only,  # noqa: PLC2701  # Testing private validation logic
@@ -29,6 +33,7 @@ from family_assistant.tools.engineering import (
     read_source_file,
     search_source_code,
 )
+from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.web.frontend_telemetry import (
     FrontendTelemetryRecord,
@@ -461,6 +466,15 @@ class TestReadFrontendTelemetry:
         data = result.get_data()
         assert isinstance(data, dict)
         assert data["filters"]["limit"] == 500
+
+    def test_output_is_marked_untrusted_for_taint(self) -> None:
+        # The telemetry lane is fed entirely by the unauthenticated
+        # POST /api/errors/, so its results must be treated as an external taint
+        # source (OUTPUT_UNTRUSTED), never trusted. Guards against a regression
+        # that would let injected breadcrumb text reach the engineer as trusted.
+        tags = LOCAL_TOOL_METADATA_BY_NAME["read_frontend_telemetry"].tags
+        assert ToolTag.OUTPUT_UNTRUSTED in tags
+        assert ToolTag.OUTPUT_TRUSTED not in tags
 
 
 # --- Tool definitions tests ---
