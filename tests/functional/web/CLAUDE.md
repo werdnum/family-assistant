@@ -1,64 +1,22 @@
 # Web Testing Guide
 
-This file provides guidance for working with web API and UI tests for the web application.
+Guidance for the web API and UI tests.
 
-## Overview
+## Layout
 
-Web tests are organized into two categories:
+- **`api/`** — REST endpoint tests driven through an HTTPX `AsyncClient` against the FastAPI app. No
+  browser.
+- **`ui/`** — Playwright end-to-end tests, marked `@pytest.mark.playwright`.
+- **`pages/`** — Page Object Models shared by the UI tests: `base_page.py` (`BasePage`),
+  `chat_page.py` (`ChatPage`), `notes_page.py` (`NotesPage`), `events_page.py` (`EventsPage`),
+  `history_page.py` (`HistoryPage`). Put selectors and multi-step interactions here rather than
+  inline in tests.
+- **`routers/`** — router-level tests that need neither browser nor full app.
 
-### API Tests (`tests/functional/web/api/`)
+## Documentation Screenshots
 
-REST API endpoint tests that verify the backend API works correctly. These tests:
-
-- Use the FastAPI test client to make HTTP requests
-- Test request/response handling, status codes, and data validation
-- Don't require Playwright or a browser
-- Run quickly and test API contracts
-- Include tests for automations, chat, file uploads, and more
-
-Example tests:
-
-- `test_chat_messages.py` - Chat API endpoint tests
-- `test_chat_streaming.py` - Streaming chat response tests
-- `test_automations_crud_api.py` - Automation CRUD operations
-- `test_endpoints.py` - General endpoint tests
-
-### UI Tests (`tests/functional/web/ui/`)
-
-End-to-end browser tests using Playwright that verify the complete web UI works correctly. These
-tests:
-
-- Use Playwright to interact with the web UI like a real user
-- Test page rendering, navigation, user interactions
-- Are marked with `@pytest.mark.playwright`
-- Include Page Object Models in `tests/functional/web/pages/` for reusable page interactions
-- Run slower but provide the highest confidence in UI functionality
-
-Example tests:
-
-- `test_chat_basic.py` - Basic chat functionality
-- `test_notes_ui.py` - Notes management
-- `test_events_list.py` - Event listing and filtering
-- `test_automations_ui.py` - Automation UI interactions
-
-### Page Object Models (`tests/functional/web/pages/`)
-
-Reusable Playwright page objects for common UI interactions. Helps maintain tests by abstracting
-page structure and interactions into reusable classes.
-
-Example page objects:
-
-- `pages/chat.py` - ChatPage for chat UI interactions
-- `pages/notes.py` - NotesPage for notes UI interactions
-- `pages/sidebar.py` - SidebarPage for navigation
-
-### Documentation Screenshots
-
-Screenshots for documentation are captured throughout the test suite using the `take_screenshot`
-fixture. Tests can call this fixture at key points to capture both desktop (1920x1080) and mobile
-(393x852, iPhone 15 Pro) viewport screenshots.
-
-**Usage in tests:**
+The `take_screenshot` fixture captures desktop (1920x1080) and mobile (393x852, iPhone 15 Pro)
+viewports into `screenshots/{desktop,mobile}/`. It is a no-op unless `--take-screenshots` is passed.
 
 ```python
 @pytest.mark.playwright
@@ -68,172 +26,74 @@ async def test_example(
     take_screenshot: Callable[[Any, str, str], Awaitable[None]],
 ) -> None:
     page = web_test_fixture.page
-
-    # After navigating to a page
     await page.goto("/some-page")
-
-    # Capture screenshots
     for viewport in ["desktop", "mobile"]:
         await take_screenshot(page, "page-name", viewport)
 ```
 
-**Generating screenshots:**
-
 ```bash
-# Run tests with screenshot capture enabled
 pytest tests/functional/web/ui/ --take-screenshots -xvs
-
-# Run specific test with screenshots
-pytest tests/functional/web/ui/test_chat_basic.py --take-screenshots -xvs
 ```
 
-Screenshots are saved to `screenshots/{desktop,mobile}/` and can be used in documentation. See
-[screenshots/README.md](../../../screenshots/README.md) for details.
+See [screenshots/README.md](../../../screenshots/README.md).
 
-## Playwright UI Testing Guide
+## Playwright Locator Strictness
 
-End-to-end tests for the web UI are written using Playwright and can be found in
-`tests/functional/web/ui/`. These tests are marked with `@pytest.mark.playwright`.
+Playwright actions and waits run in strict mode when they imply a single target, so do not call
+`wait_for()`, `click()`, `text_content()`, or similar on a locator that can legitimately match
+several elements.
 
-### Playwright Locator Strictness
-
-Playwright actions and waits on locators run in strict mode when they imply a single target. Do not
-call `wait_for()`, `click()`, `text_content()`, or similar single-element operations on locators
-that can legitimately match multiple elements.
-
-Specific failure mode to avoid: chat tests can have multiple `[data-testid="assistant-message"]`
-elements after an initial assistant response and a later final assistant response. A line like this
-is flaky and can fail before the actual assertion runs:
+The concrete failure mode here: chat tests can have multiple `[data-testid="assistant-message"]`
+elements once there is an initial assistant response and a later final one, so this line is flaky
+and can fail before the real assertion runs:
 
 ```python
 assistant_message = page.locator('[data-testid="assistant-message"]')
 await assistant_message.wait_for(state="visible", timeout=10000)
 ```
 
-Prefer waiting for the specific behavior under test instead:
+Wait for the specific behaviour under test instead:
 
-- Use `ChatPage.wait_for_message_content(...)` when the expected assistant/user text matters.
-- Use a selector for the concrete UI being asserted, such as `[data-testid*="tool-call"]` or
+- `ChatPage.wait_for_message_content(...)` when the expected assistant/user text is what matters.
+- A selector for the concrete UI being asserted, e.g. `[data-testid*="tool-call"]` or
   `[data-testid="tool-group"]`, when testing tool-call rendering.
-- If the test genuinely needs one item from a multi-match locator, use `.first`, `.last`, or
-  `.nth(index)` deliberately and document the ordering assumption through the assertion.
-- If the test only needs to prove at least one matching element exists, use `count()` or
-  `expect(locator).to_have_count(...)` rather than a strict single-element wait.
+- `.first` / `.last` / `.nth(index)` when the test genuinely needs one item from a multi-match
+  locator — and assert the ordering assumption.
+- `count()` or `expect(locator).to_have_count(...)` when you only need to prove at least one match
+  exists.
 
-## Debugging Playwright Tests
+## Debugging Playwright Failures
 
-When a Playwright test fails, `pytest-playwright` automatically captures screenshots and records a
-video of the test execution. These artifacts are invaluable for debugging.
+Failures write screenshots, video, and `trace.zip` to `test-results/`. `--screenshot on` and
+`--video on` capture them for passing tests too. Open a trace with
+`npx playwright show-trace test-results/*/trace.zip`.
 
-- **Screenshots:** A screenshot is taken at the point of failure.
-- **Videos:** A video of the entire test run is saved.
-- **Traces:** Comprehensive debugging data including network requests, console logs, DOM snapshots,
-  and action timeline.
-
-By default, these are saved to the `test-results` directory. You can also use the `--screenshot on`
-and `--video on` flags to capture these artifacts for passing tests as well.
-
-## Advanced Debugging Techniques
-
-### 1. Analyzing Network Traffic
+Trace contents can also be grepped without the viewer, which is faster when you know what you are
+looking for:
 
 ```bash
-# Extract and examine network requests from trace files
-unzip -p test-results/*/trace.zip trace.network | strings | grep -A 5 -B 5 "send_message_stream"
-
-# Look for specific API endpoints or error responses
+# Network requests / non-2xx responses
+unzip -p test-results/*/trace.zip trace.network | strings | grep -A5 -B5 "send_message_stream"
 unzip -p test-results/*/trace.zip trace.network | strings | grep "status.*[45][0-9][0-9]"
-```
 
-### 2. Examining Server-Sent Events (SSE) Streams
-
-```bash
-# Extract actual streaming response data to debug partial content issues
+# Raw SSE payloads — use this to tell "server sent partial data" from "UI rendered partially"
 unzip -p test-results/*/trace.zip resources/*.dat | head -50
 
-# This shows the actual SSE events and data sent by the server
-# Useful for debugging streaming chat responses or real-time updates
-```
-
-### 3. Console Log Analysis
-
-```bash
-# Check for JavaScript errors or warnings
+# Browser console errors
 unzip -p test-results/*/trace.zip trace.trace | strings | grep -i "error\|warning\|exception"
 ```
 
-### 4. Interactive Trace Viewing
+## Web API Test Fixtures
 
-```bash
-# Open the full interactive trace viewer (requires Playwright CLI)
-npx playwright show-trace test-results/*/trace.zip
+`mock_llm_client`, `app_fixture`, `web_test_fixture`, `take_screenshot`, `session_db_engine`, and
+`api_db_context` come from `tests/functional/web/conftest.py`.
 
-# This provides a timeline view with:
-# - Network requests and responses with full headers/body
-# - Console messages with timestamps
-# - DOM snapshots at each action
-# - Screenshots at each step
+`db_context`, `mock_processing_service_config`, `test_tools_provider`, `test_processing_service`,
+and `test_client` (an HTTPX `AsyncClient` over `app_fixture`) are declared per-file in `api/` tests
+— copy them from a neighbouring test file rather than expecting them from a conftest.
+
+```python
+async def test_endpoint(test_client):
+    response = await test_client.post("/api/endpoint", json={...})
+    assert response.status_code == 200
 ```
-
-### 5. Debugging Common Issues
-
-- **Partial content/streaming issues:** Check SSE data extraction (method 2) to verify server sends
-  complete data
-- **Timing/race conditions:** Use trace timeline to see exact timing of actions vs. UI updates
-- **Network failures:** Examine network requests for failed API calls or timeouts
-- **DOM state issues:** Use DOM snapshots in trace viewer to see element state at failure point
-
-## Playwright Artifacts in Detail
-
-When Playwright tests fail, these artifacts are automatically generated:
-
-- **Screenshots:** Capture the exact state when test failed
-- **Videos:** Show the complete test execution, helpful for understanding test flow
-- **Traces:** Comprehensive debugging data including:
-  - Network requests and responses
-  - Console logs and errors
-  - DOM snapshots at each step
-  - Action timeline with screenshots
-
-Open traces with: `npx playwright show-trace trace.zip`
-
-## Web API Testing Fixtures
-
-These fixtures are available in various web API test files:
-
-**`db_context`** (function scope)
-
-- Provides a DatabaseContext for web API tests
-- Usage: `async def test_api(db_context):`
-
-**`mock_processing_service_config`** (function scope)
-
-- Provides a ProcessingServiceConfig with test prompts
-
-**`mock_llm_client`** (function scope)
-
-- Provides a RuleBasedMockLLMClient for API tests
-
-**`test_tools_provider`** (function scope)
-
-- Configured ToolsProvider with local tools enabled
-
-**`test_processing_service`** (function scope)
-
-- ProcessingService instance with mock components
-
-**`app_fixture`** (function scope)
-
-- FastAPI application instance configured for testing
-
-**`test_client`** (function scope)
-
-- HTTPX AsyncClient for the test FastAPI app
-
-- Usage:
-
-  ```python
-  async def test_endpoint(test_client):
-      response = await test_client.post("/api/endpoint", json={...})
-      assert response.status_code == 200
-  ```

@@ -1,163 +1,62 @@
 # Telegram Bot Testing Guide
 
-This file provides guidance for working with Telegram bot tests.
+Tests use `telegram-bot-api-mock`, a Python mock server the bot talks to over real HTTP. Because the
+calls are real, `get_file()` / `download_to_memory()` work without any mocking, and the server
+records every message the bot sent so you can assert on it. The server is session-scoped
+(`telegram_test_server_session`); each test gets a fresh handler and client on top of it.
 
-## Testing Architecture
+## `telegram_handler_fixture`
 
-Telegram bot tests use `telegram-bot-api-mock`, a Python mock server that provides realistic
-HTTP-level testing. The bot makes real HTTP calls to the mock server, which records all messages and
-allows simulating user input.
+Function-scoped, defined in `tests/functional/telegram/conftest.py`. Yields a
+`TelegramHandlerTestFixture` named tuple:
 
-## Telegram Bot Testing Fixture
+- `assistant` — Assistant instance
+- `handler` — `TelegramUpdateHandler`
+- `bot` — real `Bot` pointed at the mock server
+- `mock_llm` — `RuleBasedMockLLMClient`
+- `mock_confirmation_manager` — `AsyncMock` replacing `confirmation_manager.request_confirmation`
+- `application` — real Telegram `Application`
+- `processing_service` / `tools_provider` — the assistant's defaults
+- `get_db_context_func` — async context manager factory for `DatabaseContext`
+- `telegram_client` — `TelegramTestClient` (`tests/mocks/telegram_test_server.py`) for simulating
+  user input
 
-**`telegram_handler_fixture`** (function scope)
+## Basic Flow
 
-Comprehensive fixture for testing Telegram bot functionality. Located in
-`tests/functional/telegram/conftest.py`.
-
-Returns `TelegramHandlerTestFixture` named tuple with:
-
-- `assistant`: Configured Assistant instance
-- `handler`: TelegramUpdateHandler
-- `bot`: Real Bot instance connected to telegram-bot-api-mock
-- `mock_llm`: RuleBasedMockLLMClient for controlled LLM responses
-- `mock_confirmation_manager`: Mock for tool confirmation requests
-- `application`: Real Telegram Application connected to mock server
-- `processing_service`: Configured ProcessingService
-- `tools_provider`: Configured ToolsProvider
-- `get_db_context_func`: Function to get database context
-- `telegram_client`: TelegramTestClient for simulating user input
-
-## Usage Example
-
-```python
-async def test_telegram_command(telegram_handler_fixture):
-    fixture = telegram_handler_fixture
-
-    # Add LLM rules to control responses
-    fixture.mock_llm.rules.append((matcher_func, LLMOutput(...)))
-
-    # Send a message via the test client (simulates user input)
-    result = await fixture.telegram_client.send_message("Hello bot!")
-
-    # Parse the response into an Update and call the handler
-    update = Update.de_json(result.get("result", {}), fixture.bot)
-    context = create_mock_context(fixture.application)
-    await fixture.handler.message_handler(update, context)
-
-    # Check bot responses
-    updates = await fixture.telegram_client.get_updates()
-```
-
-## Sending Media Attachments
-
-The test client supports sending various media types:
-
-```python
-# Send a photo
-result = await fixture.telegram_client.send_photo(
-    photo_content=photo_bytes, filename="image.png", caption="What's in this photo?"
-)
-
-# Send a video
-result = await fixture.telegram_client.send_video(
-    video_content=video_bytes, filename="video.mp4", caption="Describe this video"
-)
-
-# Send an audio file
-result = await fixture.telegram_client.send_audio(
-    audio_content=audio_bytes, filename="audio.mp3", caption="What song is this?"
-)
-
-# Send a document
-result = await fixture.telegram_client.send_document(
-    document_content=pdf_bytes,
-    filename="document.pdf",
-    mime_type="application/pdf",
-    caption="Summarize this document",
-)
-```
-
-## Setting Up Mock LLM Responses
-
-The `RuleBasedMockLLMClient` allows you to define rules that match against LLM inputs and return
-specific outputs:
-
-```python
-# Define a matcher function
-def matcher_func(args):
-    return "weather" in args["messages"][0]["content"]
-
-
-# Add rule to fixture
-fixture.mock_llm.rules.append((matcher_func, LLMOutput(content="It's sunny today!")))
-```
-
-## Testing Bot Commands
-
-```python
-async def test_start_command(telegram_handler_fixture):
-    fixture = telegram_handler_fixture
-
-    # Send a command via the test client
-    result = await fixture.telegram_client.send_command("/start")
-
-    # Parse and handle the update
-    update = Update.de_json(result.get("result", {}), fixture.bot)
-    context = create_mock_context(fixture.application)
-    await fixture.handler.start_command(update, context)
-
-    # Check bot responses
-    updates = await fixture.telegram_client.get_updates()
-    assert len(updates) > 0
-```
-
-## Testing Message Handlers
+Send input through `telegram_client`, deserialize the mock server's response into an `Update`, then
+call the handler yourself:
 
 ```python
 async def test_message_handler(telegram_handler_fixture):
     fixture = telegram_handler_fixture
-
-    # Set up LLM response
     fixture.mock_llm.rules.append((
-        lambda args: True,  # Match all
-        LLMOutput(content="I understand your message"),
+        lambda args: "weather" in args["messages"][0]["content"],
+        LLMOutput(content="It's sunny today!"),
     ))
 
-    # Send a message via the test client
-    result = await fixture.telegram_client.send_message("Hello bot")
+    result = await fixture.telegram_client.send_message("What's the weather?")
     update = Update.de_json(result.get("result", {}), fixture.bot)
-    context = create_mock_context(fixture.application)
-
-    # Handle message
+    context = create_context(fixture.application)
     await fixture.handler.message_handler(update, context)
 
-    # Verify bot sent a response
     updates = await fixture.telegram_client.get_updates()
-    assert len(updates) > 0
 ```
 
-## Testing Tool Confirmations
+There is no shared `create_context` helper — each test file defines its own small builder over
+`ContextTypes.DEFAULT_TYPE(application=..., chat_id=..., user_id=...)`. Shared assertion helpers do
+exist in `tests/functional/telegram/helpers.py`: `wait_for_bot_response`, `assert_bot_sent_message`,
+`assert_bot_sent_message_with_keyboard`, and `extract_callback_data_from_keyboard`.
 
-```python
-async def test_tool_confirmation(telegram_handler_fixture):
-    fixture = telegram_handler_fixture
+Slash commands go through `handler.handle_generic_slash_command` / `handler.handle_unknown_command`;
+send them with `telegram_client.send_command("/foo")`.
 
-    # Set up confirmation manager mock to auto-approve
-    fixture.mock_confirmation_manager.return_value = True
+## Media
 
-    # Test tool that requires confirmation
-    # ... test logic
-```
+`telegram_client` has `send_photo`, `send_video`, `send_audio`, and `send_document`. Each takes the
+raw bytes plus `filename` and an optional `caption`; `send_document` also takes `mime_type`.
 
-## Key Differences from Mocked Approach
+## Tool Confirmations
 
-The `telegram-bot-api-mock` approach provides:
-
-1. **Real HTTP calls**: The bot makes actual HTTP requests to the mock server
-2. **File downloads work**: `get_file()` and `download_to_memory()` work without mocking
-3. **Message history**: The mock server records all messages for verification
-4. **Realistic testing**: Tests more closely match production behavior
-
-The mock server is session-scoped (`telegram_test_server_session`), so all tests share the same
-server instance. Each test gets its own fixture with a fresh handler and client.
+`mock_confirmation_manager` stands in for `request_confirmation`, so set its `return_value` to a
+`ConfirmationOutcome` (e.g. `ConfirmationOutcome(kind="approved")` or `kind="rejected"`), or a
+`side_effect` of `asyncio.TimeoutError` to exercise the timeout path.
