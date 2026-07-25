@@ -3,127 +3,70 @@
 This file provides guidance for working with the FastAPI web application layer for the Family
 Assistant.
 
-## Overview
-
-The web layer provides both a web UI and REST API endpoints for interacting with the assistant's
-functionality. It follows a modular FastAPI structure with clear separation of concerns.
-
 ## Architecture
 
-### Core Components
+- **`app_creator.py`**: sets up the FastAPI app with middleware, routers, static files, and the
+  Jinja2 template environment
+- **`auth.py`**: OIDC session auth and API-token auth, plus the `AuthMiddleware` and its
+  `PUBLIC_PATHS` regex list of endpoints that bypass authentication
+- **`dependencies.py`**: FastAPI dependency injection for database context, services, and the
+  current user
+- **`models.py`**: Pydantic models for API requests and responses
+- **`utils.py`**: shared utility functions
 
-- **Application Creation**: `app_creator.py` sets up the FastAPI app with middleware, routers, and
-  static files
-- **Authentication**: `auth.py` provides OIDC and API token authentication with configurable public
-  paths
-- **Dependencies**: `dependencies.py` contains FastAPI dependency injection for database context and
-  services
-- **Models**: `models.py` defines Pydantic models for API requests and responses
-- **Utilities**: `utils.py` contains shared utility functions
-
-### Routers Organization
-
-Routers are organized in the `routers/` directory by functionality:
-
-#### API Endpoints (`/api` prefix)
-
-- **`api.py`**: Main API router that aggregates other API routers
-- **`chat_api.py`**: Chat completion endpoints
-- **`documents_api.py`**: Document upload and management
-- **`tools_api.py`**: Tool execution and management
-- **`api_token_management.py`**: API token CRUD operations
-- **`webhooks.py`**: Webhook endpoints for external integrations
-
-#### Web UI Endpoints (no prefix)
-
-- **`documentation.py`**: Document viewing and management UI
-- **`documents_ui.py`**: Document upload interface
-- **`history.py`**: Message history and conversation management UI
-- **`notes.py`**: Note-taking and knowledge management interface
-- **`tasks_ui.py`**: Background task monitoring interface
-- **`tools_ui.py`**: Tool testing and management interface
-- **`ui_token_management.py`**: Web UI for API token management
-- **`vector_search.py`**: Vector similarity search interface
-
-#### Utility Endpoints
-
-- **`health.py`**: Health check and status endpoints
+Routers live in `routers/`, one per feature area. `api.py` is the aggregator that mounts the other
+`*_api.py` routers under the `/api` prefix.
 
 ## Adding New Web API Endpoints
 
-When adding new web API endpoints:
+1. Create the router in `routers/`, following existing patterns for dependency injection.
+2. Define request/response Pydantic models in `models.py` if needed.
+3. Register the router. An ordinary `*_api.py` router is registered on `api_router` in
+   `routers/api.py` with its prefix and tags, so it lands under `/api`; register directly in
+   `app_creator.py` only for a router that is deliberately mounted outside `/api`.
+4. Enforce auth with a dependency such as `get_current_user`, and document the requirement in the
+   endpoint docstring. Do not reach for `PUBLIC_PATHS` here: it already matches `^/api(/.*)?$`, so
+   `AuthMiddleware` bypasses every `/api` request and a route-specific pattern changes nothing.
+   Under `/api`, a route is protected precisely when it declares the dependency, and a deliberately
+   public receiver simply omits it.
+5. Add the endpoint to the appropriate test files in `tests/functional/web/`.
 
-1. **Create your router** in `src/family_assistant/web/routers/`
+## Notable Behaviours
 
-   - Organize by functionality (API vs. UI, feature area)
-   - Follow existing patterns for dependency injection
-   - Use Pydantic models for request/response validation
+- **Auth flow**: requests hit `AuthMiddleware` for path-based checking; OIDC users get session-based
+  auth, API clients present Bearer tokens validated against the database, and public paths bypass
+  authentication entirely.
+- **Chat API**: routes requests to different processing service profiles, keys context off
+  conversation IDs, and supports response streaming.
+- **Vector search**: hybrid search combining vector similarity with full-text search via RRF
+  (Reciprocal Rank Fusion), across multiple embedding types.
+- **Tools**: MCP integration for external tools, plus a confirmation mechanism for destructive
+  operations.
 
-2. **Define Pydantic models** in `models.py` if needed
+## Error Reports vs. Telemetry Breadcrumbs
 
-   - Use proper type hints
-   - Add validation rules where appropriate
-   - Include clear descriptions
+Frontend clients POST to `POST /api/errors/`. The report's optional `severity` selects the lane:
 
-3. **Register router** in `app_creator.py`
+- Absent or `"error"` → **error lane**: logged at `ERROR` and persisted to `error_logs` (the table
+  the engineer profile reads via `read_error_logs` and a human reads via `GET /api/errors/`). The
+  web frontend never sets `severity`, so its reports — including React error-boundary catches that
+  use `error_type: "component_error"` — stay here.
+- `"info"` / `"warning"` / `"debug"` → **telemetry lane**: recorded in an in-memory ring buffer and
+  logged below the `error_logs` threshold, so high-frequency breadcrumbs never drown genuine errors.
+  The iOS app sends its sync breadcrumbs (stream restarts/disconnects, resync phases, transport
+  events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader gate) or the
+  engineer-profile `read_frontend_telemetry` tool. The buffer is dropped on restart.
 
-   - Import the router
-   - Add to the appropriate router list (API or UI)
-   - Set correct prefix and tags
+Routing is decided by `severity` alone — `error_type` has no effect on it. Both clients send
+`error_type: "component_error"`, but the web frontend never sets `severity` (so those land in the
+error lane) while the iOS client maps it to `"info"` (so those land in telemetry). Do not infer the
+lane from `error_type`.
 
-4. **Add authentication requirements** if needed
+See
+[docs/design/ios-frontend-telemetry-lane.md](../../../docs/design/ios-frontend-telemetry-lane.md)
+and [ios/CLAUDE.md](../../../ios/CLAUDE.md), where the split originated.
 
-   - Configure public paths in auth configuration
-   - Use dependency injection for auth checks
-   - Document auth requirements in endpoint docstrings
-
-5. **Important**: Add your new endpoint to the appropriate test files in `tests/functional/web/` to
-   ensure it's tested for basic functionality
-
-## Key Features
-
-### Authentication System
-
-- **OIDC Integration**: Web-based authentication using OpenID Connect providers
-- **API Tokens**: Bearer token authentication for API access with configurable expiration
-- **Public Paths**: Configurable endpoints that bypass authentication (health checks, webhooks)
-- **Middleware**: Request-level authentication with proper error handling
-
-### Chat API
-
-- **Multi-Profile Support**: Route requests to different processing service profiles
-- **Conversation Management**: Maintain conversation context with unique conversation IDs
-- **Streaming Support**: Real-time response streaming for better user experience
-
-### Document Management
-
-- **Upload Interface**: Web UI and API for document ingestion
-- **Processing Pipeline**: Automatic document indexing and embedding generation
-- **Metadata Extraction**: Support for various document types with metadata parsing
-
-### Vector Search
-
-- **Hybrid Search**: Combines vector similarity with full-text search using RRF (Reciprocal Rank
-  Fusion)
-- **Multiple Embedding Types**: Support for different embedding models and strategies
-- **Search Interface**: Both API and web UI for semantic search capabilities
-
-### Tool Integration
-
-- **MCP Support**: Integration with Model Context Protocol for external tools
-- **Tool Confirmation**: Safety mechanism for destructive operations
-- **Testing Interface**: Web UI for testing tool functionality
-
-## Development Patterns
-
-### Authentication Flow
-
-1. Requests hit `AuthMiddleware` for path-based auth checking
-2. OIDC users get session-based authentication
-3. API users provide Bearer tokens validated against database
-4. Public paths bypass authentication entirely
-
-### Dependency Injection
+## Dependency Injection
 
 Use FastAPI dependencies for shared resources:
 
@@ -136,43 +79,10 @@ async def my_endpoint(
     db: DatabaseContext = Depends(get_db),
     processing_service: ProcessingService = Depends(get_processing_service),
 ):
-    # Your endpoint logic
     pass
 ```
 
-### Error Handling
-
-Return appropriate HTTP status codes and error messages:
-
-```python
-from fastapi import HTTPException
-
-if not resource:
-    raise HTTPException(status_code=404, detail="Resource not found")
-```
-
-## UI Pages
-
-**Note**: UI pages are now handled entirely by the React frontend. If you need to add new UI views,
-create React components in the `frontend/` directory rather than server-side endpoints.
-
-The web layer provides API endpoints that the frontend consumes.
-
 ## Testing Web Endpoints
 
-Web layer components should be tested through:
-
-- **Integration Tests**: Full request/response cycles in `tests/functional/web/`
-- **Router Tests**: Individual endpoint testing with mocked dependencies
-- **Authentication Tests**: Auth flow validation with test tokens
-
-See [tests/functional/web/CLAUDE.md](../../../tests/functional/web/CLAUDE.md) for detailed testing
-guidance.
-
-## Configuration
-
-The web layer is configured through:
-
-- **Environment Variables**: Authentication settings, database connections, external service URLs
-- **`config.yaml`**: Service profiles, processing configurations, tool definitions
-- **Template Variables**: Runtime configuration passed to Jinja2 templates
+Full request/response cycles go in `tests/functional/web/`; see
+[tests/functional/web/CLAUDE.md](../../../tests/functional/web/CLAUDE.md) for detailed guidance.

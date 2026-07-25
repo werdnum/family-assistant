@@ -4,66 +4,23 @@ This file provides guidance for working with GitHub Actions workflows.
 
 ## Workflow Files
 
-The `.github/workflows/` directory contains CI/CD workflow definitions:
-
-- **`test.yml`**: Main test workflow that runs linting, type checking, and tests
-- Other workflow files for deployment, releases, etc.
+- **`ci-with-devcontainer.yml`**: main CI. Builds the CI dev container image, then runs linting,
+  frontend tests, and the backend suite against both SQLite and PostgreSQL, uploading test artifacts
+  for each. Triggers on push to `main` and on pull requests.
+- **`build-containers.yml`**: builds and pushes the application and devcontainer images.
+- **`ios-tests.yml`**: iOS app tests (`workflow_call` / `workflow_dispatch`).
+- **`gemini-dispatch.yml`** plus the other `gemini-*.yml` files: Gemini-driven triage, review, and
+  plan/execute automation.
+- **`auto-request-review.yml`**: requests reviewers when a PR is opened or marked ready.
 
 ## When Working on CI Workflows
 
-### Testing Changes
-
-When modifying workflows:
-
-1. **Test locally first** when possible:
-
-   - Use `act` to run GitHub Actions locally
-   - Run the actual commands locally to verify they work
-
-2. **Make small, incremental changes**:
-
-   - Test one change at a time
-   - Use workflow_dispatch triggers for testing
-
-3. **Check workflow syntax**:
-
-   - GitHub validates YAML syntax on commit
-   - Use a YAML linter for complex changes
-
-### Common CI Patterns
-
-**Conditional execution:**
-
-```yaml
-- name: Run tests
-  if: success() && !cancelled()
-  run: pytest tests/
-```
-
-**Matrix builds:**
-
-```yaml
-strategy:
-  matrix:
-    python-version: [3.11, 3.12]
-    database: [sqlite, postgres]
-```
-
-**Artifact handling:**
-
-```yaml
-- uses: actions/upload-artifact@v4
-  with:
-    name: test-results
-    path: test-results/
-```
+Run the underlying commands locally first, and make one change at a time. `build-containers.yml` and
+`ios-tests.yml` expose `workflow_dispatch` triggers you can use to exercise a run without pushing
+commits.
 
 ## Debugging CI Failures
 
-When CI tests fail, see [tests/CLAUDE.md](../../tests/CLAUDE.md) for comprehensive CI debugging
-guidance including:
-
-- Monitoring CI runs with `gh` CLI
-- Downloading and analyzing artifacts
-- Interpreting test reports
-- Common CI issues and solutions
+When CI tests fail, see [tests/CLAUDE.md](../../tests/CLAUDE.md) for CI debugging guidance:
+downloading run artifacts, the artifact and JSON report names for each job, and interpreting
+Playwright failure traces.

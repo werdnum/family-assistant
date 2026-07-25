@@ -986,7 +986,8 @@ notifications for all users on that cycle. To avoid this, publish the OAuth clie
 mode; for the Gmail and Drive scopes this may involve Google's verification process. The design
 intentionally does not work around this in code — the right fix is production mode, not silence.
 
-**Required environment variables** (see also the `google_integration` section in AGENTS.md):
+**Required environment variables** (see also the `google_integration` section in
+[docs/operations/CONFIGURATION_REFERENCE.md](../operations/CONFIGURATION_REFERENCE.md)):
 
 - `GOOGLE_OAUTH_CLIENT_ID` — your OAuth client ID.
 
