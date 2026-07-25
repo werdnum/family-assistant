@@ -425,6 +425,58 @@ final class ToolRenderingTests: XCTestCase {
         )
     }
 
+    /// Cached image bytes are private to the session that fetched them: a
+    /// different deployment must never hit an entry cached from another (the
+    /// same attachment id can exist on both, e.g. a restored database), and
+    /// logging out must drop them so the next person on this device cannot be
+    /// handed them without a re-authorized download.
+    func testAttachmentImageCacheIsScopedToItsServerAndClearable() throws {
+        let attachment = ChatAttachment(
+            id: "att-cache",
+            attachmentID: "att-cache",
+            type: .image,
+            name: "photo.png",
+            contentURL: "/api/attachments/att-cache",
+            mimeType: "image/png",
+            size: nil,
+            localFileURL: nil,
+            uploadState: .uploaded,
+            errorMessage: nil
+        )
+        let image = Self.solidImage(color: .red)
+        defer { AttachmentImageCache.clear() }
+
+        AttachmentImageCache.store(image, for: attachment, server: "https://one.example.test")
+
+        XCTAssertNotNil(AttachmentImageCache.image(for: attachment, server: "https://one.example.test"))
+        XCTAssertNil(AttachmentImageCache.image(for: attachment, server: "https://two.example.test"))
+
+        AttachmentImageCache.clear()
+        XCTAssertNil(AttachmentImageCache.image(for: attachment, server: "https://one.example.test"))
+    }
+
+    /// With no server configured there is nothing to scope an entry to, so
+    /// nothing is cached.
+    func testAttachmentImageCacheIgnoresEntriesWithoutAServer() {
+        let attachment = ChatAttachment(
+            id: "att-nowhere",
+            attachmentID: "att-nowhere",
+            type: .image,
+            name: "photo.png",
+            contentURL: "/api/attachments/att-nowhere",
+            mimeType: "image/png",
+            size: nil,
+            localFileURL: nil,
+            uploadState: .uploaded,
+            errorMessage: nil
+        )
+        defer { AttachmentImageCache.clear() }
+
+        AttachmentImageCache.store(Self.solidImage(color: .green), for: attachment, server: "")
+
+        XCTAssertNil(AttachmentImageCache.image(for: attachment, server: ""))
+    }
+
     private func seedAuth() {
         KeychainHelper.save(key: "fa_api_token", string: "render-test-token")
         UserDefaults.standard.set(

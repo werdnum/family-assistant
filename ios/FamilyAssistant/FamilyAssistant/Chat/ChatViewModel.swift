@@ -2980,6 +2980,13 @@ final class ChatViewModel {
         }
     }
 
+    /// Identifies the deployment an attachment's bytes came from, so cached
+    /// images can never be served across servers. Empty when no server is
+    /// configured, which suppresses caching entirely.
+    var attachmentCacheScope: String {
+        authManager.validatedServerURL()?.absoluteString ?? ""
+    }
+
     func authenticatedImageData(for attachment: ChatAttachment) async throws -> Data {
         guard let contentURL = attachment.contentURL else {
             throw ChatAPIError.validation("Attachment does not have an image URL.")

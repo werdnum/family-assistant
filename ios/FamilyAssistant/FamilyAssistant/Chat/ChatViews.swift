@@ -1808,7 +1808,11 @@ private struct AttachmentStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            // Lazy so a turn that produced many attachments only fetches the
+            // previews actually scrolled into view: each `AttachmentPreview`
+            // starts its own authenticated download on appear, so an eager
+            // stack would pull every one of them at once.
+            LazyHStack(spacing: 10) {
                 ForEach(attachments) { attachment in
                     AttachmentPreview(attachment: attachment, viewModel: viewModel)
                 }
@@ -2000,7 +2004,8 @@ private struct AuthenticatedAttachmentImage: View {
             }
         }
         .task(id: attachment.contentURL) {
-            if let cached = AttachmentImageCache.image(for: attachment) {
+            let server = viewModel.attachmentCacheScope
+            if let cached = AttachmentImageCache.image(for: attachment, server: server) {
                 image = cached
                 failed = false
                 return
@@ -2014,7 +2019,7 @@ private struct AuthenticatedAttachmentImage: View {
                     failed = true
                     return
                 }
-                AttachmentImageCache.store(decodedImage, for: attachment)
+                AttachmentImageCache.store(decodedImage, for: attachment, server: server)
                 image = decodedImage
                 failed = false
             } catch {
@@ -2032,7 +2037,13 @@ private struct AuthenticatedAttachmentImage: View {
 /// owned files `private, no-store` (a shared cache keyed on URL could hand one
 /// user's file to another), so `URLSession` will not hold them either. Without
 /// this, scrolling past an image re-downloads it every time.
-private enum AttachmentImageCache {
+///
+/// That same reasoning bounds what may be cached across a session: an entry is
+/// keyed by its server as well as its path, and the whole cache is dropped at
+/// logout (`AuthManager.logout()`). Otherwise the next person to sign in on this
+/// device could be handed bytes from the previous session's attachment of the
+/// same id without the download ever being re-authorized.
+enum AttachmentImageCache {
     private static let cache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.countLimit = 32
@@ -2040,19 +2051,26 @@ private enum AttachmentImageCache {
         return cache
     }()
 
-    private static func key(for attachment: ChatAttachment) -> NSString? {
-        attachment.contentURL.map { $0 as NSString }
+    private static func key(for attachment: ChatAttachment, server: String) -> NSString? {
+        guard let contentURL = attachment.contentURL, !server.isEmpty else {
+            return nil
+        }
+        return "\(server)|\(contentURL)" as NSString
     }
 
-    static func image(for attachment: ChatAttachment) -> UIImage? {
-        key(for: attachment).flatMap { cache.object(forKey: $0) }
+    static func image(for attachment: ChatAttachment, server: String) -> UIImage? {
+        key(for: attachment, server: server).flatMap { cache.object(forKey: $0) }
     }
 
-    static func store(_ image: UIImage, for attachment: ChatAttachment) {
-        guard let key = key(for: attachment) else {
+    static func store(_ image: UIImage, for attachment: ChatAttachment, server: String) {
+        guard let key = key(for: attachment, server: server) else {
             return
         }
         cache.setObject(image, forKey: key, cost: decodedByteCount(of: image))
+    }
+
+    static func clear() {
+        cache.removeAllObjects()
     }
 
     /// Resident size of the decoded bitmap, which is what the limit needs to

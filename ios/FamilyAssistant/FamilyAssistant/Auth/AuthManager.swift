@@ -726,6 +726,10 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        // Decoded attachment images are held in memory to survive the chat
+        // thread's view recycling; they are this session's private files and
+        // must not outlive it.
+        AttachmentImageCache.clear()
 
         // Clear WKWebView data before flipping the auth state, so a fast
         // re-login's fresh session cookie cannot be wiped by this cleanup.
