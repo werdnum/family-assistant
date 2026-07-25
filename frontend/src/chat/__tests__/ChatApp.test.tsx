@@ -430,6 +430,57 @@ describe('ChatApp', () => {
     expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
   });
 
+  it('shows image attachments from history inline in the assistant reply', async () => {
+    const { server } = await import('../../test/setup.js');
+    const { http, HttpResponse } = await import('msw');
+
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
+        if (params.conversationId !== 'web_conv_assistant_image') {
+          return HttpResponse.json({ messages: [] });
+        }
+
+        return HttpResponse.json({
+          messages: [
+            {
+              internal_id: 201,
+              role: 'user',
+              content: 'Show me the chart again',
+              timestamp: '2026-06-24T12:00:00Z',
+            },
+            {
+              internal_id: 202,
+              role: 'assistant',
+              content: 'Here it is.',
+              timestamp: '2026-06-24T12:00:01Z',
+              attachments: [
+                {
+                  attachment_id: 'chart-image',
+                  type: 'tool_result',
+                  description: 'Revenue chart',
+                  mime_type: 'image/png',
+                  content_url: '/api/attachments/chart-image',
+                },
+              ],
+            },
+          ],
+        });
+      })
+    );
+    mockLocalStorage.getItem.mockImplementation((key: string) =>
+      key === 'lastConversationId' ? 'web_conv_assistant_image' : null
+    );
+
+    await renderChatApp({ waitForReady: true });
+
+    expect(await screen.findByText('Here it is.')).toBeInTheDocument();
+    // Visible without expanding the attachments tool group.
+    const image = await screen.findByTestId('response-image');
+    expect(image).toHaveAttribute('src', '/api/attachments/chart-image');
+    expect(image).toHaveAttribute('alt', 'Revenue chart');
+    expect(screen.getByTestId('tool-group-content')).toHaveAttribute('data-state', 'closed');
+  });
+
   it('adopts the opened conversation profile and sends the follow-up under it', async () => {
     const { server } = await import('../../test/setup.js');
     const { http, HttpResponse } = await import('msw');

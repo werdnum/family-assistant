@@ -505,10 +505,17 @@ export const useStreamingResponse = ({
                 payload.attachment_id &&
                 (payload.source === undefined || payload.source === 'response')
               ) {
+                // `tool_result` (not the event's own `attachment`) so the entry
+                // satisfies isAttachment() and DynamicToolUI forwards it to the
+                // attachments tool UI. An unrecognized type is dropped there,
+                // which sent that UI down its metadata-refetch fallback: one full
+                // GET of every attachment just to read its response headers.
                 autoAttachments.push({
-                  type: 'attachment',
+                  type: 'tool_result',
                   attachment_id: payload.attachment_id,
-                  content_url: payload.content_url,
+                  content_url:
+                    payload.content_url ||
+                    `/api/attachments/${encodeURIComponent(payload.attachment_id)}`,
                   mime_type: payload.mime_type,
                   description: payload.description,
                   size: payload.size,

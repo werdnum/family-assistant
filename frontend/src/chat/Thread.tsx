@@ -31,6 +31,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { AssistantResponseImages } from './AssistantResponseImages';
 import { useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
@@ -559,6 +560,9 @@ const AssistantMessage: React.FC = () => {
                   </>
                 )}
               </div>
+              {/* Images the assistant attached, shown inline rather than only
+                  behind the collapsed attachments tool group. */}
+              <AssistantResponseImages />
               {hasCopyableContent && <AssistantActionBar />}
             </div>
           </div>

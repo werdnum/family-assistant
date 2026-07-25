@@ -203,6 +203,13 @@ async def test_attachment_response_flow(
 
     # Wait for assistant response to complete, then for attachment tool to be ready
     await chat_page.wait_for_assistant_response(timeout=30000)
+
+    # An image attachment is shown inline in the reply, without the user having to
+    # expand the tool group that queued it.
+    response_image = page.locator('[data-testid="response-image"]').first
+    await response_image.wait_for(state="visible", timeout=30000)
+    assert attachment_id in (await response_image.get_attribute("src") or "")
+
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
     # Verify the attachment display is shown to the user.

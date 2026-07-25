@@ -7,9 +7,16 @@ import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 
 describe('Streaming with Tool Calls', () => {
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
+    consoleWarnSpy = vi.spyOn(console, 'warn');
+  });
+
+  afterEach(() => {
+    consoleWarnSpy.mockRestore();
   });
 
   it(
@@ -176,6 +183,14 @@ describe('Streaming with Tool Calls', () => {
         },
         { timeout: 5000 }
       );
+
+      // The image is shown inline in the reply, without having to expand the
+      // collapsed attachments tool group.
+      const image = await screen.findByTestId('response-image');
+      expect(image).toHaveAttribute('src', '/api/attachments/att-1');
+      expect(image).toHaveAttribute('alt', 'A photo');
+      expect(screen.getByTestId('tool-group-content')).toHaveAttribute('data-state', 'closed');
+
       await user.click(screen.getByTestId('tool-group-trigger'));
       await waitFor(
         () => {
@@ -183,6 +198,103 @@ describe('Streaming with Tool Calls', () => {
         },
         { timeout: 5000 }
       );
+      // The event's own metadata reaches the tool UI, so it never falls back to
+      // refetching each attachment to discover its name and type.
+      expect(screen.getByText('A photo')).toBeInTheDocument();
+      expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+        'AttachToResponseTool: Using fallback attachment metadata fetching'
+      );
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'shows an inline image for an enriched attach_to_response tool result',
+    async () => {
+      let ourTurnId = '';
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+          };
+          ourTurnId = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_attach_tool',
+            first_seq: 0,
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `event: tool_call\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    tool_call: {
+                      id: 'attach_call_1',
+                      type: 'function',
+                      function: {
+                        name: 'attach_to_response',
+                        arguments: JSON.stringify({ attachment_ids: ['att-9'] }),
+                      },
+                    },
+                  })}\n\n`
+                )
+              );
+              // The producer enriches the tool result with attachment metadata.
+              controller.enqueue(
+                encoder.encode(
+                  `event: tool_result\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    tool_call_id: 'attach_call_1',
+                    result: JSON.stringify({
+                      status: 'attachments_queued',
+                      attachment_ids: ['att-9'],
+                    }),
+                    attachments: [
+                      {
+                        attachment_id: 'att-9',
+                        type: 'tool_result',
+                        description: 'Sales chart',
+                        url: '/api/attachments/att-9',
+                        content_url: '/api/attachments/att-9',
+                        mime_type: 'image/png',
+                        size: 2048,
+                      },
+                    ],
+                  })}\n\n`
+                )
+              );
+              controller.enqueue(
+                encoder.encode(
+                  `event: turn_ended\ndata: ${JSON.stringify({
+                    turn_id: ourTurnId,
+                    status: 'complete',
+                  })}\n\n`
+                )
+              );
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, {
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Chart my sales');
+      await user.keyboard('{Enter}');
+
+      const image = await screen.findByTestId('response-image', undefined, { timeout: 5000 });
+      expect(image).toHaveAttribute('src', '/api/attachments/att-9');
+      expect(image).toHaveAttribute('alt', 'Sales chart');
     },
     { timeout: 30000 }
   );

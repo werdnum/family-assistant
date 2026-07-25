@@ -49,6 +49,7 @@ from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
@@ -161,6 +162,69 @@ def _get_confirmation_result_waiters(
     waiters = ConfirmationResultWaiterRegistry()
     request.app.state.confirmation_result_waiters = waiters
     return waiters
+
+
+async def _enrich_persisted_attachments(
+    messages: list[MessageHistoryRow],
+    *,
+    db_context: DatabaseContext,
+    attachment_registry: "AttachmentRegistry",
+    acting_user_id: str | None,
+) -> None:
+    """Fill in the mime type and content URL of persisted attachment metadata.
+
+    History rows record attachments in whatever shape their producer had at write
+    time: a tool result keeps the mime type but not always a content URL, and a
+    reply delivered through a chat interface records a bare
+    ``attachment_reference`` carrying only an id. Clients need the mime type to
+    decide whether an attachment is an image they should show inline, and a URL to
+    fetch it, so resolve every referenced id against the registry here instead of
+    making each client guess. Attachments the caller cannot see are left exactly
+    as stored.
+    """
+    referenced_ids: set[str] = set()
+    for message in messages:
+        for attachment in message.get("attachments") or []:
+            attachment_id = attachment.get("attachment_id")
+            if attachment_id:
+                referenced_ids.add(attachment_id)
+    if not referenced_ids:
+        return
+
+    resolved = await attachment_registry.get_attachments(
+        db_context, sorted(referenced_ids), acting_user_id=acting_user_id
+    )
+    missing = referenced_ids - resolved.keys()
+    if missing:
+        # Expected for attachments that have been cleaned up or that belong to
+        # another user, and /messages is polled, so this stays at debug level.
+        logger.debug(
+            "History attachments not resolvable for this caller, left unenriched: %s",
+            ", ".join(sorted(missing)),
+        )
+
+    for message in messages:
+        for attachment in message.get("attachments") or []:
+            attachment_id = attachment.get("attachment_id")
+            if attachment_id is None:
+                continue
+            metadata = resolved.get(attachment_id)
+            if metadata is None:
+                continue
+            content_url = (
+                attachment.get("content_url")
+                or metadata.content_url
+                or f"/api/attachments/{attachment_id}"
+            )
+            attachment["content_url"] = content_url
+            if not attachment.get("url"):
+                attachment["url"] = content_url
+            if not attachment.get("mime_type"):
+                attachment["mime_type"] = metadata.mime_type
+            if not attachment.get("description"):
+                attachment["description"] = metadata.description
+            if attachment.get("size") is None:
+                attachment["size"] = metadata.size
 
 
 async def _process_user_attachments(
@@ -2261,6 +2325,16 @@ async def get_conversation_messages(
             limit=actual_limit,
             include_subconversations=False,
         )
+
+    # Persisted attachment metadata is incomplete by design (see the helper), so
+    # resolve it before serializing: clients decide from the mime type whether to
+    # render an attachment inline as an image.
+    await _enrich_persisted_attachments(
+        messages,
+        db_context=db_context,
+        attachment_registry=attachment_registry,
+        acting_user_id=user_id,
+    )
 
     # Convert to response format
     response_messages = []
