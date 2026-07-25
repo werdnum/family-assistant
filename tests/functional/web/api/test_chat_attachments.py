@@ -699,7 +699,12 @@ async def test_explicitly_attached_response_attachment_is_persisted(
         )
     ]
     assert len(rows_with_attachment) == 1
-    assert rows_with_attachment[0]["attachments"][0]["type"] == "attachment_reference"
+    persisted = rows_with_attachment[0]["attachments"][0]
+    assert persisted["type"] == "attachment_reference"
+    # Only the reference is stored; the read path resolves the rest, which is what
+    # lets a client know this is an image it should render inline.
+    assert persisted["mime_type"] == "image/png"
+    assert persisted["content_url"] == f"/api/attachments/{attachment.attachment_id}"
 
 
 # Note: Removed test_chat_api_trigger_content_structure as it was testing internal
