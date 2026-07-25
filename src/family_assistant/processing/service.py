@@ -69,6 +69,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
+# Sentinel substituted for per-turn system prompt inputs when locating the
+# prompt's stable prefix. Chosen so it cannot share a leading character with a
+# real timestamp or context block, which would hide the boundary.
+_VOLATILE_PROBE = "\x00\x00per-turn-probe\x00\x00"
+
+
+def _common_prefix_len(left: str, right: str) -> int | None:
+    """Length of the longest common prefix of two strings, or None if empty."""
+    limit = min(len(left), len(right))
+    index = 0
+    while index < limit and left[index] == right[index]:
+        index += 1
+    return index or None
+
 
 def _taint_metadata_from_sources(
     sources: Sequence[TaintSource] | None,
@@ -393,19 +407,54 @@ class ProcessingService:
 
     def _render_system_prompt(
         self, user_name: str, aggregated_other_context_str: str
-    ) -> str:
-        """Render a system prompt with strict placeholder validation."""
-        system_prompt_template = self.service_config.prompts.get(
-            "system_prompt",
-            "You are a helpful assistant. Current time is {current_time}.",
+    ) -> tuple[str, int | None]:
+        """Render a system prompt and locate its request-stable prefix.
+
+        Returns the rendered prompt plus the length of the leading run that does
+        not depend on per-turn inputs (see ``SystemMessage.stable_prefix_len``),
+        or ``None`` if no such boundary exists.
+
+        The boundary is found by rendering a second time with sentinel values for
+        the per-turn inputs and taking the common prefix: whatever two renderings
+        that differ only in those inputs still share is, by construction,
+        independent of them. Deriving it this way keeps it correct for
+        operator-edited templates, which may place the placeholders anywhere or
+        omit them entirely.
+        """
+        rendered = self._format_system_prompt(
+            user_name=user_name,
+            current_time_str=self._current_time_str(),
+            aggregated_other_context_str=aggregated_other_context_str,
         )
-        system_prompt_docs = self.service_config.prompts.get("system_prompt_docs", "")
-        current_time_str = (
+        probe = self._format_system_prompt(
+            user_name=user_name,
+            current_time_str=_VOLATILE_PROBE,
+            aggregated_other_context_str=_VOLATILE_PROBE,
+        )
+        stable_prefix_len = _common_prefix_len(rendered, probe)
+        return rendered, stable_prefix_len
+
+    def _current_time_str(self) -> str:
+        return (
             self.clock
             .now()
             .astimezone(self.service_config.timezone)
             .strftime("%Y-%m-%d %H:%M:%S %Z")
         )
+
+    def _format_system_prompt(
+        self,
+        *,
+        user_name: str,
+        current_time_str: str,
+        aggregated_other_context_str: str,
+    ) -> str:
+        """Render the system prompt template with strict placeholder validation."""
+        system_prompt_template = self.service_config.prompts.get(
+            "system_prompt",
+            "You are a helpful assistant. Current time is {current_time}.",
+        )
+        system_prompt_docs = self.service_config.prompts.get("system_prompt_docs", "")
         format_args = {
             "user_name": user_name,
             "current_time": current_time_str,
@@ -732,17 +781,30 @@ class ProcessingService:
             else:
                 aggregated_other_context_str = thread_attachments_context
 
-        final_system_prompt = self._render_system_prompt(
+        final_system_prompt, stable_prefix_len = self._render_system_prompt(
             user_name=user_name,
             aggregated_other_context_str=aggregated_other_context_str,
         )
         delegation_addition = await self.delegation_catalog_addition()
         if delegation_addition:
-            final_system_prompt = (
-                f"{final_system_prompt}\n\n{delegation_addition}".strip()
-            )
+            # Appended after the per-turn context, so it lands past the stable
+            # prefix. Guard the offset anyway: a misplaced breakpoint would put
+            # per-turn text inside the cached block, which fails silently as a
+            # cache that only ever writes and never reads.
+            combined = f"{final_system_prompt}\n\n{delegation_addition}".strip()
+            if stable_prefix_len is not None and not combined.startswith(
+                final_system_prompt[:stable_prefix_len]
+            ):
+                stable_prefix_len = None
+            final_system_prompt = combined
         if final_system_prompt:
-            messages_for_llm.insert(0, SystemMessage(content=final_system_prompt))
+            messages_for_llm.insert(
+                0,
+                SystemMessage(
+                    content=final_system_prompt,
+                    stable_prefix_len=stable_prefix_len,
+                ),
+            )
 
         attachment_injection_messages = (
             await self.attachment_processor.process_content_parts(

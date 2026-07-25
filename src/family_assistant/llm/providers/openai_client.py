@@ -308,6 +308,63 @@ class OpenAIClient(BaseLLMClient):
         return input_items
 
     @staticmethod
+    def _usage_detail_tokens(
+        usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
+        field: str,
+    ) -> int | None:
+        """Read a token count out of an OpenAI usage payload's details block.
+
+        The block is `prompt_tokens_details` on Chat Completions and
+        `input_tokens_details` on Responses. Both SDK objects and raw dicts turn
+        up here: the Responses streaming path and VCR replay hand back parsed
+        JSON rather than typed models, and some fields (`cache_write_tokens`) are
+        present in API responses but not modelled by the pinned SDK, so they are
+        only reachable by name.
+
+        Returns `None` only when the field is absent everywhere. A reported zero
+        comes back as `0`, so a known miss stays distinguishable from a payload
+        that says nothing.
+        """
+        for block in ("prompt_tokens_details", "input_tokens_details"):
+            details = (
+                usage.get(block)
+                if isinstance(usage, dict)
+                else getattr(usage, block, None)
+            )
+            if details is None:
+                continue
+            value = (
+                details.get(field)
+                if isinstance(details, dict)
+                else getattr(details, field, None)
+            )
+            if value is not None:
+                return int(value)
+        return None
+
+    @classmethod
+    def _cached_prompt_tokens(
+        cls,
+        usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
+    ) -> int | None:
+        """Cache-hit prompt tokens. A *subset* of the reported prompt total,
+        unlike Anthropic's separate bucket, so it is never added to the total."""
+        return cls._usage_detail_tokens(usage, "cached_tokens")
+
+    @classmethod
+    def _cache_write_tokens(
+        cls,
+        usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
+    ) -> int | None:
+        """Cache-write tokens, reported by the Responses API.
+
+        Chat Completions does not report this; Responses does, even though the
+        pinned SDK does not type it. Also a subset of the prompt total rather
+        than an extra bucket.
+        """
+        return cls._usage_detail_tokens(usage, "cache_write_tokens")
+
+    @staticmethod
     def _responses_reasoning_info(response: Response) -> MessageReasoningInfo | None:
         """Extract usage information from a Responses API response."""
         usage = getattr(response, "usage", None)
@@ -321,6 +378,12 @@ class OpenAIClient(BaseLLMClient):
         details = getattr(usage, "output_tokens_details", None)
         if details and getattr(details, "reasoning_tokens", None) is not None:
             reasoning_info["reasoning_tokens"] = details.reasoning_tokens
+        cached = OpenAIClient._cached_prompt_tokens(usage)
+        if cached is not None:
+            reasoning_info["cached_prompt_tokens"] = cached
+        cache_write = OpenAIClient._cache_write_tokens(usage)
+        if cache_write is not None:
+            reasoning_info["cache_write_tokens"] = cache_write
         return reasoning_info
 
     @staticmethod
@@ -483,6 +546,13 @@ class OpenAIClient(BaseLLMClient):
                     details = response.usage.completion_tokens_details
                     if details and hasattr(details, "reasoning_tokens"):
                         reasoning_info["reasoning_tokens"] = details.reasoning_tokens
+
+                cached = self._cached_prompt_tokens(response.usage)
+                if cached is not None:
+                    reasoning_info["cached_prompt_tokens"] = cached
+                cache_write = self._cache_write_tokens(response.usage)
+                if cache_write is not None:
+                    reasoning_info["cache_write_tokens"] = cache_write
 
             llm_output = LLMOutput(
                 content=content,
@@ -796,6 +866,18 @@ class OpenAIClient(BaseLLMClient):
                 "model": self.model,
                 "messages": api_message_dicts,
                 "stream": True,  # Enable streaming
+                # Streaming responses carry no usage unless it is requested, so
+                # without this the whole turn reports no tokens at all -- prompt
+                # cache hits included. Only sent to the official API: an
+                # OpenAI-compatible endpoint that rejects unknown parameters
+                # would fail the request outright. Operators whose endpoint does
+                # support it can opt in through model_parameters, since those
+                # are merged below and win over this default.
+                **(
+                    {"stream_options": {"include_usage": True}}
+                    if self._is_direct_openai
+                    else {}
+                ),
                 **self.default_kwargs,
                 **self._get_model_specific_params(self.model),
             }
@@ -823,14 +905,17 @@ class OpenAIClient(BaseLLMClient):
             last_chunk_with_usage: Any | None = None
 
             async for chunk in stream:
+                # The usage chunk arrives last and carries an empty `choices`
+                # list, so it has to be captured before the guards below skip it.
+                if chunk is not None and getattr(chunk, "usage", None):
+                    last_chunk_with_usage = chunk
+
                 if not chunk or not hasattr(chunk, "choices") or not chunk.choices:
                     continue
 
                 delta = chunk.choices[0].delta
                 if not delta:
                     continue
-
-                last_chunk_with_usage = chunk
 
                 # Handle content
                 if delta.content:
@@ -892,11 +977,28 @@ class OpenAIClient(BaseLLMClient):
                 and hasattr(last_chunk_with_usage, "usage")
                 and last_chunk_with_usage.usage
             ):
-                metadata["reasoning_info"] = MessageReasoningInfo(
-                    prompt_tokens=last_chunk_with_usage.usage.prompt_tokens,
-                    completion_tokens=last_chunk_with_usage.usage.completion_tokens,
-                    total_tokens=last_chunk_with_usage.usage.total_tokens,
+                stream_usage = last_chunk_with_usage.usage
+                stream_reasoning_info = MessageReasoningInfo(
+                    prompt_tokens=stream_usage.prompt_tokens,
+                    completion_tokens=stream_usage.completion_tokens,
+                    total_tokens=stream_usage.total_tokens,
                 )
+                cached = self._cached_prompt_tokens(stream_usage)
+                if cached is not None:
+                    stream_reasoning_info["cached_prompt_tokens"] = cached
+                cache_write = self._cache_write_tokens(stream_usage)
+                if cache_write is not None:
+                    stream_reasoning_info["cache_write_tokens"] = cache_write
+                # Mirror the non-streaming path: reasoning models report this
+                # under completion_tokens_details, and enabling include_usage is
+                # what makes it reachable on a streamed turn at all.
+                completion_details = getattr(
+                    stream_usage, "completion_tokens_details", None
+                )
+                reasoning_tokens = getattr(completion_details, "reasoning_tokens", None)
+                if reasoning_tokens is not None:
+                    stream_reasoning_info["reasoning_tokens"] = reasoning_tokens
+                metadata["reasoning_info"] = stream_reasoning_info
 
             # Record successful streaming request to diagnostics buffer
             duration_ms = (time.monotonic() - start_time) * 1000
@@ -1083,11 +1185,18 @@ class OpenAIClient(BaseLLMClient):
                 if isinstance(response, dict):
                     usage = response.get("usage")
                     if isinstance(usage, dict):
-                        metadata["reasoning_info"] = MessageReasoningInfo(
+                        responses_reasoning_info = MessageReasoningInfo(
                             prompt_tokens=int(usage.get("input_tokens", 0)),
                             completion_tokens=int(usage.get("output_tokens", 0)),
                             total_tokens=int(usage.get("total_tokens", 0)),
                         )
+                        cached = self._cached_prompt_tokens(usage)
+                        if cached is not None:
+                            responses_reasoning_info["cached_prompt_tokens"] = cached
+                        cache_write = self._cache_write_tokens(usage)
+                        if cache_write is not None:
+                            responses_reasoning_info["cache_write_tokens"] = cache_write
+                        metadata["reasoning_info"] = responses_reasoning_info
                     output = response.get("output")
                     if isinstance(output, list):
                         metadata["provider_metadata"] = {
@@ -1189,6 +1298,12 @@ class OpenAIClient(BaseLLMClient):
         last_chunk_with_usage: dict[str, Any] | None = None
 
         for chunk in chunk_dicts:
+            # The terminal usage chunk carries an empty `choices` list, so it has
+            # to be captured before the guard below skips it -- same shape as the
+            # live-stream path.
+            if chunk.get("usage"):
+                last_chunk_with_usage = chunk
+
             choices = chunk.get("choices") or []
             if not choices or not isinstance(choices, list):
                 continue
@@ -1229,9 +1344,6 @@ class OpenAIClient(BaseLLMClient):
                 if func_args:
                     tc_data["function"]["arguments"] += func_args
 
-            if chunk.get("usage"):
-                last_chunk_with_usage = chunk
-
         for tc_data in current_tool_calls.values():
             tc_id = tc_data["id"]
             if tc_data["function"]["name"] and tc_id:
@@ -1252,10 +1364,17 @@ class OpenAIClient(BaseLLMClient):
         metadata: StreamEventMetadata = {}
         if last_chunk_with_usage:
             usage = last_chunk_with_usage.get("usage") or {}
-            metadata["reasoning_info"] = MessageReasoningInfo(
+            replay_reasoning_info = MessageReasoningInfo(
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 completion_tokens=usage.get("completion_tokens", 0),
                 total_tokens=usage.get("total_tokens", 0),
             )
+            cached = self._cached_prompt_tokens(usage)
+            if cached is not None:
+                replay_reasoning_info["cached_prompt_tokens"] = cached
+            cache_write = self._cache_write_tokens(usage)
+            if cache_write is not None:
+                replay_reasoning_info["cache_write_tokens"] = cache_write
+            metadata["reasoning_info"] = replay_reasoning_info
 
         yield LLMStreamEvent(type="done", metadata=metadata)

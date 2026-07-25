@@ -36,6 +36,21 @@ from .base import (
     ServiceUnavailableError,
 )
 from .messages import UserMessage
+from .utils.usage_telemetry import set_usage_span_attributes
+
+
+def _record_stream_usage(span: trace.Span, event: LLMStreamEvent) -> None:
+    """Export usage from a stream's terminal event onto the retry span.
+
+    Providers report streaming usage in the `done` event's metadata rather than
+    on a span of their own -- the OpenAI client has no span at all -- so doing it
+    here is what makes `gen_ai.usage.*` present for every provider instead of
+    only the ones that happen to instrument themselves.
+    """
+    if event.type != "done" or not event.metadata:
+        return
+    set_usage_span_attributes(span, event.metadata.get("reasoning_info"))
+
 
 T = TypeVar("T", bound=BaseModel)
 R = TypeVar("R")
@@ -120,17 +135,7 @@ class RetryingLLMClient:
                     tool_choice=tool_choice,
                 )
                 span.set_attribute("gen_ai.response.model", self.primary_model)
-                if result.reasoning_info:
-                    if "prompt_tokens" in result.reasoning_info:
-                        span.set_attribute(
-                            "gen_ai.usage.input_tokens",
-                            result.reasoning_info["prompt_tokens"],
-                        )
-                    if "completion_tokens" in result.reasoning_info:
-                        span.set_attribute(
-                            "gen_ai.usage.output_tokens",
-                            result.reasoning_info["completion_tokens"],
-                        )
+                set_usage_span_attributes(span, result.reasoning_info)
                 return result
             except retriable_errors as e:
                 logger.warning(
@@ -171,17 +176,7 @@ class RetryingLLMClient:
                         tool_choice=tool_choice,
                     )
                     span.set_attribute("gen_ai.response.model", self.primary_model)
-                    if result.reasoning_info:
-                        if "prompt_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.input_tokens",
-                                result.reasoning_info["prompt_tokens"],
-                            )
-                        if "completion_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.output_tokens",
-                                result.reasoning_info["completion_tokens"],
-                            )
+                    set_usage_span_attributes(span, result.reasoning_info)
                     return result
                 except retriable_errors as e:
                     logger.warning(
@@ -237,17 +232,7 @@ class RetryingLLMClient:
                     span.set_attribute(
                         "gen_ai.response.model", self.fallback_model or ""
                     )
-                    if result.reasoning_info:
-                        if "prompt_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.input_tokens",
-                                result.reasoning_info["prompt_tokens"],
-                            )
-                        if "completion_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.output_tokens",
-                                result.reasoning_info["completion_tokens"],
-                            )
+                    set_usage_span_attributes(span, result.reasoning_info)
                     return result
                 except Exception as e:
                     logger.error(
@@ -308,6 +293,7 @@ class RetryingLLMClient:
                         tool_choice=tool_choice,
                     ):
                         with trace.use_span(span, end_on_exit=False):
+                            _record_stream_usage(span, event)
                             yield event  # noqa: ASYNC119
                         events_yielded = True
                 except Exception as e:
@@ -346,6 +332,7 @@ class RetryingLLMClient:
                                 ):
                                     events_yielded = True
                                     with trace.use_span(span, end_on_exit=False):
+                                        _record_stream_usage(span, event)
                                         yield event  # noqa: ASYNC119
                                 return
                             except Exception as retry_err:
@@ -395,6 +382,7 @@ class RetryingLLMClient:
                                     tool_choice=tool_choice,
                                 ):
                                     with trace.use_span(span, end_on_exit=False):
+                                        _record_stream_usage(span, event)
                                         yield event  # noqa: ASYNC119
                             except Exception as fallback_error:
                                 logger.error(

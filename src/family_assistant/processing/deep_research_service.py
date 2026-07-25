@@ -94,13 +94,17 @@ class DeepResearchProcessingService(ProcessingService):
         in the background.
         """
         _ = initial_taint_sources
-        system_prompt = self._render_system_prompt(
+        system_prompt, stable_prefix_len = self._render_system_prompt(
             user_name=user_name, aggregated_other_context_str=""
         )
         user_text = self._extract_user_content_for_history(content_parts)
         messages: list[LLMMessage] = []
         if system_prompt:
-            messages.append(SystemMessage(content=system_prompt))
+            messages.append(
+                SystemMessage(
+                    content=system_prompt, stable_prefix_len=stable_prefix_len
+                )
+            )
         messages.append(UserMessage(content=user_text))
 
         previous_interaction_id: str | None = None

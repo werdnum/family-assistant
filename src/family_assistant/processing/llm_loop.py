@@ -267,7 +267,13 @@ class LLMStreamingLoop:
         pending_attachment_ids: list[
             str
         ] = []  # Track attachment IDs from attach_to_response calls
-        original_system_content: str | None = None  # Store original system prompt
+        # The system prompt as it arrived, before any on-demand tool additions.
+        original_system_message: SystemMessage | None = None
+        # The addition currently baked into messages[0], so the system prompt is
+        # rebuilt only when it actually changes rather than on every iteration.
+        applied_system_prompt_addition: str | None = None
+        # The synthetic final-iteration instruction, once appended.
+        final_iteration_instruction: UserMessage | None = None
 
         can_confirm = request_confirmation_callback is not None
 
@@ -353,32 +359,42 @@ class LLMStreamingLoop:
             # If so, we cannot modify the system prompt as it would invalidate signatures.
             has_thought_signatures = messages_have_thought_signatures(messages)
 
-            # Add iteration context to system prompt ONLY if no thought signatures present
-            # Thought signatures are cryptographically tied to the exact conversation context
-            if messages and messages[0].role == "system" and not has_thought_signatures:
-                # Store original system content on first iteration
-                if original_system_content is None:
-                    original_system_content = str(messages[0].content)
+            # Fold on-demand tool additions into the system prompt, but only when
+            # they have actually changed. The system prompt renders at the front of
+            # the prompt prefix, so rewriting it per iteration -- as this loop used
+            # to do to append an iteration counter -- invalidated the provider
+            # prompt cache on every tool call, re-reading the whole prompt and every
+            # accumulated tool result at full price. On-demand activation already
+            # changes the tool list (which invalidates the prefix regardless), so
+            # rebuilding here costs nothing extra.
+            #
+            # Thought signatures are cryptographically tied to the exact conversation
+            # context, so the system prompt is left completely alone when present.
+            if (
+                messages
+                and isinstance(messages[0], SystemMessage)
+                and not has_thought_signatures
+                and applied_system_prompt_addition != system_prompt_addition
+            ):
+                if original_system_message is None:
+                    original_system_message = messages[0]
 
-                # Add iteration status to system prompt
-                iteration_suffix = (
-                    f"\n\n[Processing iteration {current_iteration}/{max_iterations}]"
-                )
-                if is_final_iteration:
-                    iteration_suffix += "\nIMPORTANT: This is the final iteration. You MUST provide your final response now without requesting additional tools."
-
-                # Build system prompt: original + provider additions + iteration suffix
-                system_content = original_system_content
+                system_content = original_system_message.content
                 if system_prompt_addition:
                     system_content += "\n\n" + system_prompt_addition
-                system_content += iteration_suffix
 
-                # Create new message with modified content (Pydantic models are immutable)
-                messages[0] = SystemMessage(content=system_content)
-            elif is_final_iteration and has_thought_signatures:
-                # Add final iteration instruction as a user message rather than modifying
-                # the system prompt. This approach works reliably regardless of whether
-                # thought signatures are present.
+                # model_copy preserves stable_prefix_len, which points into the
+                # original content and stays valid when text is appended after it.
+                messages[0] = original_system_message.model_copy(
+                    update={"content": system_content}
+                )
+                applied_system_prompt_addition = system_prompt_addition
+
+            if is_final_iteration:
+                # Delivered as a trailing user message rather than a system-prompt
+                # edit so the cached prefix survives the final iteration too.
+                # Kept on hand so downstream scans for the user's actual request
+                # can skip it -- it is scaffolding, not something the user said.
                 final_iteration_instruction = UserMessage(
                     content=(
                         "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
@@ -473,10 +489,21 @@ class LLMStreamingLoop:
                     logger.warning(
                         f"Context length exceeded, pruning messages and retrying: {e}"
                     )
+                    # Prune without the synthetic final-iteration instruction.
+                    # The turn splitter starts a new turn at every UserMessage, so
+                    # leaving it in costs a real turn out of min_turns -- and at
+                    # min_turns=1 it is the *only* turn kept, discarding the
+                    # user's request and every accumulated tool result.
                     messages = prune_messages_for_context(
-                        messages,
+                        [
+                            msg
+                            for msg in messages
+                            if msg is not final_iteration_instruction
+                        ],
                         min_turns=self.config.context_pruning_min_turns,
                     )
+                    if final_iteration_instruction is not None:
+                        messages.append(final_iteration_instruction)
                     context_retry_attempted = True
                     continue
 
@@ -541,6 +568,12 @@ class LLMStreamingLoop:
                 # Extract original user query from messages (most recent first)
                 original_query = ""
                 for msg in reversed(messages):
+                    # Skip our own final-iteration scaffolding: it is the newest
+                    # user message on the last iteration, and selecting
+                    # attachments against it would match the boilerplate rather
+                    # than what the user actually asked for.
+                    if msg is final_iteration_instruction:
+                        continue
                     if isinstance(msg, UserMessage):
                         if isinstance(msg.content, str):
                             original_query = msg.content

@@ -66,6 +66,7 @@ from family_assistant.llm.messages import (
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
+from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
 from family_assistant.tools.types import ToolDefinition
 
 from ..base import (
@@ -331,7 +332,7 @@ class AnthropicClient(BaseLLMClient):
         for attempt in range(max_retries + 1):
             try:
                 processed_messages = self._process_tool_messages(attempt_messages)
-                system_prompt, api_messages = (
+                system_blocks, api_messages = (
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
                 # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
@@ -350,8 +351,8 @@ class AnthropicClient(BaseLLMClient):
                     **self.default_kwargs,
                     **self._get_model_specific_params(self.model),
                 }
-                if system_prompt:
-                    params["system"] = system_prompt
+                if system_blocks:
+                    params["system"] = system_blocks
 
                 response = await self.client.messages.create(**params)
                 tool_input = self._extract_forced_tool_input(response, tool_name)
@@ -467,10 +468,10 @@ class AnthropicClient(BaseLLMClient):
         self,
         messages: Sequence[LLMMessage],
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str | list[TextBlockParam] | None, list[dict[str, Any]]]:
         """Convert typed messages to Anthropic API format.
 
-        Returns (system_prompt, api_messages).
+        Returns (system_blocks, api_messages).
 
         Key differences from OpenAI:
         - System messages are extracted to the top-level `system` parameter
@@ -480,11 +481,18 @@ class AnthropicClient(BaseLLMClient):
         - Images use source.type: "base64" format
         """
         system_parts: list[str] = []
+        # Stable-prefix length of the first system message, used to place the
+        # prompt-cache breakpoint. Only the first is considered: it is the
+        # profile's system prompt, and anything hoisted after it (mid-conversation
+        # system triggers) is per-turn material that belongs past the breakpoint.
+        stable_prefix_len: int | None = None
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
         api_messages: list[dict[str, Any]] = []
 
         for msg in messages:
             if isinstance(msg, SystemMessage):
+                if not system_parts:
+                    stable_prefix_len = msg.stable_prefix_len
                 system_parts.append(msg.content)
 
             elif isinstance(msg, UserMessage):
@@ -535,8 +543,86 @@ class AnthropicClient(BaseLLMClient):
         # Merge consecutive same-role messages (Anthropic requires alternating roles)
         api_messages = self._merge_consecutive_roles(api_messages)
 
-        system_prompt = "\n\n".join(system_parts) if system_parts else None
-        return system_prompt, api_messages
+        system_blocks = self._build_system_blocks(system_parts, stable_prefix_len)
+        return system_blocks, api_messages
+
+    @staticmethod
+    def _reasoning_info_from_usage(
+        usage: Any,  # noqa: ANN401 - anthropic.types.Usage, shape varies by SDK version
+    ) -> MessageReasoningInfo:
+        """Build reasoning info from an Anthropic usage object.
+
+        Anthropic splits prompt tokens into three disjoint buckets: `input_tokens`
+        counts only the uncached remainder, with cache reads and cache writes
+        reported separately. `total_tokens` therefore has to add all three back
+        together, or cached turns will under-report the prompt.
+        """
+        cache_read = getattr(usage, "cache_read_input_tokens", None)
+        cache_write = getattr(usage, "cache_creation_input_tokens", None)
+
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=usage.input_tokens,
+            completion_tokens=usage.output_tokens,
+            total_tokens=(
+                usage.input_tokens
+                + (cache_read or 0)
+                + (cache_write or 0)
+                + usage.output_tokens
+            ),
+        )
+        # A reported zero is a known cache miss and is recorded as such. Only an
+        # absent field is left out, so a miss cannot be mistaken for a provider
+        # that reports nothing -- otherwise a dashboard that skips unreported
+        # values would drop every miss and overstate the hit rate.
+        if cache_read is not None:
+            reasoning_info["cached_prompt_tokens"] = cache_read
+        if cache_write is not None:
+            reasoning_info["cache_write_tokens"] = cache_write
+        return reasoning_info
+
+    @staticmethod
+    def _build_system_blocks(
+        system_parts: list[str],
+        stable_prefix_len: int | None,
+    ) -> str | list[TextBlockParam] | None:
+        """Build the top-level `system` value, with a prompt-cache breakpoint.
+
+        Prompt caching is a prefix match, so a breakpoint only pays off when the
+        text ahead of it is byte-identical between requests. The profile's system
+        prompt ends with per-turn material (current time, aggregated context), so
+        we split it at `stable_prefix_len` and mark only the leading block
+        cacheable. Concatenating the returned blocks reproduces the single string
+        this used to send, so the model sees identical text either way.
+
+        A prompt that is stable all the way to the end needs no split -- it is
+        emitted as one cacheable block. Only when there is no boundary at all is
+        the plain string returned, since a breakpoint over volatile text buys
+        cache writes and no reads.
+        """
+        if not system_parts:
+            return None
+
+        system_prompt = "\n\n".join(system_parts)
+        if stable_prefix_len is None or stable_prefix_len <= 0:
+            return system_prompt
+
+        if stable_prefix_len >= len(system_prompt):
+            return [
+                TextBlockParam(
+                    type="text",
+                    text=system_prompt,
+                    cache_control={"type": "ephemeral"},
+                )
+            ]
+
+        return [
+            TextBlockParam(
+                type="text",
+                text=system_prompt[:stable_prefix_len],
+                cache_control={"type": "ephemeral"},
+            ),
+            TextBlockParam(type="text", text=system_prompt[stable_prefix_len:]),
+        ]
 
     @staticmethod
     def _convert_user_content(
@@ -649,7 +735,7 @@ class AnthropicClient(BaseLLMClient):
             try:
                 processed_messages = self._process_tool_messages(list(messages))
 
-                system_prompt, api_messages = (
+                system_blocks, api_messages = (
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
@@ -662,8 +748,8 @@ class AnthropicClient(BaseLLMClient):
                     **self._get_model_specific_params(self.model),
                 }
 
-                if system_prompt:
-                    params["system"] = system_prompt
+                if system_blocks:
+                    params["system"] = system_blocks
 
                 if tools:
                     params["tools"] = self._convert_tools_to_anthropic_format(tools)
@@ -697,18 +783,8 @@ class AnthropicClient(BaseLLMClient):
                 # Extract usage information
                 reasoning_info: MessageReasoningInfo | None = None
                 if response.usage:
-                    reasoning_info = MessageReasoningInfo(
-                        prompt_tokens=response.usage.input_tokens,
-                        completion_tokens=response.usage.output_tokens,
-                        total_tokens=response.usage.input_tokens
-                        + response.usage.output_tokens,
-                    )
-                    span.set_attribute(
-                        "gen_ai.usage.input_tokens", response.usage.input_tokens
-                    )
-                    span.set_attribute(
-                        "gen_ai.usage.output_tokens", response.usage.output_tokens
-                    )
+                    reasoning_info = self._reasoning_info_from_usage(response.usage)
+                    set_usage_span_attributes(span, reasoning_info)
 
                 span.set_attribute("gen_ai.response.model", self.model)
 
@@ -925,7 +1001,7 @@ class AnthropicClient(BaseLLMClient):
             try:
                 processed_messages = self._process_tool_messages(list(messages))
 
-                system_prompt, api_messages = (
+                system_blocks, api_messages = (
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
@@ -938,8 +1014,8 @@ class AnthropicClient(BaseLLMClient):
                     **self._get_model_specific_params(self.model),
                 }
 
-                if system_prompt:
-                    params["system"] = system_prompt
+                if system_blocks:
+                    params["system"] = system_blocks
 
                 if tools:
                     params["tools"] = self._convert_tools_to_anthropic_format(tools)
@@ -1005,19 +1081,11 @@ class AnthropicClient(BaseLLMClient):
 
                 metadata: StreamEventMetadata = {}
                 if final_message and final_message.usage:
-                    metadata["reasoning_info"] = MessageReasoningInfo(
-                        prompt_tokens=final_message.usage.input_tokens,
-                        completion_tokens=final_message.usage.output_tokens,
-                        total_tokens=final_message.usage.input_tokens
-                        + final_message.usage.output_tokens,
+                    stream_reasoning_info = self._reasoning_info_from_usage(
+                        final_message.usage
                     )
-                    span.set_attribute(
-                        "gen_ai.usage.input_tokens", final_message.usage.input_tokens
-                    )
-                    span.set_attribute(
-                        "gen_ai.usage.output_tokens",
-                        final_message.usage.output_tokens,
-                    )
+                    metadata["reasoning_info"] = stream_reasoning_info
+                    set_usage_span_attributes(span, stream_reasoning_info)
 
                 span.set_attribute("gen_ai.response.model", self.model)
 
@@ -1147,11 +1215,7 @@ class AnthropicClient(BaseLLMClient):
 
         metadata: StreamEventMetadata = {}
         if response.usage:
-            metadata["reasoning_info"] = MessageReasoningInfo(
-                prompt_tokens=response.usage.input_tokens,
-                completion_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
-            )
+            metadata["reasoning_info"] = self._reasoning_info_from_usage(response.usage)
 
         events.append(LLMStreamEvent(type="done", metadata=metadata))
         return events

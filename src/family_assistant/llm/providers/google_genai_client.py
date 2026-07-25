@@ -55,6 +55,7 @@ from family_assistant.llm.messages import (
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
+from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
 from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
@@ -1243,11 +1244,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 reasoning_info: MessageReasoningInfo | None = None
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
                     usage = response.usage_metadata
-                    reasoning_info = MessageReasoningInfo(
-                        prompt_tokens=getattr(usage, "prompt_token_count", 0),
-                        completion_tokens=getattr(usage, "candidates_token_count", 0),
-                        total_tokens=getattr(usage, "total_token_count", 0),
-                    )
+                    reasoning_info = self._reasoning_info_from_usage_metadata(usage)
 
                 # Add thought summaries to reasoning_info for debugging/introspection
                 if thought_summaries:
@@ -1281,17 +1278,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 except Exception as record_err:
                     logger.debug(f"Failed to record LLM request: {record_err}")
 
-                if llm_output.reasoning_info:
-                    if "prompt_tokens" in llm_output.reasoning_info:
-                        span.set_attribute(
-                            "gen_ai.usage.input_tokens",
-                            llm_output.reasoning_info["prompt_tokens"],
-                        )
-                    if "completion_tokens" in llm_output.reasoning_info:
-                        span.set_attribute(
-                            "gen_ai.usage.output_tokens",
-                            llm_output.reasoning_info["completion_tokens"],
-                        )
+                set_usage_span_attributes(span, llm_output.reasoning_info)
 
                 return llm_output
 
@@ -1360,6 +1347,31 @@ class GoogleGenAIClient(BaseLLMClient):
             return LLMProviderError(
                 error_message, provider="google", model=self.model_name
             )
+
+    @staticmethod
+    def _reasoning_info_from_usage_metadata(
+        usage: Any,  # noqa: ANN401 - types.GenerateContentResponseUsageMetadata
+    ) -> MessageReasoningInfo:
+        """Build reasoning info from Gemini's `usage_metadata`.
+
+        Gemini caches implicitly and reports hits in `cached_content_token_count`
+        as a *subset* of `prompt_token_count`, so cached tokens are not added to
+        the total the way Anthropic's separate buckets are.
+        """
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=getattr(usage, "prompt_token_count", 0) or 0,
+            completion_tokens=getattr(usage, "candidates_token_count", 0) or 0,
+            total_tokens=getattr(usage, "total_token_count", 0) or 0,
+        )
+        # A reported zero is a known cache miss; only an absent field is left
+        # out, so a miss stays distinguishable from "provider reported nothing".
+        cached_tokens = getattr(usage, "cached_content_token_count", None)
+        if cached_tokens is not None:
+            reasoning_info["cached_prompt_tokens"] = cached_tokens
+        thoughts_tokens = getattr(usage, "thoughts_token_count", None)
+        if thoughts_tokens is not None:
+            reasoning_info["reasoning_tokens"] = thoughts_tokens
+        return reasoning_info
 
     @staticmethod
     def _parse_retry_after(error_message: str) -> float | None:
@@ -1953,10 +1965,17 @@ class GoogleGenAIClient(BaseLLMClient):
             accumulated_tool_calls = []
             thought_summaries: list[dict[str, str | int]] = []
             part_index = 0
+            # Gemini reports usage on streaming chunks, with the last one
+            # carrying the final cumulative counts. Keep the newest seen rather
+            # than reading a single chunk, since not every chunk includes it.
+            latest_usage_metadata: Any | None = None
 
             # Process stream chunks
             with trace.use_span(span, end_on_exit=False):
                 async for chunk in stream_response:  # type: ignore[misc]
+                    if getattr(chunk, "usage_metadata", None):
+                        latest_usage_metadata = chunk.usage_metadata
+
                     # Extract text content from chunk
                     if hasattr(chunk, "text") and chunk.text:
                         yield LLMStreamEvent(  # noqa: ASYNC119
@@ -2070,14 +2089,23 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
 
             # Signal completion
-            # Note: Usage metadata might not be available in streaming mode
             done_metadata: StreamEventMetadata = {}
+
+            stream_reasoning_info: MessageReasoningInfo | None = None
+            if latest_usage_metadata is not None:
+                stream_reasoning_info = self._reasoning_info_from_usage_metadata(
+                    latest_usage_metadata
+                )
+                set_usage_span_attributes(span, stream_reasoning_info)
 
             # Add thought summaries to reasoning_info for debugging/introspection
             if thought_summaries:
-                done_metadata["reasoning_info"] = MessageReasoningInfo(
-                    thought_summaries=thought_summaries
-                )
+                if stream_reasoning_info is None:
+                    stream_reasoning_info = MessageReasoningInfo()
+                stream_reasoning_info["thought_summaries"] = thought_summaries
+
+            if stream_reasoning_info is not None:
+                done_metadata["reasoning_info"] = stream_reasoning_info
 
             # Record successful streaming request to diagnostics buffer
             duration_ms = (time.monotonic() - start_time) * 1000

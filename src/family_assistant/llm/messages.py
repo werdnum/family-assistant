@@ -84,12 +84,29 @@ class MessageReasoningInfo(TypedDict, total=False):
 
     May contain token usage stats from LLM providers, or provenance
     info when a message was sent on behalf of another turn.
+
+    Prompt-cache accounting differs by provider, so ``prompt_tokens`` is not a
+    common denominator for a cache hit rate:
+
+    - Anthropic reports uncached, cache-read, and cache-write tokens as three
+      disjoint buckets. ``prompt_tokens`` holds only the uncached remainder, so
+      the full prompt is
+      ``prompt_tokens + cached_prompt_tokens + cache_write_tokens``.
+    - OpenAI and Google report the full prompt in ``prompt_tokens``, with
+      ``cached_prompt_tokens`` as a subset of it rather than an extra bucket.
+      OpenAI's Responses API also reports ``cache_write_tokens``, likewise a
+      subset; Chat Completions and Google do not report one at all.
+
+    Compute a hit rate against the reconstructed prompt total rather than
+    against ``prompt_tokens`` directly.
     """
 
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
     reasoning_tokens: int
+    cached_prompt_tokens: int
+    cache_write_tokens: int
     source_turn_id: str | None
     tool_name: str
     thought_summaries: list[dict[str, str | int]]
@@ -248,6 +265,19 @@ class SystemMessage(BaseModel):
 
     role: Literal["system"] = "system"
     content: str
+    stable_prefix_len: int | None = None
+    """Length of the leading run of ``content`` that is stable across requests.
+
+    ``content[:stable_prefix_len]`` is byte-identical on every request in a
+    conversation; the remainder carries per-turn material such as the current
+    time and aggregated context. Providers that support explicit prompt-cache
+    breakpoints split ``content`` here and mark the first part cacheable. The
+    text sent to the model is unchanged either way -- only the block boundary
+    differs.
+
+    ``None`` means the producer did not identify a boundary, in which case
+    ``content`` is sent unsplit and uncached.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

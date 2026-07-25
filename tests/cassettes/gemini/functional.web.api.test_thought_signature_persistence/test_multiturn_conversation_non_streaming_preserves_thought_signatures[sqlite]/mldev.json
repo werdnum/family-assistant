@@ -17,7 +17,7 @@
               {
                 "parts": [
                   {
-                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant.\n\n[Processing iteration 1/5]"
+                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant."
                   }
                 ],
                 "role": "user"
@@ -265,7 +265,7 @@
               {
                 "parts": [
                   {
-                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant.\n\n[Processing iteration 1/5]"
+                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant."
                   }
                 ],
                 "role": "user"
@@ -602,7 +602,7 @@
               {
                 "parts": [
                   {
-                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant.\n\n[Processing iteration 1/5]"
+                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant."
                   }
                 ],
                 "role": "user"
