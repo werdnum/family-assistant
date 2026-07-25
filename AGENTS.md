@@ -416,7 +416,8 @@ placement, auth, and the error-vs-telemetry reporting lanes.
 The development environment runs using Docker Compose with persistent volumes for `/workspace` (the
 project code), `/home/claude` (Claude's settings and cache), and PostgreSQL data. The compose stack
 runs **postgres** (with pgvector), **backend** (backend server plus frontend dev server via
-`poe dev`), and **claude** (claude-code-webui on port 8080 with MCP servers configured).
+`poe dev`), and **claude** (an agent shell with MCP servers configured; it runs `sleep infinity` and
+exposes no port — the claude-code-webui setup lives in the separate k8s pod definition).
 
 `.devcontainer/CLAUDE.devcontainer.md` documents that environment from the inside — logs, access
 points, volume mounts. `setup-workspace.sh` installs it as `/home/claude/.claude/CLAUDE.md` so it

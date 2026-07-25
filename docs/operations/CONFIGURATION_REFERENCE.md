@@ -1161,9 +1161,12 @@ Covered endpoints:
 - `GET /api/diagnostics/taint-audit`
 - `GET /api/debug/profiles/tools`
 
-Every other endpoint still requires normal authentication. In particular `GET /api/debug/profiles`
-(the full config dump) is **not** covered, while the tool-inventory endpoint that is covered exposes
-only tool names and sizes — no prompts and no policy bodies.
+The token grants no access beyond those endpoints. It does not make anything public that was not
+already: `/api/*` bypasses `AuthMiddleware` and individual routes enforce their own auth, so a
+deliberately public route such as the `POST /api/errors/` report receiver stays reachable without
+it. In particular `GET /api/debug/profiles` (the full config dump) is **not** covered, while the
+tool-inventory endpoint that is covered exposes only tool names and sizes — no prompts and no policy
+bodies.
 
 ______________________________________________________________________
 

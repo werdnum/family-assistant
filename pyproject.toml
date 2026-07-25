@@ -517,7 +517,6 @@ ignore = [
 "src/family_assistant/web/routers/documents_api.py" = ["PLW0717"]
 "src/family_assistant/web/routers/gemini_live_api.py" = ["PLW0717"]
 "src/family_assistant/web/routers/tools_api.py" = ["PLW0717"]
-"src/family_assistant/web/routers/vector_search.py" = ["PLW0717"]
 "src/family_assistant/web/routers/webhooks.py" = ["PLW0717"]
 "src/family_assistant/web/turn_producer.py" = ["PLW0717"]
 "src/family_assistant/web/web_chat_interface.py" = ["PLW0717"]

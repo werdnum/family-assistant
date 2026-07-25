@@ -4,7 +4,7 @@
 set -e
 
 TIMEOUT="${1:-120}"
-HEALTH_URL="http://devcontainer-backend-1:8000/api/health"
+HEALTH_URL="http://devcontainer-backend-1:8000/health"
 INTERVAL=2
 ELAPSED=0
 

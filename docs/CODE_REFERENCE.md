@@ -903,7 +903,6 @@ file serving, and router inclusion.
 - `family_assistant.web.routers.tasks_ui`
 - `family_assistant.web.routers.tools_ui`
 - `family_assistant.web.routers.ui_token_management`
-- `family_assistant.web.routers.vector_search`
 - `family_assistant.web.routers.webhooks`
 
 ### `src/family_assistant/web/auth.py`
@@ -1185,27 +1184,6 @@ retries.
 - `family_assistant.storage.context` (DatabaseContext)
 - `family_assistant.web.auth` (AUTH_ENABLED)
 - `family_assistant.web.dependencies` (get_current_active_user, get_db)
-
-### `src/family_assistant/web/routers/vector_search.py`
-
-\*\*Description:\*\*FastAPI router for the web UI providing a vector search debugger and document
-detail view.
-
-**Major Symbols:**
-
-- `vector_search_router`: FastAPI router for vector search.
-- `vector_search_form()`: Serves the vector search form.
-- `document_detail_view()`: Serves the detailed view for a single document.
-- `handle_vector_search()`: Handles vector search form submission.
-
-**Internal Dependencies:**
-
-- `family_assistant.embeddings` (EmbeddingGenerator)
-- `family_assistant.storage.context` (DatabaseContext)
-- `family_assistant.storage.vector` (DocumentRecord, get_document_by_id)
-- `family_assistant.storage.vector_search` (MetadataFilter, VectorSearchQuery, query_vector_store)
-- `family_assistant.web.auth` (AUTH_ENABLED)
-- `family_assistant.web.dependencies` (get_db, get_embedding_generator_dependency)
 
 ### `src/family_assistant/web/routers/webhooks.py`
 

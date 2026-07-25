@@ -131,7 +131,7 @@ mock_llm = RuleBasedMockLLMClient(
 
 ## Manual API Testing
 
-`scripts/wait-for-server.sh [timeout]` polls `http://devcontainer-backend-1:8000/api/health` every 2
+`scripts/wait-for-server.sh [timeout]` polls `http://devcontainer-backend-1:8000/health` every 2
 seconds (default timeout 120s; exit 0 ready, 1 timeout) — use it before driving the API in CI or
 containers.
 

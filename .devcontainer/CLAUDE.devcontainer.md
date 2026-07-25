@@ -21,17 +21,16 @@ The devcontainer runs using Docker Compose with three containers:
    - PostgreSQL connection: `postgresql+asyncpg://test:test@postgres:5432/test`
    - Development mode enabled (`DEV_MODE=true`)
 
-3. **claude** - Claude Code Web UI
+3. **claude** - agent shell
 
-   - Port: 8080
-   - Runs `claude-code-webui` with MCP servers configured
+   - Runs `sleep infinity` and exposes no port; you exec into it
+   - MCP servers configured
    - Read-only access to development server logs
 
 ### Access Points
 
 - **Main Application**: http://devcontainer-backend-1:5173 (frontend dev server with HMR)
 - **Backend API**: http://devcontainer-backend-1:8000 (FastAPI with auto-reload)
-- **Claude Code Web UI**: http://localhost:8080
 - **Health Check**: http://devcontainer-backend-1:8000/health
 
 ## Development Server Logs
@@ -107,7 +106,8 @@ Backend container:
 - **Backend container** runs: `poe dev 2>&1 | tee /var/log/family-assistant/dev-server.log`
   - This starts both uvicorn (port 8000) and vite dev server (port 5173)
   - Output is both logged to file and displayed on stdout
-- **Claude container** runs: `claude-code-webui --port 8080 --host 0.0.0.0`
+- **Claude container** runs: `sleep infinity` (exec in to work; the `claude-code-webui` setup lives
+  in the separate k8s pod definition, not in Compose)
 
 ### Testing with Playwright MCP Server
 

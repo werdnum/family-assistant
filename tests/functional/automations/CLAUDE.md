@@ -15,10 +15,12 @@ handlers by default (opt out with `register_delegation_handler=False`), so a del
 silently stranded as "queued". Register any additional handlers with
 `worker.register_task_handler(...)`.
 
-Delegation tests build their own primary/specialized/delegated `ProcessingService` fixtures locally
-(`primary_processing_service`, `specialized_processing_service`, `delegated_processing_service`,
-plus the matching `*_service_config` and `*_llm_mock` fixtures). Look in the test file you are
-editing rather than assuming a shared one exists.
+Delegation tests build their own primary/specialized/delegated `ProcessingService` fixtures locally,
+and the supporting config and LLM-mock fixtures are per-file rather than a symmetric naming scheme —
+some are plain fixtures (`primary_service_config`, `delegated_service_config`,
+`specialized_llm_mock`) and some are factories (`specialized_service_config_factory`,
+`primary_llm_mock_factory`), and not every combination exists. Read the conftest-level fixtures in
+the test file you are editing rather than assuming a shared or matching one exists.
 
 ## Running
 
