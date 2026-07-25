@@ -135,6 +135,95 @@ enum ChatAttachmentUploadState: String, Codable, Equatable {
     case failed
 }
 
+extension ChatAttachment {
+    /// Identity for de-duplicating the same attachment reported through more
+    /// than one channel. The server-side id is authoritative; the fallbacks only
+    /// matter for locally-built attachments that never had one.
+    var dedupeKey: String {
+        attachmentID ?? contentURL ?? id
+    }
+
+    /// A copy that is renderable as an image, or nil when this attachment is not
+    /// a displayable image.
+    ///
+    /// The content URL is derived from the attachment id when the metadata
+    /// carries none: a persisted tool-result row records the mime type but not
+    /// always a URL, and `/api/attachments/{id}` is the canonical route for a
+    /// known id.
+    ///
+    /// A missing mime type is a different matter — nothing on the client can
+    /// prove such an attachment is an image, so it is left alone rather than
+    /// guessed at. Resolving it belongs to the server: the messages endpoint
+    /// fills in the mime type of persisted attachments from the attachment
+    /// registry on read, which is what turns a bare `attachment_reference` (an
+    /// id and nothing else) into something displayable here.
+    var displayableImage: ChatAttachment? {
+        guard type == .image else {
+            return nil
+        }
+        guard let url = contentURL ?? Self.canonicalContentURL(forAttachmentID: attachmentID) else {
+            return nil
+        }
+        var image = self
+        image.contentURL = url
+        return image
+    }
+
+    private static func canonicalContentURL(forAttachmentID attachmentID: String?) -> String? {
+        guard let attachmentID,
+              let encoded = attachmentID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        else {
+            return nil
+        }
+        return "/api/attachments/\(encoded)"
+    }
+}
+
+extension ChatMessage {
+    /// How many images one reply may render inline.
+    ///
+    /// A bubble is a whole agentic turn — `groupToolCallTurns` folds every tool
+    /// call of the turn into one — so a turn that took thirty camera snapshots
+    /// would otherwise stack thirty full-width images into a single bubble and
+    /// fetch them all eagerly, which is exactly the unbounded per-message layout
+    /// the watchdog work exists to prevent. Images past the cap are not lost:
+    /// they stay on the attachment strip they came from, as thumbnails.
+    static let maxInlineImages = 6
+
+    /// The reply's image attachments, to be shown inline in the bubble rather
+    /// than inside the tool group.
+    ///
+    /// The same image reaches the client in two shapes. Live, it arrives as an
+    /// `attachment` stream event and lands on the message's own attachments; on
+    /// reload it comes back on the tool row that produced it, which
+    /// `renderMessages` folds into the tool call. Both are collected here and
+    /// de-duplicated by attachment id, so a turn reporting an image through both
+    /// paths renders it once — and an image stays put when a live turn is
+    /// replaced by its persisted rows.
+    ///
+    /// User uploads are excluded: they already render as thumbnails on the user
+    /// bubble's own attachment strip.
+    var inlineImageAttachments: [ChatAttachment] {
+        guard role != .user else {
+            return []
+        }
+        var seen: Set<String> = []
+        var images: [ChatAttachment] = []
+        for attachment in attachments + toolCalls.flatMap(\.attachments) {
+            guard images.count < Self.maxInlineImages else {
+                break
+            }
+            guard let image = attachment.displayableImage,
+                  seen.insert(image.dedupeKey).inserted
+            else {
+                continue
+            }
+            images.append(image)
+        }
+        return images
+    }
+}
+
 struct ChatUploadResponse: Decodable, Equatable {
     let attachmentID: String
     let filename: String

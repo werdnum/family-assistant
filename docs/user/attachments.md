@@ -48,6 +48,18 @@ web interface's **Upload Document** page instead. See
 
 The assistant can report size, type, upload time, and a description.
 
+## Attachments the assistant sends back
+
+When the assistant attaches something to its reply — a generated image, a chart, a camera snapshot,
+a file it fetched from your email — it arrives with the answer itself:
+
+- **Images** appear inline, underneath the reply text, in both the web app and the iOS app. Tap or
+  click one to see it full size, and use the download button beside it to save or share it.
+- **Other files** (PDFs, documents, data files) appear as a named attachment with a download button
+  rather than a preview.
+- Images are part of the saved reply, so reopening the conversation later shows them again — they
+  are not just a live-stream effect.
+
 ## How attachments behave
 
 Every attachment gets a unique identifier the assistant can refer to for the rest of the
