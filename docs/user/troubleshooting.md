@@ -31,8 +31,12 @@ page covers the general cases.
 
 ## Starting fresh
 
-Each conversation carries its own context. In the web interface and iOS app, start a new
-conversation. In Telegram, start a new conversation or let the context age out.
+In the web interface and the iOS app, start a new conversation — each one carries its own context.
+
+Telegram works differently: a chat is one long-running conversation, and there's no command to reset
+it. Older messages drop out on their own once they pass the deployment's history age limit. Until
+then, the practical fix is to say what you actually want ("ignore the earlier list, start from this
+one"), which works better than trying to clear the slate.
 
 ## It switched modes, or asked to
 

@@ -40,7 +40,10 @@ use a condition script, which receives the event and returns a boolean:
 
 - Arriving home:
   `event.get('old_state', {}).get('state') != 'home' and event.get('new_state', {}).get('state') == 'home'`
-- Above a threshold: `int(event.get('new_state', {}).get('state', '0').split('.')[0]) > 25`
+- Above a threshold:
+  `event.get('new_state', {}).get('state') not in (None, 'unavailable', 'unknown') and float(event['new_state']['state']) > 25`
+  — screen out the non-numeric readings Home Assistant sends, then compare as a float so `25.9`
+  counts as above 25
 - Any motion sensor: `event.get('entity_id', '').startswith('binary_sensor.motion')`
 
 ## Scheduled automations

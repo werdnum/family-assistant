@@ -12,9 +12,12 @@ move between tools and people.
 - **iOS app:** attach from the composer, paste a copied image, or share a file into the app from
   another app.
 
-**Supported types** include JPEG, PNG, GIF, WebP, BMP, and TIFF images, and PDF, plain text,
-Markdown, JSON, and CSV documents. Size limits apply — typically 20 MB for images and 100 MB for
-other files.
+**Supported types** depend on where you're sending from. Web and iOS chat accept JPEG, PNG, GIF, and
+WebP images, plus PDF, plain text, and Markdown. Telegram and the **Upload Document** page take a
+wider range, including BMP and TIFF images and JSON and CSV data files. If a file is rejected in
+chat, converting it — or uploading it on the Upload Document page instead — usually gets it in.
+
+Size limits apply: typically 20 MB for images and 100 MB for other files.
 
 ## What you can do with them
 
@@ -47,8 +50,13 @@ conversation. That means you can refer back to something you sent earlier, and t
 pass an attachment from one tool to another — take a camera snapshot and then analyse it, edit an
 image and then send the result, extract information from a document and save it as a note.
 
-Attachments are scoped to your conversation: only you can access what you upload there, and each
-conversation keeps its own collection.
+**Who can see them:** attachments belong to you, not to a single conversation. Other people can't
+read what you upload, but you can — a later chat can pull up a file you sent earlier, and files
+attached to a note stay reachable whenever that note comes up. Each attachment records the
+conversation it arrived in, which is how the assistant keeps track of what you're referring to; it
+isn't a wall between your own conversations.
+
+If you want something genuinely out of reach, delete it rather than relying on starting a new chat.
 
 ## Sending attachments to other people
 

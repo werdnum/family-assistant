@@ -15,8 +15,10 @@ combining semantic matching with keyword matching:
 Results are grouped by document, with the relevant snippets shown. You can narrow by source type
 ("search only my emails") when you know where something lives.
 
-In the web interface, the **Vector Search** page does the same thing and lets you click through to a
-document.
+In the web interface, the **Vector Search** page searches the same material and lets you click
+through to a document, but it matches on meaning only. If you're hunting an exact phrase, a
+reference number, or a name, ask the assistant instead — it matches wording as well as meaning, so
+it will find an exact string the page can miss.
 
 ## Reading a full document
 

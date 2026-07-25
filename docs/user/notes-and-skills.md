@@ -87,8 +87,11 @@ operator. Those load at startup, and a saved skill with the same name overrides 
 
 ### Visibility
 
-Skills support the same visibility labels as notes. Add `visibility_labels` to the frontmatter to
-restrict which profiles can see a skill.
+Skills support the same visibility labels as notes, but the labels are not part of the frontmatter —
+only `name` and `description` are read from there. To restrict a skill, ask for the restriction when
+you create it ("save this as a skill, visible only to the research profile"), so the assistant sets
+the labels on the note itself. A skill saved without asking gets the default labels for the profile
+that created it.
 
 ## Troubleshooting
 

@@ -1114,11 +1114,17 @@ part of the floor check:
 - **`home_local`** (Home Assistant actions). If the deployment drives high-consequence actuators —
   locks, garage doors, alarms — consider raising this sink to `confirm` at `unknown_external` via
   `taint_policy.matrix_overrides` or `operator_minimum`.
-- **`artifact_write`** (note and calendar writes). Destructive mutations such as `delete_note` and
-  `delete_calendar_event` resolve here and run unconfirmed at `unknown_external` by default.
+
+- **`artifact_write`** (note and calendar writes). Destructive mutations resolve here and the matrix
+  alone does not confirm them at `unknown_external` — `delete_note` runs unconfirmed on that path.
   Provenance stamping stops injected instructions laundering themselves into trusted storage, but
   raise `artifact_write` to `confirm` via `matrix_overrides` if you want deletions confirmed once
   any external content has been read.
+
+  This describes the taint matrix only. Ordinary tool policy is a separate and independent gate: the
+  shipped `default_profile_settings.tools_policy` carries a priority-20 `confirm` rule for
+  `delete_calendar_event` and `modify_calendar_event`, so those remain confirmed whatever the matrix
+  says. A soft taint outcome never removes a confirmation that tool policy imposes.
 
 ______________________________________________________________________
 
