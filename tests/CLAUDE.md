@@ -2,542 +2,212 @@
 
 This file provides guidance for working with tests in this project.
 
-## Test Structure Overview
-
-The project uses a three-tier testing structure organized by test type and feature area:
-
-### Three-Tier Test Organization
+## Test Structure
 
 ```
 tests/
-├── unit/                  # Unit tests - individual function/class behavior
-│   ├── attachments/
-│   ├── calendar/
-│   ├── events/
-│   ├── indexing/          # Document/email indexing logic
-│   ├── llm/
-│   ├── processing/
-│   ├── services/
-│   ├── storage/           # Database/storage layer
-│   ├── tools/
-│   └── web/
-├── integration/           # Integration tests - component interactions & external services
-│   ├── home_assistant/    # Home Assistant API integration
-│   ├── llm/               # LLM provider integrations (OpenAI, Gemini, etc)
-│   └── fixtures/          # Shared fixture configurations
-├── functional/            # Functional tests - end-to-end feature flows
-│   ├── attachments/
-│   ├── automations/       # Automation execution and event system
-│   ├── calendar/          # Calendar operations and reminders
-│   ├── events/
-│   ├── home_assistant/
-│   ├── indexing/          # Email/document indexing pipeline
-│   │   └── processors/    # Content processor tests
-│   ├── notes/
-│   ├── scripting/
-│   ├── storage/
-│   ├── tasks/
-│   ├── telegram/          # Telegram bot functionality
-│   ├── tools/
-│   ├── vector_search/
-│   └── web/               # Web API and UI tests
-│       ├── api/           # REST API endpoint tests
-│       ├── ui/            # Playwright end-to-end UI tests
-│       └── pages/         # Playwright Page Object Models
-└── mocks/                 # Mock utilities and fixtures
-
+├── unit/          # a2a_client, attachments, calendar_config, events, indexing, llm,
+│                  # processing, scripting, security, services, skills, storage, telegram,
+│                  # tools, utils, web
+├── integration/   # home_assistant, llm, tools, fixtures — external services via VCR.py
+├── functional/    # attachments, automations, calendar, email_intake, events, home_assistant,
+│                  # indexing/processors, integration, notes, scripting, storage, tasks,
+│                  # telegram, tools, vector_search, web/{api,ui,pages,routers}
+├── cassettes/     # llm/ (VCR.py YAML), gemini/ (Gemini SDK replay JSON)
+├── factories/     # Test data factories
+├── fixtures/      # Static fixture data (email_intake, ical)
+├── data/          # Sample documents used by indexing tests
+└── mocks/         # Mock utilities (mock_llm.py, mock_tools_provider.py, telegram_test_server.py)
 ```
 
-### Understanding Each Tier
-
-**Unit Tests** (`tests/unit/`)
-
-- Test individual functions, classes, or methods in isolation
-- Use mocks for external dependencies
-- Run quickly and detect regressions early
-- Located in directories matching `src/` structure
-- Example: Testing CalendarValidator logic without database access
-
-**Integration Tests** (`tests/integration/`)
-
-- Test interactions with external services (LLM APIs, Home Assistant, etc.)
-- Use VCR.py to record/replay HTTP interactions for reproducibility
-- Verify correct API usage and response handling
-- Located in `tests/integration/` subdirectories by service
-- Example: Testing that Home Assistant API calls work correctly
-
-**Functional Tests** (`tests/functional/`)
-
-- Test complete feature workflows end-to-end
-- Use real or fake dependencies to maximize coverage
-- Verify features work as users experience them
-- Organized by feature area, not implementation details
-- Example: Creating a calendar event, confirming it, verifying it appears in UI
-
-### Finding Tests for a Feature
-
-To find tests for a specific feature:
-
-1. **By Feature Name**: Look in `tests/functional/{feature}/` (e.g., calendar tests in
-   `tests/functional/calendar/`)
-2. **By Component**: Look in corresponding `tests/unit/{component}/` (e.g., storage tests in
-   `tests/unit/storage/`)
-3. **By API**: Look in `tests/functional/web/api/` for endpoint tests
-4. **By UI Page**: Look in `tests/functional/web/ui/test_{feature}*.py` for Playwright tests
-
-### Benefits of This Organization
-
-- **Discoverability**: Find tests quickly by feature or component
-- **Maintainability**: Group related tests together, making changes easier
-- **Performance**: Run unit tests quickly for fast feedback, save slower tests for CI
-- **Clarity**: Clear separation between test types helps understand test purpose
+`unit/` mirrors the `src/` layout; `integration/` is organized by external service; `functional/` is
+organized by feature area, not by implementation.
 
 ## Testing Principles
 
-- **Testing Philosophy: Prefer Real/Fake Dependencies Over Mocks**
-
-  - **"Bring the system into contact with reality."** The most important goal is to prove the system
-    actually works. The most valuable tests are those that resemble how the application is used in
-    production.
-  - **Use real dependencies** like the test database (`db_engine` fixture) or a real protocol client
-    whenever you can. This provides real assurance of compatibility with actual clients of the
-    protocols we implement.
-  - **Use fake dependencies** for services that are complex or slow. Prefer high-fidelity "fakes" or
-    simple in-memory implementations using official SDKs that mimic real behavior.
-  - **Avoid fragile "change-detector" unit tests.** Pure unit tests with extensive mocking often
-    just repeat implementation mistakes in the test. If you can't spot an error in the
-    implementation, you likely won't spot it in a mocked test either.
-  - **Use mocks as a very last resort.** Mocks should be reserved only for external third-party
-    services that are truly impossible to control or fake.
-  - **Why?** We want to guard against hallucinating or misunderstanding interfaces. Integrating an
-    external reference (SDK, real client, etc.) makes tests more robust and realistic.
+- **Prefer real/fake dependencies over mocks.** Use real dependencies like the test database
+  (`db_engine`) or a real protocol client wherever possible — this proves compatibility with actual
+  clients of the protocols we implement. Use high-fidelity fakes (in-memory implementations built on
+  official SDKs) for services that are complex or slow. Mocks are a last resort, reserved for
+  external third-party services that cannot be controlled or faked. Heavily-mocked unit tests tend
+  to repeat the implementation's own mistakes back at you.
 
 - **Each test tests one independent behaviour** of the system under test. Arrange, Act, Assert.
-  NEVER Arrange, Act, Assert, Act, Assert.
+  Never Arrange, Act, Assert, Act, Assert.
 
-- **ALWAYS run tests with `-xq`** so there is less output to process. NEVER use `-s` or `-v` unless
-  you have already tried with `-q` and you are sure there is information in the output of `-s` or
-  `-v` that you need for debugging.
+- **Run tests with `-xq`** so there is less output to process. Only reach for `-s` or `-v` once
+  you've tried `-q` and know you need the extra output.
 
-- **CRITICAL: Avoid Fixed Waits in Tests**: Tests must NEVER use arbitrary time-based waits like
-  `setTimeout`, `sleep`, or fixed delays. These cause flaky tests that fail under load or in CI.
-
-  **Always wait for the specific condition you care about:**
-
-  - ✅ GOOD: `await waitFor(() => expect(element).toBeEnabled())`
-  - ✅ GOOD: `await screen.findByText('Success message')`
-  - ✅ GOOD: `await waitForMessageSent(input)` (waits for input.value === '')
-  - ❌ BAD: `await new Promise(resolve => setTimeout(resolve, 2000))`
-  - ❌ BAD: `await sleep(500)`
-
-  **For frontend tests (Vitest/React Testing Library):**
-
-  - Use `waitFor()` to wait for conditions
-  - Use `findBy*` queries which wait automatically
-  - Create reusable condition-based wait helpers
-  - Only use fixed waits if modeling actual user behavior timing (e.g., 500ms between rapid actions)
-
-  **For backend tests (pytest):**
-
-  - Use `pytest-asyncio` with condition-based waits
-  - Poll with timeouts: `while not condition and time.time() < deadline: await asyncio.sleep(0.1)`
-  - Never use bare `time.sleep()` or `asyncio.sleep()` without a condition check
-
-  **Why this matters:**
-
-  - Fixed waits are always too short (fail under load) or too long (waste time)
-  - Condition-based waits complete as soon as possible
-  - Tests become reliable across different hardware and CI environments
+- **No fixed waits.** Wait on the condition you care about — `waitFor()` / `findBy*` in frontend
+  tests, condition polling with a deadline in pytest. This is enforced by the ast-grep rules
+  `no-asyncio-sleep-in-tests`, `no-time-sleep-in-tests`, and `no-playwright-wait-for-timeout`; use
+  `# ast-grep-ignore: <rule>` with a reason for the rare genuine exception.
 
 ## Finding Flaky Tests
 
-When debugging test flakiness, use pytest's `--flake-finder` plugin:
+Use pytest-flakefinder rather than a shell loop:
 
 ```bash
 pytest tests/path/to/test.py --flake-finder --flake-runs=100 -x
 ```
 
-This is much more efficient than running tests in a loop. The `-x` flag stops on first failure.
-Never use manual loops or shell scripts to repeatedly run tests.
-
-## Running Tests
-
-```bash
-# Run all tests
-poe test  # Note: You will need a long timeout - something like 15 minutes
-
-# Run tests with PostgreSQL (production database)
-poe test-postgres  # Quick mode with -xq
-poe test-postgres-verbose  # Verbose mode with -xvs
-
-# Run tests with PostgreSQL using pytest directly
-pytest --postgres -xq  # All tests with PostgreSQL
-pytest --postgres tests/functional/test_specific.py -xq  # Specific tests
-
-# Run specific test files
-pytest tests/functional/test_specific.py -xq
-```
-
 ## Database Backend Selection
 
-By default, tests run with an in-memory SQLite database for speed. However, production uses
-PostgreSQL, so it's important to test with PostgreSQL to catch database-specific issues:
+`db_engine` is parameterized by the `--db` flag (`sqlite`, `postgres`, or `all` — the default). The
+older `--postgres` boolean flag is equivalent to `--db postgres`. `poe test-postgres`,
+`poe test-postgres-verbose`, and `poe test-sqlite` wrap the common combinations.
 
-- Use `--postgres` flag to run tests with PostgreSQL instead of SQLite
-- PostgreSQL container starts automatically when the flag is used (requires Docker/Podman)
-- Tests that specifically need PostgreSQL features can use `pg_vector_db_engine` fixture, but will
-  get a warning if run without `--postgres` flag
-- The unified `db_engine` fixture automatically provides the appropriate database based on the flag
+Each PostgreSQL test gets its own uniquely-named database, created before the test and dropped
+after, so there is no cross-test state. The container starts automatically when postgres is selected
+(requires Docker/Podman, or `pgserver`). Tests needing pgvector should request
+`pg_vector_db_engine`.
 
-**PostgreSQL Test Isolation**: When using `--postgres`, each test gets its own unique database:
-
-- A new database is created before each test (e.g., `test_my_function_12345678`)
-- The database is completely dropped after the test completes
-- This ensures complete isolation - tests cannot interfere with each other
-- No data persists between tests, eliminating order-dependent failures
-
-**Important**: Running tests with `--postgres` has already revealed PostgreSQL-specific issues like:
-
-- Event loop conflicts in error logging when using PostgreSQL
-- Different transaction handling between SQLite and PostgreSQL
-- Schema differences that only manifest with PostgreSQL
-
-It's recommended to run tests with `--postgres` before pushing changes that touch database
-operations.
+Running against PostgreSQL has caught real issues SQLite hides — event loop conflicts in error
+logging, different transaction handling, and schema differences — so exercise it before pushing
+changes that touch database operations.
 
 ## Core Test Fixtures
 
-The project provides a comprehensive set of pytest fixtures for testing different components. These
-fixtures are defined in `tests/conftest.py` and `tests/functional/telegram/conftest.py`.
+Defined in `tests/conftest.py` unless noted otherwise.
 
 ### Database Fixtures
 
-**`db_engine`** (function scope)
+**`db_engine`** (function scope) — the primary fixture for database tests. Parameterized to SQLite
+or PostgreSQL by `pytest_generate_tests` from the `--db`/`--postgres` flags. SQLite uses a temporary
+on-disk file (`fa_test_*.sqlite`) deleted after the test; PostgreSQL creates and drops a unique
+database per test. Handles schema initialization. Not `autouse` — tests must request it.
 
-- The primary fixture for database tests, providing either SQLite or PostgreSQL.
-- Controlled by `--db` or `--postgres` flags (defaults to SQLite).
-- **SQLite**: Creates a temporary on-disk database for each test.
-- **PostgreSQL**: Creates a unique database for each test using `postgres_container`.
-- Handles schema initialization and automatic cleanup after each test.
-- **Note**: This is not an `autouse` fixture; it must be requested by the test.
+**`postgres_container`** (session scope) — manages the PostgreSQL server for the whole session, via
+`pgserver` (embedded) or an external instance from `TEST_DATABASE_URL`. Includes `pgvector`.
 
-**`postgres_container`** (session scope)
+**`pg_vector_db_engine`** (function scope) — PostgreSQL with `pgvector` guaranteed, unique database
+per test. Requesting it forces the test to the postgres backend only.
 
-- Manages a PostgreSQL server instance for the entire test session.
-- Uses `pgserver` (embedded PostgreSQL) or an external instance via `TEST_DATABASE_URL`.
-- Provides the shared infrastructure for PostgreSQL-based tests.
-- Includes `pgvector` support.
+**`session_db_engine`** (session scope, `tests/functional/web/conftest.py`) — shared file-based
+SQLite engine for performance-critical **read-only** tests; state persists across tests in the
+session. One database file per `pytest-xdist` worker.
 
-**`pg_vector_db_engine`** (function scope)
-
-- PostgreSQL database engine with `pgvector` support guaranteed.
-- Always provides a PostgreSQL backend, even if the suite is running with SQLite.
-- Creates a unique database per test for complete isolation.
-- Usage: `async def test_something(pg_vector_db_engine):`
-
-**`session_db_engine`** (session scope)
-
-- Session-scoped SQLite engine for performance-critical, read-only tests.
-- Shared across multiple tests to reduce setup overhead.
-- Supports parallel execution via `pytest-xdist` (one database per worker).
-- Located in `tests/functional/web/conftest.py`.
-
-**`api_db_context`** (function scope)
-
-- Provides an already-entered `DatabaseContext` for API-level tests.
-- Simplifies access to database repository methods.
-- Located in `tests/functional/web/conftest.py`.
+**`api_db_context`** (function scope, `tests/functional/web/conftest.py`) — an already-entered
+`DatabaseContext` over `db_engine`, so API tests can call repository methods directly.
 
 ### Task Worker Fixtures
 
-**`task_worker_manager`** (function scope)
+**`task_worker_manager`** (function scope) — yields a **factory**, not a worker. Call it with a
+`ProcessingService` and a chat interface to construct and start a `TaskWorker`; the fixture shuts it
+down at teardown. The factory returns `(TaskWorker, new_task_event, shutdown_event)` and registers
+the delegation and schedule-automation handlers by default (opt out with
+`register_delegation_handler=False`). Tests register any additional handlers themselves.
 
-- Manages lifecycle of a TaskWorker instance for background task testing
+```python
+async def test_task(task_worker_manager):
+    worker, new_task_event, shutdown_event = task_worker_manager(
+        processing_service=service, chat_interface=MagicMock()
+    )
+    worker.register_task_handler("my_task", my_handler)
+```
 
-- Returns tuple: `(TaskWorker, new_task_event, shutdown_event)`
-
-- Worker has mock ChatInterface and embedding generator
-
-- Tests must register their own task handlers
-
-- Usage:
-
-  ```python
-  async def test_task(task_worker_manager):
-      worker, new_task_event, shutdown_event = task_worker_manager
-      worker.register_handler("my_task", my_handler)
-      # ... test task execution
-  ```
+**`mock_clock`** (function scope) — a `MockClock` for controlling time; `task_worker_manager` wires
+it into the worker.
 
 ### CalDAV Server Fixtures
 
-**`radicale_server_session`** (session scope)
+**`radicale_server_session`** (session scope) — starts a Radicale CalDAV server for the session with
+user `testuser`/`testpass`. Yields `(base_url, username, password)`.
 
-- Starts a Radicale CalDAV server for the test session
-- Creates test user with credentials: `testuser`/`testpass`
-- Returns tuple: `(base_url, username, password)`
-- Server persists for entire test session
-
-**`radicale_server`** (function scope)
-
-- Creates a unique calendar for each test function
-
-- Depends on `radicale_server_session` and `pg_vector_db_engine`
-
-- Returns tuple: `(base_url, username, password, unique_calendar_url)`
-
-- Automatically cleans up the calendar after test
-
-- Usage:
-
-  ```python
-  async def test_calendar(radicale_server):
-      base_url, username, password, calendar_url = radicale_server
-      # Use calendar_url for test operations
-  ```
+**`radicale_server`** (function scope) — depends on `radicale_server_session` and `db_engine`;
+creates a uniquely-named calendar per test and cleans it up afterwards. Yields
+`(base_url, username, password, unique_calendar_url)`.
 
 ### Indexing Pipeline Fixtures
 
-**`mock_pipeline_embedding_generator`** (function scope)
-
-- HashingWordEmbeddingGenerator for deterministic embeddings in tests
-
-**`indexing_task_worker`** (function scope)
-
-- TaskWorker configured for indexing tasks
-- Returns tuple: `(TaskWorker, new_task_event, shutdown_event)`
+Defined locally in `tests/functional/indexing/test_indexing_pipeline.py` (see
+[tests/functional/indexing/CLAUDE.md](functional/indexing/CLAUDE.md)):
+`mock_pipeline_embedding_generator` (a `HashingWordEmbeddingGenerator` for deterministic embeddings)
+and `indexing_task_worker` (a `TaskWorker` configured for indexing, returning
+`(TaskWorker, new_task_event, shutdown_event)`).
 
 ### Mock Utilities
 
-The project includes `tests/mocks/mock_llm.py` with:
+`tests/mocks/mock_llm.py` provides **`RuleBasedMockLLMClient`**: rules are
+`(matcher_function, LLMOutput | callable)` tuples evaluated in order, where the matcher receives a
+dict of the call's keyword arguments. It also accepts `structured_rules` for `generate_structured`
+and a `response_gate` `asyncio.Event` the test can use to hold a reply in flight.
 
-**`RuleBasedMockLLMClient`**
-
-- Mock LLM that responds based on predefined rules
-
-- Rules are (matcher_function, LLMOutput) tuples
-
-- Matcher functions receive keyword arguments and return bool
-
-- Usage:
-
-  ```python
-  mock_llm = RuleBasedMockLLMClient(
-      rules=[
-          (
-              lambda args: "weather" in args["messages"][0]["content"],
-              LLMOutput(content="It's sunny today!"),
-          ),
-      ],
-      default_response=LLMOutput(content="Default response"),
-  )
-  ```
-
-## Testing Chat API Endpoints
-
-### Waiting for Server Startup
-
-When the server is starting up (e.g., in CI, Docker containers, or local development), use the
-wait-for-server script to ensure the server is ready before making requests:
-
-```bash
-# Wait for server with default 120 second timeout
-scripts/wait-for-server.sh
-
-# Wait with custom timeout (e.g., 60 seconds)
-scripts/wait-for-server.sh 60
+```python
+mock_llm = RuleBasedMockLLMClient(
+    rules=[
+        (
+            lambda args: "weather" in args["messages"][0]["content"],
+            LLMOutput(content="It's sunny today!"),
+        ),
+    ],
+    default_response=LLMOutput(content="Default response"),
+)
 ```
 
-The script polls `http://devcontainer-backend-1:8000/api/health` every 2 seconds until the server
-responds or the timeout is reached. Exit codes:
+## Manual API Testing
 
-- `0` - Server is ready
-- `1` - Timeout waiting for server
+`scripts/wait-for-server.sh [timeout]` polls `http://devcontainer-backend-1:8000/api/health` every 2
+seconds (default timeout 120s; exit 0 ready, 1 timeout) — use it before driving the API in CI or
+containers.
 
-To test the chat API functionality manually, you can use curl to make requests to both streaming and
-non-streaming endpoints:
+Chat endpoints (base `http://devcontainer-backend-1:8000`):
 
-**Non-streaming chat:**
+- `POST /api/v1/chat/send_message` — non-streaming, body `{"prompt": ...}`.
+- `POST /api/v1/chat/turns` — kicks off a streaming turn; the client supplies a UUID `turn_id`, so
+  retries are idempotent.
+- `GET /api/v1/chat/conversations/{id}/stream?from_seq=0` — replays from `from_seq` then tails live;
+  `follow=false` closes once the turn ends.
 
-```bash
-curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/send_message \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, can you tell me what 2+2 equals?"}'
-```
+Tools endpoints: `POST /api/tools/execute/{tool_name}` with body `{"arguments": {...}}` runs a tool
+directly, bypassing the LLM; `GET /api/tools/definitions` lists them. Endpoint discovery:
+`curl -s .../openapi.json | jq '.paths | keys'`.
 
-**Streaming chat (resumable, two-step):**
+Set `DEBUG_LLM_MESSAGES=true` to log the exact messages sent to the LLM (system prompts, user
+messages, tool calls and responses).
 
-```bash
-# 1. Kick off a turn (client supplies a UUID turn_id; idempotent on retry).
-curl -X POST http://devcontainer-backend-1:8000/api/v1/chat/turns \
-  -H "Content-Type: application/json" \
-  -d '{"turn_id": "'"$(uuidgen)"'", "conversation_id": "demo", "prompt": "What is 5+7?"}'
-
-# 2. Subscribe to the conversation event stream (replays from from_seq, then
-#    tails live; follow=false closes once the turn ends).
-curl -N "http://devcontainer-backend-1:8000/api/v1/chat/conversations/demo/stream?from_seq=0"
-```
-
-**Debug Logging:** To see detailed LLM request/response debugging, set the `DEBUG_LLM_MESSAGES=true`
-environment variable when running the application. This will log the exact messages being sent to
-the LLM, including system prompts, user messages, tool calls, and tool responses.
-
-**Diagnostics Export:** For comprehensive debugging, use the diagnostics export API to get a
-combined export of error logs, LLM requests, and message history. This is designed for use with
-`curl` and `jq`, and outputs data suitable for passing to Claude Code or other LLMs for debugging.
-
-```bash
-# Get JSON export (default) - requires authentication
-curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
-  http://localhost:8000/api/diagnostics/export | jq .
-
-# Get just LLM requests from last 30 minutes
-curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
-  http://localhost:8000/api/diagnostics/export | jq '.llm_requests'
-
-# Get errors from last 5 minutes
-curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
-  'http://localhost:8000/api/diagnostics/export?minutes=5' | jq '.error_logs'
-
-# Get markdown format for pasting to LLM
-curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
-  'http://localhost:8000/api/diagnostics/export?format=markdown'
-
-# Filter by conversation
-curl -s -H "Authorization: Bearer YOUR_API_TOKEN" \
-  'http://localhost:8000/api/diagnostics/export?conversation_id=abc123' | jq .
-```
-
+**Diagnostics export:** `GET /api/diagnostics/export` returns a combined export of system info,
+error logs, LLM requests (messages, tools, responses, timing), and message history — designed to be
+piped through `jq` or pasted to an LLM. Requires authentication (or `DIAGNOSTICS_READONLY_TOKEN`).
 Query parameters:
 
-- `minutes`: Time window (1-120, default: 30)
-- `max_errors`: Max error logs to return (1-100, default: 50)
-- `max_llm_requests`: Max LLM requests to return (1-100, default: 20)
-- `max_messages`: Max message history entries (1-500, default: 100)
-- `conversation_id`: Optional filter for specific conversation
-- `format`: Output format - `json` (default) or `markdown`
-
-The export includes:
-
-- System info (Python version, platform, database type)
-- Error logs with timestamps, levels, and tracebacks
-- LLM requests with messages, tools, responses, and timing
-- Message history with roles, content, and conversation IDs
-
-**API Discovery:** To discover available API endpoints, use jq to parse the OpenAPI spec:
-
-```bash
-# List all available endpoints
-curl -s 'http://devcontainer-backend-1:8000/openapi.json' | jq '.paths | keys'
-
-# Find specific endpoints (e.g., tools-related)
-curl -s 'http://devcontainer-backend-1:8000/openapi.json' | jq '.paths | keys | map(select(contains("tool")))'
-```
-
-**Testing Tools API directly:**
-
-```bash
-# Execute a tool directly (bypasses LLM, saves tokens for testing)
-curl -X POST "http://devcontainer-backend-1:8000/api/tools/execute/get_camera_frame" \
-  -H "Content-Type: application/json" \
-  -d '{"arguments": {"camera_id": "chickens", "timestamp": "2025-12-27T09:30:00"}}'
-
-# Get tool definitions
-curl -s 'http://devcontainer-backend-1:8000/api/tools/definitions' | jq
-```
+- `minutes`: time window (1-120, default 30)
+- `max_errors`: (1-100, default 50)
+- `max_llm_requests`: (1-100, default 20)
+- `max_messages`: (1-500, default 100)
+- `conversation_id`: filter to one conversation
+- `format`: `json` (default) or `markdown`
 
 ## Playwright Tests
 
-End-to-end tests for the web UI are written using Playwright and can be found in
-`tests/functional/web/`. These tests are marked with `@pytest.mark.playwright`.
-
-See [tests/functional/web/CLAUDE.md](functional/web/CLAUDE.md) for detailed Playwright testing
-guidance and debugging techniques.
+End-to-end web UI tests live in `tests/functional/web/` and are marked `@pytest.mark.playwright`.
+See [tests/functional/web/CLAUDE.md](functional/web/CLAUDE.md).
 
 ## Telegram Bot Tests
 
-Tests for the Telegram bot functionality can be found in `tests/functional/telegram/`.
+See [tests/functional/telegram/CLAUDE.md](functional/telegram/CLAUDE.md).
 
-See [tests/functional/telegram/CLAUDE.md](functional/telegram/CLAUDE.md) for Telegram-specific
-testing patterns.
+## CI Debugging
 
-## CI Debugging and Troubleshooting
+Do not set `CI=true` locally — CI uses it as a shortcut to skip rebuilding the frontend, and the
+web-test fixtures will then expect pre-built assets that aren't there.
 
-When CI tests fail, use these tools and techniques to debug issues efficiently.
+Locally, `poe test` writes a pass/fail summary to `.poe-test-summary.txt`, which is useful when the
+full output is truncated.
 
-**Note**: Do not use `CI=true` when debugging locally - it is used in CI as a shortcut to skip
-rebuilding the frontend.
+In CI, start from the JSON test report in the run's artifacts
+(`gh run download <run-id> --name <artifact-name>`). Artifact names are suffixed with the run id:
 
-### CI Status Monitoring
+- `backend-test-artifacts-sqlite-<run-id>` → `test-results/backend-sqlite-report.json`
+- `backend-test-artifacts-postgres-<run-id>` → `test-results/backend-postgres-report.json`
+- `playwright-artifacts-sqlite-<run-id>` → `test-results/playwright-sqlite-report.json`
+- `playwright-artifacts-postgres-<run-id>` → `test-results/playwright-postgres-report.json`
+- `frontend-test-results-<run-id>` → `test-results/frontend-report.json`
+- `gemini-live-test-results-<run-id>`, `llm-integration-test-results-<run-id>`
 
-```bash
-# View recent CI runs
-gh run list --limit 5
+The Playwright artifacts also contain, in subdirectories named after the failing test:
+`test-results/**/test-failed-*.png` (screenshots at failure), `test-results/**/test-*.webm` (videos
+of the run), and `test-results/**/trace.zip` (open in the Playwright Trace Viewer).
 
-# Check specific run status
-gh run view <run-id>
-
-# Monitor CI run in real-time (tip: pipe to tail if output is too long)
-gh run watch <run-id>
-gh run watch <run-id> | tail -50
-
-# View failed job logs once run completes
-gh run view <run-id> --log-failed
-```
-
-### Downloading and Analyzing Artifacts
-
-**First step when debugging: Download the JSON test report from artifacts**
-
-```bash
-# Download all artifacts from a CI run
-gh run download <run-id>
-
-# Download specific artifact (faster for large runs)
-gh run download <run-id> --name playwright-artifacts-sqlite-<run-id>
-gh run download <run-id> --name playwright-artifacts-postgres-<run-id>
-
-# List available artifacts
-gh run view <run-id>  # Shows artifacts section at bottom
-```
-
-### Artifact Contents
-
-**JSON Test Reports:**
-
-- `test-results/sqlite-report.json` - Detailed SQLite test results with timing and metadata
-- `test-results/postgres-report.json` - Detailed PostgreSQL test results
-- Include test names, outcomes, durations, and error details
-- Useful for analyzing patterns across test runs and understanding failures
-
-**Playwright Debugging Artifacts:**
-
-- `test-results/**/test-failed-*.png` - Screenshots at point of failure
-- `test-results/**/test-*.webm` - Videos of entire test execution
-- `test-results/**/trace.zip` - Detailed browser traces for step-by-step debugging
-- Located in subdirectories named after the failing test
-
-### Debugging Workflow
-
-1. **Check CI status:** `gh run list --limit 5`
-2. **Download JSON report:** `gh run download <run-id> --name <artifact-name>`
-3. **Analyze test failures:** Open `*-report.json` to see detailed error messages
-4. **Review visual artifacts:** Check screenshots and videos for UI test failures
-5. **Use traces for deep debugging:** Open `trace.zip` in Playwright Trace Viewer
-
-### Common CI Issues
-
-**Frontend Build Failures:**
-
-- Check container build logs for frontend asset copying
-- Verify `router.html` and `.vite/manifest.json` are present in artifacts
-
-**Mobile Responsive Test Failures:**
-
-- Screenshots show actual vs. expected layout on mobile viewport
-- Check for horizontal scroll issues in 375px viewport
-
-**Navigation Test Failures:**
-
-- Videos show actual user interaction flow
-- Verify navigation elements are visible and clickable
+For frontend build failures, check that `router.html` and `.vite/manifest.json` made it into the
+artifacts — a missing manifest means the asset copy step failed rather than the test.

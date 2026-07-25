@@ -22,5 +22,5 @@ commits.
 ## Debugging CI Failures
 
 When CI tests fail, see [tests/CLAUDE.md](../../tests/CLAUDE.md) for CI debugging guidance:
-monitoring runs with the `gh` CLI, downloading and analyzing artifacts, and interpreting test
-reports.
+downloading run artifacts, the artifact and JSON report names for each job, and interpreting
+Playwright failure traces.

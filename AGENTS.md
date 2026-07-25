@@ -32,278 +32,127 @@ Additional guidance is available in subdirectories:
 
 - Place all imports at the top of the file, organized by the isort rules in `pyproject.toml`.
 - Use type hints for all method parameters and return values.
-- All methods must have type hints for their parameters and return values.
 - Comments are used to explain implementation when it's unclear. Do NOT add comments that are
   self-evident from the code, or that explain the code's history (that's what commit history is
   for). No comments like `# Removed db_context`.
 
 ## Development Setup
 
-### Quick Setup
-
-The easiest way to set up your development environment is to use the setup script:
-
 ```bash
-# Run the setup script to install all dependencies
-./scripts/setup-workspace.sh
-
-# Activate the virtual environment
+./scripts/setup-workspace.sh   # creates .venv, installs deps, hooks, frontend, browsers
 source .venv/bin/activate
-
-# Verify setup
-poe test
+poe test                       # verify
 ```
 
-The setup script will:
-
-- Create a virtual environment (`.venv`)
-- Install all Python dependencies using `uv sync --extra dev --extra pgserver` (includes all dev
-  tools and PostgreSQL test server)
-- Install pre-commit hooks
-- Install frontend dependencies (`npm ci --prefix frontend`)
-- Install Playwright browsers
-- Check for GNU Parallel, which is required by the default adaptive `poe test` runner. The
-  devcontainer includes it; local hosts should install the system package named `parallel`.
-
-### Manual Installation
-
-If you prefer to set up manually:
-
-```bash
-# Create virtual environment
-uv venv .venv
-source .venv/bin/activate
-
-# Install Python dependencies (includes dev dependencies and pgserver)
-uv sync --extra dev --extra pgserver
-
-# Install pre-commit hooks
-.venv/bin/pre-commit install
-
-# Install frontend dependencies
-npm ci --prefix frontend
-
-# Install Playwright browsers (using rebrowser-playwright)
-.venv/bin/python -m rebrowser_playwright install chromium
-
-# Install GNU Parallel using your operating system package manager
-# Ubuntu/Debian example:
-sudo apt-get install parallel
-
-# Optional: Install local embedding model support (adds ~450MB of dependencies)
-# Only needed if you want to use local sentence transformer models instead of cloud APIs
-uv sync --extra dev --extra local-embeddings
-```
+The script installs Python deps with `uv sync --extra dev --extra pgserver` (dev tools plus the
+PostgreSQL test server), installs pre-commit hooks, runs `npm ci --prefix frontend`, installs
+Playwright browsers via `rebrowser_playwright`, and checks for GNU Parallel, which the default
+adaptive `poe test` runner requires. The devcontainer includes Parallel; local hosts should install
+the system package named `parallel`.
 
 ## Dependency Management
 
-This project uses [uv](https://docs.astral.sh/uv/) for Python dependency management. Dependencies
-are declared in `pyproject.toml` and locked in `uv.lock`.
+Dependencies are declared in `pyproject.toml` and locked in `uv.lock`, managed with
+[uv](https://docs.astral.sh/uv/).
 
-### Adding Dependencies
-
-```bash
-# Add a production dependency
-uv add <package-name>
-
-# Add a development dependency (to the [dev] extra)
-uv add --dev <package-name>
-
-# Add a dependency with version constraints
-uv add "package-name>=1.0.0,<2.0.0"
-
-# Add an optional dependency group
-uv add --optional local-embeddings sentence-transformers
-```
-
-### Removing Dependencies
-
-```bash
-# Remove a dependency
-uv remove <package-name>
-
-# Remove a development dependency
-uv remove --dev <package-name>
-```
-
-### Updating Dependencies
-
-```bash
-# Update all dependencies to their latest compatible versions
-uv lock --upgrade
-
-# Update a specific package
-uv lock --upgrade-package <package-name>
-
-# Sync your virtual environment with the lockfile
-uv sync --extra dev
-```
-
-### Important Notes
-
-- **NEVER use `uv pip install`** - This bypasses uv's dependency resolution and lockfile management
-- **Use `uv add`/`uv remove`** - These commands update both `pyproject.toml` and `uv.lock`
-- **Run `uv sync --extra dev`** after pulling changes to ensure your environment matches the
-  lockfile
-- **Commit `uv.lock`** to version control to ensure reproducible builds across all environments
+- **Never use `uv pip install`** - it bypasses uv's resolution and the lockfile. Use
+  `uv add`/`uv remove` (including `uv add --dev` and `uv add --optional <extra>`), which update both
+  `pyproject.toml` and `uv.lock`.
+- Commit `uv.lock`.
+- Run `uv sync --extra dev` after pulling changes.
+- Optional extras: `pgserver` (PostgreSQL test server), `local-embeddings` (local sentence
+  transformer models, ~450MB — only needed instead of cloud embedding APIs).
 
 ## Frontend Development
 
-The frontend is a modern React application built with Vite. All frontend code is in the `frontend/`
-directory.
-
-```bash
-# Install dependencies
-npm install --prefix frontend
-
-# Start dev server (starts both backend and frontend with HMR)
-poe dev
-
-# Build for production
-npm run build --prefix frontend
-```
-
-See [frontend/CLAUDE.md](frontend/CLAUDE.md) for detailed frontend development guidance, testing
-patterns, and MSW setup.
+The frontend is a React + Vite app in `frontend/`. Use `poe dev` to run backend and frontend
+together with HMR; `npm run build --prefix frontend` for a production build. See
+[frontend/CLAUDE.md](frontend/CLAUDE.md) for testing patterns and MSW setup.
 
 ## Development Commands
 
 ### Linting and Type Checking
 
 ```bash
-# Lint entire codebase (src/ and tests/)
-scripts/format-and-lint.sh
-
-# Lint specific Python files only
-scripts/format-and-lint.sh path/to/file.py path/to/another.py
-
-# Lint only changed Python files (useful before committing)
+scripts/format-and-lint.sh                       # entire codebase
+scripts/format-and-lint.sh path/to/file.py       # specific files
 scripts/format-and-lint.sh $(git diff --name-only --cached | grep '\.py$')
 ```
 
-This script runs: `ruff check --fix`, `ruff format`, `basedpyright`, `pylint`, and code conformance
-checks.
-
-**Code Conformance**: The project uses ast-grep to enforce pattern-based rules (e.g., banning
-`asyncio.sleep()` in tests). Rules are defined in `.ast-grep/rules/`. See
-[.ast-grep/rules/README.md](.ast-grep/rules/README.md) for active rules and
+This runs `ruff check --fix`, `ruff format`, `basedpyright`, `pylint`, and code conformance checks
+(ast-grep pattern rules, e.g. banning `asyncio.sleep()` in tests). Rules live in `.ast-grep/rules/`;
+see [.ast-grep/rules/README.md](.ast-grep/rules/README.md) and
 [.ast-grep/EXEMPTIONS.md](.ast-grep/EXEMPTIONS.md) for exemption guidance.
 
-**IMPORTANT**: `scripts/format-and-lint.sh` MUST pass before committing. NEVER use
-`git commit --no-verify` -- all lint failures must be fixed or properly disabled.
+`scripts/format-and-lint.sh` must pass before committing, and never use `git commit --no-verify` —
+lint failures must be fixed or properly disabled.
 
 ### Using the `llm` CLI
 
-- `llm -f myscript.py 'explain this code'` - Analyze a script
-- `git diff | llm -s 'Describe these changes'` - Understand code changes
-- `llm -f error.log 'debug this error'` - Debug from log files
-- `llm -f file1.py -f file2.py 'how do these interact?'` - Analyze multiple files
+The `llm` CLI is available for ad-hoc analysis, e.g.
+`llm -f file1.py -f file2.py 'how do these interact?'` or
+`git diff | llm -s 'Describe these changes'`.
 
 ### Testing
 
 ```bash
-# Run all tests
-poe test  # Note: You will need a long timeout - something like 15 minutes
-
-# Run tests with PostgreSQL (production database)
-poe test-postgres  # Quick mode with -xq
-poe test-postgres-verbose  # Verbose mode with -xvs
-
-# Run specific test files
+poe test                    # everything (needs a long timeout — ~15 minutes)
+poe test-postgres           # PostgreSQL (production database), quick mode
+poe test-postgres-verbose   # PostgreSQL, verbose
 pytest tests/functional/test_specific.py -xq
 ```
 
-**Test Results Summary:** When `poe test` completes, it writes a summary to `.poe-test-summary.txt`.
-This is useful when the full output is truncated (e.g., in LLM tool contexts):
+`poe test` writes a summary to `.poe-test-summary.txt` (RESULT, duration, which checks passed) —
+useful when the full output is truncated in LLM tool contexts.
 
-```bash
-cat .poe-test-summary.txt
-# Shows: RESULT: PASSED/FAILED, duration, and which checks passed/failed
-```
-
-See [tests/CLAUDE.md](tests/CLAUDE.md) for comprehensive testing guidance including:
-
-- Testing principles and patterns
-- Test fixtures documentation
-- Database backend selection (SQLite vs PostgreSQL)
-- CI debugging and troubleshooting
+See [tests/CLAUDE.md](tests/CLAUDE.md) for testing principles, fixtures, database backend selection,
+and CI debugging.
 
 ### Running the Application
 
 ```bash
-# Development mode with hot-reloading (recommended)
-poe dev
-# Access the app at http://localhost:5173 (or http://devcontainer-backend-1:5173 in dev container)
-
-# Main application entry point (production mode)
-python -m family_assistant
-
-# Backend API server only (for testing)
-poe serve
+poe dev                  # hot-reloading dev mode; http://localhost:5173
+                         # (http://devcontainer-backend-1:5173 in the dev container)
+python -m family_assistant   # production entry point
+poe serve                # backend API server only
 ```
 
 ### Database Migrations
 
 ```bash
-# Create new migration
 alembic revision --autogenerate -m "Description"
-
-# Apply migrations
 alembic upgrade head
-
-# Use DATABASE_URL="sqlite+aiosqlite:///family_assistant.db" with alembic to make a new revision
-# alembic migrations run on startup
 ```
+
+Use `DATABASE_URL="sqlite+aiosqlite:///family_assistant.db"` with alembic when making a new
+revision. Migrations run on startup.
 
 ### Environment Variables for Push Notifications
 
-The following environment variables are required for PWA push notification functionality:
+Required for PWA push notifications. Generate a key pair with
+`python scripts/generate_vapid_keys.py`.
 
-- **`VAPID_PRIVATE_KEY`** - VAPID private key for signing push messages
-
-  - Format: Raw key bytes encoded with URL-safe base64, no padding
-  - Generate using: `python scripts/generate_vapid_keys.py`
-  - Example: `a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2`
-
-- **`VAPID_CONTACT_EMAIL`** - Admin contact email for VAPID 'sub' claim
-
-  - Format: `mailto:admin@example.com` or similar email
-  - Used for notifications when subscriptions fail
-  - Example: `mailto:admin@example.com`
-
-- **`VAPID_PUBLIC_KEY`** - (Optional) VAPID public key
-
-  - Format: Same URL-safe base64 encoding as private key
-  - Auto-derived from private key if not provided
-  - Needed if you want to explicitly provide the public key for client distribution
-
-**Key Generation**:
-
-```bash
-# Generate a new VAPID key pair
-python scripts/generate_vapid_keys.py
-
-# Output format:
-# VAPID_PRIVATE_KEY=<url-safe-base64-no-padding>
-# VAPID_PUBLIC_KEY=<url-safe-base64-no-padding>
-```
+- **`VAPID_PRIVATE_KEY`** - Raw key bytes, URL-safe base64, no padding.
+- **`VAPID_CONTACT_EMAIL`** - Admin contact for the VAPID `sub` claim, e.g.
+  `mailto:admin@example.com`. Used for notifications when subscriptions fail.
+- **`VAPID_PUBLIC_KEY`** - Optional, same encoding. Auto-derived from the private key if unset; set
+  it explicitly if you want to control the value distributed to clients.
 
 ### Environment Variables for iOS Push Notifications (APNs)
 
-Native iOS push notifications are delivered through Apple Push Notification service (APNs) using
-provider-token authentication with a `.p8` auth key. The APNs sender is enabled only when
-`APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID` and a private key are all configured. All of these
-map to the `apns` config section.
+Native iOS push is delivered through APNs using provider-token authentication with a `.p8` auth key.
+The sender is enabled only when `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID` and a private key
+are all configured. All map to the `apns` config section.
 
-- **`APNS_TEAM_ID`** - Apple Developer Team ID, used as the JWT `iss` claim.
-- **`APNS_KEY_ID`** - APNs auth key id, used as the JWT `kid` header.
-- **`APNS_AUTH_KEY`** - Contents of the `.p8` private key (PEM). Treated as a secret and redacted
-  from logged config.
+- **`APNS_TEAM_ID`** - Apple Developer Team ID, the JWT `iss` claim.
+- **`APNS_KEY_ID`** - APNs auth key id, the JWT `kid` header.
+- **`APNS_AUTH_KEY`** - Contents of the `.p8` private key (PEM). Secret, redacted from logged
+  config.
 - **`APNS_AUTH_KEY_PATH`** - Path to a `.p8` file (alternative to `APNS_AUTH_KEY`).
-- **`APNS_BUNDLE_ID`** - The app bundle id, sent as the `apns-topic` header.
-- **`APNS_USE_SANDBOX`** - Default APNs environment (`true` for sandbox) when a registered token
-  does not specify one. Each device token also carries its own `environment`, and a
-  sandbox/production mismatch (`BadDeviceToken`) is auto-corrected on the next send.
+- **`APNS_BUNDLE_ID`** - App bundle id, sent as the `apns-topic` header.
+- **`APNS_USE_SANDBOX`** - Default environment (`true` for sandbox) when a registered token does not
+  specify one. Each device token carries its own `environment`, and a sandbox/production mismatch
+  (`BadDeviceToken`) is auto-corrected on the next send.
 
 Clients register device tokens via `POST /api/ios/push-tokens` and unregister via
 `DELETE /api/ios/push-tokens/{device_token}` (both authenticated). See
@@ -311,37 +160,24 @@ Clients register device tokens via `POST /api/ios/push-tokens` and unregister vi
 
 ### Environment Variables for Email Intake
 
-The following environment variable can be used instead of hardcoding the value in `config.yaml`:
-
-- **`MAILGUN_WEBHOOK_SIGNING_KEY`** - Mailgun webhook signing key for verifying incoming email
-  webhooks
-
-  - Maps to `email_intake.mailgun_webhook_signing_key` in config
-  - Found in the Mailgun dashboard under Sending → Webhooks
-  - Example: `export MAILGUN_WEBHOOK_SIGNING_KEY=your-signing-key-here`
+- **`MAILGUN_WEBHOOK_SIGNING_KEY`** - Maps to `email_intake.mailgun_webhook_signing_key`. Verifies
+  incoming email webhooks; found in the Mailgun dashboard under Sending → Webhooks.
 
 ### Environment Variables for Google Integration (Gmail & Drive)
 
-Per-user Gmail and Drive access is enabled by configuring an OAuth client in Google Cloud Console
-and a Fernet encryption key for storing refresh tokens at rest. All three secrets below must be
-present; if any is missing the integration is disabled at startup with a clear error naming the
-unmet condition. See also `docs/design/user-scoped-google-data-access.md` and the
-[Connect your Google account](docs/user/USER_GUIDE.md#connect-your-google-account) section of the
-user guide.
+Per-user Gmail and Drive access needs an OAuth client from Google Cloud Console plus a Fernet key
+for encrypting refresh tokens at rest. All three secrets must be present; if any is missing the
+integration is disabled at startup with an error naming the unmet condition. See
+`docs/design/user-scoped-google-data-access.md` and
+[Connect your Google account](docs/user/USER_GUIDE.md#connect-your-google-account).
 
-- **`GOOGLE_OAUTH_CLIENT_ID`** - OAuth 2.0 client ID from Google Cloud Console.
+- **`GOOGLE_OAUTH_CLIENT_ID`** → `google_integration.oauth_client_id`.
 
-  - Maps to `google_integration.oauth_client_id` in config.
-  - Example: `export GOOGLE_OAUTH_CLIENT_ID=1234567890-abc.apps.googleusercontent.com`
-
-- **`GOOGLE_OAUTH_CLIENT_SECRET`** - OAuth 2.0 client secret. Treated as a secret and redacted from
+- **`GOOGLE_OAUTH_CLIENT_SECRET`** → `google_integration.oauth_client_secret`. Secret; redacted from
   logged config and diagnostics export.
 
-  - Maps to `google_integration.oauth_client_secret` in config.
-  - Example: `export GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-...`
-
-- **`CREDENTIAL_ENCRYPTION_KEY`** - URL-safe base64-encoded Fernet key used to encrypt stored OAuth
-  refresh tokens at rest. Treated as a secret and redacted from logged config. Generate one with:
+- **`CREDENTIAL_ENCRYPTION_KEY`** → `google_integration.credential_encryption_key`. URL-safe
+  base64-encoded Fernet key, secret and redacted. Generate with:
 
   ```bash
   python -c "from family_assistant.services.credential_encryption import generate_key; print(generate_key())"
@@ -351,96 +187,80 @@ user guide.
   a configuration error: the stored connection row is left untouched, so restoring the correct key
   restores access without any user re-authorization.
 
-  - Maps to `google_integration.credential_encryption_key` in config.
-
 **`google_integration` config section:**
 
 ```yaml
 google_integration:
-  oauth_client_id: ""        # env GOOGLE_OAUTH_CLIENT_ID
-  oauth_client_secret: ""    # env GOOGLE_OAUTH_CLIENT_SECRET (secret, redacted)
-  credential_encryption_key: ""  # env CREDENTIAL_ENCRYPTION_KEY (secret, redacted)
-
-  # Operator-tunable DATA scopes. This list narrows the grant — you can remove
-  # Drive scopes to get Gmail-only, for example. Only scopes used by shipped
-  # deterministic tools are allowed; other scopes cause a startup error.
-  # The identity scopes openid and email are always appended in code and are not
-  # configurable here.
+  oauth_client_id: ""
+  oauth_client_secret: ""
+  credential_encryption_key: ""
   scopes:
     - "https://www.googleapis.com/auth/gmail.readonly"
     - "https://www.googleapis.com/auth/gmail.compose"
     - "https://www.googleapis.com/auth/drive.readonly"
     - "https://www.googleapis.com/auth/drive.file"
-
-  # Require taint_policy.mode=enforce plus the matrix floor before registering
-  # the Gmail/Drive tools. Set false to accept running them under observe mode;
-  # the waiver is logged at startup and shown on the integration status endpoint.
   require_taint_enforcement: true
 ```
 
-**Scopes allowlist semantics.** The `scopes` list exists to *narrow* the grant, not to broaden it.
-Adding an unsupported scope (`gmail.send`, `gmail.modify`, full `drive`, etc.) disables the
-integration with a clear startup error. Tool registration follows the configured scopes:
-`gmail_search`, `gmail_get_message`, and `gmail_get_attachment` require `gmail.readonly`;
-`gmail_create_draft` requires `gmail.compose`; `drive_search` registers with either `drive.readonly`
-or `drive.metadata.readonly`; `drive_get_file` requires `drive.readonly`; and `drive_write_file`
-requires `drive.file`. The draft tool never sends email, although Google's `gmail.compose` OAuth
-scope itself also authorizes sending. Drive writes are deterministically confined to the app-created
-Family Assistant folder and app-marked files within it.
+**Scopes allowlist semantics.** The `scopes` list *narrows* the grant — remove Drive scopes to get
+Gmail-only, for example. Only scopes used by shipped deterministic tools are allowed; adding an
+unsupported scope (`gmail.send`, `gmail.modify`, full `drive`, etc.) disables the integration with a
+startup error. The identity scopes `openid` and `email` are always appended in code and are not
+configurable. Tool registration follows the configured scopes: `gmail_search`, `gmail_get_message`
+and `gmail_get_attachment` require `gmail.readonly`; `gmail_create_draft` requires `gmail.compose`;
+`drive_search` registers with either `drive.readonly` or `drive.metadata.readonly`; `drive_get_file`
+requires `drive.readonly`; `drive_write_file` requires `drive.file`. The draft tool never sends
+email, although Google's `gmail.compose` scope itself also authorizes sending. Drive writes are
+deterministically confined to the app-created Family Assistant folder and app-marked files within
+it.
 
-**Enablement conditions.** All of the following must hold for the integration to enable (validated
-at startup):
+**Enablement conditions** (validated at startup): the three secrets are set; the `scopes` list
+passes allowlist validation; and real web authentication is active (OIDC configured, `users` block
+resolution in effect) — the development `test_user` mode shares one identity across all callers and
+therefore refuses to enable this feature.
 
-- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `CREDENTIAL_ENCRYPTION_KEY` are all
-  set.
-- The `scopes` list passes allowlist validation.
-- Real web authentication is active (OIDC configured, `users` block resolution in effect). The
-  development `test_user` mode shares one identity across all callers and therefore refuses to
-  enable this feature.
-
-**`require_taint_enforcement`.** Defaults to `true`. With the default, the tools only register when
+**`require_taint_enforcement`.** Defaults to `true`: the tools only register when
 `taint_policy.mode` is `enforce` and the effective policy matrix floors the key exfiltration sinks
 (`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`,
-`sensitive_read_broadening`) at `confirm` for untrusted content. If the check fails, the tools are
-not registered and the integration status endpoint reports the unmet condition. Setting
-`require_taint_enforcement: false` waives the check (logged at startup and surfaced on the status
-endpoint); the tools then register regardless of taint mode.
+`sensitive_read_broadening`) at `confirm` for untrusted content. If the check fails the tools are
+not registered and the integration status endpoint reports the unmet condition. Setting it to
+`false` waives the check (logged at startup, surfaced on the status endpoint) and the tools register
+regardless of taint mode.
 
-**`taint_policy.history_taint_epoch`.** Optional timezone-aware ISO-8601 timestamp (quote the value
-in YAML; naive or unparseable values fail startup) granting a read-time amnesty to legacy
-message-history taint metadata. Rows persisted before the epoch contribute taint only from
-explicitly attributed sources — the synthetic `legacy_missing_taint_metadata` fallback and anonymous
-escalation artifacts are ignored and the row's tier is recomputed from what remains — while rows at
-or after the epoch are trusted as recorded (a post-epoch row missing metadata logs an ERROR as a
-write-path regression alarm). One filter is timestamp-independent: sources carrying the
-`legacy_missing_taint_metadata` label *inside* persisted metadata are second-hand echoes of another
-row's read-time fallback, so they are dropped and the row's tier recomputed even for post-epoch rows
-(first-hand missing-metadata rows still escalate and fire the ERROR alarm; anonymous post-epoch
-artifacts are read conservatively). Deployment-level only; profiles cannot set it. **Set the epoch
-to the instant this feature is DEPLOYED (or later), never earlier** (e.g. not the taint-metadata
-migration date `2026-07-06`): rows written before deploy may contain re-baked poison that the
-timestamp-independent echo filter only partially neutralizes, so an earlier epoch would keep
-re-seeding it. `GET /api/diagnostics/taint-audit` reports the configured epoch and pre/post-epoch
-row splits so the poison collapse can be verified before switching `taint_policy.mode` to `enforce`.
+**`taint_policy.history_taint_epoch`.** Optional timezone-aware ISO-8601 timestamp (quote it in
+YAML; naive or unparseable values fail startup) granting a read-time amnesty to legacy
+message-history taint metadata. Deployment-level only; profiles cannot set it.
+
+- Rows persisted **before** the epoch contribute taint only from explicitly attributed sources: the
+  synthetic `legacy_missing_taint_metadata` fallback and anonymous escalation artifacts are ignored
+  and the row's tier is recomputed from what remains.
+- Rows **at or after** the epoch are trusted as recorded; a post-epoch row missing metadata logs an
+  ERROR as a write-path regression alarm, and anonymous post-epoch artifacts are read
+  conservatively.
+- One filter is timestamp-independent: sources carrying the `legacy_missing_taint_metadata` label
+  *inside* persisted metadata are second-hand echoes of another row's read-time fallback, so they
+  are dropped and the tier recomputed even for post-epoch rows. First-hand missing-metadata rows
+  still escalate and fire the ERROR alarm.
+- **Set the epoch to the instant this feature is DEPLOYED (or later), never earlier** (e.g. not the
+  taint-metadata migration date `2026-07-06`): rows written before deploy may contain re-baked
+  poison that the echo filter only partially neutralizes, so an earlier epoch would keep re-seeding
+  it.
+- `GET /api/diagnostics/taint-audit` reports the configured epoch and pre/post-epoch row splits, so
+  the poison collapse can be verified before switching `taint_policy.mode` to `enforce`.
+
 See [docs/design/taint-history-epoch-amnesty.md](docs/design/taint-history-epoch-amnesty.md).
 
 ### Environment Variable for Read-Only Diagnostics Access
 
-- **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret that grants read-only access to the
-  error-log, frontend-telemetry, diagnostics-export, taint-audit, and per-profile tool-inventory
-  endpoints (`GET /api/errors/`, `GET /api/errors/{id}`, `GET /api/errors/telemetry`,
+- **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret granting read-only access to
+  `GET /api/errors/`, `GET /api/errors/{id}`, `GET /api/errors/telemetry`,
   `GET /api/diagnostics/export`, `GET /api/diagnostics/taint-audit`, and
-  `GET /api/debug/profiles/tools`) without a full user session or API token. Intended for an
-  external monitor or scraper that only needs to pull diagnostics.
-
-  - When set, supply it as either `Authorization: Bearer <token>` or `X-API-Token: <token>`.
-  - It only unlocks the diagnostics/error read endpoints and the tool-inventory endpoint (which
-    exposes only tool names and sizes — no prompts or policy bodies); every other endpoint still
-    requires normal authentication. In particular `GET /api/debug/profiles` (full config dump) is
-    **not** covered and still needs a normal session/API token.
-  - The token is compared with a constant-time check. Leave the variable unset to disable the
-    read-only path entirely (the endpoints then require normal authentication).
-  - Example: `export DIAGNOSTICS_READONLY_TOKEN=$(openssl rand -hex 32)`
+  `GET /api/debug/profiles/tools` without a user session or API token — intended for an external
+  monitor that only pulls diagnostics. Supply it as `Authorization: Bearer <token>` or
+  `X-API-Token: <token>`; it is compared with a constant-time check. Every other endpoint still
+  requires normal authentication — in particular `GET /api/debug/profiles` (full config dump) is
+  **not** covered, while the tool-inventory endpoint it does cover exposes only tool names and
+  sizes, no prompts or policy bodies. Leave it unset to disable the read-only path entirely.
 
 ### Frontend error reports vs. telemetry (breadcrumbs)
 
@@ -451,41 +271,39 @@ Frontend clients POST to `POST /api/errors/`. The report's optional `severity` s
   web frontend never sets `severity`, so its reports — including React error-boundary catches that
   use `error_type: "component_error"` — stay here.
 - `"info"` / `"warning"` / `"debug"` → **telemetry lane**: recorded in an in-memory ring buffer and
-  logged below the `error_logs` threshold, so high-frequency diagnostic breadcrumbs never drown
-  genuine errors. The iOS app sends its sync breadcrumbs (stream restarts/disconnects, resync
-  phases, transport events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader
-  gate as the error endpoints) or the engineer-profile `read_frontend_telemetry` tool. The buffer is
-  non-persistent (dropped on restart). See
+  logged below the `error_logs` threshold, so high-frequency breadcrumbs never drown genuine errors.
+  The iOS app sends its sync breadcrumbs (stream restarts/disconnects, resync phases, transport
+  events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader gate) or the
+  engineer-profile `read_frontend_telemetry` tool. The buffer is dropped on restart. See
   [docs/design/ios-frontend-telemetry-lane.md](docs/design/ios-frontend-telemetry-lane.md).
 
 ### Global Tool Policy (`global_tools_policy`)
 
 `global_tools_policy` is a top-level config section whose rules are injected into **every**
 profile's tool-policy engine, regardless of the profile's own `tools_policy` (which otherwise
-replaces the shipped defaults wholesale). Use it for tools that must be available in all contexts.
-Operator policy still overrides global rules. The shipped default uses it to make
-`report_technical_problem` available in every profile so the assistant can always report bugs (they
-surface in the error-log and diagnostics endpoints above), and to make `read_text_attachment` and
-`jq_query` available in every profile so the assistant can always read back tool results that
-exceeded the large-result threshold and were auto-converted to attachments.
+replaces the shipped defaults wholesale). Operator policy still overrides global rules. The shipped
+default uses it for `report_technical_problem` (so the assistant can always report bugs, which
+surface in the error-log and diagnostics endpoints above) and for `read_text_attachment` and
+`jq_query` (so the assistant can always read back tool results that exceeded the large-result
+threshold and were auto-converted to attachments).
 
 ### Gemini Computer Use (visual browser profile)
 
-The `browser_visual_profile` drives a browser via Gemini's native computer-use capability. It is
-enabled per profile with `enable_computer_use: true` on `processing_config` (Google provider only;
-combining it with a non-Google provider or `retry_config` is a startup error). When enabled:
+The `browser_visual_profile` drives a browser via Gemini's native computer-use capability, enabled
+per profile with `enable_computer_use: true` on `processing_config` (Google provider only; combining
+it with a non-Google provider or `retry_config` is a startup error). When enabled:
 
-- The `types.Tool(computer_use=...)` tool is attached to every request with **prompt-injection
-  detection always on** (no waiver knob; detections surface as safety confirmations).
+- The `types.Tool(computer_use=...)` tool is attached to every request with prompt-injection
+  detection always on (no waiver knob; detections surface as safety confirmations).
 - The model's predefined action space (`click`, `type`, `scroll`, `drag_and_drop`, …) executes
   through the shared `BrowserBackend` (local Playwright or remote browser-server). Actions the
   browser-server REST API cannot faithfully execute (non-left buttons, multi-clicks, key down/up)
   fail with an explicit error rather than degrading silently; `computer_use_excluded_functions` on
   `processing_config` can exclude them from the action space.
-- When the model attaches a `safety_decision` requiring confirmation to an action (payments,
-  messaging, terms-of-service, suspected prompt injection), the action pauses for user confirmation
-  through the standard tool-confirmation flow and, once approved, the acknowledgement is returned to
-  the API. Declines are reported back to the model without ending the turn.
+- When the model attaches a `safety_decision` requiring confirmation (payments, messaging,
+  terms-of-service, suspected prompt injection), the action pauses for user confirmation through the
+  standard tool-confirmation flow and, once approved, the acknowledgement is returned to the API.
+  Declines are reported back to the model without ending the turn.
 
 See [docs/design/gemini-computer-use-native.md](docs/design/gemini-computer-use-native.md) for the
 full design.
@@ -496,154 +314,56 @@ The embedding generator is selected from `embedding_model`/`embedding_provider`.
 provider is inferred from the model name (`gemini/<model>` for Google Gemini, a path starting with
 `/` for local sentence-transformer models, `mock-deterministic-embedder` for tests).
 
-To use **any OpenAI-compatible embeddings endpoint** (OpenAI itself, OpenRouter, or a self-hosted
-inference server), set `embedding_provider` to `openai`. The `embedding_model` value is then sent to
-the API verbatim, so use the model id the endpoint expects.
+Set `embedding_provider` to `openai` to use any OpenAI-compatible embeddings endpoint (OpenAI,
+OpenRouter, or a self-hosted inference server); `embedding_model` is then sent to the API verbatim.
 
-- **`EMBEDDING_PROVIDER`** - Maps to `embedding_provider`. Set to `openai` to use an
-  OpenAI-compatible endpoint. Leave unset to infer the provider from `embedding_model`.
-- **`EMBEDDING_BASE_URL`** - Maps to `embedding_base_url`. Base URL of the OpenAI-compatible
-  endpoint (only used when `embedding_provider=openai`). For OpenRouter use
-  `https://openrouter.ai/api/v1`. Leave unset for the official OpenAI API.
-- **`EMBEDDING_API_KEY`** - Maps to `embedding_api_key`. API key for the endpoint. Falls back to
-  `openai_api_key` / `OPENAI_API_KEY` when unset. Treated as a secret and redacted from logged
-  config.
-- **`EMBEDDING_DIMENSIONS`** - Maps to `embedding_dimensions`. Only forwarded as the `dimensions`
-  request parameter when explicitly set, so the chosen model must support that output size (e.g.
-  OpenAI's `text-embedding-3-*` models). Leave it unset for models that do not accept the field
-  (e.g. `text-embedding-ada-002`) to use the model's native size. When set, it must also match the
-  vector storage column dimensionality.
-
-**Example: OpenRouter (`openai/text-embedding-3-small`)**
-
-```bash
-export EMBEDDING_PROVIDER=openai
-export EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
-export EMBEDDING_API_KEY=sk-or-...           # your OpenRouter key
-export EMBEDDING_MODEL=openai/text-embedding-3-small
-export EMBEDDING_DIMENSIONS=1536
-```
-
-**Example: OpenAI directly**
-
-```bash
-export EMBEDDING_PROVIDER=openai
-export OPENAI_API_KEY=sk-...
-export EMBEDDING_MODEL=text-embedding-3-small
-export EMBEDDING_DIMENSIONS=1536
-```
+- **`EMBEDDING_PROVIDER`** → `embedding_provider`. Set to `openai` for an OpenAI-compatible
+  endpoint; leave unset to infer from `embedding_model`.
+- **`EMBEDDING_BASE_URL`** → `embedding_base_url`. Endpoint base URL, only used when
+  `embedding_provider=openai` (OpenRouter: `https://openrouter.ai/api/v1`). Leave unset for the
+  official OpenAI API.
+- **`EMBEDDING_API_KEY`** → `embedding_api_key`. Falls back to `openai_api_key` / `OPENAI_API_KEY`
+  when unset. Secret, redacted from logged config.
+- **`EMBEDDING_DIMENSIONS`** → `embedding_dimensions`. Only forwarded as the `dimensions` request
+  parameter when explicitly set, so the model must support that output size (e.g. OpenAI's
+  `text-embedding-3-*`). Leave it unset for models that reject the field (e.g.
+  `text-embedding-ada-002`) to use the native size. When set, it must also match the vector storage
+  column dimensionality.
 
 ### Code Generation
 
-```bash
-# Generate SYMBOLS.md file
-poe symbols
-```
+`poe symbols` regenerates `SYMBOLS.md`.
 
 ### Type Inference with MonkeyType
 
-MonkeyType traces test execution to infer types from actual runtime values. This is useful for:
+MonkeyType traces test execution to infer types, useful for annotating **untyped** functions. Trace
+with `poe trace tests/unit/test_my_module.py`, inspect with
+`monkeytype stub family_assistant.my_module`, then apply with
+`monkeytype apply family_assistant.my_module` (which only touches untyped code) and run `poe lint`
+to fix imports.
 
-- Adding type hints to **untyped** functions
-- Generating stubs to understand what types are actually used
+Only use `--ignore-existing-annotations` to narrow overly broad `Any` types in code you've verified
+is called with specific types. It overwrites existing annotations with whatever the tests happened
+to exercise, which wrecks protocol types (`LLMInterface` → `MockLLMClient`), optional parameters
+(`Clock | None` → `None`), and pulls test mocks into production imports.
 
-**Commands:**
-
-```bash
-# Trace tests to collect type information
-poe trace tests/unit/
-
-# List modules with collected type data
-monkeytype list-modules
-
-# View inferred types as stubs (read-only, for inspection)
-monkeytype stub family_assistant.module_name
-
-# Apply types to untyped code only (safe - won't overwrite existing types)
-monkeytype apply family_assistant.module_name
-```
-
-**When to use `--ignore-existing-annotations`:**
-
-Use with caution. This flag overwrites existing type annotations with what MonkeyType observed
-during test execution. This is problematic for:
-
-- Protocol/interface types (e.g., `LLMInterface` gets replaced with `MockLLMClient`)
-- Optional parameters (e.g., `Clock | None` becomes `None` if tests don't use the parameter)
-- Production code with proper types (test mocks get added as imports)
-
-Only use `--ignore-existing-annotations` for narrowing overly broad `Any` types in code that you've
-verified is only called with specific types.
-
-**Safe workflow:**
-
-```bash
-# 1. Trace specific tests
-poe trace tests/unit/test_my_module.py
-
-# 2. Inspect the stubs first
-monkeytype stub family_assistant.my_module
-
-# 3. Apply only to untyped code (no --ignore-existing-annotations)
-monkeytype apply family_assistant.my_module
-
-# 4. Run linting to fix imports
-poe lint
-```
-
-**Caveats:**
-
-- MonkeyType only sees types used during test execution—test coverage determines accuracy
-- Test mocks may pollute inferred types (e.g., `RuleBasedMockLLMClient` instead of `LLMInterface`)
-- The `monkeytype.sqlite3` database file is gitignored
-- Run `rm monkeytype.sqlite3` to clear the trace database between runs
+The `monkeytype.sqlite3` trace database is gitignored; `rm monkeytype.sqlite3` to clear it between
+runs.
 
 ### Finding Symbol Definitions and Signatures
 
-```bash
-# Use symbex to find symbol definitions and signatures
-# Docs: https://github.com/simonw/symbex
-
-# Find a specific function or class
-symbex my_function
-symbex MyClass
-
-# Show signatures for all symbols
-symbex -s
-
-# Search with wildcards
-symbex 'test_*'
-symbex '*Tool.*'
-
-# Search in specific files
-symbex MyClass -f src/family_assistant/assistant.py
-```
+Use [symbex](https://github.com/simonw/symbex) to find definitions and signatures, e.g.
+`symbex MyClass`, `symbex -s`, `symbex '*Tool.*'`,
+`symbex MyClass -f src/family_assistant/assistant.py`.
 
 ### Making Large-Scale Changes: Prefer `ast-grep`
 
-`ast-grep` is available for making mechanical syntactic changes and is the tool of choice in most
-cases.
-
-**Note**: Use `ast-grep scan` for applying complex rule-based transformations (not `ast-grep run`).
-The `scan` command supports YAML rule files and inline rules with `--inline-rules`.
-
-**Quick example:**
+`ast-grep` is the tool of choice for mechanical syntactic changes. Use `ast-grep scan` (not
+`ast-grep run`) for rule-based transformations — `scan` supports YAML rule files and
+`--inline-rules`. Simple replacements work directly:
 
 ```bash
-# Simple pattern/replace
 ast-grep -U -p 'oldFunction($$$ARGS)' -r 'newFunction($$$ARGS)' .
-
-# Complex transformation with conditions
-ast-grep -U --inline-rules '
-id: my-transformation
-language: python
-rule:
-  pattern: my_pattern($$$ARGS)
-  not:
-    has:
-      pattern: required_arg = $_
-  fix: my_pattern($$$ARGS, required_arg=default)
-' .
 ```
 
 See [docs/development/ast-grep-recipes.md](docs/development/ast-grep-recipes.md) for detailed
@@ -653,149 +373,77 @@ transformation recipes and patterns.
 
 Family Assistant is an LLM-powered application for family information management and task
 automation. It provides multiple interfaces (Telegram, Web UI, Email webhooks) and uses a modular
-architecture built with Python, FastAPI, and SQLAlchemy.
-
-**For detailed architecture documentation**, see
-[docs/architecture-diagram.md](docs/architecture-diagram.md) which provides a comprehensive visual
-overview of:
-
-- System architecture and component interactions
-- Data flows and processing pipelines
-- Core components and their responsibilities
+architecture built with Python, FastAPI, and SQLAlchemy. See
+[docs/architecture-diagram.md](docs/architecture-diagram.md) for the detailed component and
+data-flow documentation.
 
 ### Key Design Patterns
 
 - **No Mutable Global State**: Except in the very outer layer of the application.
 - **Repository Pattern**: Data access logic encapsulated in repository classes, accessed via
-  DatabaseContext
+  DatabaseContext.
 - **Dependency Injection**: Non-trivial objects with external dependencies should be created using
   dependency injection. Core services should accept dependencies as constructor arguments rather
   than creating them internally.
-- **Testing with Real/Fake Dependencies**: Prefer using real or fake dependencies over mocks in
-  tests, especially functional tests. Mocks should only be used for external services where fakes
-  are not practical (e.g., Telegram). This ensures tests are more realistic and less brittle.
-- **Protocol-based Interfaces**: Uses Python protocols for loose coupling (ChatInterface,
-  LLMInterface, EmbeddingGenerator)
-- **Async/Await**: Fully asynchronous architecture using asyncio
-- **Context Managers**: Database operations use context managers for proper resource cleanup
-- **Retry Logic**: Built-in retry mechanisms for transient failures
-- **Event-Driven**: Loosely coupled components communicate via events
+- **Testing with Real/Fake Dependencies**: Prefer real or fake dependencies over mocks, especially
+  in functional tests. Mocks are only for external services where fakes are impractical (e.g.
+  Telegram).
+- **Protocol-based Interfaces**: Python protocols for loose coupling (ChatInterface, LLMInterface,
+  EmbeddingGenerator).
 
 ## Security Considerations
 
 ### Rule of Two for AI Agent Security
 
 Family Assistant follows the **"Rule of Two"** principle from
-[Meta's practical AI agent security framework](https://ai.meta.com/blog/practical-ai-agent-security/).
-This principle helps mitigate prompt injection vulnerabilities by ensuring agents satisfy no more
-than two of the following three properties in any given session:
+[Meta's practical AI agent security framework](https://ai.meta.com/blog/practical-ai-agent-security/):
+an agent should satisfy no more than two of the following three properties in any given session, so
+that no complete exfiltration or unauthorized-action chain exists.
 
 1. **[A]** Processing untrustworthy inputs
 2. **[B]** Accessing sensitive systems or private data
 3. **[C]** Changing state or communicating externally
 
-By restricting agents to any two properties simultaneously, we prevent complete exploit chains that
-could lead to data exfiltration or unauthorized actions.
-
 #### Trust Boundaries in Family Assistant
 
-When evaluating input trust levels:
+- **Trusted inputs**: direct messages from authorized users via Telegram or Web UI; notes, tasks and
+  calendar events created by the user; forwarded messages from known contacts (implicitly vetted).
+- **Untrusted inputs**: emails received via webhooks (sender may be forged, content may contain
+  injections); forwarded emails (original sender unknown, headers manipulable); web-scraped content
+  or external API responses; anything from unauthenticated sources.
 
-- **Trusted inputs**: Content directly created or fully vetted by authorized users
-
-  - Direct messages from authorized users via Telegram or Web UI
-  - Notes, tasks, and calendar events created by the user
-  - Forwarded messages from known contacts (user has implicitly vetted the content)
-
-- **Untrusted inputs**: Content from external sources that may not have been fully vetted
-
-  - Emails received via webhooks (sender may be forged, content may contain injections)
-  - Forwarded emails (original sender unknown, headers may be manipulated)
-  - Web-scraped content or external API responses
-  - Any content from unauthenticated sources
-
-- This approach requires enforcing strong authentication and authorization at the interface
-  boundaries The current architecture primarily operates in **[BC]** mode:
-
-- Input filtering and authentication ensure only authorized users can interact with the system
-
-- The agent can access sensitive data (notes, calendar, contacts) and take actions (creating tasks,
-  sending notifications)
-
-- This approach requires maintaining strong authentication and authorization at the interface
-  boundaries
+The architecture primarily operates in **[BC]** mode: the agent can access sensitive data (notes,
+calendar, contacts) and take actions (creating tasks, sending notifications), so it depends on
+strong authentication and authorization at the interface boundaries.
 
 #### Processing Profiles
 
-**Processing profiles** provide a practical mechanism for implementing Rule of Two constraints by
-dynamically adjusting available tools and supervision requirements based on input trust level:
+**Processing profiles** implement Rule of Two constraints by adjusting available tools and
+supervision requirements based on input trust level:
 
-1. **Trusted Profile [BC]**: Full tool access when processing input from authorized users
+1. **Trusted Profile [BC]**: full tool access for direct user interactions via Telegram or Web UI;
+   relies on authentication at the interface boundary.
+2. **Untrusted-Readonly Profile [AB]**: can read sensitive data but cannot change state or
+   communicate externally (tools disabled or requiring human approval). Example: "Summarize this
+   email" — reads context, cannot send results anywhere.
+3. **Untrusted-Sandboxed Profile [AC]**: cannot access sensitive user data, but can take scoped/rate
+   limited actions. Example: "What's the weather like?" — calls external APIs, cannot read the
+   user's calendar.
+4. **Engineer Profile [B]**: read-only diagnostic access (source code, database, error logs, notes)
+   for debugging the application. Used via `/engineer` or by delegating to the `engineer` profile.
+   It cannot change state or communicate externally on its own; every side effect requires user
+   confirmation — creating GitHub issues, reconnecting an MCP server, and delegation in either
+   direction, so a human approves before the engineer hands off a fix or another profile hands it an
+   investigation. Example: "Why isn't my daily brief firing?"
+5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) with a
+   higher iteration limit (100) for deep multi-step reasoning. Used via `/complex` or delegation
+   from the default assistant. **Not to be confused with `spawn_worker`**, which launches isolated
+   coding agents (Claude Code / Gemini CLI) in sandboxed containers with NO access to Family
+   Assistant tools or data. Use `complex_tasks` when the task needs FA context (notes, calendar,
+   documents, Home Assistant, etc.); use `spawn_worker` for standalone coding or computing tasks.
 
-   - All tools available (data access, state changes, communication)
-   - Used for direct user interactions via Telegram or Web UI
-   - Relies on strong authentication at interface boundaries
-
-2. **Untrusted-Readonly Profile [AB]**: Processing untrusted input with data access but no actions
-
-   - Can read sensitive data (notes, calendar, contacts)
-   - Cannot change state or communicate externally (tools disabled or require human approval)
-   - Useful for analyzing emails or external content while preventing exfiltration
-   - Example: "Summarize this email" - can read context but not send results anywhere
-
-3. **Untrusted-Sandboxed Profile [AC]**: Processing untrusted input with actions but no sensitive
-   data access
-
-   - Cannot access sensitive user data
-   - Can take actions or communicate (with appropriate scoping/rate limits)
-   - Useful for processing external content that doesn't require personal context
-   - Example: "What's the weather like?" - can call external APIs but not read user's calendar
-
-4. **Engineer Profile [B]**: Read-only diagnostic access for debugging the application
-
-   - Can read sensitive data (source code, database, error logs, notes)
-   - Cannot change state or communicate externally on its own; delegation to/from the engineer is
-     allowed but always requires user confirmation, so a human approves before the engineer hands
-     off a fix or another profile hands it an investigation
-   - Side effects (all require user confirmation): creating GitHub issues, reconnecting an MCP
-     server, and delegating to another profile
-   - Used via `/engineer` slash command or by delegating to the `engineer` profile (with
-     confirmation)
-   - Example: "Why isn't my daily brief firing?" - reads DB state, error logs, source code
-
-5. **Complex Tasks Profile [BC]**: Advanced reasoning with OpenAI GPT-5.6-sol for complex tasks
-
-   - Full tool access (same as Trusted Profile) for comprehensive task handling
-   - Uses OpenAI GPT-5.6-sol (`gpt-5.6-sol`) for superior multi-step reasoning
-   - Higher iteration limit (100) for deep analysis workflows
-   - Used via `/complex` slash command or delegation from default assistant
-   - Example: "Plan a detailed family vacation itinerary considering everyone's preferences"
-   - **Not to be confused with `spawn_worker`**: `spawn_worker` launches isolated coding agents
-     (Claude Code / Gemini CLI) in sandboxed containers with NO access to Family Assistant tools or
-     data. Use `complex_tasks` when the task needs FA context (notes, calendar, documents, Home
-     Assistant, etc.); use `spawn_worker` for standalone coding or computing tasks.
-
-**Dynamic Profile Switching**: The system could switch profiles based on:
-
-- Input source detection (direct message vs forwarded email)
-- Explicit user commands ("analyze this untrusted email in readonly mode")
-- Tool invocation patterns (attempting to access sensitive data triggers confirmation prompt)
-- Content analysis (detecting potential injection attempts)
-
-**Future Considerations**: As the system evolves to handle more untrusted inputs (e.g., email
-analysis), implementing explicit processing profiles will become increasingly important for
-maintaining security boundaries while preserving functionality.
-
-**Important Limitations**: The Rule of Two specifically addresses prompt injection risks. It does
-not protect against other AI agent vulnerabilities such as:
-
-- Hallucinations or incorrect information
-- Excessive privileges or over-permissioned tools
-- Agent mistakes or unintended actions
-- Traditional security vulnerabilities (SQL injection, XSS, etc.)
-
-The Rule of Two complements—rather than replaces—traditional security practices like least-privilege
-access, input validation, and defense-in-depth approaches.
+The Rule of Two addresses prompt injection specifically; it complements rather than replaces
+least-privilege access, input validation, and defense in depth.
 
 ## Native Codex PR Review Policy
 
@@ -805,39 +453,28 @@ access, input validation, and defense-in-depth approaches.
 
 ## Development Guidelines
 
-- ALWAYS make a plan before you make any nontrivial changes.
-- Ask for plan approval when there are significant decisions, tradeoffs, or ambiguity that require
-  user input (for example: major rearchitecture, reimplementation, or technical decisions that may
-  require judgement calls).
-- If the plan is just restating a clear user request with no meaningful choices to make, do not
-  pause for approval—proceed directly with the requested implementation.
+- Make a plan before any nontrivial change. Ask for plan approval when there are significant
+  decisions, tradeoffs, or ambiguity requiring user input (major rearchitecture, reimplementation,
+  judgement calls). If the plan just restates a clear user request with no meaningful choices, skip
+  approval and proceed.
 - Significant changes should have the plan written to docs/design for approval and future
   documentation.
-- When completing a user-visible feature, always update docs/user/USER_GUIDE.md and tell the
-  assistant how it works in the system prompt in prompts.yaml or in tool descriptions. This is NOT
-  optional or low priority.
-- When solving a problem, always consider whether there's a better long term fix and ask the user
-  whether they prefer the tactical pragmatic fix or the "proper" long term fix. Look out for design
-  or code smells. Refactoring is relatively cheap in this project - cheaper than leaving something
-  broken.
+- When completing a user-visible feature, update docs/user/USER_GUIDE.md and tell the assistant how
+  it works in the system prompt in prompts.yaml or in tool descriptions. This is not optional.
+- When solving a problem, consider whether there's a better long term fix and ask the user whether
+  they prefer the tactical pragmatic fix or the "proper" one. Look out for design or code smells.
+  Refactoring is relatively cheap in this project - cheaper than leaving something broken.
 - **Behaviour-altitude principle:** Common/reasonable scenarios should get ideal behaviour;
   uncommon/unusual scenarios should get reasonable (correct, non-broken) behaviour, not necessarily
   ideal behaviour. Do not build elaborate machinery to give rare scenarios ideal behaviour when
   reasonable behaviour suffices; that trades disproportionate complexity for negligible benefit and
   tends to spawn the machinery-edge-case spiral (see the cost/benefit gate in
   `REVIEW_GUIDELINES.md`).
-- IMPORTANT: You NEVER leave tests broken. We do not commit changes that cause tests to break. You
-  NEVER make excuses like saying that test failures are 'unrelated' or 'separate issues'. You ALWAYS
-  fix ALL test failures, even if you don't think you caused them.
-- **Assumption about test failures**: You are responsible for fixing test failures in or near the
-  code you changed, even if you believe they are pre-existing. The project does not commit with
-  failing tests, so treat a failure anywhere near your change as a result of your changes and
-  resolve it before committing. For flakiness in areas completely unrelated to your change, see the
-  flaky-test guidance under "Debugging and Change Verification" below.
-- **Hook bypassing**: NEVER attempt to bypass pre-commit hooks, PreToolUse hooks, or any other
-  verification hooks (e.g., using `--no-verify`, `--no-gpg-sign`) without explicit permission from
-  the user. These hooks exist to enforce quality standards and prevent broken code from being
-  committed.
+- **Never leave tests broken.** Fix all test failures rather than dismissing them as 'unrelated' or
+  'pre-existing' — you are responsible for failures in or near the code you changed. For flakiness
+  in areas completely unrelated to your change, see "Debugging and Change Verification" below.
+- **Hook bypassing**: never bypass pre-commit hooks, PreToolUse hooks, or other verification hooks
+  (e.g. `--no-verify`, `--no-gpg-sign`) without explicit permission from the user.
 
 ### Refactoring and Error Handling
 
@@ -862,59 +499,48 @@ error handling guidelines. Key principles:
 
 ### Debugging and Change Verification
 
-Once you've implemented a change, you ALWAYS go through the following algorithm:
+Once you've implemented a change:
 
 1. Run scripts/format-and-lint.sh to check for linter errors.
 2. Make sure that you have tests covering the new functionality, and that they pass.
 3. Run all tests plausibly impacted by your change.
 4. Run `poe test` after major changes for final verification - this is what runs in CI and it runs
-   all tests and linters. `poe test` is the gold standard, but it doesn't need to be run every
-   single time you push a small fix. CI runs the full suite on every push regardless, so it remains
-   the backstop that must pass before a PR can merge - skipping a local `poe test` defers
-   verification to CI, it does not skip it.
+   all tests and linters. It doesn't need to be run every single time you push a small fix; CI runs
+   the full suite on every push regardless, so skipping a local `poe test` defers verification to
+   CI, it does not skip it.
 
-When long-running verification commands such as `poe test` are active, do not provide play-by-play
-progress updates. Let the command run and report only when action is needed or when it finishes.
+While long-running verification commands such as `poe test` are active, do not provide play-by-play
+progress updates. Report only when action is needed or when it finishes.
 
-Flaky tests can be addressed as follows: flakiness anywhere near the modified code should be
-addressed even if it expands the scope of the PR somewhat. Flakiness in areas completely unrelated
-to the modified code can be ignored if the test passes on rerun - though if it's persistent you can
-mark the test `@flaky` and/or file a GitHub issue for the flakiness.
+Flakiness anywhere near the modified code should be addressed even if it expands the scope of the PR
+somewhat. Flakiness in areas completely unrelated to the modified code can be ignored if the test
+passes on rerun — if it's persistent, mark the test `@flaky` and/or file a GitHub issue.
 
-You NEVER push new changes or make a PR with failing tests or linter errors that are caused by your
-change. We do not merge PRs with failing tests or linter errors.
+Never push changes or open a PR with failing tests or linter errors caused by your change.
 
 ### Planning Guidelines
 
-- Always break plans down into meaningful milestones that deliver incremental value, or at least
-  which can be tested independently. This is key to maintaining momentum.
-- Do NOT give timelines in weeks or other units of time. Development on this project does not
-  proceed in this manner as a hobby project predominantly developed using LLM assistance tools like
-  Claude Code.
+- Break plans into meaningful milestones that deliver incremental value, or that can at least be
+  tested independently. This is key to maintaining momentum.
+- Do not give timelines in weeks or other units of time. Development on this project does not
+  proceed in this manner as a hobby project predominantly developed using LLM assistance tools.
 
 ### Adding New Tools
 
-Tools must be registered in TWO places:
-
-1. **In the code** (`src/family_assistant/tools/__init__.py`)
-2. **In the configuration** (`config.yaml`)
-
-See [src/family_assistant/tools/CLAUDE.md](src/family_assistant/tools/CLAUDE.md) for complete tool
+Tools must be registered in TWO places: in the code (`src/family_assistant/tools/__init__.py`) and
+in the configuration (`defaults.yaml` / `config.yaml`). See
+[src/family_assistant/tools/CLAUDE.md](src/family_assistant/tools/CLAUDE.md) for complete tool
 development guidance.
 
 ### Adding New UI Endpoints
 
-When adding new web API endpoints:
-
-1. Create your router in `src/family_assistant/web/routers/`
-2. **Important**: Add your new endpoint to the appropriate test files in `tests/functional/web/` to
-   ensure it's tested for basic functionality
-
-See [src/family_assistant/web/CLAUDE.md](src/family_assistant/web/CLAUDE.md) for web API development
+Create your router in `src/family_assistant/web/routers/`, and add the new endpoint to the
+appropriate test files in `tests/functional/web/` so it's covered for basic functionality. See
+[src/family_assistant/web/CLAUDE.md](src/family_assistant/web/CLAUDE.md) for web API development
 guidance.
 
-Note: UI pages are now handled entirely by the React frontend. If you need to add new UI views,
-create React components in the `frontend/` directory rather than server-side endpoints.
+UI pages are handled entirely by the React frontend — add new views as React components in
+`frontend/`, not as server-side endpoints.
 
 ## Important Notes
 
@@ -923,19 +549,18 @@ create React components in the `frontend/` directory rather than server-side end
 - Before starting any new work, switch to `main`, pull the latest changes, and create a fresh branch
   from updated `main`. Do not reuse whatever branch happened to be active from previous work.
 
-- NEVER revert existing changes without the user's explicit permission.
+- Never revert existing changes without the user's explicit permission.
 
 - Always check that linters and tests are happy when you're finished.
 
-- Always commit changes after each major step. Prefer many small self contained commits as long as
-  each commit passes lint checks.
+- Commit after each major step. Prefer many small self contained commits as long as each commit
+  passes lint checks.
 
 - Making a non-draft pull request is a required part of implementation once changes are complete and
   verified, unless the user explicitly asks not to open a PR.
 
-- **Important**: When adding new imports, add the code that uses the import first, then add the
-  import. Otherwise, a linter running in another tab might remove the import as unused before you
-  add the code that uses it.
+- When adding new imports, add the code that uses the import first, then add the import. Otherwise a
+  linter running in another tab might remove the import as unused before you add the code.
 
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL
   text may break across engines.
@@ -946,14 +571,12 @@ create React components in the `frontend/` directory rather than server-side end
   from family_assistant.storage.context import DatabaseContext
 
   async with DatabaseContext() as db:
-      # Access repositories as properties
       await db.notes.add_or_update(title, content)
       tasks = await db.tasks.get_pending_tasks()
-      await db.email.store_email(email_data)
   ```
 
-- **SQLAlchemy Count Queries**: When using `func.count()` in SQLAlchemy queries, always use
-  `.label("count")` to give the column an alias:
+- **SQLAlchemy Count Queries**: give `func.count()` an alias with `.label("count")` — this avoids a
+  KeyError when accessing the result:
 
   ```python
   query = select(func.count(table.c.id).label("count"))
@@ -961,22 +584,9 @@ create React components in the `frontend/` directory rather than server-side end
   return row["count"] if row else 0
   ```
 
-  This avoids KeyError when accessing the result.
-
-- **SQLAlchemy func imports**: To avoid pylint errors about `func.count()` and `func.now()` not
-  being callable, import func as:
-
-  ```python
-  from sqlalchemy.sql import functions as func
-  ```
-
-  instead of:
-
-  ```python
-  from sqlalchemy import func
-  ```
-
-  This resolves the "E1102: func.X is not callable" errors while maintaining the same functionality.
+- **SQLAlchemy func imports**: import `from sqlalchemy.sql import functions as func` rather than
+  `from sqlalchemy import func`, which avoids pylint "E1102: func.X is not callable" errors for
+  `func.count()` and `func.now()`.
 
 ## File Management Guidance
 
@@ -985,33 +595,18 @@ create React components in the `frontend/` directory rather than server-side end
 
 ## DevContainer
 
-The development environment runs using Docker Compose with persistent volumes for:
-
-- `/workspace` - The project code
-- `/home/claude` - Claude's home directory with settings and cache
-- PostgreSQL data
+The development environment runs using Docker Compose with persistent volumes for `/workspace` (the
+project code), `/home/claude` (Claude's settings and cache), and PostgreSQL data. The compose stack
+runs **postgres** (with pgvector), **backend** (backend server plus frontend dev server via
+`poe dev`), and **claude** (claude-code-webui on port 8080 with MCP servers configured).
 
 ### Building and Deploying
 
-- To build and push the development container, use: `.devcontainer/build-and-push.sh [tag]`
-- If no tag is provided, it defaults to timestamp format: `YYYYMMDD_HHMMSS`
-- Example: `.devcontainer/build-and-push.sh` (uses timestamp tag)
-- Example: `.devcontainer/build-and-push.sh v1.2.3` (uses custom tag)
-- This script builds the container with podman and pushes to the registry
+`.devcontainer/build-and-push.sh [tag]` builds the container with podman and pushes it to the
+registry. Without an argument the tag defaults to a `YYYYMMDD_HHMMSS` timestamp.
 
 ### Automatic Git Synchronization
 
-The dev container automatically pulls the latest changes from git when Claude is invoked:
-
-- Runs `git fetch` and `git pull --rebase` on startup
-- Safely stashes and restores any local uncommitted changes
-- If conflicts occur, reverts to the original state to avoid breaking the workspace
-- This ensures the persistent workspace stays synchronized with the remote repository
-
-### Container Architecture
-
-The Docker Compose setup runs three containers:
-
-1. **postgres** - PostgreSQL with pgvector extension for local development
-2. **backend** - Runs the backend server and frontend dev server via `poe dev`
-3. **claude** - Runs claude-code-webui on port 8080 with MCP servers configured
+The dev container runs `git fetch` and `git pull --rebase` when Claude is invoked, stashing and
+restoring local uncommitted changes. If conflicts occur it reverts to the original state rather than
+breaking the workspace.
