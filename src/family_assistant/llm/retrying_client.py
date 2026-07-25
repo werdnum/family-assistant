@@ -36,6 +36,7 @@ from .base import (
     ServiceUnavailableError,
 )
 from .messages import UserMessage
+from .utils.usage_telemetry import set_usage_span_attributes
 
 T = TypeVar("T", bound=BaseModel)
 R = TypeVar("R")
@@ -120,17 +121,7 @@ class RetryingLLMClient:
                     tool_choice=tool_choice,
                 )
                 span.set_attribute("gen_ai.response.model", self.primary_model)
-                if result.reasoning_info:
-                    if "prompt_tokens" in result.reasoning_info:
-                        span.set_attribute(
-                            "gen_ai.usage.input_tokens",
-                            result.reasoning_info["prompt_tokens"],
-                        )
-                    if "completion_tokens" in result.reasoning_info:
-                        span.set_attribute(
-                            "gen_ai.usage.output_tokens",
-                            result.reasoning_info["completion_tokens"],
-                        )
+                set_usage_span_attributes(span, result.reasoning_info)
                 return result
             except retriable_errors as e:
                 logger.warning(
@@ -171,17 +162,7 @@ class RetryingLLMClient:
                         tool_choice=tool_choice,
                     )
                     span.set_attribute("gen_ai.response.model", self.primary_model)
-                    if result.reasoning_info:
-                        if "prompt_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.input_tokens",
-                                result.reasoning_info["prompt_tokens"],
-                            )
-                        if "completion_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.output_tokens",
-                                result.reasoning_info["completion_tokens"],
-                            )
+                    set_usage_span_attributes(span, result.reasoning_info)
                     return result
                 except retriable_errors as e:
                     logger.warning(
@@ -237,17 +218,7 @@ class RetryingLLMClient:
                     span.set_attribute(
                         "gen_ai.response.model", self.fallback_model or ""
                     )
-                    if result.reasoning_info:
-                        if "prompt_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.input_tokens",
-                                result.reasoning_info["prompt_tokens"],
-                            )
-                        if "completion_tokens" in result.reasoning_info:
-                            span.set_attribute(
-                                "gen_ai.usage.output_tokens",
-                                result.reasoning_info["completion_tokens"],
-                            )
+                    set_usage_span_attributes(span, result.reasoning_info)
                     return result
                 except Exception as e:
                     logger.error(

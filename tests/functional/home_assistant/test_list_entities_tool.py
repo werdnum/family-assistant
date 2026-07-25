@@ -255,8 +255,17 @@ async def test_list_home_assistant_entities_with_area_filter(
 
     # --- LLM Rules ---
     def area_filter_matcher(kwargs: MatcherArgs) -> bool:
-        last_text = get_last_message_text(kwargs.get("messages", [])).lower()
-        return "pool" in last_text and kwargs.get("tools") is not None
+        messages = kwargs.get("messages", [])
+        last_text = get_last_message_text(messages).lower()
+        # Gate on the user turn: the tool result mentions the pool area too, so
+        # without this the initial call matches again on the next iteration and
+        # the loop spins until it runs out of iterations.
+        return (
+            bool(messages)
+            and messages[-1].role == "user"
+            and "pool" in last_text
+            and kwargs.get("tools") is not None
+        )
 
     area_filter_response = MockLLMOutput(
         content="I'll find devices in the pool area.",

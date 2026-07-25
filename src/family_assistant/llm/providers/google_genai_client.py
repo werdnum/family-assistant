@@ -1248,6 +1248,13 @@ class GoogleGenAIClient(BaseLLMClient):
                         completion_tokens=getattr(usage, "candidates_token_count", 0),
                         total_tokens=getattr(usage, "total_token_count", 0),
                     )
+                    # Gemini caches implicitly and reports hits as a subset of
+                    # prompt_token_count, so this is not added to the total.
+                    cached_tokens = (
+                        getattr(usage, "cached_content_token_count", None) or 0
+                    )
+                    if cached_tokens:
+                        reasoning_info["cached_prompt_tokens"] = cached_tokens
 
                 # Add thought summaries to reasoning_info for debugging/introspection
                 if thought_summaries:

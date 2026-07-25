@@ -285,9 +285,15 @@ async def test_get_camera_snapshot_list_cameras(
 
     # --- LLM Rules ---
     def list_cameras_matcher(kwargs: MatcherArgs) -> bool:
-        last_text = get_last_message_text(kwargs.get("messages", [])).lower()
+        messages = kwargs.get("messages", [])
+        last_text = get_last_message_text(messages).lower()
+        # Gate on the user turn: the tool result also says "Available cameras",
+        # so without this the initial call matches again on the next iteration
+        # and the loop spins until it runs out of iterations.
         return (
-            "cameras" in last_text
+            bool(messages)
+            and messages[-1].role == "user"
+            and "cameras" in last_text
             and "available" in last_text
             and kwargs.get("tools") is not None
         )

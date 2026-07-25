@@ -173,7 +173,7 @@ async def test_prepare_turn_messages_uses_isolated_writes() -> None:
         return_value=([], "")
     )
     service.context_preparer.aggregate_context = AsyncMock(return_value="")
-    service._render_system_prompt = MagicMock(return_value="")  # type: ignore[method-assign]
+    service._render_system_prompt = MagicMock(return_value=("", None))  # type: ignore[method-assign]
     service.attachment_processor.process_content_parts = AsyncMock(return_value=[])
     service.attachment_processor.convert_message_urls = AsyncMock(
         side_effect=lambda db_context, messages, acting_user_id=None: messages
@@ -520,7 +520,7 @@ def test_render_system_prompt_allows_escaped_literal_braces() -> None:
         "Link: {server_url}/automations/{{automation_id}}"
     )
 
-    rendered_prompt = service._render_system_prompt("tester", "")
+    rendered_prompt, _ = service._render_system_prompt("tester", "")
 
     assert "http://testserver/automations/{automation_id}" in rendered_prompt
 
@@ -530,7 +530,7 @@ def test_render_system_prompt_supports_placeholder_adjacent_to_escaped_braces() 
     service = _make_service()
     service.service_config.prompts["system_prompt"] = "Wrapped: {{{server_url}}}"
 
-    rendered_prompt = service._render_system_prompt("tester", "")
+    rendered_prompt, _ = service._render_system_prompt("tester", "")
 
     assert "{http://testserver}" in rendered_prompt
 
@@ -555,7 +555,7 @@ def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
         service.service_config.id = profile_id
         service.service_config.prompts = processing_config.prompts
 
-        rendered_prompt = service._render_system_prompt(
+        rendered_prompt, _ = service._render_system_prompt(
             "tester", "Context with literal braces: {name}"
         )
 
