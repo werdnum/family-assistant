@@ -197,6 +197,7 @@ Both profiles share these limits:
 
 ## Related Features
 
-- **[User Guide](USER_GUIDE.md)** — full assistant documentation
+- **[Research and Web Browsing](research-and-browsing.md)** — when to reach for `/browse` at all
+- **[User Guide](USER_GUIDE.md)** — index of every topic guide
 - **[Scripting Guide](scripting.md)** — automate tasks with scripts
 - **Document Ingestion** — save web content: "Save this page for later: [URL]"
