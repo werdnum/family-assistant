@@ -93,6 +93,19 @@ def _taint_metadata_from_sources(
     return state.to_metadata()
 
 
+def _is_turn_closing_assistant_message(message: LLMMessage) -> bool:
+    """Whether this assistant message ends the turn rather than a tool round.
+
+    The LLM loop emits one ``done`` event per iteration and every one of them
+    repeats the turn's pending attachment ids, so the ids alone do not identify
+    the row that closes the turn: an ``attach_to_response`` followed by another
+    tool call would record the same reference on both assistant rows, which is
+    the duplicate the reader would then render twice. Only the reply that stops
+    calling tools is terminal.
+    """
+    return isinstance(message, AssistantMessage) and not message.tool_calls
+
+
 def _tool_row_attachment_ids(message: LLMMessage) -> set[str]:
     """Attachment ids a tool result records on its own history row."""
     if not isinstance(message, ToolMessage) or not message.attachments:
@@ -1102,7 +1115,8 @@ class ProcessingService:
                     (
                         index
                         for index, message in enumerate(generated_turn_messages)
-                        if isinstance(message, AssistantMessage) and message.content
+                        if _is_turn_closing_assistant_message(message)
+                        and message.content
                     ),
                     default=None,
                 )
@@ -1314,7 +1328,7 @@ class ProcessingService:
                             )
                             reasoning_info_for_stream = (
                                 event.metadata.get("reasoning_info")
-                                if isinstance(stream_msg, AssistantMessage)
+                                if _is_turn_closing_assistant_message(stream_msg)
                                 and event.metadata
                                 else None
                             )
@@ -1326,7 +1340,7 @@ class ProcessingService:
                                     event.metadata.get("attachment_ids"),
                                     recorded_on_tool_rows=recorded_on_tool_rows,
                                 )
-                                if isinstance(stream_msg, AssistantMessage)
+                                if _is_turn_closing_assistant_message(stream_msg)
                                 and event.metadata
                                 else None
                             )
