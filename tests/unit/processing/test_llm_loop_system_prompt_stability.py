@@ -17,6 +17,7 @@ import pytest
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
+from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -79,6 +80,7 @@ class _SnapshottingMockLLMClient(RuleBasedMockLLMClient):
         self._round = 0
         self.system_prompts: list[str] = []
         self.trailing_messages: list[LLMMessage] = []
+        self.retry_messages: list[LLMMessage] = []
 
     async def generate_response(
         self,
@@ -91,6 +93,7 @@ class _SnapshottingMockLLMClient(RuleBasedMockLLMClient):
             first.content if isinstance(first, SystemMessage) else ""
         )
         self.trailing_messages.append(messages[-1])
+        self.retry_messages = list(messages)
 
         self._round += 1
         if self._round <= self._tool_call_rounds:
@@ -306,3 +309,54 @@ async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
     for query in queries:
         assert "final processing iteration" not in query.lower()
     assert queries[0] == "Show me the pictures of the cat"
+
+
+class _ContextLimitOnceMockLLMClient(_SnapshottingMockLLMClient):
+    """Raises ContextLengthError once, then succeeds, to drive the pruning retry."""
+
+    def __init__(self) -> None:
+        super().__init__(tool_call_rounds=0)
+        self._raised = False
+
+    async def generate_response(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> LLMOutput:
+        if not self._raised:
+            self._raised = True
+            raise ContextLengthError(
+                "context length exceeded", provider="mock", model="mock"
+            )
+        return await super().generate_response(messages, tools, tool_choice)
+
+
+@pytest.mark.asyncio
+async def test_context_pruning_keeps_the_user_turn_not_the_scaffolding(
+    db_engine: AsyncEngine,
+) -> None:
+    """The turn splitter starts a turn at every UserMessage, so the synthetic
+    final-iteration instruction must be excluded from pruning. At min_turns=1 it
+    would otherwise be the only turn kept, dropping the user's actual request."""
+    llm_client = _ContextLimitOnceMockLLMClient()
+    service = _make_service(llm_client, max_iterations=1)
+    service.llm_loop.config.context_pruning_min_turns = 1
+
+    async with get_db_context(db_engine) as db_context:
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="web",
+            conversation_id="cache-pruning",
+            trigger_content_parts=[{"type": "text", "text": "Remember the milk"}],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+        )
+
+    # The retry is the only recorded call: the first attempt raised.
+    assert llm_client.retry_messages, "pruning retry never happened"
+    texts = [str(msg.content) for msg in llm_client.retry_messages]
+    assert any("Remember the milk" in text for text in texts), (
+        f"user request was pruned away, leaving only: {texts}"
+    )
+    assert "final processing iteration" in texts[-1].lower()

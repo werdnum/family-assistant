@@ -489,10 +489,21 @@ class LLMStreamingLoop:
                     logger.warning(
                         f"Context length exceeded, pruning messages and retrying: {e}"
                     )
+                    # Prune without the synthetic final-iteration instruction.
+                    # The turn splitter starts a new turn at every UserMessage, so
+                    # leaving it in costs a real turn out of min_turns -- and at
+                    # min_turns=1 it is the *only* turn kept, discarding the
+                    # user's request and every accumulated tool result.
                     messages = prune_messages_for_context(
-                        messages,
+                        [
+                            msg
+                            for msg in messages
+                            if msg is not final_iteration_instruction
+                        ],
                         min_turns=self.config.context_pruning_min_turns,
                     )
+                    if final_iteration_instruction is not None:
+                        messages.append(final_iteration_instruction)
                     context_retry_attempted = True
                     continue
 
