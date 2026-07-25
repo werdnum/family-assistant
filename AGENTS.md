@@ -23,6 +23,7 @@ Additional guidance is available in subdirectories:
   development
 - **[src/family_assistant/web/CLAUDE.md](src/family_assistant/web/CLAUDE.md)** - Web API development
 - **[frontend/CLAUDE.md](frontend/CLAUDE.md)** - Frontend development (React, Vite, testing)
+- **[ios/CLAUDE.md](ios/CLAUDE.md)** - Native iOS app (SwiftUI, error reporting and telemetry lanes)
 - **[scripts/CLAUDE.md](scripts/CLAUDE.md)** - Script development
 - **[.github/workflows/CLAUDE.md](.github/workflows/CLAUDE.md)** - CI workflow development
 - **[docs/development/ast-grep-recipes.md](docs/development/ast-grep-recipes.md)** - Code

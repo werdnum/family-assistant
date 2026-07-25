@@ -53,8 +53,14 @@ Frontend clients POST to `POST /api/errors/`. The report's optional `severity` s
   events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader gate) or the
   engineer-profile `read_frontend_telemetry` tool. The buffer is dropped on restart.
 
+Routing is decided by `severity` alone — `error_type` has no effect on it. Both clients send
+`error_type: "component_error"`, but the web frontend never sets `severity` (so those land in the
+error lane) while the iOS client maps it to `"info"` (so those land in telemetry). Do not infer the
+lane from `error_type`.
+
 See
-[docs/design/ios-frontend-telemetry-lane.md](../../../docs/design/ios-frontend-telemetry-lane.md).
+[docs/design/ios-frontend-telemetry-lane.md](../../../docs/design/ios-frontend-telemetry-lane.md)
+and [ios/CLAUDE.md](../../../ios/CLAUDE.md), where the split originated.
 
 ## Dependency Injection
 
