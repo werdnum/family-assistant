@@ -69,8 +69,11 @@ By conversation:
 - "Convert my garage door automation to use a script instead."
 
 Or in the web interface, on the **Automations** page: create automations with a visual form and live
-script validation, review each one's configuration and execution history, edit conditions and
-scripts, switch between action types, enable or disable, delete, and filter by type and status.
+script validation, filter by type and status, open one to review its configuration and execution
+history, and enable, disable, or delete it.
+
+To change an existing automation's conditions or script, ask the assistant — the web form creates
+and inspects automations, but doesn't edit them in place.
 
 ## Scripts in automations
 

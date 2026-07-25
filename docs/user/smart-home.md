@@ -24,9 +24,12 @@ available.
 
 ## Who's home
 
-If you have device trackers or person entities configured, the assistant knows who is home and who
-is away, can tell you distances to known locations like work or school, and can use that context in
-its answers ("is it worth starting dinner?").
+If your household has **person** entities set up in Home Assistant, the assistant knows who is home
+and who is away, can tell you how far someone is from a known zone like work or school, and can use
+that in its answers ("is it worth starting dinner?").
+
+It reads person entities specifically. A device tracker on its own isn't enough — it has to be
+attached to a person in Home Assistant for the assistant to see it.
 
 ## Camera snapshots
 

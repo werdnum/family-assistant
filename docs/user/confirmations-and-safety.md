@@ -21,7 +21,7 @@ lookups can pause for approval too. It's why a search that normally just runs so
 
 ## Approving
 
-- **Telegram:** inline **Approve** and **Deny** buttons.
+- **Telegram:** inline **✅ Confirm** and **❌ Cancel** buttons.
 - **Web interface:** a dialog showing what the assistant wants to do, with approve and reject
   options.
 - **iOS:** confirmation notifications are actionable — long-press (or pull down) the notification to

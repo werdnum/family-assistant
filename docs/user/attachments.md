@@ -12,10 +12,15 @@ move between tools and people.
 - **iOS app:** attach from the composer, paste a copied image, or share a file into the app from
   another app.
 
-**Supported types** depend on where you're sending from. Web and iOS chat accept JPEG, PNG, GIF, and
-WebP images, plus PDF, plain text, and Markdown. Telegram and the **Upload Document** page take a
-wider range, including BMP and TIFF images and JSON and CSV data files. If a file is rejected in
-chat, converting it — or uploading it on the Upload Document page instead — usually gets it in.
+**Supported types** depend on where you're sending from:
+
+- **Web and iOS chat:** JPEG, PNG, GIF, and WebP images, plus PDF, plain text, and Markdown.
+- **Telegram:** images and documents, including formats the web chat won't take.
+- **Upload Document page:** PDF, TXT, DOCX, DOC, HTML, and MD — documents rather than images, since
+  the point of that page is indexing text you can search later.
+
+If a file is rejected, converting it to a nearby format (an image to PNG, a spreadsheet to CSV sent
+through Telegram) is usually the quickest way through.
 
 Size limits apply: typically 20 MB for images and 100 MB for other files.
 
