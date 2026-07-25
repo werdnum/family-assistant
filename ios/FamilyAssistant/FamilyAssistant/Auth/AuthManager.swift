@@ -367,6 +367,13 @@ final class AuthManager {
     @MainActor
     private func bumpAuthEpoch() {
         authEpoch += 1
+        // Every auth transition passes through here — logout, a terminal 401's
+        // re-auth latch, and a fresh login (which may be a different account on
+        // the same deployment, without the shell ever unmounting). Decoded
+        // attachment images belong to the session that was authorized to fetch
+        // them, so they go with it. Views keyed on the epoch re-fetch rather
+        // than keep showing what they already decoded.
+        AttachmentImageCache.clear()
     }
 
     /// Mutate ``authRequired`` and, on an actual change, emit the matching

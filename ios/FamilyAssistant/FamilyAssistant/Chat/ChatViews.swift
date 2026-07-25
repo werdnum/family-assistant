@@ -407,6 +407,18 @@ private struct MessageBubble: View {
         message.role == .user
     }
 
+    /// Images hoisted into the reply itself. Everything else stays on the strip
+    /// it came from.
+    private var inlineImages: [ChatAttachment] {
+        message.inlineImageAttachments
+    }
+
+    /// The hoisted images' identities, so neither the message's own strip nor
+    /// the tool group renders a second copy of what is already shown inline.
+    private var hoistedKeys: Set<String> {
+        Set(inlineImages.map(\.dedupeKey))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
@@ -432,11 +444,23 @@ private struct MessageBubble: View {
                 // — both layout-watchdog hazards if the plain fast path lived here.
                 NativeMarkdownView(markdown: message.text)
             }
-            if !message.toolCalls.isEmpty {
-                ToolGroupView(toolCalls: message.toolCalls, viewModel: viewModel)
+            // Images belong with the answer, not behind a disclosure arrow: the
+            // tool group collapses as soon as its calls complete, so an image
+            // left inside it is invisible on reload even though it rendered
+            // during the live turn.
+            if !inlineImages.isEmpty {
+                ResponseImageGallery(images: inlineImages, viewModel: viewModel)
             }
-            if !message.attachments.isEmpty {
-                AttachmentStrip(attachments: message.attachments, viewModel: viewModel)
+            if !message.toolCalls.isEmpty {
+                ToolGroupView(
+                    toolCalls: message.toolCalls,
+                    hoistedAttachmentKeys: hoistedKeys,
+                    viewModel: viewModel
+                )
+            }
+            let strayAttachments = message.attachments.filter { !hoistedKeys.contains($0.dedupeKey) }
+            if !strayAttachments.isEmpty {
+                AttachmentStrip(attachments: strayAttachments, viewModel: viewModel)
             }
             if let failed = viewModel.failedSend(for: message) {
                 Button {
@@ -1697,6 +1721,9 @@ private struct MarkdownListItemView: View {
 
 private struct ToolGroupView: View {
     let toolCalls: [ChatToolCall]
+    /// Attachments already shown inline in the reply, which the cards must not
+    /// render a second time.
+    let hoistedAttachmentKeys: Set<String>
     var viewModel: ChatViewModel
     @State private var collapsedCompleted = true
 
@@ -1708,7 +1735,11 @@ private struct ToolGroupView: View {
         DisclosureGroup(isExpanded: Binding(get: { !shouldCollapse }, set: { collapsedCompleted = !$0 })) {
             VStack(spacing: 8) {
                 ForEach(toolCalls) { toolCall in
-                    ToolCallCard(toolCall: toolCall, viewModel: viewModel)
+                    ToolCallCard(
+                        toolCall: toolCall,
+                        hoistedAttachmentKeys: hoistedAttachmentKeys,
+                        viewModel: viewModel
+                    )
                 }
             }
             .padding(.top, 6)
@@ -1722,6 +1753,7 @@ private struct ToolGroupView: View {
 
 private struct ToolCallCard: View {
     let toolCall: ChatToolCall
+    let hoistedAttachmentKeys: Set<String>
     var viewModel: ChatViewModel
 
     var body: some View {
@@ -1742,8 +1774,11 @@ private struct ToolCallCard: View {
                 NativeMarkdownView(markdown: result)
                     .font(.caption)
             }
-            if !toolCall.attachments.isEmpty {
-                AttachmentStrip(attachments: toolCall.attachments, viewModel: viewModel)
+            let remainingAttachments = toolCall.attachments.filter {
+                !hoistedAttachmentKeys.contains($0.dedupeKey)
+            }
+            if !remainingAttachments.isEmpty {
+                AttachmentStrip(attachments: remainingAttachments, viewModel: viewModel)
             }
         }
         .padding(10)
@@ -1773,7 +1808,11 @@ private struct AttachmentStrip: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            // Lazy so a turn that produced many attachments only fetches the
+            // previews actually scrolled into view: each `AttachmentPreview`
+            // starts its own authenticated download on appear, so an eager
+            // stack would pull every one of them at once.
+            LazyHStack(spacing: 10) {
                 ForEach(attachments) { attachment in
                     AttachmentPreview(attachment: attachment, viewModel: viewModel)
                 }
@@ -1825,9 +1864,126 @@ private struct AttachmentPreview: View {
     }
 }
 
+/// The reply's images, rendered directly in the assistant bubble.
+///
+/// Each image is given a fixed maximum height so a reply carrying several of
+/// them costs a bounded, predictable amount of layout — the same discipline
+/// `MarkdownRenderBudget` applies to text (see `StickyBottomScroll`'s notes on
+/// the scene-update watchdog).
+private struct ResponseImageGallery: View {
+    let images: [ChatAttachment]
+    var viewModel: ChatViewModel
+    // One sheet binding for both destinations: stacking two `.sheet` modifiers
+    // on the same view leaves only one of them able to present.
+    @State private var sheet: Sheet?
+
+    private static let maxImageHeight: CGFloat = 240
+
+    private enum Sheet: Identifiable {
+        case fullSize(ChatAttachment)
+        case share(URL)
+
+        var id: String {
+            switch self {
+            case .fullSize(let attachment):
+                "full-size-\(attachment.id)"
+            case .share(let url):
+                "share-\(url.absoluteString)"
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(images) { image in
+                VStack(alignment: .leading, spacing: 4) {
+                    Button {
+                        sheet = .fullSize(image)
+                    } label: {
+                        AuthenticatedAttachmentImage(attachment: image, viewModel: viewModel, contentMode: .fit)
+                            // A cap rather than a fixed height: a wide, short
+                            // image keeps its own proportions instead of sitting
+                            // in a tall empty band, while a tall one still costs
+                            // a bounded amount of layout.
+                            .frame(maxWidth: .infinity, maxHeight: Self.maxImageHeight)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Image \(image.name)")
+                    .accessibilityHint("Opens full size")
+                    HStack {
+                        Text(image.name)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            Task {
+                                if let url = await viewModel.downloadAttachmentForSharing(image) {
+                                    sheet = .share(url)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                        .accessibilityLabel("Download \(image.name)")
+                    }
+                }
+                .accessibilityIdentifier("response-image-\(image.id)")
+            }
+        }
+        .sheet(item: $sheet) { sheet in
+            switch sheet {
+            case .fullSize(let image):
+                ResponseImageViewer(attachment: image, viewModel: viewModel)
+            case .share(let url):
+                ShareSheet(activityItems: [url])
+            }
+        }
+    }
+}
+
+/// Full-size view of one response image, reached by tapping its inline copy.
+private struct ResponseImageViewer: View {
+    let attachment: ChatAttachment
+    var viewModel: ChatViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var shareURL: URL?
+
+    var body: some View {
+        NavigationStack {
+            AuthenticatedAttachmentImage(attachment: attachment, viewModel: viewModel, contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .navigationTitle(attachment.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") { dismiss() }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            Task { shareURL = await viewModel.downloadAttachmentForSharing(attachment) }
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Share \(attachment.name)")
+                    }
+                }
+        }
+        .sheet(item: Binding(
+            get: { shareURL.map(ShareURL.init(url:)) },
+            set: { if $0 == nil { shareURL = nil } }
+        )) { item in
+            ShareSheet(activityItems: [item.url])
+        }
+        .accessibilityIdentifier("response-image-viewer")
+    }
+}
+
 private struct AuthenticatedAttachmentImage: View {
     let attachment: ChatAttachment
     var viewModel: ChatViewModel
+    var contentMode: ContentMode = .fill
     @State private var image: UIImage?
     @State private var failed = false
 
@@ -1836,7 +1992,7 @@ private struct AuthenticatedAttachmentImage: View {
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
             } else if failed {
                 Image(systemName: "photo")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1847,7 +2003,16 @@ private struct AuthenticatedAttachmentImage: View {
                     .background(Color(.secondarySystemBackground))
             }
         }
-        .task(id: attachment.contentURL) {
+        // Keyed on the session scope as well as the URL: a change of
+        // credentials must re-run this rather than leave the previously decoded
+        // image on screen.
+        .task(id: "\(viewModel.attachmentCacheScope)|\(attachment.contentURL ?? "")") {
+            let server = viewModel.attachmentCacheScope
+            if let cached = AttachmentImageCache.image(for: attachment, server: server) {
+                image = cached
+                failed = false
+                return
+            }
             image = nil
             failed = false
             do {
@@ -1857,6 +2022,7 @@ private struct AuthenticatedAttachmentImage: View {
                     failed = true
                     return
                 }
+                AttachmentImageCache.store(decodedImage, for: attachment, server: server)
                 image = decodedImage
                 failed = false
             } catch {
@@ -1864,6 +2030,64 @@ private struct AuthenticatedAttachmentImage: View {
                 failed = true
             }
         }
+    }
+}
+
+/// Bounded in-memory cache of decoded attachment images.
+///
+/// The thread realizes only a fixed window of bubbles, so scrolling tears these
+/// views down and rebuilds them; and the attachment route deliberately serves
+/// owned files `private, no-store` (a shared cache keyed on URL could hand one
+/// user's file to another), so `URLSession` will not hold them either. Without
+/// this, scrolling past an image re-downloads it every time.
+///
+/// That same reasoning bounds what may be cached across a session: an entry is
+/// keyed by the authenticated session it was fetched under (server plus auth
+/// epoch, see `ChatViewModel.attachmentCacheScope`), and the cache is dropped on
+/// every auth transition (`AuthManager.bumpAuthEpoch`). Otherwise the next
+/// person to sign in on this device could be handed bytes from the previous
+/// session's attachment of the same id without the download ever being
+/// re-authorized — including via the in-place re-auth after a terminal 401,
+/// which never unmounts the authenticated shell.
+enum AttachmentImageCache {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 32
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
+
+    private static func key(for attachment: ChatAttachment, server: String) -> NSString? {
+        guard let contentURL = attachment.contentURL, !server.isEmpty else {
+            return nil
+        }
+        return "\(server)|\(contentURL)" as NSString
+    }
+
+    static func image(for attachment: ChatAttachment, server: String) -> UIImage? {
+        key(for: attachment, server: server).flatMap { cache.object(forKey: $0) }
+    }
+
+    static func store(_ image: UIImage, for attachment: ChatAttachment, server: String) {
+        guard let key = key(for: attachment, server: server) else {
+            return
+        }
+        cache.setObject(image, forKey: key, cost: decodedByteCount(of: image))
+    }
+
+    static func clear() {
+        cache.removeAllObjects()
+    }
+
+    /// Resident size of the decoded bitmap, which is what the limit needs to
+    /// bound. The compressed byte count off the wire is far smaller — a few
+    /// megabytes of JPEG decodes to tens of megabytes — so costing by it would
+    /// let the cache hold many times its nominal limit.
+    private static func decodedByteCount(of image: UIImage) -> Int {
+        guard let cgImage = image.cgImage else {
+            return 0
+        }
+        return cgImage.bytesPerRow * cgImage.height
     }
 }
 
