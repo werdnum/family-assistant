@@ -178,14 +178,19 @@ Query parameters:
 - `conversation_id`: filter to one conversation
 - `format`: `json` (default) or `markdown`
 
-## Playwright Tests
+## Per-Area Test Guides
 
-End-to-end web UI tests live in `tests/functional/web/` and are marked `@pytest.mark.playwright`.
-See [tests/functional/web/CLAUDE.md](functional/web/CLAUDE.md).
-
-## Telegram Bot Tests
-
-See [tests/functional/telegram/CLAUDE.md](functional/telegram/CLAUDE.md).
+- [tests/integration/CLAUDE.md](integration/CLAUDE.md) — VCR.py cassettes, record modes, and the
+  Home Assistant fixture.
+- [tests/functional/web/CLAUDE.md](functional/web/CLAUDE.md) — Playwright web UI tests (marked
+  `@pytest.mark.playwright`), page objects, and trace debugging.
+- [tests/functional/telegram/CLAUDE.md](functional/telegram/CLAUDE.md) — Telegram bot tests.
+- [tests/functional/automations/CLAUDE.md](functional/automations/CLAUDE.md) — automations, the
+  event system, and delegation.
+- [tests/functional/calendar/CLAUDE.md](functional/calendar/CLAUDE.md) — calendar operations and
+  reminders.
+- [tests/functional/indexing/CLAUDE.md](functional/indexing/CLAUDE.md) — document and email indexing
+  pipeline.
 
 ## CI Debugging
 
