@@ -18,7 +18,7 @@ messages as you would to a person.
 - **Follow up mid-reply:** if you send another message while the assistant is still working, it
   folds that into the response it's already preparing.
 - **`/interrupt`** stops the request currently being processed in that chat.
-- **Confirmations** arrive as inline Approve/Deny buttons. See
+- **Confirmations** arrive as inline **✅ Confirm** and **❌ Cancel** buttons. See
   [confirmations-and-safety.md](confirmations-and-safety.md).
 
 ## Web interface
@@ -82,8 +82,8 @@ The menu is grouped into **Information**, **Operations**, and **Settings**:
 
   ![Tasks Page](../../screenshots/desktop/tasks.png)
 
-- **Automations** — create, edit, enable, disable, and delete automations, and review their run
-  history. See [automations.md](automations.md).
+- **Automations** — create automations, review their configuration and run history, and enable,
+  disable, or delete them. See [automations.md](automations.md).
 
   ![Automations Page](../../screenshots/desktop/automations.png)
 
