@@ -6,14 +6,18 @@ how it handles content that came from outside your household.
 ## When you'll be asked
 
 Actions with real consequences need your approval first — modifying or deleting a calendar event is
-the everyday example, alongside handing work to another mode. Read-only actions — looking things up,
-searching, summarising — never do.
+the everyday example, alongside handing work to another mode. Ordinary lookups don't: asking what's
+on your calendar or searching your notes just happens.
 
 Which actions are gated depends on your deployment's policy and on how the request reached the
 assistant. The same action can go straight through in a direct chat and require approval when it
 originated in a forwarded email or followed something the assistant read from an untrusted source.
 Writing notes, scheduling reminders, sending messages to other people, and fetching a linked
 document all work that way.
+
+Once a turn has taken in untrusted content, even reading can be gated. Searching your documents or
+your Gmail widens what the assistant knows while it is holding text someone else wrote, so those
+lookups can pause for approval too. It's why a search that normally just runs sometimes asks first.
 
 ## Approving
 
@@ -70,8 +74,8 @@ Some situations run the assistant with deliberately reduced powers:
   information to file things sensibly, but asks before making changes.
 - **`/engineer`** is read-only by design: it can inspect the system but not change data or send
   messages. See [troubleshooting.md](troubleshooting.md).
-- **`ops_automation`** can write only quarantined diagnostics notes. See
-  [automations.md](automations.md#unattended-operational-diagnostics).
+- **Scheduled health checks** write only quarantined diagnostics notes. See
+  [automations.md](automations.md#scheduled-health-checks).
 
 If one of these says a tool isn't available to it, that's the intended configuration, not a
 malfunction.

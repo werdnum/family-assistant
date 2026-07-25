@@ -1161,6 +1161,23 @@ See [docs/design/taint-history-epoch-amnesty.md](../design/taint-history-epoch-a
 
 ______________________________________________________________________
 
+## Confined Diagnostics Profile (`ops_automation`)
+
+`ops_automation` exists so an unattended scheduled job can crawl recent error logs, triage them, and
+record a summary without holding broad access. Delegation into it requires user confirmation.
+
+The profile is deliberately narrow: it reads bounded diagnostics, writes **only** notes labelled
+`ops_diagnostics` (enforced in the repository layer, so it cannot write elsewhere even when
+instructed to), and can create only script automations — never ones that wake the full assistant.
+Its notes are quarantined, so log text carrying injected content cannot reach a trusted
+conversation.
+
+To let a profile read those reports, grant it the `ops_diagnostics` visibility label. Without that
+grant the reports are readable only through the web interface. See
+[docs/design/profile-confined-note-writes-and-automation-approvals.md](../design/profile-confined-note-writes-and-automation-approvals.md).
+
+______________________________________________________________________
+
 ## Shopping (Universal Commerce Protocol)
 
 `ucp_config` publishes this deployment's own UCP platform profile at `/.well-known/ucp` and holds

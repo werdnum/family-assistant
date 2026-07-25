@@ -7,8 +7,10 @@ action:
 
 - **Wake the assistant** — good when the response needs judgement, because the assistant reads the
   situation and decides what to do.
-- **Run a script** — good when the response is fixed. Scripts run instantly, cost nothing per run,
-  and behave identically every time. Ideal for logging, simple notifications, and data collection.
+- **Run a script** — good when the response is fixed. A script that only reads state and writes a
+  note runs quickly, costs nothing per run, and behaves identically every time, which makes it ideal
+  for logging, simple notifications, and data collection. A script can also call the model or reach
+  external services, and then those guarantees no longer hold.
 
 Use the `/automate` command for a mode focused on building and validating automations, or just ask
 in an ordinary conversation.
@@ -69,8 +71,8 @@ scripts, switch between action types, enable or disable, delete, and filter by t
 
 ## Scripts in automations
 
-Scripts are written in Starlark and can call the assistant's tools. See [scripting.md](scripting.md)
-for the language and API reference.
+Scripts are Python, running in a sandbox, and can call the assistant's tools. See
+[scripting.md](scripting.md) for the language and API reference.
 
 Two things worth knowing:
 
@@ -97,21 +99,16 @@ label and are not pulled into your main assistant's context; you can read them i
 If you want an event-driven result in a normally visible note, have a **script** automation write
 the note rather than the woken assistant.
 
-## Unattended operational diagnostics
+## Scheduled health checks
 
-A confined `ops_automation` profile exists for standing up a scheduled job that crawls recent error
-logs, triages them, and records a summary note — without giving an unattended job broad access.
+You can have the assistant watch its own error logs on a schedule and write up what it finds — ask
+from a normal chat, for example "set up a daily log-triage automation". You'll be asked to confirm
+before it's created.
 
-Set it up by asking from a trusted chat ("set up a daily log-triage automation"); handing work to
-this profile asks for your confirmation first. The profile is deliberately narrow: it reads bounded
-diagnostics, writes **only** notes labelled `ops_diagnostics` (enforced in storage, so it cannot
-write elsewhere even if asked), and can create only script automations, never ones that wake the
-full assistant.
-
-Its triage notes are quarantined too, so log text that might contain injected content can't reach a
-trusted conversation. You read the reports yourself in the web interface. Using it requires the
-deployment to grant the `ops_diagnostics` label to whichever profiles should read the reports; see
-[docs/design/profile-confined-note-writes-and-automation-approvals.md](../design/profile-confined-note-writes-and-automation-approvals.md).
+The resulting reports are written as notes you read in the web interface. They are kept out of your
+main assistant's context on purpose: error logs can contain text from outside your household, so
+quarantining the reports stops that text reaching a trusted conversation. Ask your operator if you
+want these reports readable in chat as well.
 
 ## Troubleshooting
 

@@ -7,7 +7,8 @@ move between tools and people.
 
 - **Telegram:** attach the file or photo to your message, with your question as the caption. A
   Telegram album counts as one message, so you get a single answer covering all the photos.
-- **Web interface:** attach files in chat, or use the **Upload Document** page for batch uploads.
+- **Web interface:** attach files in chat, or add them to your searchable documents one at a time on
+  the **Upload Document** page.
 - **iOS app:** attach from the composer, paste a copied image, or share a file into the app from
   another app.
 

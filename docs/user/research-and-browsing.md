@@ -46,9 +46,11 @@ See [browser_automation.md](browser_automation.md) for the full guide.
 `/research_max` goes further at the cost of longer turnaround. Use `/research` for most questions
 and `/research_max` when thoroughness genuinely matters more than speed.
 
-Research can take a while. When it does, the assistant hands you a delegation reference and keeps
-the conversation free; the result is posted back automatically when it's ready, and you can ask a
-follow-up that continues the same research session.
+Research takes a while either way, but how you get the result depends on how it started. Ask with
+`/research` and you're in the research mode yourself — the answer arrives in that conversation as it
+finishes. If instead the assistant decides on its own to hand a question to the research specialist,
+it gives you a `delegation_...` reference, keeps the conversation free, and posts the result back
+automatically when it's ready; you can ask a follow-up that continues that same research session.
 
 ## Saving what you find
 
@@ -60,7 +62,10 @@ Ask the assistant to index a page so you can search it later — see
 - **The page won't load.** Include the full URL with `https://`. Some sites detect and block
   automated browsers; for simple content, try asking without `/browse`.
 - **It can't log in somewhere.** The browser session is isolated: it has none of your saved
-  passwords or active sessions, cannot solve CAPTCHAs, and can't get past multi-factor
-  authentication.
+  passwords or active sessions, and it can't solve a CAPTCHA or a multi-factor prompt on its own. If
+  your deployment has the handoff feature enabled, that isn't the end of it — the assistant can pass
+  you a link to take over the same live browser, you sign in or clear the challenge yourself, and
+  then hand control back so it carries on from there. See
+  [browser_automation.md](browser_automation.md).
 - **The assistant asks before browsing.** It sometimes checks whether it's okay to use the browser
   for a request. That's normal.

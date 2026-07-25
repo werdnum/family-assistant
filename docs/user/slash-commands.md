@@ -3,11 +3,16 @@
 **What's here:** the commands that switch the assistant into a specialised mode, and when to reach
 for each.
 
-Put the command at the start of your message, followed by your request:
+**These are a Telegram feature.** In Telegram, put the command at the start of your message,
+followed by your request:
 
 ```
 /research Compare the regulatory landscape for autonomous vehicles across the EU, US, and Japan
 ```
+
+In the web interface and the iOS app there is no command prefix — pick the profile you want from the
+profile picker instead, and then type your request normally. Typing `/research …` into a web or iOS
+chat sends it as ordinary text and does not switch modes.
 
 Which commands exist depends on how your deployment is configured; these are the standard ones.
 
