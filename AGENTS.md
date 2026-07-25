@@ -275,8 +275,9 @@ least-privilege access, input validation, and defense in depth.
   approval and proceed.
 - Significant changes should have the plan written to docs/design for approval and future
   documentation.
-- When completing a user-visible feature, update docs/user/USER_GUIDE.md and tell the assistant how
-  it works in the system prompt in prompts.yaml or in tool descriptions. This is not optional.
+- When completing a user-visible feature, update the user documentation and tell the assistant how
+  it works in the system prompt in prompts.yaml or in tool descriptions. This is not optional. See
+  **[Writing User Documentation](#writing-user-documentation)** below for where the change belongs.
 - When solving a problem, consider whether there's a better long term fix and ask the user whether
   they prefer the tactical pragmatic fix or the "proper" one. Look out for design or code smells.
   Refactoring is relatively cheap in this project - cheaper than leaving something broken.
@@ -340,6 +341,32 @@ Never push changes or open a PR with failing tests or linter errors caused by yo
   tested independently. This is key to maintaining momentum.
 - Do not give timelines in weeks or other units of time. Development on this project does not
   proceed in this manner as a hobby project predominantly developed using LLM assistance tools.
+
+### Writing User Documentation
+
+User documentation lives in `docs/user/`, **split by topic, one file per topic**. This matters
+because the assistant reads these files at runtime with `get_user_documentation_content`: it can
+only fetch a whole file, so a sprawling file wastes context and a well-named small one doesn't.
+
+- **Put the change in the topic file that already covers it.** `docs/user/USER_GUIDE.md` is a short
+  index, not a place to document features. If you add an entry there, it's a one-line row pointing
+  at a topic guide.
+- **Add a new file when a topic genuinely doesn't exist yet**, and add it to the index. Name it for
+  what a reader would search for (`smart-home.md`, not `integrations2.md`) — the assistant sees only
+  the filenames when choosing what to read. Start it with an H1 and a one-line **What's here:**
+  summary.
+- **A file that grows past a few hundred lines is a signal to split it**, not to keep appending.
+- **Write for the person using the assistant.** Say what the feature does and how to ask for it.
+  Skip implementation detail, internal identifiers, and rationale that only matters to whoever built
+  it.
+- **Do not document the change history.** No "NEW:", no "this now works", no "previously this was
+  broken". Describe the current behaviour as though it had always been that way; the commit history
+  is the record of what changed.
+- **Operator-facing material goes to `docs/operations/`**, primarily
+  [CONFIGURATION_REFERENCE.md](docs/operations/CONFIGURATION_REFERENCE.md). Environment variables,
+  keys, OAuth client setup, and policy tuning do not belong in a user guide — link to them instead.
+- **Design rationale goes to `docs/design/`.** A user guide may link to a design doc; it should not
+  reproduce it.
 
 ### Adding New Tools
 

@@ -972,7 +972,16 @@ for encrypting refresh tokens at rest. All three secrets must be present; if any
 integration is disabled at startup with an error naming the unmet condition.
 
 See [docs/design/user-scoped-google-data-access.md](../design/user-scoped-google-data-access.md) and
-[Connect your Google account](../user/USER_GUIDE.md#connect-your-google-account).
+the user-facing [Gmail and Google Drive guide](../user/google-workspace.md).
+
+**OAuth client setup.** Create an OAuth 2.0 client in Google Cloud Console with the redirect URI
+pointing at `<your-server>/api/integrations/google/callback`, and add every household member who
+will use the feature as a test user on the consent screen. A client in "testing" mode is sufficient
+and needs no Google verification for these sensitive scopes — but refresh tokens issued to a
+test-mode client expire after **7 days**, which triggers re-authorization notifications for every
+user on that cycle. Publishing the client to production mode avoids this; for the Gmail and Drive
+scopes that may involve Google's verification process. The design intentionally does not work around
+this in code — the right fix is production mode, not silence.
 
 ```yaml
 google_integration:
@@ -1099,6 +1108,24 @@ endpoint reports the unmet condition.
 Setting it to `false` waives the check (logged at startup and surfaced on the status endpoint) and
 the tools register regardless of taint mode.
 
+Two sink classes are deliberately softer at `unknown_external` in the shipped matrix and are not
+part of the floor check:
+
+- **`home_local`** (Home Assistant actions). If the deployment drives high-consequence actuators —
+  locks, garage doors, alarms — consider raising this sink to `confirm` at `unknown_external` via
+  `taint_policy.matrix_overrides` or `operator_minimum`.
+
+- **`artifact_write`** (note and calendar writes). Destructive mutations resolve here and the matrix
+  alone does not confirm them at `unknown_external` — `delete_note` runs unconfirmed on that path.
+  Provenance stamping stops injected instructions laundering themselves into trusted storage, but
+  raise `artifact_write` to `confirm` via `matrix_overrides` if you want deletions confirmed once
+  any external content has been read.
+
+  This describes the taint matrix only. Ordinary tool policy is a separate and independent gate: the
+  shipped `default_profile_settings.tools_policy` carries a priority-20 `confirm` rule for
+  `delete_calendar_event` and `modify_calendar_event`, so those remain confirmed whatever the matrix
+  says. A soft taint outcome never removes a confirmation that tool policy imposes.
+
 ______________________________________________________________________
 
 ## Message History Taint Epoch
@@ -1140,6 +1167,37 @@ See [docs/design/taint-history-epoch-amnesty.md](../design/taint-history-epoch-a
 
 ______________________________________________________________________
 
+## Confined Diagnostics Profile (`ops_automation`)
+
+`ops_automation` exists so an unattended scheduled job can crawl recent error logs, triage them, and
+record a summary without holding broad access. Delegation into it requires user confirmation.
+
+The profile is deliberately narrow: it reads bounded diagnostics, writes **only** notes labelled
+`ops_diagnostics` (enforced in the repository layer, so it cannot write elsewhere even when
+instructed to), and can create only script automations — never ones that wake the full assistant.
+Its notes are quarantined, so log text carrying injected content cannot reach a trusted
+conversation.
+
+To let a profile read those reports, grant it the `ops_diagnostics` visibility label. Without that
+grant the reports are readable only through the web interface. See
+[docs/design/profile-confined-note-writes-and-automation-approvals.md](../design/profile-confined-note-writes-and-automation-approvals.md).
+
+______________________________________________________________________
+
+## Shopping (Universal Commerce Protocol)
+
+`ucp_config` publishes this deployment's own UCP platform profile at `/.well-known/ucp` and holds
+the signing material the shopping tools need. Checkout handoff requires signed UCP requests: set
+`UCP_SIGNING_KEY_ID` plus either `UCP_SIGNING_PRIVATE_KEY` or `UCP_SIGNING_PRIVATE_KEY_PATH` with an
+EC P-256 or P-384 private key. Prefer the path form with a mounted secret. Without them, discovery
+and cart building still work but checkout handoff fails with an error naming the missing variables.
+
+See `ucp_config` in `defaults.yaml` for the full key set, and
+[docs/design/ucp-client-prerequisites.md](../design/ucp-client-prerequisites.md) for the client
+requirements. The user-facing behaviour is described in [Shopping](../user/shopping.md).
+
+______________________________________________________________________
+
 ## Diagnostics Access
 
 ### DIAGNOSTICS_READONLY_TOKEN
@@ -1165,6 +1223,13 @@ Covered endpoints:
 - `GET /api/diagnostics/export`
 - `GET /api/diagnostics/taint-audit`
 - `GET /api/debug/profiles/tools`
+
+`GET /api/diagnostics/taint-audit` summarizes recent taint policy decisions by tool, sink, tier,
+outcome, and source category, and inventories stored message-history rows by interface, role,
+metadata version, and taint tier — so repeated reads of the same legacy row do not inflate the
+apparent backfill size. Use `days` to set the audit window and `max_events` to bound processing; the
+response says explicitly when that cap truncated the breakdown. It exposes no message content,
+conversation IDs, tool arguments, or source IDs.
 
 The token grants no access beyond those endpoints. It does not make anything public that was not
 already: `/api/*` bypasses `AuthMiddleware` and individual routes enforce their own auth, so a
@@ -1463,7 +1528,7 @@ Operator merge note for tool policy:
 
 ### mcp_config.json
 
-MCP server definitions with environment variable expansion using `${VAR}` syntax:
+MCP server definitions with environment variable expansion using `$VAR` or `${VAR}` syntax:
 
 ```json
 {
@@ -1477,6 +1542,25 @@ MCP server definitions with environment variable expansion using `${VAR}` syntax
   }
 }
 ```
+
+Expansion applies to every string value: stdio `command`, `args`, and `env` entries, and the `url`
+of a remote SSE or Streamable HTTP server. For example, `"url": "${MCP_HTTP_ORIGIN}/mcp"` keeps a
+deployment-specific origin out of `config.yaml`.
+
+#### tool_metadata (taint classification)
+
+Configure `tool_metadata` for MCP servers whose protocol annotations do not describe their security
+boundary, so the runtime taint policy can classify their tools correctly:
+
+- `code_execution` or `worker` — network-capable sandboxes.
+- `home_auto` — actions confined to the household system.
+- `low_bandwidth_external` — constrained providers such as a search API that receives only a query.
+- `external_comm` or `browser` — anything that sends messages, invokes webhooks, or accepts
+  attacker-controlled destinations. Use these rather than `home_auto` for a Home Assistant service
+  that does any of those things.
+
+Every configured entry should also declare `output_trusted` or `output_untrusted`. An exact
+`tool_metadata` entry **replaces** the tool's annotation-derived tags rather than adding to them.
 
 ### prompts.yaml
 

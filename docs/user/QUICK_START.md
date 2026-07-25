@@ -96,7 +96,9 @@ Example: `/research Tell me about the history of Python programming`
 
 ## Next Steps
 
-- **[Full User Guide](USER_GUIDE.md)** - Complete feature documentation
+- **[User Guide](USER_GUIDE.md)** - Index of every topic guide
+- **[Interfaces](interfaces.md)** - What Telegram, the web app, and iOS each offer
+- **[Slash Commands](slash-commands.md)** - The full list of specialist modes
 - **[Scheduling Guide](scheduling.md)** - Advanced reminders and recurring tasks
 - **[Scripting Guide](scripting.md)** - Create custom automations
 - **[Browser Automation Guide](browser_automation.md)** - Complex web interactions with `/browse`

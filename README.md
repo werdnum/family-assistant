@@ -218,9 +218,9 @@ The project uses Alembic for database migrations.
 ### For Users
 
 - **[Quick Start Guide](docs/user/QUICK_START.md)** - Get started in 5 minutes
-- **[Features Overview](docs/user/FEATURES.md)** - Complete feature catalog
-- **[User Guide](docs/user/USER_GUIDE.md)** - Comprehensive usage documentation
-- **[FAQ](docs/user/FAQ.md)** - Frequently asked questions
+- **[User Guide](docs/user/USER_GUIDE.md)** - Index of the per-topic user guides
+- **[Interfaces](docs/user/interfaces.md)** - Telegram, web, and iOS
+- **[Slash Commands](docs/user/slash-commands.md)** - Specialist modes and when to use them
 - **[Scheduling](docs/user/scheduling.md)** - Reminders and scheduled tasks
 - **[Scripting](docs/user/scripting.md)** - Automation with scripts
 - **[Camera Integration](docs/user/camera_integration.md)** - Security camera features

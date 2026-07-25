@@ -2087,10 +2087,10 @@ def process_event(event_data):
     name: 'get_user_documentation_content',
     title: 'Get User Documentation - Success',
     args: {
-      filename: 'FEATURES.md',
+      filename: 'notes-and-skills.md',
     },
     result:
-      '# Family Assistant Features\n\nThis document outlines the key features of the Family Assistant application:\n\n## Core Features\n- **Smart Chat Interface**: Interact with the assistant via Telegram or web interface\n- **Document Management**: Store, search, and retrieve documents and notes\n- **Calendar Integration**: Manage events and appointments\n- **Task Scheduling**: Set up automated tasks and reminders\n\n## Advanced Features\n- **Home Assistant Integration**: Control smart home devices\n- **Script Execution**: Run custom automation scripts\n- **Event Listeners**: Respond to system events automatically\n\nFor detailed usage instructions, see the USER_GUIDE.md file.',
+      '# Notes and Skills\n\n**What\'s here:** saving facts the assistant should remember, managing them, and teaching it reusable instructions ("skills").\n\n## Notes\n\nNotes are the assistant\'s long-term memory for facts you give it.\n\n- "Remember: the plumber\'s number is 555-1234."\n- "List all my notes."\n\n## Skills\n\nSkills are notes that hold procedural instructions rather than facts.',
     status: { type: 'complete' },
   },
   {

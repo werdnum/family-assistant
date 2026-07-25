@@ -240,7 +240,6 @@ Example:
 
 ## Related Guides
 
-- [Video Generation](USER_GUIDE.md#generate-videos) - Create AI-generated videos
-- [Data Visualization](USER_GUIDE.md#create-data-visualizations) - Create charts and graphs from
-  data
-- [Working with Attachments](USER_GUIDE.md#4-working-with-attachments) - General attachment handling
+- [Photos, Images, Video, and Charts](media.md) - Video generation and charting overview
+- [Data Visualization Guide](data_visualization.md) - Create charts and graphs from data
+- [Attachments](attachments.md) - General attachment handling
