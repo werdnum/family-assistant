@@ -31,13 +31,9 @@ which is the authoritative list.
 
 ## Templates and static files
 
-The UI is React, but a few server-rendered pages remain. Jinja2 templates live in
-[`../templates/`](../templates) (`base.html.j2`, `context_viewer.html.j2`) and are used by the
-context viewer. Static assets are served from [`../static/`](../static); the production frontend
-build lands in `../static/dist/`.
-
-`routers/vector_search.py` and `routers/errors.py` still render Jinja2 templates, but they are not
-registered with the app and the templates they name no longer exist — treat them as vestigial.
+The UI is React, but the context viewer is still server-rendered. Its Jinja2 templates live in
+[`../templates/`](../templates) (`base.html.j2`, `context_viewer.html.j2`). Static assets are served
+from [`../static/`](../static); the production frontend build lands in `../static/dist/`.
 
 ## Development
 
