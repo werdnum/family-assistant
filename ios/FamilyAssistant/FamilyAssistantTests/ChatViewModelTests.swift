@@ -8185,6 +8185,53 @@ final class ChatViewModelTests: XCTestCase {
         model = nil
     }
 
+    func testActivityStreamConnectsWhileBootstrapFetchesAreStillOutstanding() async throws {
+        // Regression: `bootstrap` used to start the activity stream only after
+        // awaiting `loadProfiles` and `refreshConversations`. In production the
+        // conversation-list fetch alone runs a ~2s median round trip, so every cold
+        // launch spent seconds with no stream even attempted — and the indicator
+        // showed a connection warning the whole time. The activity stream depends on
+        // neither fetch, so it must connect while they are still in flight.
+        // Stale stored conversation → launch opens a generated draft, so liveness
+        // rests on the activity stream alone (no follow stream to establish).
+        storeLastConversation("web_conv_stale", activeSecondsAgo: 16 * 60)
+        let activityController = HangingStream()
+        let conversationsController = HangingStream()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path == "/api/v1/chat/activity/stream" {
+                return .hangingStream("", controller: activityController)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                // Never completes: bootstrap stays parked inside `refreshConversations`.
+                return .hangingStream("", controller: conversationsController)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/profiles" {
+                return .json(#"{"profiles":[],"default_profile_id":"default_assistant"}"#)
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/confirmations/pending" {
+                return .json(#"{"confirmations":[]}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        var model: ChatViewModel? = makeViewModel(conversationID: nil)
+        let bootstrapTask = Task { [model] in await model?.bootstrap() }
+
+        // A launch draft has no server-side row, so liveness rests on the
+        // account-global activity stream alone. It connects despite the list fetch
+        // never returning, and the indicator reaches `.live` rather than sitting on a
+        // warning for the duration of bootstrap.
+        try await waitUntil(timeout: 6) { model?.syncPresentation == .live }
+        XCTAssertEqual(model?.syncPresentation, .live)
+
+        bootstrapTask.cancel()
+        conversationsController.finish()
+        activityController.finish()
+        _ = await bootstrapTask.value
+        model = nil
+    }
+
     func testIndicatorNotLiveAfterCleanEOFDrop() async throws {
         // A held (connected) follow stream that then closes cleanly (empty EOF)
         // must leave the derived presentation off `.live`: a clean EOF is still an

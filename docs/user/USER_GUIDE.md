@@ -581,7 +581,8 @@ various tasks with dark mode support and mobile optimization.
   level meter while audio is being captured, and reports an error instead of connecting silently if
   the microphone pipeline does not start. A small connection indicator in the Chat toolbar tells you
   the live-updates state at a glance and offers the right fix in one tap. It rides out a momentary
-  blip without flashing a warning, shows a spinner while it is actively reconnecting, and otherwise
+  blip without flashing a warning, shows a spinner while it is starting up or actively reconnecting
+  — opening the app no longer flashes a connection warning for the first few seconds — and otherwise
   distinguishes *degraded* (updates are lagging — tap to reconnect) from *offline* (no connection —
   tap to reconnect) from *sign-in required* (tap to sign in), instead of collapsing everything into
   one "no connection" icon. Background sync failures no longer pop up error dialogs while you are
