@@ -39,6 +39,23 @@ Routers live in `routers/`, one per feature area. `api.py` is the aggregator tha
 - **Tools**: MCP integration for external tools, plus a confirmation mechanism for destructive
   operations.
 
+## Error Reports vs. Telemetry Breadcrumbs
+
+Frontend clients POST to `POST /api/errors/`. The report's optional `severity` selects the lane:
+
+- Absent or `"error"` → **error lane**: logged at `ERROR` and persisted to `error_logs` (the table
+  the engineer profile reads via `read_error_logs` and a human reads via `GET /api/errors/`). The
+  web frontend never sets `severity`, so its reports — including React error-boundary catches that
+  use `error_type: "component_error"` — stay here.
+- `"info"` / `"warning"` / `"debug"` → **telemetry lane**: recorded in an in-memory ring buffer and
+  logged below the `error_logs` threshold, so high-frequency breadcrumbs never drown genuine errors.
+  The iOS app sends its sync breadcrumbs (stream restarts/disconnects, resync phases, transport
+  events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader gate) or the
+  engineer-profile `read_frontend_telemetry` tool. The buffer is dropped on restart.
+
+See
+[docs/design/ios-frontend-telemetry-lane.md](../../../docs/design/ios-frontend-telemetry-lane.md).
+
 ## Dependency Injection
 
 Use FastAPI dependencies for shared resources:

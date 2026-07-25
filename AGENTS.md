@@ -136,21 +136,6 @@ the message-history taint epoch, the read-only diagnostics token, embedding prov
 global tool policy. Look there before adding or changing anything that reads configuration, and
 update it when you add a new setting.
 
-### Frontend error reports vs. telemetry (breadcrumbs)
-
-Frontend clients POST to `POST /api/errors/`. The report's optional `severity` selects the lane:
-
-- Absent or `"error"` → **error lane**: logged at `ERROR` and persisted to `error_logs` (the table
-  the engineer profile reads via `read_error_logs` and a human reads via `GET /api/errors/`). The
-  web frontend never sets `severity`, so its reports — including React error-boundary catches that
-  use `error_type: "component_error"` — stay here.
-- `"info"` / `"warning"` / `"debug"` → **telemetry lane**: recorded in an in-memory ring buffer and
-  logged below the `error_logs` threshold, so high-frequency breadcrumbs never drown genuine errors.
-  The iOS app sends its sync breadcrumbs (stream restarts/disconnects, resync phases, transport
-  events) here. Read them via `GET /api/errors/telemetry` (same diagnostics-reader gate) or the
-  engineer-profile `read_frontend_telemetry` tool. The buffer is dropped on restart. See
-  [docs/design/ios-frontend-telemetry-lane.md](docs/design/ios-frontend-telemetry-lane.md).
-
 ### Gemini Computer Use (visual browser profile)
 
 The `browser_visual_profile` drives a browser via Gemini's native computer-use capability, enabled
@@ -369,13 +354,10 @@ semantics.
 
 ### Adding New UI Endpoints
 
-Create your router in `src/family_assistant/web/routers/`, and add the new endpoint to the
-appropriate test files in `tests/functional/web/` so it's covered for basic functionality. See
-[src/family_assistant/web/CLAUDE.md](src/family_assistant/web/CLAUDE.md) for web API development
-guidance.
-
 UI pages are handled entirely by the React frontend — add new views as React components in
-`frontend/`, not as server-side endpoints.
+`frontend/`, not as server-side endpoints. For API endpoints, see
+[src/family_assistant/web/CLAUDE.md](src/family_assistant/web/CLAUDE.md), which covers router
+placement, auth, and the error-vs-telemetry reporting lanes.
 
 ## Important Notes
 

@@ -58,6 +58,15 @@ streaming API integration.
 Client-side routing with separate entry points: `chat.html` for the chat interface, `router.html`
 for the main application router, plus feature-specific pages in `src/pages/`.
 
+### Error Reporting
+
+`src/api/errorClient.ts` POSTs to `POST /api/errors/`. The optional `severity` field selects which
+lane the report lands in server-side: omitting it (what the web frontend does) persists a genuine
+error, while `"info"`/`"warning"`/`"debug"` route to an in-memory telemetry ring buffer for
+high-frequency breadcrumbs. See
+[src/family_assistant/web/CLAUDE.md](../src/family_assistant/web/CLAUDE.md) before changing what a
+client sends. The errors viewer UI is `src/errors/`.
+
 ### Push Notifications
 
 Web Push support, so notifications arrive even when the app is closed:
