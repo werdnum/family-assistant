@@ -43,7 +43,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
     from datetime import datetime
 
     from family_assistant.camera.protocol import CameraBackend
@@ -91,6 +91,44 @@ def _taint_metadata_from_sources(
     for source in sources or ():
         state = state.add_source(source)
     return state.to_metadata()
+
+
+def _tool_row_attachment_ids(message: LLMMessage) -> set[str]:
+    """Attachment ids a tool result records on its own history row."""
+    if not isinstance(message, ToolMessage) or not message.attachments:
+        return set()
+    return {
+        attachment_id
+        for attachment in message.attachments
+        if (attachment_id := attachment.get("attachment_id"))
+    }
+
+
+def _response_attachment_references(
+    response_attachment_ids: Sequence[str] | None,
+    *,
+    recorded_on_tool_rows: Collection[str],
+) -> list[MessageAttachmentMetadata] | None:
+    """Attachment references to store on the assistant row that ends a turn.
+
+    A turn's response attachments are otherwise only announced live (the web
+    stream's per-file events, a Telegram media send), so a client loading the
+    conversation afterwards has no way to know the reply carried them. Recording
+    them as references keeps them in history; the read path resolves each id to
+    its mime type and URL.
+
+    Ids a tool result already recorded on its own row are skipped: both rows are
+    visible to clients, so listing the attachment on each would show it twice.
+    """
+    references = [
+        MessageAttachmentMetadata(
+            type="attachment_reference",
+            attachment_id=attachment_id,
+        )
+        for attachment_id in response_attachment_ids or ()
+        if attachment_id not in recorded_on_tool_rows
+    ]
+    return references or None
 
 
 class ProcessingService:
@@ -1055,7 +1093,21 @@ class ProcessingService:
             final_assistant_message_internal_id = None
 
             if generated_turn_messages:
+                # The reply's attachments belong on the last assistant row of the
+                # turn, and only where a tool row isn't already carrying them.
+                recorded_on_tool_rows: set[str] = set()
                 for turn_msg in generated_turn_messages:
+                    recorded_on_tool_rows |= _tool_row_attachment_ids(turn_msg)
+                final_assistant_index = max(
+                    (
+                        index
+                        for index, message in enumerate(generated_turn_messages)
+                        if isinstance(message, AssistantMessage) and message.content
+                    ),
+                    default=None,
+                )
+
+                for index, turn_msg in enumerate(generated_turn_messages):
                     if (
                         isinstance(turn_msg, AssistantMessage)
                         and turn_msg.content
@@ -1082,6 +1134,14 @@ class ProcessingService:
                         subconversation_id=subconversation_id,
                         user_id=user_id,
                         reasoning_info=reasoning_info_for_msg,
+                        attachments=(
+                            _response_attachment_references(
+                                response_attachment_ids,
+                                recorded_on_tool_rows=recorded_on_tool_rows,
+                            )
+                            if index == final_assistant_index
+                            else None
+                        ),
                         save_with_isolated_context=use_isolated_history_writes,
                     )
 
@@ -1210,6 +1270,9 @@ class ProcessingService:
                     )
 
                     # --- 3. Stream LLM Processing ---
+                    # Ids already recorded on a tool row of this turn, so the
+                    # closing assistant row doesn't repeat them.
+                    recorded_on_tool_rows: set[str] = set()
                     async for event, stream_msg in self.process_message_stream(
                         db_context=db_context,
                         messages=typed_messages_for_llm,
@@ -1246,8 +1309,23 @@ class ProcessingService:
                                 stream_msg.content = normalize_latex_to_unicode(
                                     stream_msg.content
                                 )
+                            recorded_on_tool_rows |= _tool_row_attachment_ids(
+                                stream_msg
+                            )
                             reasoning_info_for_stream = (
                                 event.metadata.get("reasoning_info")
+                                if isinstance(stream_msg, AssistantMessage)
+                                and event.metadata
+                                else None
+                            )
+                            # The turn's closing assistant message arrives on the
+                            # same event as its response attachment ids, so this
+                            # is where they get recorded.
+                            response_attachments = (
+                                _response_attachment_references(
+                                    event.metadata.get("attachment_ids"),
+                                    recorded_on_tool_rows=recorded_on_tool_rows,
+                                )
                                 if isinstance(stream_msg, AssistantMessage)
                                 and event.metadata
                                 else None
@@ -1262,6 +1340,7 @@ class ProcessingService:
                                 subconversation_id=subconversation_id,
                                 user_id=user_id,
                                 reasoning_info=reasoning_info_for_stream,
+                                attachments=response_attachments,
                                 save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
                             )
 
