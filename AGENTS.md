@@ -418,6 +418,11 @@ project code), `/home/claude` (Claude's settings and cache), and PostgreSQL data
 runs **postgres** (with pgvector), **backend** (backend server plus frontend dev server via
 `poe dev`), and **claude** (claude-code-webui on port 8080 with MCP servers configured).
 
+`.devcontainer/CLAUDE.devcontainer.md` documents that environment from the inside — logs, access
+points, volume mounts. `setup-workspace.sh` installs it as `/home/claude/.claude/CLAUDE.md` so it
+loads as user-level memory for agents running in the container, and skips the install when that path
+is mounted read-only. Edit it there, not in this file.
+
 ### Building and Deploying
 
 `.devcontainer/build-and-push.sh [tag]` builds the container with podman and pushes it to the

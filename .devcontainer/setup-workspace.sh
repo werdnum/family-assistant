@@ -305,6 +305,22 @@ if [ -f "/home/claude/.claude/CLAUDE.local.md" ]; then
     cp /home/claude/.claude/CLAUDE.local.md .claude/
 fi
 
+# Install the dev container guide as the user-level CLAUDE.md so agents running
+# in here know how this environment works. Skipped when /home/claude/.claude is
+# read-only, which is how docker-compose.multi.yml mounts the host's own
+# ~/.claude — writing there would clobber the user's personal global memory.
+# The write is attempted rather than probed with [ -w ]: a read-only bind mount
+# is enforced by the mount layer, which the permission bits do not reflect, and
+# root bypasses those bits anyway.
+if [ -f "/opt/claude-settings/CLAUDE.devcontainer.md" ]; then
+    if mkdir -p /home/claude/.claude 2>/dev/null &&
+        cp /opt/claude-settings/CLAUDE.devcontainer.md /home/claude/.claude/CLAUDE.md 2>/dev/null; then
+        echo "Installed dev container guide to /home/claude/.claude/CLAUDE.md"
+    else
+        echo "Skipping dev container guide: /home/claude/.claude is read-only."
+    fi
+fi
+
 # One Shot Mode Configuration
 if [ "$ONESHOT_MODE" = "true" ]; then
     echo "🎯 ONE SHOT MODE ACTIVE"

@@ -154,6 +154,7 @@ RUN --mount=type=cache,target=/home/claude/.cache/uv,sharing=locked,uid=1001,gid
 USER root
 RUN mkdir -p /opt/claude-settings
 COPY .devcontainer/settings.local.json /opt/claude-settings/
+COPY .devcontainer/CLAUDE.devcontainer.md /opt/claude-settings/
 COPY .devcontainer/oneshot-config /opt/oneshot-config/
 COPY .devcontainer/setup-workspace.sh /usr/local/bin/
 COPY .devcontainer/setup-git-auth.sh /usr/local/bin/
