@@ -27,8 +27,10 @@ other files.
 an object, changing the style), combine several, or use one image as a style reference. See
 [media.md](media.md) and [image_tools.md](image_tools.md).
 
-**Process a document:** summarise it, extract specific information, search within it, or index it
-for later search. See [documents-and-search.md](documents-and-search.md).
+**Process a document:** summarise it, extract specific information, or search within it. A file sent
+in a chat stays with that conversation; to make its content permanently searchable, upload it on the
+web interface's **Upload Document** page instead. See
+[documents-and-search.md](documents-and-search.md).
 
 **Ask about an attachment itself:**
 
@@ -49,8 +51,10 @@ conversation keeps its own collection.
 
 ## Sending attachments to other people
 
-The assistant can forward an attachment to another known user — "send this image to John". It always
-asks you to confirm first. See [confirmations-and-safety.md](confirmations-and-safety.md).
+The assistant can forward an attachment to another known user — "send this image to John" — as part
+of the same messaging feature described in
+[interfaces.md](interfaces.md#messaging-other-people-in-your-household), including when the approval
+step applies.
 
 ## Tips
 

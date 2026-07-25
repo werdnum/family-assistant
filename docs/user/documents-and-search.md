@@ -41,10 +41,13 @@ from the page.
 
 ### From a file
 
-Upload PDFs, text files, and other documents on the **Upload Document** page of the web interface,
-or send them directly in a Telegram message. The assistant processes and indexes them so their
-content becomes searchable. See [attachments.md](attachments.md) for what happens to files in a
-conversation.
+Upload PDFs, text files, and other documents on the **Upload Document** page of the web interface.
+The assistant processes and indexes them so their content becomes searchable.
+
+Sending a file in a chat message is different: it becomes an attachment the assistant can read and
+work with for that conversation, but it is not added to your searchable knowledge base. To keep a
+file permanently, upload it on the **Upload Document** page. See [attachments.md](attachments.md)
+for what the assistant can do with files in a conversation.
 
 ### From email
 

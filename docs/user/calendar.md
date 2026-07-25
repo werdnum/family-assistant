@@ -45,4 +45,5 @@ down quickly.
 - **The assistant flagged a duplicate.** Review the events it listed. If yours is genuinely
   different (a different doctor, a different purpose), tell it to create the event anyway.
 - **A change is waiting.** Modifications and deletions don't take effect until you approve the
-  confirmation. Approvals stay open for 24 hours.
+  confirmation, and confirmations expire if you leave them too long — see
+  [confirmations-and-safety.md](confirmations-and-safety.md).

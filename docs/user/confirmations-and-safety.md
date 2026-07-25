@@ -5,9 +5,15 @@ how it handles content that came from outside your household.
 
 ## When you'll be asked
 
-Actions with real consequences need your approval first: calendar modifications and deletions,
-sending messages or attachments to other people, file operations, and other significant changes of
-state. Read-only actions — looking things up, searching, summarising — don't.
+Actions with real consequences need your approval first — modifying or deleting a calendar event is
+the everyday example, alongside handing work to another mode. Read-only actions — looking things up,
+searching, summarising — never do.
+
+Which actions are gated depends on your deployment's policy and on how the request reached the
+assistant. The same action can go straight through in a direct chat and require approval when it
+originated in a forwarded email or followed something the assistant read from an untrusted source.
+Writing notes, scheduling reminders, sending messages to other people, and fetching a linked
+document all work that way.
 
 ## Approving
 
@@ -31,7 +37,10 @@ running, a delegated task reporting back. If such a turn needs approval for some
 the request as a pending confirmation addressed to you, sends it to your primary channel, and
 finishes its turn. The action runs later, once you approve.
 
-Approvals stay open for 24 hours.
+How long an approval stays open depends on the deployment and on which mode asked. Ordinary
+assistant confirmations expire after about an hour by default; requests raised from forwarded email
+stay open for 24 hours, since you may not be at a trusted interface when the reply lands. If a
+confirmation expires before you answer, just ask again.
 
 ## Content from outside your household
 

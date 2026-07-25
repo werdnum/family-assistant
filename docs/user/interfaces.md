@@ -152,12 +152,29 @@ be signed in first.
 
 These also appear as building blocks in Shortcuts, so you can combine them with other automations.
 
+## Messaging other people in your household
+
+The assistant can pass a message to another person it knows, in whichever interface they use:
+
+- "Tell Alice that dinner is ready."
+- "Let Sam know I'll be twenty minutes late."
+- "Send this photo to John."
+
+It tells you what it sent and to whom. In a normal chat it sends straight away, so name the person
+clearly. When the request originated somewhere less trusted — a forwarded email, say — it asks you
+to approve the message first. See [confirmations-and-safety.md](confirmations-and-safety.md).
+
+This only reaches people set up as users of your Family Assistant — it isn't a way to send ordinary
+SMS or email to arbitrary contacts.
+
 ## Push notifications
 
 The assistant can reach you when the app isn't open.
 
 - **Browser (PWA):** install the web app to your device and allow notifications.
-- **iOS app:** registers for Apple push notifications automatically.
+- **iOS app:** notifications are off until you turn them on. Go to **More → Settings** and choose
+  **Enable Notifications**, then grant permission when iOS asks. The app registers for Apple push
+  notifications only after that.
 
 You're notified when a new assistant reply arrives in a web conversation, a confirmation is waiting
 for approval, a background task fails after retrying, a spawned worker task finishes, or a
