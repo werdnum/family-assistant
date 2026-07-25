@@ -3,13 +3,21 @@
 import base64
 import io
 import json
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
+from family_assistant.llm import (
+    AssistantMessage,
+    LLMOutput,
+    ToolCallFunction,
+    ToolCallItem,
+    UserMessage,
+)
+from family_assistant.llm.messages import MessageAttachmentMetadata
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.context import get_db_context
 from tests.functional.web.conftest import run_chat_turn_stream
@@ -585,3 +593,77 @@ async def test_messages_returns_latest_user_profile_only_when_requested(
     )
     assert user_message["processing_profile_id"] is not None
     assert adopt_data["latest_user_profile_id"] == user_message["processing_profile_id"]
+
+
+@pytest.mark.asyncio
+async def test_conversation_history_enriches_bare_attachment_references(
+    api_test_client: AsyncClient,
+    attachment_registry_fixture: AttachmentRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """A delivered reply records only an attachment id; the read path fills the rest.
+
+    Chat interfaces persist response attachments as bare ``attachment_reference``
+    entries, so without enrichment a client cannot tell an image from any other
+    file (nor where to load it from) and falls back to showing a paperclip.
+    """
+    conversation_id = "web_conv_reference_enrichment"
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), color="green").save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
+
+    async with get_db_context(engine=db_engine) as db_context:
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=db_context,
+            content=image_bytes,
+            filename="chart.png",
+            mime_type="image/png",
+            conversation_id=conversation_id,
+            user_id="test_user",
+        )
+        await db_context.message_history.add_message(
+            UserMessage(content="Show me the chart"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
+            user_id="test_user",
+        )
+        await db_context.message_history.add_message(
+            AssistantMessage(content="Here it is."),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=datetime(2026, 7, 1, 12, 0, 1, tzinfo=UTC),
+            attachments=[
+                MessageAttachmentMetadata(
+                    type="attachment_reference",
+                    attachment_id=attachment.attachment_id,
+                ),
+                MessageAttachmentMetadata(
+                    type="attachment_reference",
+                    attachment_id="unknown-attachment",
+                ),
+            ],
+        )
+
+    response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert response.status_code == 200
+    assistant_message = next(
+        message
+        for message in response.json()["messages"]
+        if message["role"] == "assistant"
+    )
+    resolved, unresolved = assistant_message["attachments"]
+
+    assert resolved["attachment_id"] == attachment.attachment_id
+    assert resolved["mime_type"] == "image/png"
+    assert resolved["content_url"] == f"/api/attachments/{attachment.attachment_id}"
+    assert resolved["url"] == resolved["content_url"]
+    assert resolved["description"]
+    assert resolved["size"] == len(image_bytes)
+
+    # An id this caller cannot resolve is passed through as stored, not dropped.
+    assert unresolved["attachment_id"] == "unknown-attachment"
+    assert unresolved.get("mime_type") is None
+    assert unresolved.get("content_url") is None
