@@ -2980,11 +2980,17 @@ final class ChatViewModel {
         }
     }
 
-    /// Identifies the deployment an attachment's bytes came from, so cached
-    /// images can never be served across servers. Empty when no server is
-    /// configured, which suppresses caching entirely.
+    /// Identifies the authenticated session an attachment's bytes came from, so
+    /// cached images can never be served across servers *or* across a change of
+    /// credentials on one server — a terminal 401 followed by signing in as
+    /// someone else never unmounts the shell, and would otherwise leave the
+    /// previous account's images reachable without a re-authorized download.
+    /// Empty when no server is configured, which suppresses caching entirely.
     var attachmentCacheScope: String {
-        authManager.validatedServerURL()?.absoluteString ?? ""
+        guard let server = authManager.validatedServerURL()?.absoluteString else {
+            return ""
+        }
+        return "\(server)#\(authManager.authEpoch)"
     }
 
     func authenticatedImageData(for attachment: ChatAttachment) async throws -> Data {

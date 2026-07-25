@@ -2003,7 +2003,10 @@ private struct AuthenticatedAttachmentImage: View {
                     .background(Color(.secondarySystemBackground))
             }
         }
-        .task(id: attachment.contentURL) {
+        // Keyed on the session scope as well as the URL: a change of
+        // credentials must re-run this rather than leave the previously decoded
+        // image on screen.
+        .task(id: "\(viewModel.attachmentCacheScope)|\(attachment.contentURL ?? "")") {
             let server = viewModel.attachmentCacheScope
             if let cached = AttachmentImageCache.image(for: attachment, server: server) {
                 image = cached
@@ -2039,10 +2042,13 @@ private struct AuthenticatedAttachmentImage: View {
 /// this, scrolling past an image re-downloads it every time.
 ///
 /// That same reasoning bounds what may be cached across a session: an entry is
-/// keyed by its server as well as its path, and the whole cache is dropped at
-/// logout (`AuthManager.logout()`). Otherwise the next person to sign in on this
-/// device could be handed bytes from the previous session's attachment of the
-/// same id without the download ever being re-authorized.
+/// keyed by the authenticated session it was fetched under (server plus auth
+/// epoch, see `ChatViewModel.attachmentCacheScope`), and the cache is dropped on
+/// every auth transition (`AuthManager.bumpAuthEpoch`). Otherwise the next
+/// person to sign in on this device could be handed bytes from the previous
+/// session's attachment of the same id without the download ever being
+/// re-authorized — including via the in-place re-auth after a terminal 401,
+/// which never unmounts the authenticated shell.
 enum AttachmentImageCache {
     private static let cache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()

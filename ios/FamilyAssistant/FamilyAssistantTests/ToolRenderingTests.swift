@@ -455,6 +455,31 @@ final class ToolRenderingTests: XCTestCase {
         XCTAssertNil(AttachmentImageCache.image(for: attachment, server: "https://one.example.test"))
     }
 
+    /// Signing out is not the only way the account behind a session changes: a
+    /// terminal 401 latches `authRequired` and the user signs in again in place,
+    /// possibly as somebody else, without the authenticated shell ever
+    /// unmounting. The cache scope has to move with that transition too, or the
+    /// previous account's images stay reachable.
+    @MainActor
+    func testCacheScopeChangesWhenCredentialsAreRejectedWithoutLogout() {
+        let authManager = AuthManager()
+        authManager.serverURL = "https://assistant.example.test"
+        let viewModel = ChatViewModel(
+            authManager: authManager,
+            errorReporter: ErrorReporter(spoolDirectory: nil)
+        )
+        let before = viewModel.attachmentCacheScope
+        XCTAssertFalse(before.isEmpty)
+
+        authManager.markAuthRequired()
+
+        XCTAssertNotEqual(
+            viewModel.attachmentCacheScope,
+            before,
+            "Rejected credentials must invalidate the image cache scope even though logout() is never called."
+        )
+    }
+
     /// With no server configured there is nothing to scope an entry to, so
     /// nothing is cached.
     func testAttachmentImageCacheIgnoresEntriesWithoutAServer() {
