@@ -533,6 +533,14 @@ final class ChatViewModel {
 
     func bootstrap(initialPrompt: String? = nil) async {
         activateSync()
+        // Open the account-global activity stream FIRST, before the awaited fetches
+        // below. It depends on neither the profile list nor the conversation list, and
+        // in production `refreshConversations` alone runs a ~2s median round trip — so
+        // starting it last left the launch window (the whole of bootstrap) with no
+        // stream even attempted, and the connection indicator showing a warning for
+        // seconds on every cold launch. Started here it connects in tens of
+        // milliseconds, alongside the fetches rather than behind them.
+        syncCoordinator.startActivityStream(reason: .initial)
         await loadProfiles()
         await refreshConversations()
         // Only load through the normal selection path when launch restored or
@@ -543,7 +551,6 @@ final class ChatViewModel {
             await selectConversation(conversationID, shouldLoadMessages: true)
         }
         startPendingConfirmationsPolling()
-        syncCoordinator.startActivityStream(reason: .initial)
         if let initialPrompt, shouldProcessInitialPrompt(initialPrompt) {
             lastProcessedInitialPrompt = initialPrompt
             draftText = initialPrompt

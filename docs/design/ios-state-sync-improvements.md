@@ -194,7 +194,13 @@ own cancellation/restart can't be the single owner). It tracks **separate dimens
 - reachability *hint* from `NWPathMonitor` (`.unsatisfied` pauses connect attempts and shows offline
   immediately; `.satisfied` is only a hint to retry, never proof of health)
 - auth: ok / refreshing / authRequired
-- per-channel health: follow-stream, activity-stream (connected / reconnecting / down)
+- per-channel health: follow-stream, activity-stream (connected / reconnecting / down / idle).
+  `idle` is the never-attempted initial state and is deliberately distinct from `down` ("tried,
+  waiting to retry"): only `down` maps to the wifi-bad `degraded` warning, so the launch window
+  before `bootstrap` opens the streams reads as the `syncing` spinner rather than announcing a
+  connection failure that has not happened. The streams are opened at the *top* of `bootstrap`,
+  before its awaited profile/conversation-list fetches, so that window is milliseconds rather than
+  the several seconds those fetches take.
 - reconciliation phase: idle / syncing
 
 and derives a small presentation state for the UI:
@@ -651,8 +657,8 @@ for genuinely wrong-state outcomes were fixed, one test-correctness gap closed, 
 ### 9.2 M3 review disposition (codex `gpt-5.6-sol`, 2026-07-22)
 
 A local codex pass on the M3 branch — after rebasing its error-taxonomy / inline-retry work onto the
-merged M1+M2 main — raised one P1 and four P2s about the new retry and 429 paths. Disposition per the
-same gates:
+merged M1+M2 main — raised one P1 and four P2s about the new retry and 429 paths. Disposition per
+the same gates:
 
 - **[P1] Retry targeted the user bubble, not the assistant bubble — FIXED.** The user and assistant
   messages of a turn share the same `turnID`, and the user row is appended first, so
@@ -662,8 +668,8 @@ same gates:
   `role == .assistant`. A common outcome (any Retry tap), so ideal behaviour is required. Covered by
   `testRetryAffordanceIsRestrictedToTheAssistantBubble`.
 - **[P2] Delayed message-load retry could brick the composer — FIXED.** `loadMessages` set
-  `isLoadingMessages = true` but reset it only at the function tail; the stale-selection guards
-  (a conversation switch during the fetch await) returned early, leaking the flag and permanently
+  `isLoadingMessages = true` but reset it only at the function tail; the stale-selection guards (a
+  conversation switch during the fetch await) returned early, leaking the flag and permanently
   disabling the composer on the thread the user moved to — newly reachable via M3's delayed advisory
   retry. Reset with a `defer` so every exit path clears it (also closes the latent pre-existing
   version). Covered by `testStaleMessageLoadDoesNotLeakLoadingFlag`.

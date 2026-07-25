@@ -45,7 +45,34 @@ final class SyncCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(monitor.startCount, 1)
         XCTAssertEqual(coordinator.reachability, .satisfied)
-        XCTAssertEqual(coordinator.presentation, .degraded)
+        XCTAssertEqual(coordinator.presentation, .syncing)
+    }
+
+    func testUnstartedChannelsShowSpinnerNotWifiBad() {
+        // Bootstrap runs awaited fetches around the stream starts, so there is a real
+        // window where no channel has been opened yet. Nothing has failed in that
+        // window, so it must read as the `.syncing` spinner — not the wifi-bad
+        // `.degraded` warning, which claims a connection problem that does not exist.
+        let (coordinator, _, _) = makeCoordinator()
+        coordinator.start()
+
+        XCTAssertEqual(coordinator.followHealth, .idle)
+        XCTAssertEqual(coordinator.activityHealth, .idle)
+        XCTAssertEqual(coordinator.presentation, .syncing)
+    }
+
+    func testDroppedChannelStillDegradesAfterHavingBeenTried() async throws {
+        // The `.idle` case must not soften a genuine failure: once a channel has
+        // actually connected and dropped, it is `.down` (waiting to retry) and the
+        // wifi-bad warning is correct.
+        let (coordinator, _, _) = makeCoordinator()
+        coordinator.apply(.activityConnected(generation: coordinator.activityGeneration))
+        coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        XCTAssertEqual(coordinator.presentation, .live)
+
+        coordinator.apply(.activityDropped(generation: coordinator.activityGeneration, cleanEOF: false))
+        XCTAssertEqual(coordinator.activityHealth, .down)
+        try await waitUntil { coordinator.presentation == .degraded }
     }
 
     func testStartLeavesReachabilityUnknownWhenPathUnsatisfied() {
@@ -62,7 +89,9 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertTrue(
             coordinator.apply(.followConnected(generation: coordinator.followGeneration)).isEmpty
         )
-        XCTAssertEqual(coordinator.presentation, .degraded)
+        // Activity has not been opened yet (`.idle`, not `.down`), so the half-connected
+        // state is the spinner rather than the wifi-bad warning.
+        XCTAssertEqual(coordinator.presentation, .syncing)
 
         XCTAssertTrue(
             coordinator.apply(.activityConnected(generation: coordinator.activityGeneration)).isEmpty
@@ -178,8 +207,12 @@ final class SyncCoordinatorTests: XCTestCase {
             "opening a conversation must not flash a warning before follow connects"
         )
 
-        // If the follow stream never connects, the warning still surfaces past the grace.
-        try await waitUntil { coordinator.presentation == .degraded }
+        // Past the grace, a follow stream that has not been opened yet (message load
+        // still running, so `startLiveEvents` has not run) is `.idle` — nothing has
+        // failed — so this reads as the `.syncing` spinner, never the wifi-bad
+        // warning. That warning is reserved for a channel that was tried and dropped.
+        try await waitUntil { coordinator.presentation == .syncing }
+        XCTAssertEqual(coordinator.followHealth, .idle)
     }
 
     func testSyncPhaseTakesPrecedenceOverChannelHealth() {
@@ -217,7 +250,10 @@ final class SyncCoordinatorTests: XCTestCase {
         let effects = coordinator.apply(.activityConnected(generation: staleGeneration))
 
         XCTAssertTrue(effects.isEmpty)
-        XCTAssertEqual(coordinator.activityHealth, .down)
+        XCTAssertEqual(
+            coordinator.activityHealth, .idle,
+            "a rejected connect leaves the channel at its never-attempted initial state"
+        )
     }
 
     func testReplacingFollowStreamBumpsGenerationSoStaleEventsAreRejected() async throws {
@@ -254,14 +290,14 @@ final class SyncCoordinatorTests: XCTestCase {
 
     func testFreshFollowStartMarksReconnectingNotDown() {
         // A fresh follow open (no prior connected task) must mark the channel
-        // `.reconnecting` (actively opening → spinner) rather than leaving it `.down`
-        // (waiting to retry → wifi-bad), so a slow first connect shows the spinner.
+        // `.reconnecting` (actively opening → spinner) rather than leaving it `.idle`,
+        // so the channel reports that an attempt is genuinely under way.
         let (coordinator, _, _) = makeCoordinator()
         let delegate = RecordingSyncStreamDelegate()
         delegate.hangFollowOpen = true
         coordinator.delegate = delegate
 
-        XCTAssertEqual(coordinator.followHealth, .down)
+        XCTAssertEqual(coordinator.followHealth, .idle)
         coordinator.startFollowStream(conversationID: "conv-1")
         XCTAssertEqual(
             coordinator.followHealth, .reconnecting,
@@ -275,7 +311,7 @@ final class SyncCoordinatorTests: XCTestCase {
         delegate.hangActivityOpen = true
         coordinator.delegate = delegate
 
-        XCTAssertEqual(coordinator.activityHealth, .down)
+        XCTAssertEqual(coordinator.activityHealth, .idle)
         coordinator.startActivityStream()
         XCTAssertEqual(
             coordinator.activityHealth, .reconnecting,
@@ -383,11 +419,14 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.presentation, .suspended)
     }
 
-    func testDegradedWhenOnlyOneChannelConnected() {
+    func testOneChannelConnectedDegradesOnlyOnceTheOtherHasFailed() {
         let (coordinator, _, _) = makeCoordinator()
 
         coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        // Activity has never been opened: not live, but nothing has failed either.
+        XCTAssertEqual(coordinator.presentation, .syncing)
 
+        coordinator.apply(.activityDropped(generation: coordinator.activityGeneration, cleanEOF: false))
         XCTAssertEqual(coordinator.presentation, .degraded)
     }
 
@@ -511,6 +550,7 @@ final class SyncCoordinatorTests: XCTestCase {
         let (coordinator, _, _) = makeCoordinator(satisfied: true)
 
         coordinator.apply(.followConnected(generation: coordinator.followGeneration))
+        coordinator.apply(.activityDropped(generation: coordinator.activityGeneration, cleanEOF: false))
         XCTAssertEqual(coordinator.presentation, .degraded)
 
         coordinator.apply(.reachabilityChanged(.unsatisfied))

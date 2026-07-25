@@ -107,6 +107,12 @@ final class SyncCoordinator {
         case connected
         case reconnecting
         case down
+        /// Never attempted since construction: no open has been started for this
+        /// channel yet. Distinct from `.down`, which means an attempt was made and
+        /// the channel is waiting to retry — the state the wifi-bad `.degraded`
+        /// warning is for. Only ever the initial value; every write past that is
+        /// one of the three real states.
+        case idle
     }
 
     enum ReconciliationPhase: String {
@@ -172,8 +178,8 @@ final class SyncCoordinator {
     private(set) var lifecycle: Lifecycle = .foreground
     private(set) var reachability: Reachability = .unknown
     private(set) var authState: AuthState = .ok
-    private(set) var followHealth: ChannelHealth = .down
-    private(set) var activityHealth: ChannelHealth = .down
+    private(set) var followHealth: ChannelHealth = .idle
+    private(set) var activityHealth: ChannelHealth = .idle
     /// Set while `authRequired` is latched (streams suppressed) and consumed by
     /// the next `.authOK` to restart the suppressed streams. A separate latch is
     /// required because a `.refreshing` signal always fires between `.authRequired`
@@ -200,7 +206,10 @@ final class SyncCoordinator {
     private let reconnectDelay: @MainActor (Double) async -> Void
     private let streamTerminationTimeoutSeconds: Double
     private let breadcrumb: ChatSyncBreadcrumb?
-    private var lastReportedPresentation: Presentation = .degraded
+    /// Seeded with the presentation a freshly-constructed coordinator computes (both
+    /// channels `.idle`, nothing else in play), so the first breadcrumb reports a real
+    /// transition rather than a synthetic one off a state that never existed.
+    private var lastReportedPresentation: Presentation = .syncing
     private let channelWarningGraceSeconds: Double
     /// While true, a channel-health warning (`.syncing`/`.degraded`) is held back so
     /// the indicator keeps reading `.live`. Set on the first live→non-live channel
@@ -315,8 +324,10 @@ final class SyncCoordinator {
         // Past the grace: distinguish actively re-establishing from waiting to retry.
         // A `.down` channel (a dropped stream in backoff, offline, or rejected auth)
         // is waiting to retry → the wifi-bad `.degraded` warning. A channel merely
-        // `.reconnecting` (a deliberate replace, actively re-establishing) → the
-        // `.syncing` spinner.
+        // `.reconnecting` (a deliberate replace, actively re-establishing) or still
+        // `.idle` (bootstrap has not opened it yet) → the `.syncing` spinner. `.idle`
+        // must NOT reach `.degraded`: nothing has failed, so the launch window before
+        // the streams start is a spinner, never a "no connection" alarm.
         if anyRelevantChannelDown {
             return .degraded
         }
@@ -369,7 +380,8 @@ final class SyncCoordinator {
     }
 
     /// Whether any channel relevant to the current selection is `.down` (as opposed
-    /// to merely `.reconnecting`). Mirrors the selection logic in `channelsAreLive`.
+    /// to merely `.reconnecting` or not-yet-started `.idle`). Mirrors the selection
+    /// logic in `channelsAreLive`.
     private var anyRelevantChannelDown: Bool {
         let isNoConversation = delegate != nil && delegate?.currentConversationID() == nil
         return isNoConversation
