@@ -40,7 +40,9 @@ Short clips, in the aspect ratio you ask for, optionally guided by a reference i
 
 ## Charts and graphs
 
-Use `/visualize` or `/chart`, and provide the data inline or as an attached CSV or JSON file:
+Use the charting mode — `/visualize` or `/chart` in Telegram, or the corresponding profile in the
+web and iOS profile picker (see [slash-commands.md](slash-commands.md)) — and provide the data
+inline or as an attached CSV or JSON file:
 
 - `/visualize Create a bar chart showing sales by month from this CSV file`
 - `/chart Generate a line graph of temperature trends`

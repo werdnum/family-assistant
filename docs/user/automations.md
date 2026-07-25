@@ -87,8 +87,8 @@ Two things worth knowing:
   have the tools it needs when it later runs.
 
 If a script calls an action that would normally need your approval — deleting a calendar event, say
-— it doesn't run silently in the background. A confirmation lands in Telegram or the web UI and the
-action happens once you approve.
+— it doesn't run silently in the background. A confirmation reaches you wherever you approve things
+— Telegram, the web UI, or the iOS app — and the action happens once you approve.
 
 A script can also call `wake_llm()` to hand off to the assistant conditionally, with context you
 choose. That's a good middle ground: cheap filtering in the script, judgement only when it's

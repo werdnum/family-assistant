@@ -214,7 +214,7 @@ DOCUMENT_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "get_user_documentation_content",
             "description": (
                 "Retrieves the content of a specific user documentation file. Use this to answer questions about how the assistant works or what features it has, based on the official documentation. "
-                "The documentation is split by topic: 'USER_GUIDE.md' is a short index describing what each other file covers, so read it first if the right file is not obvious from the names, then read only the file you need.\nAvailable files: {available_doc_files}\n\n"
+                "The documentation is split by topic: 'USER_GUIDE.md' is a short index describing what each other file covers, so read it first if the right file is not obvious from the names, then read the file (or files) that cover the question — a question spanning two topics needs both. Do not read files unrelated to the question.\nAvailable files: {available_doc_files}\n\n"
                 "Returns: A string containing the file content or an error message. "
                 "On success, returns the full content of the documentation file. "
                 "If access denied, returns 'Error: Access denied. Invalid filename or extension [filename].' or 'Error: Access denied. Invalid path for filename [filename].'. "

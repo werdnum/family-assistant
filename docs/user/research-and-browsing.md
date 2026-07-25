@@ -21,8 +21,10 @@ assistant fetches the content directly — no special command needed.
 
 ## Interactive browsing (`/browse`)
 
-When a page needs navigation, forms, logins, or heavy JavaScript, prefix your request with
-`/browse`:
+When a page needs navigation, forms, logins, or heavy JavaScript, use the browsing mode. In Telegram
+that means prefixing your request with `/browse`; in the web interface and the iOS app, pick the
+browser profile from the profile picker and type the request normally (see
+[slash-commands.md](slash-commands.md)).
 
 - `/browse find recent reviews for the XZ-100 camera and compare its features to the YZ-200`
 - `/browse find travel options to Paris for next June`

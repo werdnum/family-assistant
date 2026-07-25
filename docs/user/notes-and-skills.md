@@ -61,7 +61,9 @@ conversations light while making specialised knowledge available.
 ### Built-in skills
 
 Several skills ship with the assistant, covering browser automation, camera integration, image
-tools, scheduling, and shopping. They work without any setup.
+tools, scheduling, and shopping. The instructions themselves are built in and need no setup — but a
+skill only helps if the thing it drives is available. The camera skill needs cameras configured, and
+the shopping skill needs checkout signing keys set up before it can hand you a checkout link.
 
 ### Writing your own
 
@@ -80,7 +82,8 @@ When asked about meal planning:
 3. Suggest recipes that match both preferences and available time
 ```
 
-A note with that frontmatter appears in the skill catalog instead of the regular notes list.
+A note with that frontmatter joins the skill catalog the assistant consults. It also stays in your
+ordinary notes list, so you edit or delete it there like any other note.
 
 Advanced users can also place `.md` files with the same frontmatter in a directory configured by the
 operator. Those load at startup, and a saved skill with the same name overrides the file.

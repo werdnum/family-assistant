@@ -23,9 +23,9 @@ controls what it does.
 
 **Anything that writes data or sends a message waits for your approval.** Calendar events, notes,
 reminders, messages to other Family Assistant users, and fetching a linked document all land as
-pending confirmations that you approve in a trusted interface — Telegram or the web UI — before they
-run. If Telegram is your configured primary channel, you get inline approval buttons there.
-Approvals stay open for 24 hours, so you don't have to react the moment the reply lands.
+pending confirmations that you approve in a trusted interface — Telegram, the web UI, or the iOS app
+— before they run. If Telegram is your configured primary channel, you get inline approval buttons
+there. Approvals stay open for 24 hours, so you don't have to react the moment the reply lands.
 
 The assistant replies by email only when your forwarding sender address is mapped to your account by
 the operator. Mail arriving through a recipient-only alias without a mapped sender can still create
