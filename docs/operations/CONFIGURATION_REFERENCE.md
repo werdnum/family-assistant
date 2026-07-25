@@ -265,7 +265,9 @@ EMAIL_INTAKE_ENABLE_ACTIONS=true
 
 ### mailgun_webhook_signing_key
 
-Mailgun HTTP webhook signing key for the receiving domain.
+Mailgun HTTP webhook signing key for the receiving domain. Set it from the
+`MAILGUN_WEBHOOK_SIGNING_KEY` environment variable; find the value in the Mailgun dashboard under
+Sending → Webhooks.
 
 | Property  | Value                                   |
 | --------- | --------------------------------------- |
@@ -628,6 +630,59 @@ Embedding model for vector search.
 | Sensitive | No                            |
 | Example   | `text-embedding-3-large`      |
 
+When `EMBEDDING_PROVIDER` is `openai`, this value is sent to the API verbatim.
+
+______________________________________________________________________
+
+### EMBEDDING_PROVIDER
+
+Selects the embedding generator implementation.
+
+| Property  | Value                           |
+| --------- | ------------------------------- |
+| Required  | No                              |
+| Default   | Inferred from `EMBEDDING_MODEL` |
+| Sensitive | No                              |
+| Example   | `openai`                        |
+
+Leave it unset to infer the provider from the model name: a `gemini/<model>` prefix selects Google
+Gemini, a model name starting with `/` is treated as a path to a local sentence-transformer model,
+and `mock-deterministic-embedder` selects the deterministic test embedder.
+
+Set it to `openai` to use any OpenAI-compatible embeddings endpoint — the official OpenAI API,
+OpenRouter, or a self-hosted inference server.
+
+______________________________________________________________________
+
+### EMBEDDING_BASE_URL
+
+Base URL of the OpenAI-compatible embeddings endpoint.
+
+| Property  | Value                          |
+| --------- | ------------------------------ |
+| Required  | No                             |
+| Default   | None (official OpenAI API)     |
+| Sensitive | No                             |
+| Example   | `https://openrouter.ai/api/v1` |
+
+Only used when `EMBEDDING_PROVIDER` is `openai`. Leave it unset to talk to the official OpenAI API.
+For OpenRouter, use `https://openrouter.ai/api/v1`.
+
+______________________________________________________________________
+
+### EMBEDDING_API_KEY
+
+API key for the OpenAI-compatible embeddings endpoint.
+
+| Property  | Value                                             |
+| --------- | ------------------------------------------------- |
+| Required  | No                                                |
+| Default   | Falls back to `openai_api_key` / `OPENAI_API_KEY` |
+| Sensitive | **Yes**                                           |
+| Example   | `sk-or-v1-...`                                    |
+
+Redacted from logged configuration.
+
 ______________________________________________________________________
 
 ### EMBEDDING_DIMENSIONS
@@ -641,7 +696,13 @@ Dimensionality of embedding vectors.
 | Sensitive | No            |
 | Example   | `768`, `3072` |
 
-Must match the dimensions produced by the configured embedding model.
+Must match the dimensions produced by the configured embedding model, and — when set — it must also
+match the dimensionality of the vector storage column.
+
+This value is only forwarded as the `dimensions` request parameter when it has been explicitly
+configured, so the model must actually support that output size (for example OpenAI's
+`text-embedding-3-*`). Leave it unset for models that reject the field (for example
+`text-embedding-ada-002`) so the model's native size is used.
 
 ______________________________________________________________________
 
@@ -779,13 +840,14 @@ VAPID public key for push notification subscriptions.
 | Sensitive | No                                 |
 | Example   | `BG1l7...`                         |
 
-Same URL-safe base64 encoding as private key.
+Same URL-safe base64 encoding as the private key. It is auto-derived from `VAPID_PRIVATE_KEY` when
+unset; set it explicitly only if you want to control the value distributed to clients.
 
 ______________________________________________________________________
 
 ### VAPID_CONTACT_EMAIL
 
-Admin contact email for VAPID claims.
+Admin contact address used as the VAPID `sub` claim.
 
 | Property  | Value                        |
 | --------- | ---------------------------- |
@@ -793,6 +855,313 @@ Admin contact email for VAPID claims.
 | Default   | None                         |
 | Sensitive | No                           |
 | Example   | `mailto:admin@example.com`   |
+
+Push services use this address to contact the deployment administrator, for example when
+subscriptions fail.
+
+______________________________________________________________________
+
+## Push Notifications (iOS APNs)
+
+Native iOS push is delivered through Apple Push Notification service using provider-token
+authentication with a `.p8` auth key. All of these variables map to the `apns` config section.
+
+The APNs sender is enabled **only** when `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID` and a
+private key (either `APNS_AUTH_KEY` or `APNS_AUTH_KEY_PATH`) are all configured.
+
+Clients register device tokens via `POST /api/ios/push-tokens` and unregister via
+`DELETE /api/ios/push-tokens/{device_token}` (both authenticated). See
+[docs/design/ios_push_notifications.md](../design/ios_push_notifications.md) for the full design.
+
+### APNS_TEAM_ID
+
+Apple Developer Team ID, sent as the provider JWT `iss` claim.
+
+| Property  | Value              |
+| --------- | ------------------ |
+| Required  | Yes (for iOS push) |
+| Default   | None               |
+| Sensitive | No                 |
+| Example   | `A1B2C3D4E5`       |
+
+______________________________________________________________________
+
+### APNS_KEY_ID
+
+APNs auth key id, sent as the provider JWT `kid` header.
+
+| Property  | Value              |
+| --------- | ------------------ |
+| Required  | Yes (for iOS push) |
+| Default   | None               |
+| Sensitive | No                 |
+| Example   | `ABC123DEFG`       |
+
+______________________________________________________________________
+
+### APNS_AUTH_KEY
+
+Contents of the `.p8` private key, in PEM form.
+
+| Property  | Value                                   |
+| --------- | --------------------------------------- |
+| Required  | Yes, unless `APNS_AUTH_KEY_PATH` is set |
+| Default   | None                                    |
+| Sensitive | **Yes**                                 |
+| Example   | `-----BEGIN PRIVATE KEY-----\nMIGT...`  |
+
+Redacted from logged configuration.
+
+______________________________________________________________________
+
+### APNS_AUTH_KEY_PATH
+
+Path to a `.p8` auth key file, as an alternative to inlining it in `APNS_AUTH_KEY`.
+
+| Property  | Value                                |
+| --------- | ------------------------------------ |
+| Required  | Yes, unless `APNS_AUTH_KEY` is set   |
+| Default   | None                                 |
+| Sensitive | No (the file it points at is)        |
+| Example   | `/run/secrets/AuthKey_ABC123DEFG.p8` |
+
+______________________________________________________________________
+
+### APNS_BUNDLE_ID
+
+App bundle id, sent as the `apns-topic` header.
+
+| Property  | Value                         |
+| --------- | ----------------------------- |
+| Required  | Yes (for iOS push)            |
+| Default   | None                          |
+| Sensitive | No                            |
+| Example   | `com.example.familyassistant` |
+
+______________________________________________________________________
+
+### APNS_USE_SANDBOX
+
+Default APNs environment to use when a registered device token does not specify one.
+
+| Property  | Value                |
+| --------- | -------------------- |
+| Required  | No                   |
+| Default   | `false` (production) |
+| Sensitive | No                   |
+| Example   | `true`               |
+
+Each device token carries its own `environment`, so this is only the fallback. A sandbox/production
+mismatch surfaces as a `BadDeviceToken` rejection and is auto-corrected: the send is retried against
+the other environment and, on success, the token's stored `environment` is updated so subsequent
+sends go to the right host.
+
+______________________________________________________________________
+
+## Google Integration (Gmail & Drive)
+
+Per-user Gmail and Drive access needs an OAuth client from Google Cloud Console plus a Fernet key
+for encrypting refresh tokens at rest. All three secrets must be present; if any is missing the
+integration is disabled at startup with an error naming the unmet condition.
+
+See [docs/design/user-scoped-google-data-access.md](../design/user-scoped-google-data-access.md) and
+[Connect your Google account](../user/USER_GUIDE.md#connect-your-google-account).
+
+```yaml
+google_integration:
+  oauth_client_id: ""
+  oauth_client_secret: ""
+  credential_encryption_key: ""
+  scopes:
+    - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/gmail.compose"
+    - "https://www.googleapis.com/auth/drive.readonly"
+    - "https://www.googleapis.com/auth/drive.file"
+  require_taint_enforcement: true
+```
+
+### GOOGLE_OAUTH_CLIENT_ID
+
+OAuth client id from Google Cloud Console. Maps to `google_integration.oauth_client_id`.
+
+| Property  | Value                                       |
+| --------- | ------------------------------------------- |
+| Required  | Yes (for the Google integration)            |
+| Default   | `""`                                        |
+| Sensitive | No                                          |
+| Example   | `1234567890-abc.apps.googleusercontent.com` |
+
+______________________________________________________________________
+
+### GOOGLE_OAUTH_CLIENT_SECRET
+
+OAuth client secret from Google Cloud Console. Maps to `google_integration.oauth_client_secret`.
+
+| Property  | Value                            |
+| --------- | -------------------------------- |
+| Required  | Yes (for the Google integration) |
+| Default   | `""`                             |
+| Sensitive | **Yes**                          |
+| Example   | `GOCSPX-...`                     |
+
+Redacted from logged configuration and from the diagnostics export.
+
+______________________________________________________________________
+
+### CREDENTIAL_ENCRYPTION_KEY
+
+URL-safe base64-encoded Fernet key used to encrypt stored refresh tokens at rest. Maps to
+`google_integration.credential_encryption_key`.
+
+| Property  | Value                              |
+| --------- | ---------------------------------- |
+| Required  | Yes (for the Google integration)   |
+| Default   | `""`                               |
+| Sensitive | **Yes**                            |
+| Example   | `dGhpcy1pcy1ub3QtYS1yZWFsLWtleQ==` |
+
+Redacted from logged configuration and from the diagnostics export. Generate a key with:
+
+```bash
+python -c "from family_assistant.services.credential_encryption import generate_key; print(generate_key())"
+```
+
+Keep this key stable across deployments. A decryption failure (wrong or changed key) is treated as a
+configuration error: the stored connection row is left untouched, so restoring the correct key
+restores access without any user re-authorization.
+
+______________________________________________________________________
+
+### google_integration.scopes
+
+Allowlist of Google OAuth data scopes requested at consent.
+
+| Property  | Value                                                             |
+| --------- | ----------------------------------------------------------------- |
+| Required  | No                                                                |
+| Default   | `gmail.readonly`, `gmail.compose`, `drive.readonly`, `drive.file` |
+| Sensitive | No                                                                |
+| Example   | `["https://www.googleapis.com/auth/gmail.readonly"]`              |
+
+The `scopes` list *narrows* the grant — remove the Drive scopes to get a Gmail-only integration, for
+example. Only scopes used by shipped deterministic tools are allowed; adding an unsupported scope
+(`gmail.send`, `gmail.modify`, full `drive`, etc.) disables the integration with a startup error.
+The identity scopes `openid` and `email` are always appended in code and are not configurable.
+
+Tool registration follows the configured scopes:
+
+| Tool                                                        | Required scope                                |
+| ----------------------------------------------------------- | --------------------------------------------- |
+| `gmail_search`, `gmail_get_message`, `gmail_get_attachment` | `gmail.readonly`                              |
+| `gmail_create_draft`                                        | `gmail.compose`                               |
+| `drive_search`                                              | `drive.readonly` or `drive.metadata.readonly` |
+| `drive_get_file`                                            | `drive.readonly`                              |
+| `drive_write_file`                                          | `drive.file`                                  |
+
+The draft tool never sends email, although Google's `gmail.compose` scope itself also authorizes
+sending. Drive writes are deterministically confined to the app-created Family Assistant folder and
+app-marked files within it.
+
+**Enablement conditions** (validated at startup):
+
+1. The three secrets above are set.
+2. The `scopes` list passes allowlist validation.
+3. Real web authentication is active (OIDC configured, `users` block resolution in effect) — the
+   development `test_user` mode shares one identity across all callers and therefore refuses to
+   enable this feature.
+
+______________________________________________________________________
+
+### google_integration.require_taint_enforcement
+
+Whether the Gmail/Drive tools require taint enforcement before they register.
+
+| Property  | Value   |
+| --------- | ------- |
+| Required  | No      |
+| Default   | `true`  |
+| Sensitive | No      |
+| Example   | `false` |
+
+When `true`, the tools only register if `taint_policy.mode` is `enforce` **and** the effective
+policy matrix floors the key exfiltration sinks — `arbitrary_external_message`,
+`attacker_addressable_egress`, `sandbox_network`, and `sensitive_read_broadening` — at `confirm` for
+untrusted content. If the check fails, the tools are not registered and the integration status
+endpoint reports the unmet condition.
+
+Setting it to `false` waives the check (logged at startup and surfaced on the status endpoint) and
+the tools register regardless of taint mode.
+
+______________________________________________________________________
+
+## Message History Taint Epoch
+
+### taint_policy.history_taint_epoch
+
+Optional timestamp granting a read-time amnesty to legacy message-history taint metadata.
+
+| Property  | Value                         |
+| --------- | ----------------------------- |
+| Required  | No                            |
+| Default   | `null`                        |
+| Sensitive | No                            |
+| Example   | `"2026-08-01T00:00:00+00:00"` |
+
+Must be a timezone-aware ISO-8601 timestamp — quote it in YAML, since naive or unparseable values
+fail startup. This is a **deployment-level** setting only; profiles cannot set it.
+
+- Rows persisted **before** the epoch contribute taint only from explicitly attributed sources: the
+  synthetic `legacy_missing_taint_metadata` fallback and anonymous escalation artifacts are ignored,
+  and the row's tier is recomputed from what remains.
+- Rows **at or after** the epoch are trusted as recorded. A post-epoch row missing metadata logs an
+  `ERROR` as a write-path regression alarm, and anonymous post-epoch artifacts are read
+  conservatively.
+- One filter is timestamp-independent: sources carrying the `legacy_missing_taint_metadata` label
+  *inside* persisted metadata are second-hand echoes of another row's read-time fallback, so they
+  are dropped and the tier recomputed even for post-epoch rows. First-hand missing-metadata rows
+  still escalate and fire the `ERROR` alarm.
+
+> **⚠️ Set the epoch to the instant this feature is DEPLOYED (or later), never earlier** — in
+> particular, not the taint-metadata migration date `2026-07-06`. Rows written before deploy may
+> contain re-baked poison that the echo filter only partially neutralizes, so an earlier epoch would
+> keep re-seeding it.
+
+`GET /api/diagnostics/taint-audit` reports the configured epoch and the pre/post-epoch row splits,
+so the poison collapse can be verified before switching `taint_policy.mode` to `enforce`.
+
+See [docs/design/taint-history-epoch-amnesty.md](../design/taint-history-epoch-amnesty.md).
+
+______________________________________________________________________
+
+## Diagnostics Access
+
+### DIAGNOSTICS_READONLY_TOKEN
+
+Optional shared secret granting read-only access to the diagnostics endpoints without a user session
+or API token — intended for an external monitor that only pulls diagnostics.
+
+| Property  | Value                  |
+| --------- | ---------------------- |
+| Required  | No                     |
+| Default   | Unset (path disabled)  |
+| Sensitive | **Yes**                |
+| Example   | `a-long-random-string` |
+
+Supply it as `Authorization: Bearer <token>` or `X-API-Token: <token>`; it is compared with a
+constant-time check. Leave it unset to disable the read-only path entirely.
+
+Covered endpoints:
+
+- `GET /api/errors/`
+- `GET /api/errors/{id}`
+- `GET /api/errors/telemetry`
+- `GET /api/diagnostics/export`
+- `GET /api/diagnostics/taint-audit`
+- `GET /api/debug/profiles/tools`
+
+Every other endpoint still requires normal authentication. In particular `GET /api/debug/profiles`
+(the full config dump) is **not** covered, while the tool-inventory endpoint that is covered exposes
+only tool names and sizes — no prompts and no policy bodies.
 
 ______________________________________________________________________
 
@@ -1006,6 +1375,49 @@ Enable assistant debug mode.
 | Default   | `false` |
 | Sensitive | No      |
 | Example   | `true`  |
+
+______________________________________________________________________
+
+## Global Tool Policy
+
+### global_tools_policy
+
+Top-level config section whose tool-policy rules are injected into **every** profile's tool-policy
+engine.
+
+| Property  | Value                                            |
+| --------- | ------------------------------------------------ |
+| Required  | No                                               |
+| Default   | The shipped rules in `defaults.yaml` (see below) |
+| Sensitive | No                                               |
+| Example   | See the YAML block below                         |
+
+The rules apply regardless of the profile's own `tools_policy`, which otherwise replaces the shipped
+defaults wholesale rather than merging with them. Use it for tools that must be available in all
+contexts. Operator policy still overrides global rules.
+
+The shipped default uses it for two things:
+
+- `report_technical_problem`, so the assistant can always report bugs — these surface through the
+  error-log and diagnostics endpoints.
+- `read_text_attachment` and `jq_query`, so the assistant can always read back tool results that
+  exceeded the large-result threshold and were auto-converted to attachments.
+
+```yaml
+global_tools_policy:
+  rules:
+    - match:
+        names:
+          - "report_technical_problem"
+      decision: "allow"
+      priority: 50
+    - match:
+        names:
+          - "read_text_attachment"
+          - "jq_query"
+      decision: "allow"
+      priority: 50
+```
 
 ______________________________________________________________________
 

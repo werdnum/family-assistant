@@ -127,140 +127,14 @@ alembic upgrade head
 Use `DATABASE_URL="sqlite+aiosqlite:///family_assistant.db"` with alembic when making a new
 revision. Migrations run on startup.
 
-### Environment Variables for Push Notifications
+### Deployment Configuration
 
-Required for PWA push notifications. Generate a key pair with
-`python scripts/generate_vapid_keys.py`.
-
-- **`VAPID_PRIVATE_KEY`** - Raw key bytes, URL-safe base64, no padding.
-- **`VAPID_CONTACT_EMAIL`** - Admin contact for the VAPID `sub` claim, e.g.
-  `mailto:admin@example.com`. Used for notifications when subscriptions fail.
-- **`VAPID_PUBLIC_KEY`** - Optional, same encoding. Auto-derived from the private key if unset; set
-  it explicitly if you want to control the value distributed to clients.
-
-### Environment Variables for iOS Push Notifications (APNs)
-
-Native iOS push is delivered through APNs using provider-token authentication with a `.p8` auth key.
-The sender is enabled only when `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_BUNDLE_ID` and a private key
-are all configured. All map to the `apns` config section.
-
-- **`APNS_TEAM_ID`** - Apple Developer Team ID, the JWT `iss` claim.
-- **`APNS_KEY_ID`** - APNs auth key id, the JWT `kid` header.
-- **`APNS_AUTH_KEY`** - Contents of the `.p8` private key (PEM). Secret, redacted from logged
-  config.
-- **`APNS_AUTH_KEY_PATH`** - Path to a `.p8` file (alternative to `APNS_AUTH_KEY`).
-- **`APNS_BUNDLE_ID`** - App bundle id, sent as the `apns-topic` header.
-- **`APNS_USE_SANDBOX`** - Default environment (`true` for sandbox) when a registered token does not
-  specify one. Each device token carries its own `environment`, and a sandbox/production mismatch
-  (`BadDeviceToken`) is auto-corrected on the next send.
-
-Clients register device tokens via `POST /api/ios/push-tokens` and unregister via
-`DELETE /api/ios/push-tokens/{device_token}` (both authenticated). See
-[docs/design/ios_push_notifications.md](docs/design/ios_push_notifications.md) for the full design.
-
-### Environment Variables for Email Intake
-
-- **`MAILGUN_WEBHOOK_SIGNING_KEY`** - Maps to `email_intake.mailgun_webhook_signing_key`. Verifies
-  incoming email webhooks; found in the Mailgun dashboard under Sending → Webhooks.
-
-### Environment Variables for Google Integration (Gmail & Drive)
-
-Per-user Gmail and Drive access needs an OAuth client from Google Cloud Console plus a Fernet key
-for encrypting refresh tokens at rest. All three secrets must be present; if any is missing the
-integration is disabled at startup with an error naming the unmet condition. See
-`docs/design/user-scoped-google-data-access.md` and
-[Connect your Google account](docs/user/USER_GUIDE.md#connect-your-google-account).
-
-- **`GOOGLE_OAUTH_CLIENT_ID`** → `google_integration.oauth_client_id`.
-
-- **`GOOGLE_OAUTH_CLIENT_SECRET`** → `google_integration.oauth_client_secret`. Secret; redacted from
-  logged config and diagnostics export.
-
-- **`CREDENTIAL_ENCRYPTION_KEY`** → `google_integration.credential_encryption_key`. URL-safe
-  base64-encoded Fernet key, secret and redacted. Generate with:
-
-  ```bash
-  python -c "from family_assistant.services.credential_encryption import generate_key; print(generate_key())"
-  ```
-
-  Keep this key stable across deployments. A decryption failure (wrong or changed key) is treated as
-  a configuration error: the stored connection row is left untouched, so restoring the correct key
-  restores access without any user re-authorization.
-
-**`google_integration` config section:**
-
-```yaml
-google_integration:
-  oauth_client_id: ""
-  oauth_client_secret: ""
-  credential_encryption_key: ""
-  scopes:
-    - "https://www.googleapis.com/auth/gmail.readonly"
-    - "https://www.googleapis.com/auth/gmail.compose"
-    - "https://www.googleapis.com/auth/drive.readonly"
-    - "https://www.googleapis.com/auth/drive.file"
-  require_taint_enforcement: true
-```
-
-**Scopes allowlist semantics.** The `scopes` list *narrows* the grant — remove Drive scopes to get
-Gmail-only, for example. Only scopes used by shipped deterministic tools are allowed; adding an
-unsupported scope (`gmail.send`, `gmail.modify`, full `drive`, etc.) disables the integration with a
-startup error. The identity scopes `openid` and `email` are always appended in code and are not
-configurable. Tool registration follows the configured scopes: `gmail_search`, `gmail_get_message`
-and `gmail_get_attachment` require `gmail.readonly`; `gmail_create_draft` requires `gmail.compose`;
-`drive_search` registers with either `drive.readonly` or `drive.metadata.readonly`; `drive_get_file`
-requires `drive.readonly`; `drive_write_file` requires `drive.file`. The draft tool never sends
-email, although Google's `gmail.compose` scope itself also authorizes sending. Drive writes are
-deterministically confined to the app-created Family Assistant folder and app-marked files within
-it.
-
-**Enablement conditions** (validated at startup): the three secrets are set; the `scopes` list
-passes allowlist validation; and real web authentication is active (OIDC configured, `users` block
-resolution in effect) — the development `test_user` mode shares one identity across all callers and
-therefore refuses to enable this feature.
-
-**`require_taint_enforcement`.** Defaults to `true`: the tools only register when
-`taint_policy.mode` is `enforce` and the effective policy matrix floors the key exfiltration sinks
-(`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`,
-`sensitive_read_broadening`) at `confirm` for untrusted content. If the check fails the tools are
-not registered and the integration status endpoint reports the unmet condition. Setting it to
-`false` waives the check (logged at startup, surfaced on the status endpoint) and the tools register
-regardless of taint mode.
-
-**`taint_policy.history_taint_epoch`.** Optional timezone-aware ISO-8601 timestamp (quote it in
-YAML; naive or unparseable values fail startup) granting a read-time amnesty to legacy
-message-history taint metadata. Deployment-level only; profiles cannot set it.
-
-- Rows persisted **before** the epoch contribute taint only from explicitly attributed sources: the
-  synthetic `legacy_missing_taint_metadata` fallback and anonymous escalation artifacts are ignored
-  and the row's tier is recomputed from what remains.
-- Rows **at or after** the epoch are trusted as recorded; a post-epoch row missing metadata logs an
-  ERROR as a write-path regression alarm, and anonymous post-epoch artifacts are read
-  conservatively.
-- One filter is timestamp-independent: sources carrying the `legacy_missing_taint_metadata` label
-  *inside* persisted metadata are second-hand echoes of another row's read-time fallback, so they
-  are dropped and the tier recomputed even for post-epoch rows. First-hand missing-metadata rows
-  still escalate and fire the ERROR alarm.
-- **Set the epoch to the instant this feature is DEPLOYED (or later), never earlier** (e.g. not the
-  taint-metadata migration date `2026-07-06`): rows written before deploy may contain re-baked
-  poison that the echo filter only partially neutralizes, so an earlier epoch would keep re-seeding
-  it.
-- `GET /api/diagnostics/taint-audit` reports the configured epoch and pre/post-epoch row splits, so
-  the poison collapse can be verified before switching `taint_policy.mode` to `enforce`.
-
-See [docs/design/taint-history-epoch-amnesty.md](docs/design/taint-history-epoch-amnesty.md).
-
-### Environment Variable for Read-Only Diagnostics Access
-
-- **`DIAGNOSTICS_READONLY_TOKEN`** - Optional shared secret granting read-only access to
-  `GET /api/errors/`, `GET /api/errors/{id}`, `GET /api/errors/telemetry`,
-  `GET /api/diagnostics/export`, `GET /api/diagnostics/taint-audit`, and
-  `GET /api/debug/profiles/tools` without a user session or API token — intended for an external
-  monitor that only pulls diagnostics. Supply it as `Authorization: Bearer <token>` or
-  `X-API-Token: <token>`; it is compared with a constant-time check. Every other endpoint still
-  requires normal authentication — in particular `GET /api/debug/profiles` (full config dump) is
-  **not** covered, while the tool-inventory endpoint it does cover exposes only tool names and
-  sizes, no prompts or policy bodies. Leave it unset to disable the read-only path entirely.
+Environment variables and operator-facing configuration are documented in
+[docs/operations/CONFIGURATION_REFERENCE.md](docs/operations/CONFIGURATION_REFERENCE.md) — including
+push notifications (VAPID and iOS APNs), email intake, the Google (Gmail & Drive) integration and
+the message-history taint epoch, the read-only diagnostics token, embedding providers, and the
+global tool policy. Look there before adding or changing anything that reads configuration, and
+update it when you add a new setting.
 
 ### Frontend error reports vs. telemetry (breadcrumbs)
 
@@ -277,58 +151,14 @@ Frontend clients POST to `POST /api/errors/`. The report's optional `severity` s
   engineer-profile `read_frontend_telemetry` tool. The buffer is dropped on restart. See
   [docs/design/ios-frontend-telemetry-lane.md](docs/design/ios-frontend-telemetry-lane.md).
 
-### Global Tool Policy (`global_tools_policy`)
-
-`global_tools_policy` is a top-level config section whose rules are injected into **every**
-profile's tool-policy engine, regardless of the profile's own `tools_policy` (which otherwise
-replaces the shipped defaults wholesale). Operator policy still overrides global rules. The shipped
-default uses it for `report_technical_problem` (so the assistant can always report bugs, which
-surface in the error-log and diagnostics endpoints above) and for `read_text_attachment` and
-`jq_query` (so the assistant can always read back tool results that exceeded the large-result
-threshold and were auto-converted to attachments).
-
 ### Gemini Computer Use (visual browser profile)
 
 The `browser_visual_profile` drives a browser via Gemini's native computer-use capability, enabled
-per profile with `enable_computer_use: true` on `processing_config` (Google provider only; combining
-it with a non-Google provider or `retry_config` is a startup error). When enabled:
-
-- The `types.Tool(computer_use=...)` tool is attached to every request with prompt-injection
-  detection always on (no waiver knob; detections surface as safety confirmations).
-- The model's predefined action space (`click`, `type`, `scroll`, `drag_and_drop`, …) executes
-  through the shared `BrowserBackend` (local Playwright or remote browser-server). Actions the
-  browser-server REST API cannot faithfully execute (non-left buttons, multi-clicks, key down/up)
-  fail with an explicit error rather than degrading silently; `computer_use_excluded_functions` on
-  `processing_config` can exclude them from the action space.
-- When the model attaches a `safety_decision` requiring confirmation (payments, messaging,
-  terms-of-service, suspected prompt injection), the action pauses for user confirmation through the
-  standard tool-confirmation flow and, once approved, the acknowledgement is returned to the API.
-  Declines are reported back to the model without ending the turn.
-
-See [docs/design/gemini-computer-use-native.md](docs/design/gemini-computer-use-native.md) for the
-full design.
-
-### Embedding Providers
-
-The embedding generator is selected from `embedding_model`/`embedding_provider`. By default the
-provider is inferred from the model name (`gemini/<model>` for Google Gemini, a path starting with
-`/` for local sentence-transformer models, `mock-deterministic-embedder` for tests).
-
-Set `embedding_provider` to `openai` to use any OpenAI-compatible embeddings endpoint (OpenAI,
-OpenRouter, or a self-hosted inference server); `embedding_model` is then sent to the API verbatim.
-
-- **`EMBEDDING_PROVIDER`** → `embedding_provider`. Set to `openai` for an OpenAI-compatible
-  endpoint; leave unset to infer from `embedding_model`.
-- **`EMBEDDING_BASE_URL`** → `embedding_base_url`. Endpoint base URL, only used when
-  `embedding_provider=openai` (OpenRouter: `https://openrouter.ai/api/v1`). Leave unset for the
-  official OpenAI API.
-- **`EMBEDDING_API_KEY`** → `embedding_api_key`. Falls back to `openai_api_key` / `OPENAI_API_KEY`
-  when unset. Secret, redacted from logged config.
-- **`EMBEDDING_DIMENSIONS`** → `embedding_dimensions`. Only forwarded as the `dimensions` request
-  parameter when explicitly set, so the model must support that output size (e.g. OpenAI's
-  `text-embedding-3-*`). Leave it unset for models that reject the field (e.g.
-  `text-embedding-ada-002`) to use the native size. When set, it must also match the vector storage
-  column dimensionality.
+per profile with `enable_computer_use: true` on `processing_config`. It is Google-provider only:
+setting the flag with a non-Google provider, or combining it with `retry_config`, is a startup
+error. Prompt-injection detection is always on, and the model's action space, backend degradation
+rules and safety-confirmation flow are documented in
+[docs/design/gemini-computer-use-native.md](docs/design/gemini-computer-use-native.md).
 
 ### Code Generation
 
@@ -531,6 +361,11 @@ Tools must be registered in TWO places: in the code (`src/family_assistant/tools
 in the configuration (`defaults.yaml` / `config.yaml`). See
 [src/family_assistant/tools/CLAUDE.md](src/family_assistant/tools/CLAUDE.md) for complete tool
 development guidance.
+
+Note that a top-level `global_tools_policy` is injected into every profile's tool policy, so a newly
+added tool may already be reachable without a per-profile rule — see
+[docs/operations/CONFIGURATION_REFERENCE.md](docs/operations/CONFIGURATION_REFERENCE.md) for the
+semantics.
 
 ### Adding New UI Endpoints
 
