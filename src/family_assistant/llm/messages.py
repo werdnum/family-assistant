@@ -93,8 +93,9 @@ class MessageReasoningInfo(TypedDict, total=False):
       the full prompt is
       ``prompt_tokens + cached_prompt_tokens + cache_write_tokens``.
     - OpenAI and Google report the full prompt in ``prompt_tokens``, with
-      ``cached_prompt_tokens`` as a subset of it, and expose no cache-write
-      count (``cache_write_tokens`` is absent).
+      ``cached_prompt_tokens`` as a subset of it rather than an extra bucket.
+      OpenAI's Responses API also reports ``cache_write_tokens``, likewise a
+      subset; Chat Completions and Google do not report one at all.
 
     Compute a hit rate against the reconstructed prompt total rather than
     against ``prompt_tokens`` directly.

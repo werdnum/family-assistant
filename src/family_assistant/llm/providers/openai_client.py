@@ -308,37 +308,61 @@ class OpenAIClient(BaseLLMClient):
         return input_items
 
     @staticmethod
-    def _cached_prompt_tokens(
+    def _usage_detail_tokens(
         usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
+        field: str,
     ) -> int | None:
-        """Extract cache-hit prompt tokens from an OpenAI usage payload.
+        """Read a token count out of an OpenAI usage payload's details block.
 
-        Caching is automatic on OpenAI, and the hit count lives under
-        `prompt_tokens_details` (Chat Completions) or `input_tokens_details`
-        (Responses). Unlike Anthropic, these are a *subset* of the reported
-        prompt total, not a separate bucket to add on top. There is no
-        cache-write counterpart.
+        The block is `prompt_tokens_details` on Chat Completions and
+        `input_tokens_details` on Responses. Both SDK objects and raw dicts turn
+        up here: the Responses streaming path and VCR replay hand back parsed
+        JSON rather than typed models, and some fields (`cache_write_tokens`) are
+        present in API responses but not modelled by the pinned SDK, so they are
+        only reachable by name.
 
-        Returns `None` only when the payload carries no cache field at all. A
-        reported zero comes back as `0`, so a known cache miss stays
-        distinguishable from a payload that says nothing about caching.
+        Returns `None` only when the field is absent everywhere. A reported zero
+        comes back as `0`, so a known miss stays distinguishable from a payload
+        that says nothing.
         """
-        for field in ("prompt_tokens_details", "input_tokens_details"):
+        for block in ("prompt_tokens_details", "input_tokens_details"):
             details = (
-                usage.get(field)
+                usage.get(block)
                 if isinstance(usage, dict)
-                else getattr(usage, field, None)
+                else getattr(usage, block, None)
             )
             if details is None:
                 continue
-            cached = (
-                details.get("cached_tokens")
+            value = (
+                details.get(field)
                 if isinstance(details, dict)
-                else getattr(details, "cached_tokens", None)
+                else getattr(details, field, None)
             )
-            if cached is not None:
-                return int(cached)
+            if value is not None:
+                return int(value)
         return None
+
+    @classmethod
+    def _cached_prompt_tokens(
+        cls,
+        usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
+    ) -> int | None:
+        """Cache-hit prompt tokens. A *subset* of the reported prompt total,
+        unlike Anthropic's separate bucket, so it is never added to the total."""
+        return cls._usage_detail_tokens(usage, "cached_tokens")
+
+    @classmethod
+    def _cache_write_tokens(
+        cls,
+        usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
+    ) -> int | None:
+        """Cache-write tokens, reported by the Responses API.
+
+        Chat Completions does not report this; Responses does, even though the
+        pinned SDK does not type it. Also a subset of the prompt total rather
+        than an extra bucket.
+        """
+        return cls._usage_detail_tokens(usage, "cache_write_tokens")
 
     @staticmethod
     def _responses_reasoning_info(response: Response) -> MessageReasoningInfo | None:
@@ -357,6 +381,9 @@ class OpenAIClient(BaseLLMClient):
         cached = OpenAIClient._cached_prompt_tokens(usage)
         if cached is not None:
             reasoning_info["cached_prompt_tokens"] = cached
+        cache_write = OpenAIClient._cache_write_tokens(usage)
+        if cache_write is not None:
+            reasoning_info["cache_write_tokens"] = cache_write
         return reasoning_info
 
     @staticmethod
@@ -523,6 +550,9 @@ class OpenAIClient(BaseLLMClient):
                 cached = self._cached_prompt_tokens(response.usage)
                 if cached is not None:
                     reasoning_info["cached_prompt_tokens"] = cached
+                cache_write = self._cache_write_tokens(response.usage)
+                if cache_write is not None:
+                    reasoning_info["cache_write_tokens"] = cache_write
 
             llm_output = LLMOutput(
                 content=content,
@@ -956,6 +986,18 @@ class OpenAIClient(BaseLLMClient):
                 cached = self._cached_prompt_tokens(stream_usage)
                 if cached is not None:
                     stream_reasoning_info["cached_prompt_tokens"] = cached
+                cache_write = self._cache_write_tokens(stream_usage)
+                if cache_write is not None:
+                    stream_reasoning_info["cache_write_tokens"] = cache_write
+                # Mirror the non-streaming path: reasoning models report this
+                # under completion_tokens_details, and enabling include_usage is
+                # what makes it reachable on a streamed turn at all.
+                completion_details = getattr(
+                    stream_usage, "completion_tokens_details", None
+                )
+                reasoning_tokens = getattr(completion_details, "reasoning_tokens", None)
+                if reasoning_tokens is not None:
+                    stream_reasoning_info["reasoning_tokens"] = reasoning_tokens
                 metadata["reasoning_info"] = stream_reasoning_info
 
             # Record successful streaming request to diagnostics buffer
@@ -1151,6 +1193,9 @@ class OpenAIClient(BaseLLMClient):
                         cached = self._cached_prompt_tokens(usage)
                         if cached is not None:
                             responses_reasoning_info["cached_prompt_tokens"] = cached
+                        cache_write = self._cache_write_tokens(usage)
+                        if cache_write is not None:
+                            responses_reasoning_info["cache_write_tokens"] = cache_write
                         metadata["reasoning_info"] = responses_reasoning_info
                     output = response.get("output")
                     if isinstance(output, list):
@@ -1253,6 +1298,12 @@ class OpenAIClient(BaseLLMClient):
         last_chunk_with_usage: dict[str, Any] | None = None
 
         for chunk in chunk_dicts:
+            # The terminal usage chunk carries an empty `choices` list, so it has
+            # to be captured before the guard below skips it -- same shape as the
+            # live-stream path.
+            if chunk.get("usage"):
+                last_chunk_with_usage = chunk
+
             choices = chunk.get("choices") or []
             if not choices or not isinstance(choices, list):
                 continue
@@ -1293,9 +1344,6 @@ class OpenAIClient(BaseLLMClient):
                 if func_args:
                     tc_data["function"]["arguments"] += func_args
 
-            if chunk.get("usage"):
-                last_chunk_with_usage = chunk
-
         for tc_data in current_tool_calls.values():
             tc_id = tc_data["id"]
             if tc_data["function"]["name"] and tc_id:
@@ -1324,6 +1372,9 @@ class OpenAIClient(BaseLLMClient):
             cached = self._cached_prompt_tokens(usage)
             if cached is not None:
                 replay_reasoning_info["cached_prompt_tokens"] = cached
+            cache_write = self._cache_write_tokens(usage)
+            if cache_write is not None:
+                replay_reasoning_info["cache_write_tokens"] = cache_write
             metadata["reasoning_info"] = replay_reasoning_info
 
         yield LLMStreamEvent(type="done", metadata=metadata)

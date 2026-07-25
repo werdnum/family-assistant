@@ -114,6 +114,21 @@ class TestOpenAICachedPromptTokens:
 
         assert OpenAIClient._cached_prompt_tokens(usage) == 0
 
+    def test_responses_cache_write_tokens_are_read(self) -> None:
+        """The Responses API reports cache writes even though the pinned SDK
+        does not type the field, so it is only reachable by name."""
+        usage = {
+            "input_tokens_details": {"cache_write_tokens": 128, "cached_tokens": 0}
+        }
+
+        assert OpenAIClient._cache_write_tokens(usage) == 128
+        assert OpenAIClient._cached_prompt_tokens(usage) == 0
+
+    def test_chat_completions_reports_no_cache_write(self) -> None:
+        usage = SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=64))
+
+        assert OpenAIClient._cache_write_tokens(usage) is None
+
 
 class _UsageChunk:
     """A final streaming chunk carrying usage and no choices, as OpenAI sends."""
@@ -193,6 +208,20 @@ class TestOpenAIStreamUsage:
 
         assert params["stream_options"] == {"include_usage": False}
 
+    async def test_streaming_preserves_reasoning_tokens(self) -> None:
+        """include_usage makes this reachable on a streamed turn for the first
+        time; the non-streaming path already reported it."""
+        client = OpenAIClient(api_key="test", model="gpt-5.5")
+        chunk = _UsageChunk(cached_tokens=0)
+        chunk.usage.completion_tokens_details = SimpleNamespace(reasoning_tokens=777)
+
+        _, events = await self._captured_params(client, [chunk])
+
+        done = [event for event in events if event.type == "done"]
+        reasoning_info = (done[-1].metadata or {}).get("reasoning_info")
+        assert reasoning_info is not None
+        assert reasoning_info.get("reasoning_tokens") == 777
+
     async def test_usage_only_final_chunk_is_not_skipped(self) -> None:
         """The usage chunk has empty choices, so the content guards skip it."""
         client = OpenAIClient(api_key="test", model="gpt-5.5")
@@ -207,3 +236,45 @@ class TestOpenAIStreamUsage:
         assert reasoning_info is not None
         assert reasoning_info.get("cached_prompt_tokens") == 4000
         assert reasoning_info.get("prompt_tokens") == 5000
+
+
+@pytest.mark.no_db
+class TestOpenAIReplayStreamUsage:
+    """VCR replay hands back parsed dicts, and had the same empty-choices bug."""
+
+    async def _replay_events(
+        self,
+        # ast-grep-ignore: no-dict-any - replay chunks are parsed JSON
+        chunk_dicts: list[dict[str, Any]],
+    ) -> list[LLMStreamEvent]:
+        client = OpenAIClient(api_key="test", model="gpt-5.5")
+        return [
+            event async for event in client._emit_events_from_chunk_dicts(chunk_dicts)
+        ]
+
+    async def test_usage_only_chunk_is_captured(self) -> None:
+        events = await self._replay_events([
+            {
+                "choices": [
+                    {"delta": {"content": "hi"}, "index": 0, "finish_reason": None}
+                ]
+            },
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 500,
+                    "completion_tokens": 10,
+                    "total_tokens": 510,
+                    "prompt_tokens_details": {"cached_tokens": 384},
+                },
+            },
+        ])
+
+        done = [event for event in events if event.type == "done"]
+        assert done
+        reasoning_info = (done[-1].metadata or {}).get("reasoning_info")
+        assert reasoning_info is not None, (
+            "replayed stream emitted a done event with no usage at all"
+        )
+        assert reasoning_info.get("cached_prompt_tokens") == 384
+        assert reasoning_info.get("prompt_tokens") == 500

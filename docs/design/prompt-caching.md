@@ -95,11 +95,11 @@ expose a usage field on those events.
 Note the providers do not agree on what `prompt_tokens` means, so a hit rate computed against it
 directly is wrong for at least one of them:
 
-| Provider  | `prompt_tokens` covers      | Cache buckets                                                                                                   |
-| --------- | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Anthropic | the uncached remainder only | `cached_prompt_tokens` and `cache_write_tokens` are **disjoint**; the real prompt total is the sum of all three |
-| OpenAI    | the whole prompt            | `cached_prompt_tokens` is a **subset**; no cache-write concept                                                  |
-| Google    | the whole prompt            | `cached_prompt_tokens` is a **subset**; no cache-write concept                                                  |
+| Provider  | `prompt_tokens` covers      | Cache buckets                                                                                                                                              |
+| --------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Anthropic | the uncached remainder only | `cached_prompt_tokens` and `cache_write_tokens` are **disjoint**; the real prompt total is the sum of all three                                            |
+| OpenAI    | the whole prompt            | `cached_prompt_tokens` is a **subset**, never added on top. The Responses API also reports `cache_write_tokens` (also a subset); Chat Completions does not |
+| Google    | the whole prompt            | `cached_prompt_tokens` is a **subset**; no cache-write count                                                                                               |
 
 Anthropic's `total_tokens` is now computed by adding the cache buckets back, so a cached turn no
 longer reports a prompt many times smaller than the one actually sent.
