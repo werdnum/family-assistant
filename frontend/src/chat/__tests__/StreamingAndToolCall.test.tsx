@@ -7,9 +7,16 @@ import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 
 describe('Streaming with Tool Calls', () => {
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     resetLocalStorageMock();
     vi.clearAllMocks();
+    consoleWarnSpy = vi.spyOn(console, 'warn');
+  });
+
+  afterEach(() => {
+    consoleWarnSpy.mockRestore();
   });
 
   it(
@@ -190,6 +197,12 @@ describe('Streaming with Tool Calls', () => {
           expect(screen.getByText('📎 Attachments')).toBeInTheDocument();
         },
         { timeout: 5000 }
+      );
+      // The event's own metadata reaches the tool UI, so it never falls back to
+      // refetching each attachment to discover its name and type.
+      expect(screen.getByText('A photo')).toBeInTheDocument();
+      expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+        'AttachToResponseTool: Using fallback attachment metadata fetching'
       );
     },
     { timeout: 30000 }
