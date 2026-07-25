@@ -58,6 +58,14 @@ class TestGeminiUsageMetadata:
         assert "cached_prompt_tokens" not in info
         assert "reasoning_tokens" not in info
 
+    def test_reported_zero_cache_hit_is_preserved(self) -> None:
+        """A reported miss must stay distinguishable from nothing reported."""
+        info = GoogleGenAIClient._reasoning_info_from_usage_metadata(
+            self._usage(prompt_token_count=10, cached_content_token_count=0)
+        )
+
+        assert info.get("cached_prompt_tokens") == 0
+
     def test_none_counts_do_not_crash(self) -> None:
         """The SDK leaves counts unset rather than zero on some responses."""
         info = GoogleGenAIClient._reasoning_info_from_usage_metadata(
@@ -95,9 +103,16 @@ class TestOpenAICachedPromptTokens:
             == 256
         )
 
-    def test_missing_details_reports_zero(self) -> None:
-        assert OpenAIClient._cached_prompt_tokens(SimpleNamespace()) == 0
-        assert OpenAIClient._cached_prompt_tokens({}) == 0
+    def test_absent_cache_field_is_none_not_zero(self) -> None:
+        """None means "nothing reported"; 0 means a known miss."""
+        assert OpenAIClient._cached_prompt_tokens(SimpleNamespace()) is None
+        assert OpenAIClient._cached_prompt_tokens({}) is None
+
+    def test_reported_zero_is_preserved(self) -> None:
+        """A reported miss must not be dropped, or hit rates read too high."""
+        usage = SimpleNamespace(prompt_tokens_details=SimpleNamespace(cached_tokens=0))
+
+        assert OpenAIClient._cached_prompt_tokens(usage) == 0
 
 
 class _UsageChunk:

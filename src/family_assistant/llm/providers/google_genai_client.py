@@ -1363,11 +1363,13 @@ class GoogleGenAIClient(BaseLLMClient):
             completion_tokens=getattr(usage, "candidates_token_count", 0) or 0,
             total_tokens=getattr(usage, "total_token_count", 0) or 0,
         )
-        cached_tokens = getattr(usage, "cached_content_token_count", None) or 0
-        if cached_tokens:
+        # A reported zero is a known cache miss; only an absent field is left
+        # out, so a miss stays distinguishable from "provider reported nothing".
+        cached_tokens = getattr(usage, "cached_content_token_count", None)
+        if cached_tokens is not None:
             reasoning_info["cached_prompt_tokens"] = cached_tokens
-        thoughts_tokens = getattr(usage, "thoughts_token_count", None) or 0
-        if thoughts_tokens:
+        thoughts_tokens = getattr(usage, "thoughts_token_count", None)
+        if thoughts_tokens is not None:
             reasoning_info["reasoning_tokens"] = thoughts_tokens
         return reasoning_info
 

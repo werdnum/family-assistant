@@ -21,6 +21,7 @@ from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.context import get_db_context
+from family_assistant.tools.types import ToolAttachment, ToolResult
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
@@ -29,11 +30,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.llm.messages import LLMMessage
-    from family_assistant.tools.types import (
-        ToolDefinition,
-        ToolExecutionContext,
-        ToolResult,
-    )
+    from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
 class _EchoToolsProvider:
@@ -241,3 +238,71 @@ async def test_system_prompt_keeps_its_cache_breakpoint_through_the_loop(
     for system_message in captured:
         assert system_message.stable_prefix_len is not None
         assert 0 < system_message.stable_prefix_len <= len(system_message.content)
+
+
+class _AttachingToolsProvider(_EchoToolsProvider):
+    """Returns a tool result carrying more attachments than the selection threshold."""
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - tool args are dynamic
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        return ToolResult(
+            text="attached",
+            attachments=[
+                ToolAttachment(
+                    mime_type="text/plain",
+                    description=f"file {index}",
+                    attachment_id=f"att{index}",
+                )
+                for index in range(4)
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
+    db_engine: AsyncEngine,
+) -> None:
+    """The synthetic final-iteration instruction is the newest user message on the
+    last iteration. Selecting attachments against it would match boilerplate
+    instead of what the user actually asked for."""
+    llm_client = _SnapshottingMockLLMClient(tool_call_rounds=1)
+    service = _make_service(llm_client, max_iterations=2)
+    service.tool_executor.tools_provider = _AttachingToolsProvider()
+    service.llm_loop.tool_executor.tools_provider = _AttachingToolsProvider()
+    service.app_config.attachment_selection_threshold = 1
+
+    queries: list[str] = []
+
+    async def _capture_query(
+        pending_attachment_ids: list[str],
+        original_query: str,
+        *,
+        acting_user_id: str | None,
+    ) -> list[str]:
+        queries.append(original_query)
+        return pending_attachment_ids
+
+    service.llm_loop.attachment_processor.select_for_response = _capture_query  # type: ignore[method-assign]
+
+    async with get_db_context(db_engine) as db_context:
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="web",
+            conversation_id="cache-attachment-query",
+            trigger_content_parts=[
+                {"type": "text", "text": "Show me the pictures of the cat"}
+            ],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+        )
+
+    assert queries, "attachment selection never ran"
+    for query in queries:
+        assert "final processing iteration" not in query.lower()
+    assert queries[0] == "Show me the pictures of the cat"

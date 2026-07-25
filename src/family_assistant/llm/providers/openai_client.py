@@ -310,7 +310,7 @@ class OpenAIClient(BaseLLMClient):
     @staticmethod
     def _cached_prompt_tokens(
         usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
-    ) -> int:
+    ) -> int | None:
         """Extract cache-hit prompt tokens from an OpenAI usage payload.
 
         Caching is automatic on OpenAI, and the hit count lives under
@@ -318,6 +318,10 @@ class OpenAIClient(BaseLLMClient):
         (Responses). Unlike Anthropic, these are a *subset* of the reported
         prompt total, not a separate bucket to add on top. There is no
         cache-write counterpart.
+
+        Returns `None` only when the payload carries no cache field at all. A
+        reported zero comes back as `0`, so a known cache miss stays
+        distinguishable from a payload that says nothing about caching.
         """
         for field in ("prompt_tokens_details", "input_tokens_details"):
             details = (
@@ -332,9 +336,9 @@ class OpenAIClient(BaseLLMClient):
                 if isinstance(details, dict)
                 else getattr(details, "cached_tokens", None)
             )
-            if cached:
+            if cached is not None:
                 return int(cached)
-        return 0
+        return None
 
     @staticmethod
     def _responses_reasoning_info(response: Response) -> MessageReasoningInfo | None:
@@ -351,7 +355,7 @@ class OpenAIClient(BaseLLMClient):
         if details and getattr(details, "reasoning_tokens", None) is not None:
             reasoning_info["reasoning_tokens"] = details.reasoning_tokens
         cached = OpenAIClient._cached_prompt_tokens(usage)
-        if cached:
+        if cached is not None:
             reasoning_info["cached_prompt_tokens"] = cached
         return reasoning_info
 
@@ -517,7 +521,7 @@ class OpenAIClient(BaseLLMClient):
                         reasoning_info["reasoning_tokens"] = details.reasoning_tokens
 
                 cached = self._cached_prompt_tokens(response.usage)
-                if cached:
+                if cached is not None:
                     reasoning_info["cached_prompt_tokens"] = cached
 
             llm_output = LLMOutput(
@@ -950,7 +954,7 @@ class OpenAIClient(BaseLLMClient):
                     total_tokens=stream_usage.total_tokens,
                 )
                 cached = self._cached_prompt_tokens(stream_usage)
-                if cached:
+                if cached is not None:
                     stream_reasoning_info["cached_prompt_tokens"] = cached
                 metadata["reasoning_info"] = stream_reasoning_info
 
@@ -1145,7 +1149,7 @@ class OpenAIClient(BaseLLMClient):
                             total_tokens=int(usage.get("total_tokens", 0)),
                         )
                         cached = self._cached_prompt_tokens(usage)
-                        if cached:
+                        if cached is not None:
                             responses_reasoning_info["cached_prompt_tokens"] = cached
                         metadata["reasoning_info"] = responses_reasoning_info
                     output = response.get("output")
@@ -1318,7 +1322,7 @@ class OpenAIClient(BaseLLMClient):
                 total_tokens=usage.get("total_tokens", 0),
             )
             cached = self._cached_prompt_tokens(usage)
-            if cached:
+            if cached is not None:
                 replay_reasoning_info["cached_prompt_tokens"] = cached
             metadata["reasoning_info"] = replay_reasoning_info
 

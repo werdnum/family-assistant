@@ -51,8 +51,10 @@ the leading one `cache_control: {"type": "ephemeral"}`. Concatenating the blocks
 string previously sent. Because a breakpoint on the last system block also covers everything
 rendered before it, this caches the tool definitions along with the static instructions.
 
-When there is no usable boundary the client sends the plain string as before, so requests that
-cannot benefit keep their existing wire format (and existing VCR cassettes keep matching).
+A prompt that is stable all the way to the end — what a template with no volatile placeholders
+produces — needs no split and is emitted as a single cacheable block. Only when there is no boundary
+at all does the client send the plain string as before, so requests that cannot benefit keep their
+existing wire format (and existing VCR cassettes keep matching).
 
 ### Loop stability
 
@@ -102,8 +104,15 @@ directly is wrong for at least one of them:
 Anthropic's `total_tokens` is now computed by adding the cache buckets back, so a cached turn no
 longer reports a prompt many times smaller than the one actually sent.
 
-Cache fields are omitted rather than zeroed when a provider does not report them, so "not reported"
-stays distinguishable from a genuine zero-hit turn.
+Cache fields are omitted only when a provider does not report them. A **reported zero is recorded as
+zero**, so a known cache miss stays distinguishable from a provider that says nothing about caching
+— otherwise a dashboard that skips unreported values would drop every miss and overstate the hit
+rate.
+
+Streaming usage is exported to the span in `RetryingLLMClient.generate_response_stream` rather than
+per provider, because providers report it in the `done` event's metadata and the OpenAI client has
+no span of its own. Doing it at the retry layer is what makes `gen_ai.usage.*` present for every
+provider instead of only the ones that instrument themselves.
 
 ## Deferred
 
@@ -114,6 +123,19 @@ delegation catalogue — currently rendered *after* the volatile context, and th
 the uncached side — join the cached prefix. Reordering changes where the model sees this content, so
 unlike everything above it needs validation against the eval suite. Worth doing only if the
 telemetry shows the uncached tail is material.
+
+**A breakpoint on the trailing conversation content.** The system-block breakpoint caches `tools` +
+the static system prompt, but nothing in `messages`. During a tool loop the accumulated assistant
+turns and tool results are byte-stable (that is what the loop fix bought) yet still re-read at full
+price on every iteration, because Anthropic caches only up to the last breakpoint. Marking the last
+content block of the most recently appended turn — the documented multi-turn pattern — would let
+iteration N reuse iterations 1..N−1, which on a tool-heavy turn is plausibly a larger saving than
+the system prompt itself.
+
+The reason it is not in the first change: it shifts the cost profile rather than purely removing
+waste. Every request would write an incremental cache entry (1.25× on the delta) to buy 0.1× reads
+on the rest — strongly net-positive when the prefix is re-read each iteration, but it wants the
+telemetry above to confirm rather than assume. It also interacts with the 20-block lookback below.
 
 **Tool-list churn from on-demand activation** is a hard cache reset (tools render at position 0). If
 telemetry shows activation is frequent, Anthropic's `defer_loading` plus tool search would let tool

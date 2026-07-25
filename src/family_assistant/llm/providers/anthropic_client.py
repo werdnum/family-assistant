@@ -557,19 +557,26 @@ class AnthropicClient(BaseLLMClient):
         reported separately. `total_tokens` therefore has to add all three back
         together, or cached turns will under-report the prompt.
         """
-        cache_read = getattr(usage, "cache_read_input_tokens", None) or 0
-        cache_write = getattr(usage, "cache_creation_input_tokens", None) or 0
+        cache_read = getattr(usage, "cache_read_input_tokens", None)
+        cache_write = getattr(usage, "cache_creation_input_tokens", None)
 
         reasoning_info = MessageReasoningInfo(
             prompt_tokens=usage.input_tokens,
             completion_tokens=usage.output_tokens,
             total_tokens=(
-                usage.input_tokens + cache_read + cache_write + usage.output_tokens
+                usage.input_tokens
+                + (cache_read or 0)
+                + (cache_write or 0)
+                + usage.output_tokens
             ),
         )
-        if cache_read:
+        # A reported zero is a known cache miss and is recorded as such. Only an
+        # absent field is left out, so a miss cannot be mistaken for a provider
+        # that reports nothing -- otherwise a dashboard that skips unreported
+        # values would drop every miss and overstate the hit rate.
+        if cache_read is not None:
             reasoning_info["cached_prompt_tokens"] = cache_read
-        if cache_write:
+        if cache_write is not None:
             reasoning_info["cache_write_tokens"] = cache_write
         return reasoning_info
 
@@ -587,16 +594,26 @@ class AnthropicClient(BaseLLMClient):
         cacheable. Concatenating the returned blocks reproduces the single string
         this used to send, so the model sees identical text either way.
 
-        Without a usable boundary there is nothing worth caching -- a breakpoint
-        over volatile text buys cache writes and no reads -- so the plain string
-        form is returned instead.
+        A prompt that is stable all the way to the end needs no split -- it is
+        emitted as one cacheable block. Only when there is no boundary at all is
+        the plain string returned, since a breakpoint over volatile text buys
+        cache writes and no reads.
         """
         if not system_parts:
             return None
 
         system_prompt = "\n\n".join(system_parts)
-        if stable_prefix_len is None or not 0 < stable_prefix_len < len(system_prompt):
+        if stable_prefix_len is None or stable_prefix_len <= 0:
             return system_prompt
+
+        if stable_prefix_len >= len(system_prompt):
+            return [
+                TextBlockParam(
+                    type="text",
+                    text=system_prompt,
+                    cache_control={"type": "ephemeral"},
+                )
+            ]
 
         return [
             TextBlockParam(

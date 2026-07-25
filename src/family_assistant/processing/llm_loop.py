@@ -272,6 +272,8 @@ class LLMStreamingLoop:
         # The addition currently baked into messages[0], so the system prompt is
         # rebuilt only when it actually changes rather than on every iteration.
         applied_system_prompt_addition: str | None = None
+        # The synthetic final-iteration instruction, once appended.
+        final_iteration_instruction: UserMessage | None = None
 
         can_confirm = request_confirmation_callback is not None
 
@@ -391,15 +393,16 @@ class LLMStreamingLoop:
             if is_final_iteration:
                 # Delivered as a trailing user message rather than a system-prompt
                 # edit so the cached prefix survives the final iteration too.
-                messages.append(
-                    UserMessage(
-                        content=(
-                            "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
-                            "You MUST now provide your final response summarizing your findings and conclusions. "
-                            "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user.]"
-                        )
+                # Kept on hand so downstream scans for the user's actual request
+                # can skip it -- it is scaffolding, not something the user said.
+                final_iteration_instruction = UserMessage(
+                    content=(
+                        "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
+                        "You MUST now provide your final response summarizing your findings and conclusions. "
+                        "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user.]"
                     )
                 )
+                messages.append(final_iteration_instruction)
                 logger.info("Added final iteration instruction as user message")
 
             # On final iteration, don't offer any tools to ensure we get a response
@@ -554,6 +557,12 @@ class LLMStreamingLoop:
                 # Extract original user query from messages (most recent first)
                 original_query = ""
                 for msg in reversed(messages):
+                    # Skip our own final-iteration scaffolding: it is the newest
+                    # user message on the last iteration, and selecting
+                    # attachments against it would match the boilerplate rather
+                    # than what the user actually asked for.
+                    if msg is final_iteration_instruction:
+                        continue
                     if isinstance(msg, UserMessage):
                         if isinstance(msg.content, str):
                             original_query = msg.content

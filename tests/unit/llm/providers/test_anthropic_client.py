@@ -198,16 +198,40 @@ class TestAnthropicPromptCacheBreakpoint:
 
         assert system_value == "You are a helpful assistant."
 
-    @pytest.mark.parametrize("offset", [0, 28, 99])
-    def test_out_of_range_offsets_do_not_split(self, offset: int) -> None:
-        """A degenerate offset must not produce an empty or truncated block."""
+    def test_zero_offset_does_not_split(self) -> None:
+        """Nothing stable to cache, so keep the pre-existing shape."""
         content = "You are a helpful assistant."
+        system_value = self._convert([
+            SystemMessage(content=content, stable_prefix_len=0),
+            UserMessage(content="hi"),
+        ])
+
+        assert system_value == content
+
+    @pytest.mark.parametrize("offset", [28, 99])
+    def test_fully_stable_prompt_is_cached_as_one_block(self, offset: int) -> None:
+        """A prompt stable to the end is the ideal case and must still cache.
+
+        `offset == len(content)` is what a template with no volatile
+        placeholders produces; a larger offset can only mean the content was
+        trimmed after the boundary was computed. Neither is a reason to skip
+        caching the whole thing.
+        """
+        content = "You are a helpful assistant."
+        assert offset >= len(content)
+
         system_value = self._convert([
             SystemMessage(content=content, stable_prefix_len=offset),
             UserMessage(content="hi"),
         ])
 
-        assert system_value == content
+        assert system_value == [
+            {
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     def test_hoisted_mid_conversation_system_message_lands_past_the_breakpoint(
         self,
@@ -274,4 +298,19 @@ class TestAnthropicCacheUsageReporting:
 
         assert "cached_prompt_tokens" not in info
         assert "cache_write_tokens" not in info
+        assert info.get("total_tokens") == 120
+
+    def test_reported_zero_cache_tokens_are_preserved(self) -> None:
+        """Anthropic always reports these fields, so 0 is a known miss."""
+        info = AnthropicClient._reasoning_info_from_usage(
+            self._usage(
+                input_tokens=100,
+                output_tokens=20,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
+            )
+        )
+
+        assert info.get("cached_prompt_tokens") == 0
+        assert info.get("cache_write_tokens") == 0
         assert info.get("total_tokens") == 120
