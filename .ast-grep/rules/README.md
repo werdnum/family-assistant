@@ -1,290 +1,149 @@
 # Code Conformance Rules
 
-This directory contains ast-grep rules that enforce code quality standards and prevent anti-patterns
-in the codebase.
+This directory holds the ast-grep rules with `severity: error` that block commits. This file is the
+catalogue — what each active rule bans and what to use instead.
 
-## Overview
+For how the rules are enforced, how to add a new one (including the required test fixtures), and the
+pattern-matching gotchas, see [.ast-grep/CLAUDE.md](../CLAUDE.md). For exemptions — the three forms,
+when they are justified, and how to audit them — see [EXEMPTIONS.md](../EXEMPTIONS.md). Non-blocking
+hints are catalogued in [hints/README.md](hints/README.md).
 
-Code conformance rules are enforced at multiple points:
+## Test Anti-Patterns
 
-- **Pre-commit hooks**: Blocks commits with new violations
-- **`poe lint`**: Includes conformance checking in the full lint suite
-- **Claude lint hook**: Shows violations after file edits
-- **Manual checks**: `scripts/check-conformance.sh [files...]`
+These four rules only run against files under `tests/` (the `test_only_rules` set in
+`check-conformance.py`).
 
-## Active Rules
+### `no-asyncio-sleep-in-tests`
 
-### Test Anti-Patterns
+**Pattern**: `asyncio.sleep($$$)`, except inside a `while` statement — polling intervals in a
+condition-checking loop are fine, arbitrary "hope things are done" waits are not.
 
-#### `no-asyncio-sleep-in-tests`
-
-**Pattern**: `asyncio.sleep($$$)` in test files
-
-**Why it's banned**: Using `asyncio.sleep()` in tests leads to flaky tests and slow test suites.
-Fixed delays are always either too short (causing failures under load) or too long (wasting time).
-
-**Replacement**:
+**Replacement**: `wait_for_condition()` from `tests/helpers.py`.
 
 ```python
 from tests.helpers import wait_for_condition
 
-# Instead of: await asyncio.sleep(2)
-# Use:
-await wait_for_condition(
-    lambda: check_some_state(),
-    timeout=5.0,
-    interval=0.1
-)
+await wait_for_condition(lambda: check_some_state(), timeout=5.0, interval=0.1)
 ```
 
-#### `no-time-sleep-in-tests`
+### `no-time-sleep-in-tests`
 
-**Pattern**: `time.sleep($$$)` or `sleep($$$)` in test files
+**Pattern**: `time.sleep($$$)` or a bare `sleep($$$)`. Unlike the asyncio rule, there is no
+while-loop carve-out.
 
-**Why it's banned**: Blocking sleep calls block the event loop and make async tests unreliable.
+**Why it's banned**: blocking sleep stalls the event loop, making async tests slow and unreliable.
 
-**Replacement**: Use `wait_for_condition()` helper (same as above)
+**Replacement**: `wait_for_condition()`, as above.
 
-#### `no-playwright-wait-for-timeout`
+### `no-playwright-wait-for-timeout`
 
-**Pattern**: `$PAGE.wait_for_timeout($$$)` in test files
+**Pattern**: `$PAGE.wait_for_timeout($$$)`, except inside a `while` statement.
 
-**Why it's banned**: `wait_for_timeout()` is fragile and makes tests slower. Playwright provides
-better alternatives.
-
-**Replacement**:
+**Replacement**: Playwright's built-in waits.
 
 ```python
-# Wait for element to be visible
 await page.wait_for_selector("#element", state="visible")
-
-# Wait for element with text
 await page.get_by_text("Submit").wait_for(state="visible")
-
-# Wait for condition using expect
-from playwright.async_api import expect
 await expect(page.locator("#status")).to_have_text("Complete")
-
-# Wait for network to be idle
 await page.wait_for_load_state("networkidle")
 ```
 
-#### `no-strict-assistant-message-wait`
+### `no-strict-assistant-message-wait`
 
-**Pattern**: `wait_for()` on a Playwright locator that targets `[data-testid="assistant-message"]`
-or `get_by_test_id("assistant-message")`
+**Pattern**: `await ...wait_for(...)` on a locator built from `locator($SEL)` or
+`get_by_test_id($TEST_ID)` where the selector matches the regex `assistant-message` — including the
+case where the locator was assigned to a variable earlier in the same async function.
 
-**Why it's banned**: Chat tests can legitimately render multiple assistant messages, for example an
-initial assistant response followed by a final response after tool calls. Playwright `wait_for()` on
-a locator expects one matching element, so this pattern can fail in strict mode before the test
-reaches its real assertions.
+**Why it's banned**: chat tests legitimately render multiple assistant messages (an initial response
+followed by a final one after tool calls). Playwright's `wait_for()` expects a single matching
+element, so the wait fails in strict mode before the test reaches its real assertions.
 
 **Replacement**:
 
 ```python
-# Wait for expected message content
 await chat_page.wait_for_message_content("I'll add several notes for you.")
-
-# Or wait for the concrete UI under test
 await page.wait_for_selector('[data-testid*="tool-call"]', state="visible")
-
-# If one assistant message is genuinely intended, scope it explicitly
+# Or, if one assistant message is genuinely intended, scope it explicitly:
 await page.locator('[data-testid="assistant-message"]').first.wait_for(state="visible")
 ```
 
-### Tool Development Anti-Patterns
+## Datetime Correctness
 
-#### `toolresult-text-literal-with-data`
+### `no-naive-datetime-now`
 
-**Pattern**: `ToolResult` with a string literal for `text` parameter and `data` parameter
+**Pattern**: `datetime.now()` or `datetime.datetime.now()` with no arguments.
 
-**Why it's banned**: When `ToolResult` has both `text` (as a string literal) and `data`, the `text`
-field is sent to LLMs while the `data` field is used by scripts and tests. Using a string literal
-for `text` means the LLM receives only a constant message and has no access to the actual data in
-the `data` field.
+**Why it's banned**: a naive datetime silently carries the local process timezone. Comparing it with
+a timezone-aware value from the database raises `TypeError` on PostgreSQL and compares wrongly on
+SQLite; `.timestamp()` reinterprets it as local time; and values stored in `DateTime(timezone=True)`
+columns get mislabelled.
 
-**Replacement**:
+**Replacement**: pass an explicit tzinfo — `datetime.now(UTC)` for absolute instants (storage,
+comparisons, cutoffs), or `datetime.now(exec_context.timezone)` for wall-clock time in the user's
+configured zone.
+
+### `no-naive-datetime-fromtimestamp`
+
+**Pattern**: `datetime.fromtimestamp($TS)` or `datetime.datetime.fromtimestamp($TS)` with no `tz`.
+
+**Why it's banned**: same hazard as above — the conversion uses the local process timezone, which is
+typically UTC in containers but local time on a developer machine, so bugs only surface in CI or
+production.
+
+**Replacement**: `datetime.fromtimestamp(ts, tz=UTC)`, or `tz=exec_context.timezone` for a
+user-facing time.
+
+## Tool Development Anti-Patterns
+
+### `toolresult-text-literal-with-data`
+
+**Pattern**: `ToolResult` with a string *literal* for `text` alongside a `data` argument (in either
+order, with or without other arguments).
+
+**Why it's banned**: `text` is what the LLM sees, `data` is what scripts and tests consume. A string
+literal means the LLM receives only a constant message and never sees the actual data.
+
+**Replacement**: use an f-string or expression, or omit `text` and let it be generated from `data`.
 
 ```python
-# ❌ INCORRECT - LLM receives useless constant
-return ToolResult(text="Here is the data", data=actual_data)
-return ToolResult(text="Operation completed", data=result)
-
-# ✅ CORRECT - Use f-string, expression, or omit text
 return ToolResult(text=f"Found {len(items)} items", data=items)
 return ToolResult(text=json.dumps(result), data=result)
-return ToolResult(data=result)  # text auto-generated from data
+return ToolResult(data=result)
 ```
 
-**Note**: If the string literal genuinely conveys equivalent information (rare), you can add an
-exemption:
+If the literal genuinely conveys equivalent information (a short error message, say), exempt it:
 
 ```python
 # ast-grep-ignore: toolresult-text-literal-with-data - Error message is sufficient
 return ToolResult(text="Error: Invalid input", data={"error": "Invalid input"})
 ```
 
-### Type Annotation Quality
+## Note Visibility Confinement
 
-#### `no-dict-any`
+### `no-unconstrained-note-write-policy`
 
-**Pattern**: Type annotations that include `dict[str, Any]` (or `Dict[str, Any]`)
+**Pattern**: any mention of `NoteWritePolicy.UNCONSTRAINED`.
 
-**Why it's flagged**: These annotations effectively disable static typing for the structure. They
-encourage "JSON blob" dictionaries whose shape is unclear and makes downstream logic rely on runtime
-`dict` probing.
+**Why it's banned**: `UNCONSTRAINED` disables see-before-overwrite and default/required/allowed
+label enforcement for a note write. It is the deliberate opt-out for trusted admin surfaces, so it
+must stay greppable and reviewed rather than spreading.
 
-**Replacement**: Define a structured type (e.g., `TypedDict`, dataclass, or `Protocol`) that
-documents the expected keys and value types. Only use `dict[str, Any]` if the data is legitimately
-arbitrary.
+**Replacement**: derive the policy from the active profile with `exec_context.note_write_policy()`,
+so label confinement remains a property of the storage layer rather than of one caller.
 
-## Adding Exemptions
+The approved bypasses (the `NoteWritePolicy` definition itself, the web notes admin API, and the
+call-transcript writer) are listed in `.ast-grep/exemptions.yml`; a new admin surface that genuinely
+needs the bypass belongs there with a justification.
 
-Sometimes you legitimately need to use a banned pattern. There are three ways to add exemptions:
+## Type Annotation Quality
 
-### 1. Inline Exemption (Single Line)
+### `no-dict-any`
 
-Add a comment on the line immediately before the violation:
+**Pattern**: `dict[str, Any]` or `Dict[str, Any]` in a variable annotation, a function return
+annotation, a nested position inside either (e.g. `list[dict[str, Any]] | None`), or a type alias.
 
-```python
-# ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating hardware timeout
-await asyncio.sleep(5)
-```
+**Why it's flagged**: the annotation effectively disables static typing for the structure and
+encourages "JSON blob" dictionaries whose shape only exists in runtime `dict` probing.
 
-### 2. Block Exemption (Multiple Lines)
-
-Wrap the code block with exemption markers:
-
-```python
-# ast-grep-ignore-block: no-asyncio-sleep-in-tests - Legacy code needs refactoring (#123)
-await asyncio.sleep(1)
-do_something()
-await asyncio.sleep(2)
-# ast-grep-ignore-end
-```
-
-### 3. File-Level Exemption
-
-Add to `.ast-grep/exemptions.yml`:
-
-```yaml
-exemptions:
-  - rule: no-asyncio-sleep-in-tests
-    files:
-      - tests/helpers.py # Helper implements wait utilities
-      - tests/mocks/*.py # Mock implementations
-    reason: "Test infrastructure legitimately needs sleep"
-    ticket: "#456" # Optional
-```
-
-**Exemption Requirements**:
-
-- Must include the rule ID being exempted
-- Must include a clear reason
-- Should reference a ticket number for tracking future removal (when applicable)
-
-## Adding New Rules
-
-To add a new conformance rule:
-
-1. **Create rule file**: `.ast-grep/rules/<rule-id>.yml`
-
-   ```yaml
-   id: my-new-rule
-   language: python
-   severity: error
-   message: "Short description of what's banned"
-   note: |
-     Detailed explanation of why this pattern is banned.
-
-     Suggested replacement with examples.
-   rule:
-     pattern: $PATTERN
-   ```
-
-2. **Test the rule**:
-
-   ```bash
-   # Test on specific files
-   ast-grep scan tests/some_file.py
-
-   # Test on all files
-   ast-grep scan tests/
-   ```
-
-3. **Add exemptions** for existing violations (if needed)
-
-4. **Update test-only rules list** in `.ast-grep/check-conformance.py` if rule only applies to tests
-
-5. **Document the rule** in this README
-
-6. **Commit and deploy**
-
-## Auditing Exemptions
-
-To review all active exemptions:
-
-```bash
-scripts/audit-conformance-exemptions.sh
-```
-
-This shows:
-
-- All exemption entries from `.ast-grep/exemptions.yml`
-- Number of files covered by each exemption
-- Total number of violations currently exempted
-
-Periodically review exemptions to identify opportunities for cleanup and technical debt reduction.
-
-## Troubleshooting
-
-### False Positives
-
-If a rule triggers incorrectly, add an exemption with a clear explanation:
-
-```python
-# ast-grep-ignore: rule-id - This is actually correct because [reason]
-```
-
-### Rule Not Triggering
-
-1. Check rule syntax: `ast-grep scan --rule .ast-grep/rules/your-rule.yml tests/`
-2. Verify pattern matches: `ast-grep -p 'your pattern' tests/`
-3. Ensure file paths are correct (test-only rules need path filtering)
-
-### Performance Issues
-
-- Rules are cached by ast-grep and run very fast
-- The conformance check adds ~0.1-0.3s to lint time
-- For large files, increase timeout in `.claude/lint-hook.py`
-
-## Hints (Non-Enforced Guidance)
-
-The `.ast-grep/rules/hints/` directory contains patterns that provide helpful guidance but don't
-block commits. These are informational only - use your judgment about whether to apply them.
-
-### `no-wait-for-selector-then-click`
-
-**Pattern**: `$VAR = await $PAGE.wait_for_selector($$$)`
-
-**Guidance**: Consider using Playwright's Locator API instead of `wait_for_selector()` when you plan
-to interact with the element, as Locators automatically retry on stale element references.
-
-```python
-# ❌ Prone to stale element errors
-button = await page.wait_for_selector('[data-testid="submit"]')
-await button.click()  # Can fail if React re-renders
-
-# ✅ Robust (auto-retries)
-button = page.locator('[data-testid="submit"]')
-await button.click(timeout=10000)
-```
-
-If you're only checking element state without interacting, `wait_for_selector()` is fine.
-
-## Resources
-
-- [ast-grep Documentation](https://ast-grep.github.io/)
-- [ast-grep Pattern Syntax](https://ast-grep.github.io/guide/pattern-syntax.html)
-- [Rule Configuration Reference](https://ast-grep.github.io/guide/rule-config.html)
-- [Project ast-grep recipes](../../docs/development/ast-grep-recipes.md)
+**Replacement**: a `TypedDict`, dataclass, or `Protocol` documenting the expected keys and value
+types. Keep `dict[str, Any]` only when the data really is arbitrary.

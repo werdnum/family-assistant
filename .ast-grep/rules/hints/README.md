@@ -1,127 +1,55 @@
 # Code Hints
 
-This directory contains ast-grep rules that provide helpful suggestions without blocking work.
-Unlike conformance rules that cause lint failures, hints are informational and help developers
-follow best practices.
+This directory holds the ast-grep rules with `severity: hint`. Hints never fail a build, block a
+commit, or need an exemption — they are suggestions surfaced by the `format-and-lint` plugin's
+PostToolUse hook after Claude edits a file, via `.ast-grep/check-hints.py` (which always exits 0).
+Nothing in pre-commit, `poe lint`, or CI runs them.
 
-## How Hints Work
+For when to add a hint rather than a conformance rule, and for the rule-authoring steps (including
+the required test fixtures under `.ast-grep/tests/hints/`), see
+[.ast-grep/CLAUDE.md](../../CLAUDE.md). Blocking rules are catalogued in
+[../README.md](../README.md).
 
-- **Non-blocking**: Hints never cause lint failures or block commits
-- **Smart filtering**: Only shown for newly added/modified code to avoid spam on pre-existing issues
-- **Informational**: Display with 💡 icon in PostToolUse hook output
-- **Easy to add**: Just create a new YAML rule file in this directory
+This file is the catalogue of active hints.
 
-## When Hints Appear
+## `async-magic-mock`
 
-Hints are shown by the `.claude/lint-hook.py` PostToolUse hook:
+**Pattern**: `MagicMock(...)` or `Mock(...)` inside an `async def`. Test files only (the
+`test_only_hints` set in `check-hints.py`).
 
-- **For Edit operations**: Only hints where the matched code appears in the newly edited content
-- **For Write operations**: Only for new files (not tracked by git), to avoid spam on file rewrites
+**Why**: `MagicMock` does not handle async methods, so the mock fails once it is `await`ed. Use
+`AsyncMock`.
 
-## Active Hints
+## `test-mocking-guideline`
 
-### `async-magic-mock`
+**Pattern**: any `Mock(...)`, `MagicMock(...)`, or `AsyncMock(...)`. Test files only.
 
-**Pattern**: `MagicMock` or `Mock` used in async test functions
+**Why**: project guidelines prefer real or fake implementations over mocks. Use a real object when
+it is lightweight and has no external dependencies, a fake for external services, and a mock only
+for genuinely external dependencies such as the Telegram API.
 
-**Why**: `MagicMock` doesn't properly handle async methods. Use `AsyncMock` instead.
+## `no-wait-for-selector-then-click`
 
-**Example**:
+**Pattern**: `$VAR = await $PAGE.wait_for_selector($$$)`.
 
-```python
-# ❌ Will cause issues with async methods
-async def test_something():
-    mock_service = MagicMock()  # ← Hint appears here
-
-# ✅ Correct approach
-async def test_something():
-    mock_service = AsyncMock()
-```
-
-### `test-mocking-guideline`
-
-**Pattern**: Any Mock/MagicMock/AsyncMock in test files
-
-**Why**: Project guidelines strongly recommend using real or fake objects instead of mocks for
-better test reliability.
-
-**Guidance**:
-
-- Prefer real implementations when practical
-- Use fake implementations for external services
-- Reserve mocks for truly external dependencies (e.g., Telegram API, external HTTP services)
-
-### `toolresult-data-text-warning`
-
-**Pattern**: `ToolResult` with both `text` and `data` parameters
-
-**Why**: When both fields are provided, `text` is sent to LLMs while `data` is used by
-scripts/tests. Even with dynamic text (f-strings, expressions), the text might only convey metadata
-(e.g., "Found 5 items") rather than the actual data.
-
-**Example**:
+**Why**: `wait_for_selector()` returns an `ElementHandle` that goes stale if React re-renders before
+you use it, producing "Element is not attached to the DOM". Prefer the Locator API, which retries
+automatically:
 
 ```python
-# ⚠️ Text has metadata but not actual data
-return ToolResult(text=f"Retrieved {len(results)} results", data=results)
-
-# ✅ Text includes actual data or is omitted
-return ToolResult(text=f"Results: {results}", data=results)
-return ToolResult(data=results)  # Auto-generates text from data
+button = page.locator('[data-testid="submit"]')
+await button.click(timeout=10000)
 ```
 
-**Note**: String literals with data are blocked by the conformance rule
-`toolresult-text-literal-with-data`. This hint catches the subtler cases where text is dynamic but
-still doesn't convey the data content.
+If you are only checking element state without interacting, `wait_for_selector()` is fine.
 
-## Adding New Hints
+## `toolresult-data-text-warning`
 
-1. **Create hint rule file**: `.ast-grep/rules/hints/<hint-id>.yml`
+**Pattern**: `ToolResult` with both `text` and `data`, in either order.
 
-   ```yaml
-   id: my-hint
-   language: python
-   severity: hint  # Use 'hint' severity
-   message: "Brief suggestion message"
-   note: |
-     Detailed explanation of the suggestion.
+**Why**: `text` is sent to the LLM while `data` is used by scripts and tests. Even a dynamic `text`
+may convey only metadata (`f"Found {count} items"`) rather than the data itself. Either put the data
+in `text` or omit `text` and let it be generated from `data`.
 
-     Include examples of better alternatives.
-   rule:
-     pattern: $PATTERN
-   ```
-
-2. **Test the hint**:
-
-   ```bash
-   ast-grep scan --rule .ast-grep/rules/hints/my-hint.yml tests/
-   ```
-
-3. **Commit**: Hints are automatically picked up by the lint hook
-
-## Hints vs Conformance Rules
-
-| Feature        | Hints                       | Conformance Rules            |
-| -------------- | --------------------------- | ---------------------------- |
-| **Purpose**    | Suggestions, best practices | Hard requirements            |
-| **Blocking**   | Never blocks work           | Blocks commits if violated   |
-| **Exemptions** | Not needed                  | Inline/block/file exemptions |
-| **Severity**   | `hint`                      | `error`                      |
-| **Location**   | `.ast-grep/rules/hints/`    | `.ast-grep/rules/`           |
-| **When shown** | Only on new/changed code    | Always (unless exempted)     |
-
-## Implementation Details
-
-Hints are implemented by:
-
-1. **`.ast-grep/check-hints.py`**: Runs ast-grep on hint rules and outputs JSON
-2. **`.claude/lint-hook.py`**:
-   - Calls check-hints.py after file edits
-   - Filters hints to only new/changed code
-   - Displays with 💡 icon
-   - Never affects lint success/failure
-
-## Philosophy
-
-Hints help developers learn best practices without being intrusive. They appear at the right moment
-(when writing code) but don't interrupt flow or require exemptions for legacy code.
+String *literals* for `text` alongside `data` are a hard error instead — see the conformance rule
+`toolresult-text-literal-with-data`. This hint catches the subtler dynamic cases.
