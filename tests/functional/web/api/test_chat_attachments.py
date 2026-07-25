@@ -545,6 +545,271 @@ async def test_tool_result_attachments_include_complete_metadata(
     assert history_attachment["mime_type"] == "image/png"
 
 
+@pytest.mark.asyncio
+async def test_tool_produced_attachment_is_not_repeated_on_the_assistant_row(
+    api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """A tool's own attachment stays on the tool row only.
+
+    Both rows are visible to clients, so recording the response attachment on the
+    closing assistant row as well would render the same image twice.
+    """
+
+    def call_generate_image_matcher(args: dict) -> bool:
+        messages = args.get("messages", [])
+        has_user_request = any(
+            msg.role == "user" and "image" in str(msg.content or "").lower()
+            for msg in messages
+        )
+        has_tool_result = any(msg.role == "tool" for msg in messages)
+        return has_user_request and not has_tool_result
+
+    api_mock_llm_client.rules = [
+        (
+            call_generate_image_matcher,
+            LLMOutput(
+                content="Working on it.",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_generate_image_dedupe",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="generate_image",
+                            arguments=json.dumps({"prompt": "A test image"}),
+                        ),
+                    )
+                ],
+            ),
+        )
+    ]
+    api_mock_llm_client.default_response = LLMOutput(content="Here's your image!")
+
+    conversation_id = "web_conv_tool_attachment_not_repeated"
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
+            "prompt": "Generate an image for me",
+            "conversation_id": conversation_id,
+            "interface_type": "web",
+        },
+    )
+    assert response.status_code == 200
+
+    history_response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert history_response.status_code == 200
+    messages = history_response.json()["messages"]
+
+    tool_attachment_ids = {
+        attachment["attachment_id"]
+        for message in messages
+        if message["role"] == "tool"
+        for attachment in message["attachments"] or []
+    }
+    assert len(tool_attachment_ids) == 1
+
+    assistant_attachment_ids = {
+        attachment["attachment_id"]
+        for message in messages
+        if message["role"] == "assistant"
+        for attachment in message["attachments"] or []
+    }
+    assert assistant_attachment_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_explicitly_attached_response_attachment_is_persisted(
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    attachment_registry_fixture: AttachmentRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """attach_to_response on an existing attachment survives into history.
+
+    Nothing else records it: the id reaches the client only as a live stream
+    event, and no tool row carries the attachment, so without this the reply's
+    attachment vanishes as soon as the conversation is reloaded.
+    """
+    conversation_id = "web_conv_explicit_attachment_persisted"
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), color="red").save(buffer, format="PNG")
+
+    async with get_db_context(engine=db_engine) as db_context:
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=db_context,
+            content=buffer.getvalue(),
+            filename="earlier-upload.png",
+            mime_type="image/png",
+            conversation_id=conversation_id,
+            user_id="test_user",
+        )
+
+    def call_attach_to_response_matcher(args: dict) -> bool:
+        messages = args.get("messages", [])
+        has_user_request = any(msg.role == "user" for msg in messages)
+        has_tool_result = any(msg.role == "tool" for msg in messages)
+        return has_user_request and not has_tool_result
+
+    api_mock_llm_client.rules = [
+        (
+            call_attach_to_response_matcher,
+            LLMOutput(
+                content="Sending it back.",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_attach_existing",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="attach_to_response",
+                            arguments=json.dumps({
+                                "attachment_ids": [attachment.attachment_id]
+                            }),
+                        ),
+                    )
+                ],
+            ),
+        )
+    ]
+    api_mock_llm_client.default_response = LLMOutput(content="Here it is again.")
+
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
+            "prompt": "Send me that image again",
+            "conversation_id": conversation_id,
+            "interface_type": "web",
+        },
+    )
+    assert response.status_code == 200
+
+    history_response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert history_response.status_code == 200
+    messages = history_response.json()["messages"]
+
+    rows_with_attachment = [
+        message
+        for message in messages
+        if message["role"] == "assistant"
+        and any(
+            att["attachment_id"] == attachment.attachment_id
+            for att in message["attachments"] or []
+        )
+    ]
+    assert len(rows_with_attachment) == 1
+    persisted = rows_with_attachment[0]["attachments"][0]
+    assert persisted["type"] == "attachment_reference"
+    # Only the reference is stored; the read path resolves the rest, which is what
+    # lets a client know this is an image it should render inline.
+    assert persisted["mime_type"] == "image/png"
+    assert persisted["content_url"] == f"/api/attachments/{attachment.attachment_id}"
+
+
+@pytest.mark.asyncio
+async def test_response_attachment_is_recorded_once_when_more_tools_follow(
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    attachment_registry_fixture: AttachmentRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """Only the assistant row that ends the turn records the reference.
+
+    Every iteration's `done` event repeats the turn's pending attachment ids, so
+    an attach_to_response followed by a further tool call offers two assistant
+    rows to record against -- and recording both would render the image twice.
+    """
+    conversation_id = "web_conv_attachment_recorded_once"
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), color="blue").save(buffer, format="PNG")
+
+    async with get_db_context(engine=db_engine) as db_context:
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=db_context,
+            content=buffer.getvalue(),
+            filename="earlier-upload.png",
+            mime_type="image/png",
+            conversation_id=conversation_id,
+            user_id="test_user",
+        )
+
+    def tool_round(args: dict, name: str) -> bool:
+        """Match the round whose history ends just before `name` should be called."""
+        messages = args.get("messages", [])
+        tool_names = [msg.name for msg in messages if msg.role == "tool"]
+        if name == "attach_to_response":
+            return not tool_names
+        return tool_names == ["attach_to_response"]
+
+    api_mock_llm_client.rules = [
+        (
+            lambda args: tool_round(args, "attach_to_response"),
+            LLMOutput(
+                content="Attaching it.",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_attach_then_more",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="attach_to_response",
+                            arguments=json.dumps({
+                                "attachment_ids": [attachment.attachment_id]
+                            }),
+                        ),
+                    )
+                ],
+            ),
+        ),
+        (
+            lambda args: tool_round(args, "list_notes"),
+            LLMOutput(
+                content="Checking your notes too.",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_list_notes_after_attach",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="list_notes",
+                            arguments="{}",
+                        ),
+                    )
+                ],
+            ),
+        ),
+    ]
+    api_mock_llm_client.default_response = LLMOutput(content="Here it is.")
+
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
+            "prompt": "Send that image and check my notes",
+            "conversation_id": conversation_id,
+            "interface_type": "web",
+        },
+    )
+    assert response.status_code == 200
+
+    history_response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert history_response.status_code == 200
+    messages = history_response.json()["messages"]
+
+    rows_with_attachment = [
+        message
+        for message in messages
+        if message["role"] == "assistant"
+        and any(
+            att["attachment_id"] == attachment.attachment_id
+            for att in message["attachments"] or []
+        )
+    ]
+    assert len(rows_with_attachment) == 1
+    # The row that ends the turn, not the one that went on to call another tool.
+    assert rows_with_attachment[0]["tool_calls"] is None
+
+
 # Note: Removed test_chat_api_trigger_content_structure as it was testing internal
 # implementation details rather than API behavior. The structure of messages sent
 # to the LLM is an internal concern and the actual API functionality is tested
