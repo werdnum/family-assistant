@@ -833,15 +833,17 @@ ______________________________________________________________________
 
 VAPID public key for push notification subscriptions.
 
-| Property  | Value                              |
-| --------- | ---------------------------------- |
-| Required  | No (auto-derived from private key) |
-| Default   | Derived from VAPID_PRIVATE_KEY     |
-| Sensitive | No                                 |
-| Example   | `BG1l7...`                         |
+| Property  | Value             |
+| --------- | ----------------- |
+| Required  | Yes, for web push |
+| Default   | None              |
+| Sensitive | No                |
+| Example   | `BG1l7...`        |
 
-Same URL-safe base64 encoding as the private key. It is auto-derived from `VAPID_PRIVATE_KEY` when
-unset; set it explicitly only if you want to control the value distributed to clients.
+Same URL-safe base64 encoding as the private key. Nothing derives this from `VAPID_PRIVATE_KEY` at
+runtime: `GET /api/client_config` returns the configured value as-is, and the frontend hides its
+subscription control when it is absent. Setting only the private key therefore leaves clients unable
+to subscribe.
 
 ______________________________________________________________________
 

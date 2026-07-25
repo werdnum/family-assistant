@@ -11,9 +11,10 @@ recurring schedules are created via `create_automation`, not via calendar tools.
 **`radicale_server_session`** (session scope, `tests/conftest.py`) — starts one Radicale CalDAV
 server for the session with user `testuser`/`testpass`; returns `(base_url, username, password)`.
 
-**`radicale_server`** (function scope) — depends on `radicale_server_session` *and*
-`pg_vector_db_engine`, creates a unique calendar per test, and cleans it up afterwards. Returns
-`(base_url, username, password, calendar_url)`.
+**`radicale_server`** (function scope) — depends on `radicale_server_session` *and* `db_engine`,
+creates a unique calendar per test, and cleans it up afterwards. Returns
+`(base_url, username, password, calendar_url)`. It takes `db_engine`, not `pg_vector_db_engine`, so
+calendar tests are not PostgreSQL-only.
 
 Tests use `db_engine` or `pg_vector_db_engine` and open their own context via
 `DatabaseContext(engine=...)` / `get_db_context(engine=...)`; there is no `db_context` or

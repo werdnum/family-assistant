@@ -47,9 +47,12 @@ fi
 
 # Fix permissions on persistent directories
 # The claude-home volume is mounted at /home/claude
-mkdir -p /home/claude/.claude
+# /home/claude/.claude may be a read-only bind mount (docker-compose.multi.yml
+# mounts the host's own ~/.claude there), so its ownership fixups must not abort
+# this set -e script.
+mkdir -p /home/claude/.claude 2>/dev/null || true
 chown claude:claude /home/claude
-chown -R claude:claude /home/claude/.claude
+chown -R claude:claude /home/claude/.claude || true
 chmod 755 /home/claude
 chmod -R 755 /home/claude/.claude || true
 
@@ -309,11 +312,16 @@ fi
 # in here know how this environment works. Skipped when /home/claude/.claude is
 # read-only, which is how docker-compose.multi.yml mounts the host's own
 # ~/.claude — writing there would clobber the user's personal global memory.
+# Only written when absent. The default claude-home mount persists across
+# restarts and may hold the user's own global memory, which must not be
+# truncated; edit the file in the container to override the shipped guide.
 # The write is attempted rather than probed with [ -w ]: a read-only bind mount
 # is enforced by the mount layer, which the permission bits do not reflect, and
 # root bypasses those bits anyway.
 if [ -f "/opt/claude-settings/CLAUDE.devcontainer.md" ]; then
-    if mkdir -p /home/claude/.claude 2>/dev/null &&
+    if [ -e /home/claude/.claude/CLAUDE.md ]; then
+        echo "Keeping existing /home/claude/.claude/CLAUDE.md"
+    elif mkdir -p /home/claude/.claude 2>/dev/null &&
         cp /opt/claude-settings/CLAUDE.devcontainer.md /home/claude/.claude/CLAUDE.md 2>/dev/null; then
         echo "Installed dev container guide to /home/claude/.claude/CLAUDE.md"
     else

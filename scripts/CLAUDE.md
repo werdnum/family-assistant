@@ -6,8 +6,11 @@ The `scripts/` directory contains utility scripts for development, testing, and 
 
 ### `format-and-lint.sh`
 
-Usage and the "must pass before committing" rule are covered in the root `AGENTS.md`. One extra
-constraint: this script accepts Python files only and errors out if given anything else.
+Usage and the "must pass before committing" rule are covered in the root `AGENTS.md`. It routes each
+argument by extension rather than accepting Python only: `.py` to ruff/basedpyright/pylint,
+`.js/.jsx/.ts/.tsx/.vue` to Biome, ESLint and the TypeScript check, `.md` to mdformat, and
+`.sh/.bash` to shellcheck. Pass frontend, documentation and script changes to it too — they are
+checked, not ignored.
 
 ### `run_pytest_adaptive.py`
 
