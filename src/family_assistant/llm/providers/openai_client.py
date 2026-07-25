@@ -832,6 +832,18 @@ class OpenAIClient(BaseLLMClient):
                 "model": self.model,
                 "messages": api_message_dicts,
                 "stream": True,  # Enable streaming
+                # Streaming responses carry no usage unless it is requested, so
+                # without this the whole turn reports no tokens at all -- prompt
+                # cache hits included. Only sent to the official API: an
+                # OpenAI-compatible endpoint that rejects unknown parameters
+                # would fail the request outright. Operators whose endpoint does
+                # support it can opt in through model_parameters, since those
+                # are merged below and win over this default.
+                **(
+                    {"stream_options": {"include_usage": True}}
+                    if self._is_direct_openai
+                    else {}
+                ),
                 **self.default_kwargs,
                 **self._get_model_specific_params(self.model),
             }
@@ -859,14 +871,17 @@ class OpenAIClient(BaseLLMClient):
             last_chunk_with_usage: Any | None = None
 
             async for chunk in stream:
+                # The usage chunk arrives last and carries an empty `choices`
+                # list, so it has to be captured before the guards below skip it.
+                if chunk is not None and getattr(chunk, "usage", None):
+                    last_chunk_with_usage = chunk
+
                 if not chunk or not hasattr(chunk, "choices") or not chunk.choices:
                     continue
 
                 delta = chunk.choices[0].delta
                 if not delta:
                     continue
-
-                last_chunk_with_usage = chunk
 
                 # Handle content
                 if delta.content:

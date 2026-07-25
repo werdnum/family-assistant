@@ -71,6 +71,25 @@ costs nothing extra.
 three providers and surfaced as `gen_ai.usage.cached_input_tokens` /
 `gen_ai.usage.cache_write_input_tokens` span attributes.
 
+Two providers reported nothing at all on the streaming path — which is the path the processing loop
+uses, so the profiles that matter most were unmeasurable:
+
+- **Gemini** extracted usage only for non-streaming calls, on the stale assumption that streaming
+  does not carry it. Streaming chunks are `GenerateContentResponse` objects and do carry
+  `usage_metadata`; the newest one seen is now kept, since not every chunk includes it. Gemini's
+  `thoughts_token_count` also feeds the existing `reasoning_tokens` field.
+- **OpenAI** never asked for streaming usage. Chat Completions omits it unless
+  `stream_options: {"include_usage": true}` is set, so the existing extraction was dead code. Two
+  bugs were stacked here: the usage chunk arrives last with an **empty `choices` list**, so the
+  content guards `continue`d past it and it would have been dropped even once requested.
+
+`stream_options` is sent only to the official API, because an OpenAI-compatible endpoint that
+rejects unknown parameters would fail the request outright. Operators whose endpoint does support it
+can opt in via `model_parameters`, which is merged after the default and wins.
+
+The Deep Research (`interactions`) path is still uninstrumented: the SDK version in use does not
+expose a usage field on those events.
+
 Note the providers do not agree on what `prompt_tokens` means, so a hit rate computed against it
 directly is wrong for at least one of them:
 
