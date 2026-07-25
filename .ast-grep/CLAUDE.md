@@ -29,38 +29,6 @@ Rules are enforced at these points:
 Note that hints are only surfaced by the post-edit hook; nothing in pre-commit, lint, or CI runs
 `check-hints.py`.
 
-### Directory Structure
-
-```
-.ast-grep/
-├── rules/                     # Conformance rules (severity: error)
-│   ├── README.md              # Documents every active conformance rule
-│   ├── no-asyncio-sleep-in-tests.yml
-│   ├── no-dict-any.yml
-│   ├── no-naive-datetime-fromtimestamp.yml
-│   ├── no-naive-datetime-now.yml
-│   ├── no-playwright-wait-for-timeout.yml
-│   ├── no-strict-assistant-message-wait.yml
-│   ├── no-time-sleep-in-tests.yml
-│   ├── no-unconstrained-note-write-policy.yml
-│   ├── toolresult-text-literal-with-data.yml
-│   └── hints/                 # Hint rules (severity: hint)
-│       ├── README.md
-│       ├── async-magic-mock.yml
-│       ├── no-wait-for-selector-then-click.yml
-│       ├── test-mocking-guideline.yml
-│       └── toolresult-data-text-warning.yml
-├── tests/
-│   ├── conformance/           # <rule-id>-positive.py / <rule-id>-negative.py
-│   └── hints/
-├── check-conformance.py       # Conformance checker with exemption handling
-├── check-hints.py             # Hints checker (always exits 0)
-├── test-rules.py              # Rule test runner
-├── add-exemptions.py          # Bulk-adds inline ast-grep-ignore comments
-├── exemptions.yml             # File-level exemptions
-└── EXEMPTIONS.md              # Exemptions guide
-```
-
 ## Conformance Rules vs Hints
 
 **Conformance rules** live in `.ast-grep/rules/`, use `severity: error`, block commits, and can be

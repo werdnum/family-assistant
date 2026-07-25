@@ -2,13 +2,6 @@
 
 End-to-end tests for calendar events, reminders, and CalDAV sync, in `tests/functional/calendar/`.
 
-## Test Files
-
-- `test_event_management.py` — creating, modifying, and deleting events via tools/chat.
-- `test_reminders.py` — reminder scheduling, dismissal, and delivery through the task worker.
-- `test_integration.py` — CalDAV sync against the Radicale test server.
-- `test_calendar_confirmation.py` — operations that require user confirmation.
-
 Recurring schedule and timezone coverage is **not** here: it lives in
 `tests/functional/automations/` and `tests/functional/storage/test_automations_crud.py`, because
 recurring schedules are created via `create_automation`, not via calendar tools.

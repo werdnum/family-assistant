@@ -132,24 +132,6 @@ the whole suite.
 
 ## File Organization
 
-```
-tests/integration/
-├── conftest.py                # (HA fixtures now live in home_assistant/conftest.py)
-├── fixtures/home_assistant/configuration.yaml
-├── llm/
-│   ├── vcr_helpers.py         # llm_body matcher, sanitization
-│   ├── streaming_mocks.py     # streaming workarounds
-│   └── test_*.py              # providers, streaming, tool calling, thought signatures,
-│                              # structured output, retry/fallback, multimodal, computer use,
-│                              # deep research
-├── home_assistant/
-│   ├── conftest.py            # HA fixture, VCR config, normalization
-│   ├── vcr_patches.py         # MockClientResponse.content patch
-│   └── test_tools.py, test_wrapper.py, test_call_action.py
-├── tools/test_browser_backend_integration.py
-└── test_gemini_image_generation.py, test_gemini_omni_video_generation.py, test_google_embedding.py
-```
-
 Cassettes live under `tests/cassettes/` (not inside `tests/integration/`): `llm/` for VCR YAML,
 `gemini/` for SDK replays. The shared VCR fixtures (`llm_record_mode`, `vcr_config`,
 `llm_replay_config`) are in the top-level `tests/conftest.py`.

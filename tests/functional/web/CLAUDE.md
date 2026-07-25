@@ -7,10 +7,8 @@ Guidance for the web API and UI tests.
 - **`api/`** — REST endpoint tests driven through an HTTPX `AsyncClient` against the FastAPI app. No
   browser.
 - **`ui/`** — Playwright end-to-end tests, marked `@pytest.mark.playwright`.
-- **`pages/`** — Page Object Models shared by the UI tests: `base_page.py` (`BasePage`),
-  `chat_page.py` (`ChatPage`), `notes_page.py` (`NotesPage`), `events_page.py` (`EventsPage`),
-  `history_page.py` (`HistoryPage`). Put selectors and multi-step interactions here rather than
-  inline in tests.
+- **`pages/`** — Page Object Models shared by the UI tests. Put selectors and multi-step
+  interactions here rather than inline in tests.
 - **`routers/`** — router-level tests that need neither browser nor full app.
 
 ## Documentation Screenshots

@@ -2,19 +2,7 @@
 
 End-to-end tests for the document/email/note indexing pipeline, in `tests/functional/indexing/`.
 
-## Test Files
-
-- `test_document_basic.py` / `test_document_advanced.py` / `test_document_retrieval.py` — document
-  ingestion, extraction, and vector retrieval.
-- `test_email_basic.py` / `test_email_advanced.py` / `test_email_attachments.py` — email parsing,
-  threads, and attachment extraction.
-- `test_notes_basic.py` / `test_notes_search.py` — note indexing and search.
-- `test_indexing_pipeline.py` — the pipeline itself; also the home of the pipeline fixtures below.
-- `test_indexing_events.py` — events emitted during indexing.
-- `test_reindexing.py` — re-indexing already-stored content.
-- `processors/test_llm_intelligence_processor.py` — the LLM intelligence content processor.
-
-Sample fixtures files live in `tests/data/` (`test_doc.md`, `test_doc.pdf`).
+Sample document fixtures live in `tests/data/`, not in this directory.
 
 ## Fixtures
 

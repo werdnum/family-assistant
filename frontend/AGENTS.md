@@ -6,25 +6,6 @@ FastAPI backend over REST.
 Stack: React 19 with TypeScript, Vite, Tailwind CSS, shadcn/ui, `@assistant-ui/react` for the chat
 interface, Vitest for testing, MSW (Mock Service Worker) for API mocking in tests.
 
-## Project Structure
-
-```
-frontend/
-├── src/
-│   ├── components/ui/       # Reusable UI components (shadcn/ui)
-│   ├── shared/              # Shared components and utilities
-│   ├── chat/                # Chat application components
-│   ├── pages/               # Feature-specific page components
-│   ├── api/                 # API client modules
-│   ├── test/                # Test utilities and mocks
-│   │   ├── setup.js         # Global MSW server + jsdom setup
-│   │   ├── mocks/           # MSW handlers (handlers.ts)
-│   │   └── utils/           # Test helpers (renderChatApp.tsx)
-│   └── styles/              # Global styles
-├── public/                  # Static assets
-└── dist/                    # Build output
-```
-
 ## Commands
 
 ```bash

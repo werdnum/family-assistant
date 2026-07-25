@@ -4,22 +4,6 @@ This file provides guidance for working with tests in this project.
 
 ## Test Structure
 
-```
-tests/
-├── unit/          # a2a_client, attachments, calendar_config, events, indexing, llm,
-│                  # processing, scripting, security, services, skills, storage, telegram,
-│                  # tools, utils, web
-├── integration/   # home_assistant, llm, tools, fixtures — external services via VCR.py
-├── functional/    # attachments, automations, calendar, email_intake, events, home_assistant,
-│                  # indexing/processors, integration, notes, scripting, storage, tasks,
-│                  # telegram, tools, vector_search, web/{api,ui,pages,routers}
-├── cassettes/     # llm/ (VCR.py YAML), gemini/ (Gemini SDK replay JSON)
-├── factories/     # Test data factories
-├── fixtures/      # Static fixture data (email_intake, ical)
-├── data/          # Sample documents used by indexing tests
-└── mocks/         # Mock utilities (mock_llm.py, mock_tools_provider.py, telegram_test_server.py)
-```
-
 `unit/` mirrors the `src/` layout; `integration/` is organized by external service; `functional/` is
 organized by feature area, not by implementation.
 

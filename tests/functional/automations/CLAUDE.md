@@ -3,18 +3,6 @@
 End-to-end tests for automations, the event system, and delegation, in
 `tests/functional/automations/`.
 
-## Test Files
-
-- `test_automations_crud.py` — create/read/update/delete, enable/disable, listing.
-- `test_automations_execution.py` — running an automation when its trigger fires.
-- `test_event_system_basic.py` / `test_event_system_advanced.py` — event publishing, matching,
-  chaining, ordering.
-- `test_delegation_basic.py` / `test_delegation_workflows.py` / `test_async_delegation.py` /
-  `test_self_delegation.py` — delegating work to another profile.
-- `test_subconversation_isolation.py` — sub-conversation context boundaries.
-- `test_ops_automation_confinement.py` — confinement rules for ops automations.
-- `test_scheduled_script_execution.py` — cron-scheduled script automations.
-
 ## Fixtures
 
 These tests take `db_engine` (from `tests/conftest.py`) and open their own `DatabaseContext` /
