@@ -652,6 +652,11 @@ and `mock-deterministic-embedder` selects the deterministic test embedder.
 Set it to `openai` to use any OpenAI-compatible embeddings endpoint — the official OpenAI API,
 OpenRouter, or a self-hosted inference server.
 
+`openai` is currently the only value that actually changes the selection. The field also accepts
+`gemini` and `sentence_transformer`, but nothing branches on them, so those fall through to the
+model-name inference above — setting `sentence_transformer` with a plain Hugging Face model name
+fails as an unsupported model rather than loading a local one. Use the model name to select those.
+
 ______________________________________________________________________
 
 ### EMBEDDING_BASE_URL

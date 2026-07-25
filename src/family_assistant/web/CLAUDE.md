@@ -24,9 +24,11 @@ Routers live in `routers/`, one per feature area. `api.py` is the aggregator tha
 3. Register the router. An ordinary `*_api.py` router is registered on `api_router` in
    `routers/api.py` with its prefix and tags, so it lands under `/api`; register directly in
    `app_creator.py` only for a router that is deliberately mounted outside `/api`.
-4. If the endpoint should bypass authentication, add it to the public-path configuration in
-   `auth.py`; otherwise use dependency injection for auth checks and document the requirement in the
-   endpoint docstring.
+4. Enforce auth with a dependency such as `get_current_user`, and document the requirement in the
+   endpoint docstring. Do not reach for `PUBLIC_PATHS` here: it already matches `^/api(/.*)?$`, so
+   `AuthMiddleware` bypasses every `/api` request and a route-specific pattern changes nothing.
+   Under `/api`, a route is protected precisely when it declares the dependency, and a deliberately
+   public receiver simply omits it.
 5. Add the endpoint to the appropriate test files in `tests/functional/web/`.
 
 ## Notable Behaviours

@@ -2,9 +2,11 @@
 
 End-to-end tests for calendar events, reminders, and CalDAV sync, in `tests/functional/calendar/`.
 
-Recurring schedule and timezone coverage is **not** here: it lives in
-`tests/functional/automations/` and `tests/functional/storage/test_automations_crud.py`, because
-recurring schedules are created via `create_automation`, not via calendar tools.
+Recurring-schedule coverage is **not** here: it lives in `tests/functional/automations/` and
+`tests/functional/storage/test_automations_crud.py`, because recurring schedules are created via
+`create_automation`, not via calendar tools. Event timezone handling *is* covered here — see the
+`Europe/Berlin` and `America/New_York` cases in `test_event_management.py` and
+`test_integration.py`.
 
 ## Fixtures
 

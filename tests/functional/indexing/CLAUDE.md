@@ -15,7 +15,9 @@ embeddings are deterministic for a given input. `indexing_task_worker` yields
 Other local fixtures in this directory: `mock_embedding_generator`,
 `mock_embedding_generator_notes`, `temp_text_file`, `http_client`.
 
-Database: `db_engine` for most tests, `pg_vector_db_engine` where real vector search is under test.
+Database: `pg_vector_db_engine` is the norm here — the document, email, notes, reindexing and
+pipeline suites all use it, since indexing writes embeddings. `test_indexing_events.py` is the
+exception and uses `db_engine`.
 
 ## Running
 
