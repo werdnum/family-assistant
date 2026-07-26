@@ -541,14 +541,14 @@ def get_system_prompt(messages: list[LLMMessage]) -> str | None:
 
 
 __all__ = [
-    "RuleBasedMockLLMClient",
-    "Rule",
     "MatcherFunction",
-    "StructuredRule",
+    "Rule",
+    "RuleBasedMockLLMClient",
     "StructuredResponseGenerator",
-    "get_last_message_text",
-    "get_system_prompt",
-    "get_message_role",
-    "get_message_content",
+    "StructuredRule",
     "extract_text_from_content",
+    "get_last_message_text",
+    "get_message_content",
+    "get_message_role",
+    "get_system_prompt",
 ]

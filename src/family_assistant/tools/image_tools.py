@@ -292,7 +292,7 @@ async def highlight_image_tool(
                         return (output_buffer.getvalue(), regions_drawn)
 
                 except Exception as e:
-                    return (None, f"Failed to process image: {str(e)}")
+                    return (None, f"Failed to process image: {e!s}")
 
             result = await asyncio.to_thread(
                 _process_image_with_pil, original_content, regions
@@ -308,7 +308,7 @@ async def highlight_image_tool(
         except Exception as e:
             logger.error(f"Error processing image with PIL: {e}")
             return ToolResult(
-                text=f"Error: Failed to process image: {str(e)}", attachments=None
+                text=f"Error: Failed to process image: {e!s}", attachments=None
             )
 
         # Determine new filename
@@ -341,5 +341,5 @@ async def highlight_image_tool(
             f"Error highlighting image {image_attachment_id}: {e}", exc_info=True
         )
         return ToolResult(
-            text=f"Error: Failed to highlight image: {str(e)}", attachments=None
+            text=f"Error: Failed to highlight image: {e!s}", attachments=None
         )

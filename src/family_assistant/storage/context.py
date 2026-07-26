@@ -436,7 +436,7 @@ class DatabaseContext:
             )
 
         # Wrapper to call the original callback without arguments
-        def event_listener_wrapper(*args: object, **kwargs: object) -> None:  # noqa: ARG001
+        def event_listener_wrapper(*args: object, **kwargs: object) -> None:
             callback()
 
         # Register the wrapper with the transaction context manager

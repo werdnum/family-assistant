@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 if TYPE_CHECKING:
-    from rebrowser_playwright.async_api._context_manager import (  # noqa: PLC2701
+    from rebrowser_playwright.async_api._context_manager import (
         PlaywrightContextManager,
     )
 

@@ -569,13 +569,13 @@ class MockEmbeddingGenerator:
 
 
 __all__ = [
-    "EmbeddingResult",
     "EmbeddingGenerator",
+    "EmbeddingResult",
     "GoogleEmbeddingGenerator",
-    "OpenAIEmbeddingGenerator",
     "HashingWordEmbeddingGenerator",  # Added new class
-    "SentenceTransformerEmbeddingGenerator",
     "MockEmbeddingGenerator",
+    "OpenAIEmbeddingGenerator",
+    "SentenceTransformerEmbeddingGenerator",
 ]
 
 # Conditionally remove SentenceTransformerEmbeddingGenerator from __all__ if not available

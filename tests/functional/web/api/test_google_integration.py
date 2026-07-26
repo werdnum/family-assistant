@@ -287,7 +287,7 @@ async def test_authorize_redirect_contains_expected_params(
     assert params["code_challenge_method"] == "S256"
     assert params["access_type"] == "offline"
     assert params["prompt"] == "consent"
-    assert "code_challenge" in params and params["code_challenge"]
+    assert params.get("code_challenge")
     scope = params["scope"]
     assert GMAIL_SCOPE in scope
     assert DRIVE_SCOPE in scope

@@ -618,7 +618,7 @@ async def test_mark_expired_rejects_naive_now(db_engine: AsyncEngine) -> None:
 
     with pytest.raises(ValueError, match="timezone-aware"):
         await service.mark_expired(
-            now=datetime(2026, 4, 19, 12, 0, 0),  # noqa: DTZ001
+            now=datetime(2026, 4, 19, 12, 0, 0),
         )
 
     async with DatabaseContext(engine=db_engine) as db:

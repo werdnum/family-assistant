@@ -18,7 +18,7 @@ import requests
 
 # Import VCR compatibility patch (autouse fixture activates automatically)
 from tests.integration.home_assistant.vcr_patches import (
-    patch_vcr_mock_client_response,  # noqa: F401
+    patch_vcr_mock_client_response,
 )
 
 # Prevent unused import warning

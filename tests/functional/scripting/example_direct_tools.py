@@ -101,7 +101,6 @@ class SimpleToolsProvider:
 
     async def close(self) -> None:
         """Cleanup."""
-        pass
 
 
 async def main() -> None:

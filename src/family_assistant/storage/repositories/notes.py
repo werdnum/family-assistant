@@ -87,13 +87,9 @@ def _row_to_note_model(row: dict[str, Any]) -> NoteModel:
 class NoteNotFoundError(Exception):
     """Raised when a note cannot be found."""
 
-    pass
-
 
 class DuplicateNoteError(Exception):
     """Raised when attempting to create a note with a title that already exists."""
-
-    pass
 
 
 class NoteWritePolicyError(Exception):
@@ -102,8 +98,6 @@ class NoteWritePolicyError(Exception):
     Covers both the see-before-overwrite check (a restricted profile may not
     overwrite a note it cannot see) and the allowed-label ceiling.
     """
-
-    pass
 
 
 @dataclass(frozen=True)

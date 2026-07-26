@@ -85,7 +85,7 @@ async def view_context_page(
     except Exception as e:
         logger.error(f"Error in context viewer: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail=f"Error viewing context: {str(e)}"
+            status_code=500, detail=f"Error viewing context: {e!s}"
         ) from e
 
 
@@ -233,7 +233,7 @@ async def _get_context_data(
     except Exception as e:
         logger.error(f"Error in context API: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail=f"Error getting context: {str(e)}"
+            status_code=500, detail=f"Error getting context: {e!s}"
         ) from e
 
 
@@ -291,7 +291,7 @@ async def get_processing_profiles(request: Request) -> list[dict]:
     except Exception as e:
         logger.error(f"Error getting processing profiles: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail=f"Error getting profiles: {str(e)}"
+            status_code=500, detail=f"Error getting profiles: {e!s}"
         ) from e
 
 

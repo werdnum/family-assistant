@@ -15,7 +15,7 @@ from typing import (
 
 import sqlalchemy as sa
 from pgvector.sqlalchemy import (  # type: ignore[import-untyped]
-    Vector,  # noqa F401 - Needs to be imported for SQLAlchemy type mapping
+    Vector,
 )
 from sqlalchemy import (
     JSON,
@@ -817,16 +817,16 @@ async def delete_document_embeddings(
 
 # Export functions explicitly for clarity when importing elsewhere
 __all__ = [
-    "init_vector_db",
-    "update_document_title_in_db",  # Add new function to __all__
+    "Document",  # Export the protocol
+    "DocumentEmbeddingRecord",  # Export SQLAlchemy ORM model
+    "DocumentRecord",  # Export SQLAlchemy ORM model
     "add_document",
-    "get_document_by_source_id",
-    "get_document_by_id",
     "add_embedding",
     "delete_document",
     "delete_document_embeddings",  # Add new function
+    "get_document_by_id",
+    "get_document_by_source_id",
+    "init_vector_db",
     "query_vectors",
-    "DocumentRecord",  # Export SQLAlchemy ORM model
-    "DocumentEmbeddingRecord",  # Export SQLAlchemy ORM model
-    "Document",  # Export the protocol
+    "update_document_title_in_db",  # Add new function to __all__
 ]

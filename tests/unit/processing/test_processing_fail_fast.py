@@ -183,7 +183,7 @@ async def test_prepare_turn_messages_uses_isolated_writes() -> None:
         thread_root_id,
         typed_messages,
         context_taint_sources,
-    ) = await service._prepare_turn_messages_for_llm(  # noqa: SLF001
+    ) = await service._prepare_turn_messages_for_llm(
         db_context=MagicMock(),
         interface_type="test",
         conversation_id="conv_prepare_isolated",
@@ -325,12 +325,12 @@ async def test_stream_persists_errors_as_error_messages(db_engine: AsyncEngine) 
 def test_llm_loop_infers_attachment_types_from_mime_type() -> None:
     service = _make_service()
 
-    assert service.llm_loop._infer_attachment_type("image/png") == "image"  # noqa: SLF001
-    assert service.llm_loop._infer_attachment_type("video/mp4") == "video"  # noqa: SLF001
-    assert service.llm_loop._infer_attachment_type("audio/mpeg") == "audio"  # noqa: SLF001
-    assert service.llm_loop._infer_attachment_type("application/pdf") == "document"  # noqa: SLF001
-    assert service.llm_loop._infer_attachment_type("text/plain") == "file"  # noqa: SLF001
-    assert service.llm_loop._infer_attachment_type(None) == "file"  # noqa: SLF001
+    assert service.llm_loop._infer_attachment_type("image/png") == "image"
+    assert service.llm_loop._infer_attachment_type("video/mp4") == "video"
+    assert service.llm_loop._infer_attachment_type("audio/mpeg") == "audio"
+    assert service.llm_loop._infer_attachment_type("application/pdf") == "document"
+    assert service.llm_loop._infer_attachment_type("text/plain") == "file"
+    assert service.llm_loop._infer_attachment_type(None) == "file"
 
 
 @pytest.mark.no_db
@@ -826,9 +826,9 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
         async def generate_response_stream(
             self,
             *,
-            messages: list[object],  # noqa: ARG002
-            tools: list[dict[str, object]] | None,  # noqa: ARG002
-            tool_choice: str,  # noqa: ARG002
+            messages: list[object],
+            tools: list[dict[str, object]] | None,
+            tool_choice: str,
         ) -> AsyncIterator[LLMStreamEvent]:
             self.call_count += 1
             if self.call_count == 1:
@@ -897,9 +897,9 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
         async def generate_response_stream(
             self,
             *,
-            messages: list[object],  # noqa: ARG002
-            tools: list[dict[str, object]] | None,  # noqa: ARG002
-            tool_choice: str,  # noqa: ARG002
+            messages: list[object],
+            tools: list[dict[str, object]] | None,
+            tool_choice: str,
         ) -> AsyncIterator[LLMStreamEvent]:
             self.call_count += 1
             if self.call_count == 1:

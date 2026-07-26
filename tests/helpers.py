@@ -421,9 +421,9 @@ async def wait_for_server(
 
 
 __all__ = [
-    "wait_for_tasks_to_complete",
-    "wait_for_condition",
     "find_free_port",
     "require_executable",
+    "wait_for_condition",
     "wait_for_server",
+    "wait_for_tasks_to_complete",
 ]

@@ -36,7 +36,7 @@ async def test_handle_auth_callback_no_allowlist(
 
         # authlib authorize_access_token is async
         # ast-grep-ignore: no-dict-any - mock OIDC callback matches external OAuth token response
-        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
+        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:
             return {"userinfo": user_info}
 
         mock_oauth.oidc_provider.authorize_access_token = mock_authorize
@@ -65,7 +65,7 @@ async def test_handle_auth_callback_with_allowlist_success(
         }  # Case insensitive check
 
         # ast-grep-ignore: no-dict-any - mock OIDC callback matches external OAuth token response
-        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
+        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:
             return {"userinfo": user_info}
 
         mock_oauth.oidc_provider.authorize_access_token = mock_authorize
@@ -87,7 +87,7 @@ async def test_handle_auth_callback_with_allowlist_denied(
         user_info = {"email": "hacker@example.com", "sub": "123"}
 
         # ast-grep-ignore: no-dict-any - mock OIDC callback matches external OAuth token response
-        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
+        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:
             return {"userinfo": user_info}
 
         mock_oauth.oidc_provider.authorize_access_token = mock_authorize
@@ -108,7 +108,7 @@ async def test_handle_auth_callback_with_allowlist_no_email(
         user_info = {"sub": "123"}  # No email
 
         # ast-grep-ignore: no-dict-any - mock OIDC callback matches external OAuth token response
-        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:  # noqa: ARG001
+        async def mock_authorize(*args: object, **kwargs: object) -> dict[str, Any]:
             return {"userinfo": user_info}
 
         mock_oauth.oidc_provider.authorize_access_token = mock_authorize

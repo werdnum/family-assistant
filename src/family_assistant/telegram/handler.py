@@ -135,7 +135,7 @@ class TelegramMidTurnController:
 
 
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
-    """Handles specific Telegram updates (messages, commands) and delegates processing."""  # noqa: E501
+    """Handles specific Telegram updates (messages, commands) and delegates processing."""
 
     def __init__(
         self,

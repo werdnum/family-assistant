@@ -54,8 +54,6 @@ logger = logging.getLogger(__name__)
 class ReviewSubmittedException(Exception):
     """Raised when review is submitted to break out of tool chain."""
 
-    pass
-
 
 class CodeReviewToolbox(llm.Toolbox):
     """Tools for enhanced code review - read files and search patterns."""
@@ -440,7 +438,7 @@ def smart_truncate_diff(diff: str, max_chars: int = 50000) -> tuple[str, bool]:
             # Extract filename
             parts = line.split()
             if len(parts) >= 4:
-                current_file = parts[2][2:] if parts[2].startswith("a/") else parts[2]
+                current_file = parts[2].removeprefix("a/")
             current_content = [line]
         elif current_content is not None:
             current_content.append(line)
@@ -1224,9 +1222,7 @@ Exit codes:
     command = args.command
 
     try:
-        exit_code, _ = review_changes(
-            mode, output_json, model_name, command, base=base
-        )
+        exit_code, _ = review_changes(mode, output_json, model_name, command, base=base)
         sys.exit(exit_code)
     except KeyboardInterrupt:
         print("\nReview cancelled by user", file=sys.stderr)

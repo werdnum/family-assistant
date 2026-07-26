@@ -513,7 +513,7 @@ class LocalToolsProvider:
                 )
             except ValueError as e:
                 logger.error(f"Attachment processing failed for tool '{name}': {e}")
-                return f"Error: {str(e)}"
+                return f"Error: {e!s}"
             sig = inspect.signature(callable_func)
 
             resolved_hints = {}

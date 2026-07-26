@@ -125,7 +125,6 @@ class MockToolsProvider:
 
     async def close(self) -> None:
         """No cleanup needed for mock."""
-        pass
 
 
 @pytest.mark.asyncio

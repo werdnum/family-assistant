@@ -76,7 +76,7 @@ def main() -> None:
             "Usage: merge-settings.py <base_settings.json> <oneshot_settings.json>",
             file=sys.stderr,
         )
-        print("", file=sys.stderr)
+        print(file=sys.stderr)
         print(
             "Merges two JSON settings files, concatenating permission arrays.",
             file=sys.stderr,

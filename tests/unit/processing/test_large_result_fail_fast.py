@@ -256,7 +256,7 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         llm_message,
         stream_metadata,
         attachment_ids,
-    ) = await executor._build_output_for_tool_result(  # noqa: SLF001
+    ) = await executor._build_output_for_tool_result(
         db_context=Mock(),
         result=ToolResult(
             text="small result",
@@ -336,7 +336,10 @@ async def test_large_result_inherits_ownership_from_owned_argument_attachment(
             db_context=db,
         )
 
-        _, derived_ids = await executor._handle_large_text_result(  # noqa: SLF001  # exercising the internal ownership hook directly
+        (
+            _,
+            derived_ids,
+        ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
             db_context=db,
             content="D" * 4096,
             function_name="jq_query",
@@ -357,7 +360,10 @@ async def test_large_result_inherits_ownership_from_owned_argument_attachment(
             is None
         )
 
-        _, plain_ids = await executor._handle_large_text_result(  # noqa: SLF001  # exercising the internal ownership hook directly
+        (
+            _,
+            plain_ids,
+        ) = await executor._handle_large_text_result(  # exercising the internal ownership hook directly
             db_context=db,
             content="E" * 4096,
             function_name="jq_query",

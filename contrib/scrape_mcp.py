@@ -193,9 +193,7 @@ async def serve(verify_ssl: bool = True) -> None:
             logger.error(
                 f"Error during scraping/conversion for {url}: {e}", exc_info=True
             )
-            raise McpError(
-                f"Error processing scrape request for {url}: {str(e)}"
-            ) from e
+            raise McpError(f"Error processing scrape request for {url}: {e!s}") from e
 
     # --- Run the server ---
     options = server.create_initialization_options()

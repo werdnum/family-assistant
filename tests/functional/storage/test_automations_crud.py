@@ -949,7 +949,7 @@ class TestScheduleAutomationsRepository:
 
         # Simulate execution with a naive datetime (no tzinfo).
         # The code should treat it as UTC, not system-local time.
-        naive_execution = datetime(2026, 2, 28, 22, 5, 0)  # noqa: DTZ001 - intentionally naive to test the guard
+        naive_execution = datetime(2026, 2, 28, 22, 5, 0)
         await db_context.schedule_automations.after_task_execution(
             automation_id, naive_execution, timezone=sydney_tz
         )

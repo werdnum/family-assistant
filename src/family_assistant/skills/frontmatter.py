@@ -35,8 +35,7 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any] | None, str]:
     yaml_block = after_open[1:close_idx]
     body_start = close_idx + 1 + len(_DELIMITER)
     body = after_open[body_start:]
-    if body.startswith("\n"):
-        body = body[1:]
+    body = body.removeprefix("\n")
 
     try:
         parsed = yaml.safe_load(yaml_block)

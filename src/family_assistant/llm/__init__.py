@@ -800,7 +800,7 @@ class LLMOutput:
     content: str | None = None
     tool_calls: list[ToolCallItem] | None = field(default=None)
     reasoning_info: MessageReasoningInfo | None = field(default=None)
-    provider_metadata: Any | None = field(default=None)  # noqa: ANN401 - GeminiProviderMetadata at runtime, dict after asdict() serialization
+    provider_metadata: Any | None = field(default=None)
 
 
 @dataclass
@@ -1512,28 +1512,28 @@ class PlaybackLLMClient:
 
 # Export all public classes and interfaces
 __all__ = [
+    "AssistantMessage",
+    "BaseLLMClient",
+    "ErrorMessage",
+    "JsonObject",
+    "JsonValue",
+    "LLMClientFactory",
     "LLMInterface",
     "LLMMessage",
     "LLMOutput",
     "LLMStreamEvent",
+    "MessageReasoningInfo",
+    "PlaybackLLMClient",
+    "RecordingLLMClient",
+    "StreamEventMetadata",
+    "StructuredOutputError",
+    "SystemMessage",
     "ToolCallFunction",
     "ToolCallItem",
-    "BaseLLMClient",
-    "RecordingLLMClient",
-    "PlaybackLLMClient",
-    "LLMClientFactory",
-    "message_to_json_dict",
-    "tool_result_to_llm_message",
-    "AssistantMessage",
-    "ErrorMessage",
-    "SystemMessage",
     "ToolMessage",
     "UserMessage",
-    "StructuredOutputError",
-    "StreamEventMetadata",
-    "MessageReasoningInfo",
-    "JsonObject",
-    "JsonValue",
     "UserMessageContentPart",
     "UserMessageDict",
+    "message_to_json_dict",
+    "tool_result_to_llm_message",
 ]

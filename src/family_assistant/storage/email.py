@@ -299,8 +299,8 @@ async def store_incoming_email(
 
 # Export symbols for use elsewhere
 __all__ = [
+    "AttachmentData",
+    "ParsedEmailData",
     "received_emails_table",
     "store_incoming_email",
-    "ParsedEmailData",
-    "AttachmentData",
 ]

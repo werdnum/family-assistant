@@ -94,8 +94,8 @@ class _FakeAuthService:
 
     async def get_user_from_api_token(
         self,
-        auth_header: str,  # noqa: ARG002 - protocol requires this parameter
-        request: object,  # noqa: ARG002 - protocol requires this parameter
+        auth_header: str,
+        request: object,
     ) -> None:
         return None
 

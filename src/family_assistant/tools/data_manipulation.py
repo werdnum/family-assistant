@@ -118,7 +118,7 @@ async def jq_query_tool(
             )
         except json.JSONDecodeError as e:
             return ToolResult(
-                text=f"Error: Attachment is not valid JSON. Parse error: {str(e)}"
+                text=f"Error: Attachment is not valid JSON. Parse error: {e!s}"
             )
 
         # Compile and execute jq query - use asyncio.to_thread to avoid blocking event loop
@@ -141,11 +141,11 @@ async def jq_query_tool(
         except ValueError as e:
             # jq compilation or execution error
             logger.error(f"jq query error: {e}")
-            return ToolResult(text=f"Error: Invalid jq query. {str(e)}")
+            return ToolResult(text=f"Error: Invalid jq query. {e!s}")
 
     except Exception as e:
         logger.error(
             f"Error executing jq query on attachment {attachment_id}: {e}",
             exc_info=True,
         )
-        return ToolResult(text=f"Error: Failed to execute jq query. {str(e)}")
+        return ToolResult(text=f"Error: Failed to execute jq query. {e!s}")

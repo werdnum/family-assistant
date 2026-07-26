@@ -20,9 +20,9 @@ import uvicorn
 from family_assistant import embeddings
 from family_assistant.config_models import (
     DEFAULT_REMOTE_MAX_ASYNC_SECONDS,
-    AppConfig,  # noqa: TC001  # Used at runtime
+    AppConfig,  # Used at runtime
 )
-from family_assistant.config_models import (  # noqa: TC001  # Used at runtime
+from family_assistant.config_models import (  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
 )
 
@@ -434,7 +434,7 @@ class Assistant:
                     )
             else:
                 logger.debug("Playwright browsers already installed")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Could not check/install Playwright browsers: {e}")
 
     def _setup_notifications(self) -> None:

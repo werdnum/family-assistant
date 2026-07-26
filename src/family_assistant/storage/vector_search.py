@@ -393,4 +393,4 @@ async def query_vector_store(
         raise  # Re-raise the exception for the caller (web server) to handle
 
 
-__all__ = ["VectorSearchQuery", "MetadataFilter", "query_vector_store"]
+__all__ = ["MetadataFilter", "VectorSearchQuery", "query_vector_store"]

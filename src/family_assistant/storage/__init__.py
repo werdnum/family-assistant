@@ -58,10 +58,10 @@ logger = logging.getLogger(__name__)
 # --- Vector Storage Imports ---
 try:
     # Use absolute package path
-    from family_assistant.storage.vector import (  # noqa: PLC0415
+    from family_assistant.storage.vector import (
         Base as VectorBase,  # For ORM
     )
-    from family_assistant.storage.vector import (  # noqa: PLC0415
+    from family_assistant.storage.vector import (
         Document,  # Protocol for document structure
     )
 
@@ -343,32 +343,32 @@ async def init_db(engine: AsyncEngine) -> None:
 # Re-export functions and tables from specific modules to maintain the facade
 # Define __all__ AFTER all functions/variables it references are defined.
 __all__ = [
-    "init_db",  # Now defined above
-    "create_engine_with_sqlite_optimizations",
-    # Tables - still exported for direct use
-    "notes_table",
-    "message_history_table",
-    "tasks_table",
-    "confirmation_requests_table",
-    "received_emails_table",
-    "error_logs_table",
-    "event_listeners_table",
-    "recent_events_table",
-    "schedule_automations_table",
-    "push_subscriptions_table",
-    "ios_push_tokens_table",
-    "scripts_table",
-    "metadata",
     "DatabaseContext",  # Export the new context manager
-    "get_db_context",
     # Enums
     "EventActionType",
     "EventSourceType",
     "InterfaceType",
+    "confirmation_requests_table",
+    "create_engine_with_sqlite_optimizations",
     "delegation_runs_table",
-    "taint_audit_events_table",
-    "user_oauth_connections_table",
+    "error_logs_table",
+    "event_listeners_table",
+    "get_db_context",
+    "init_db",  # Now defined above
+    "ios_push_tokens_table",
+    "message_history_table",
+    "metadata",
+    # Tables - still exported for direct use
+    "notes_table",
     "pending_oauth_flows_table",
+    "push_subscriptions_table",
+    "received_emails_table",
+    "recent_events_table",
+    "schedule_automations_table",
+    "scripts_table",
+    "taint_audit_events_table",
+    "tasks_table",
+    "user_oauth_connections_table",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API
@@ -378,7 +378,7 @@ __all__ = [
 # Check if vector_storage specific names are available and if the feature is enabled.
 if VECTOR_STORAGE_ENABLED:
     __all__.extend([
-        "VectorBase",
         "Document",  # Protocol for document structure
+        "VectorBase",
     ])
 # --- Email Storage (Moved to storage/email.py, re-exported here for compatibility) ---

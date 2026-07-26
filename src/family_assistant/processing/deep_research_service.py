@@ -160,7 +160,7 @@ class DeepResearchProcessingService(ProcessingService):
         """Best-effort cancellation; mirrors ``RemoteA2AService.cancel_async``."""
         try:
             await self._google_client().cancel_agent_interaction(remote_task_id)
-        except Exception as exc:  # noqa: BLE001 - best-effort, must never raise
+        except Exception as exc:
             logger.warning(
                 "Failed to cancel Deep Research interaction %s on '%s': %s",
                 remote_task_id,

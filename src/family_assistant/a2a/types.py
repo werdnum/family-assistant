@@ -4,7 +4,6 @@ Using the SDK types directly ensures our server output always matches
 the protocol spec. Any spec changes are picked up by upgrading the SDK.
 """
 
-# ruff: noqa: F401 — re-exports for downstream code
 from a2a.types import (
     AgentCapabilities,
     AgentCard,

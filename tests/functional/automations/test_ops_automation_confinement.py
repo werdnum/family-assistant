@@ -520,7 +520,7 @@ async def test_event_listener_wake_refused_for_confined_origin(
         profile_wake_llm_flags={"ops_automation": False},
     )
     async with DatabaseContext(engine=db_engine) as db:
-        await processor._execute_action_in_context(  # noqa: SLF001 - exercising the guard directly
+        await processor._execute_action_in_context(
             db,
             cast(
                 "EventListenerDict", _wake_listener(origin_profile_id="ops_automation")
@@ -543,7 +543,7 @@ async def test_event_listener_wake_allowed_origin_routes_to_event_handler(
         profile_wake_llm_flags={"default_assistant": True},
     )
     async with DatabaseContext(engine=db_engine) as db:
-        await processor._execute_action_in_context(  # noqa: SLF001 - exercising the guard directly
+        await processor._execute_action_in_context(
             db,
             cast(
                 "EventListenerDict",

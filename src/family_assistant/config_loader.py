@@ -179,7 +179,7 @@ USER_IDENTITIES_FILE_ENV_VAR = "USER_IDENTITIES_FILE"
 
 
 def set_nested_value(
-    data: dict[str, Any],  # noqa: ANN401
+    data: dict[str, Any],
     path: str,
     value: Any,  # noqa: ANN401
 ) -> None:
@@ -200,7 +200,7 @@ def set_nested_value(
 
 
 def get_nested_value(
-    data: dict[str, Any],  # noqa: ANN401
+    data: dict[str, Any],
     path: str,
     default: Any = None,  # noqa: ANN401
 ) -> Any:  # noqa: ANN401
@@ -312,7 +312,7 @@ def parse_env_value(
 
 def load_json_file(
     file_path: str | pathlib.Path,
-) -> dict[str, Any]:  # noqa: ANN401
+) -> dict[str, Any]:
     """Load a JSON file, returning an empty dict if not found.
 
     Args:
@@ -418,7 +418,7 @@ def _apply_default_profile_tools_policy_layers(
 
 
 def apply_env_var_overrides(
-    config_data: dict[str, Any],  # noqa: ANN401
+    config_data: dict[str, Any],
     mappings: list[EnvVarMapping] | None = None,
 ) -> None:
     """Apply environment variable overrides to configuration.
@@ -516,7 +516,7 @@ def _merge_user_identity_lists(
 
 
 def apply_user_identity_file(
-    config_data: dict[str, Any],  # noqa: ANN401 - config_data is parsed YAML/JSON
+    config_data: dict[str, Any],
 ) -> None:
     """Overlay user identities from a YAML file named by the environment."""
     file_path = os.getenv(USER_IDENTITIES_FILE_ENV_VAR)
@@ -544,7 +544,7 @@ def apply_user_identity_file(
 
 
 def apply_calendar_env_vars(
-    config_data: dict[str, Any],  # noqa: ANN401
+    config_data: dict[str, Any],
 ) -> None:
     """Apply calendar-specific environment variable overrides.
 
@@ -591,7 +591,7 @@ def apply_calendar_env_vars(
 
 def load_prompts_yaml(
     prompts_file_path: str = DEFAULT_PROMPTS_FILE,
-) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:  # noqa: ANN401
+) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
     """Load prompts from YAML file.
 
     Args:
@@ -697,10 +697,10 @@ def load_user_documentation(filenames: list[str]) -> str:
 
 
 def resolve_service_profile(
-    profile_def: dict[str, Any],  # noqa: ANN401
-    default_settings: dict[str, Any],  # noqa: ANN401
-    prompts_yaml_service_profiles: dict[str, dict[str, Any]],  # noqa: ANN401
-) -> dict[str, Any]:  # noqa: ANN401
+    profile_def: dict[str, Any],
+    default_settings: dict[str, Any],
+    prompts_yaml_service_profiles: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     """Resolve a single service profile by merging defaults and overrides.
 
     The merge priority is:
@@ -859,9 +859,9 @@ def resolve_service_profile(
 
 
 def resolve_all_service_profiles(
-    config_data: dict[str, Any],  # noqa: ANN401
-    prompts_yaml_service_profiles: dict[str, dict[str, Any]],  # noqa: ANN401
-) -> list[dict[str, Any]]:  # noqa: ANN401
+    config_data: dict[str, Any],
+    prompts_yaml_service_profiles: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Resolve all service profiles from configuration.
 
     Args:
@@ -909,7 +909,7 @@ def resolve_all_service_profiles(
 
 def load_mcp_config(
     mcp_config_path: str | None = None,
-) -> dict[str, Any]:  # noqa: ANN401
+) -> dict[str, Any]:
     """Load MCP configuration from JSON file.
 
     Args:
@@ -931,7 +931,7 @@ def load_mcp_config(
 
 
 def load_indexing_pipeline_config(
-    config_data: dict[str, Any],  # noqa: ANN401
+    config_data: dict[str, Any],
 ) -> None:
     """Load indexing pipeline config from environment variable if set.
 
@@ -956,10 +956,10 @@ def load_indexing_pipeline_config(
 
 
 def _merge_service_profiles_by_id(
-    defaults_profiles: list[Any],  # noqa: ANN401
-    merged_profiles: list[Any],  # noqa: ANN401
-    operator_config_data: dict[str, Any],  # noqa: ANN401
-) -> list[dict[str, Any]]:  # noqa: ANN401
+    defaults_profiles: list[Any],
+    merged_profiles: list[Any],
+    operator_config_data: dict[str, Any],
+) -> list[dict[str, Any]]:
     """Merge service profile lists by ID so config.yaml is additive.
 
     When the operator's config.yaml defines ``service_profiles``, profiles are
@@ -1163,7 +1163,7 @@ def load_config(
 
 
 def _log_config(
-    config_data: dict[str, Any],  # noqa: ANN401
+    config_data: dict[str, Any],
 ) -> None:
     """Log configuration excluding sensitive values.
 

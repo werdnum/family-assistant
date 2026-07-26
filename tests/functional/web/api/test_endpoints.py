@@ -112,7 +112,7 @@ async def test_ui_endpoint_accessibility(web_only_assistant: Assistant) -> None:
                     )
             except Exception as e:
                 failures.append(
-                    f"UI endpoint '{description}' at '{path}' raised exception: {type(e).__name__}: {str(e)}"
+                    f"UI endpoint '{description}' at '{path}' raised exception: {type(e).__name__}: {e!s}"
                 )
 
         if failures:

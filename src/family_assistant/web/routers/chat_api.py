@@ -430,7 +430,7 @@ async def _process_user_attachments(
                     logger.error(f"Invalid attachment content: {e}")
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid base64 attachment content: {str(e)}",
+                        detail=f"Invalid base64 attachment content: {e!s}",
                     ) from e
                 except HTTPException:
                     raise

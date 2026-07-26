@@ -36,8 +36,6 @@ class ScriptRow(ScriptModel):
 class ScriptNotFoundError(Exception):
     """Raised when a script cannot be found."""
 
-    pass
-
 
 class ScriptsRepository(BaseRepository):
     """Repository for managing stored scripts."""

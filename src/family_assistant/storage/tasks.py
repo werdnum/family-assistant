@@ -142,7 +142,7 @@ async def enqueue_task(
     max_retries_override: int | None = None,
     recurrence_rule: str | None = None,
     original_task_id: str | None = None,
-) -> None:  # noqa: PLR0913
+) -> None:
     """Adds a task to the queue with automatic notification for immediate tasks.
 
     Args:

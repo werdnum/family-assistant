@@ -1329,7 +1329,7 @@ class AttachmentRegistry:
         except Exception as e:
             logger.error(f"Failed to store attachment: {e}")
             raise HTTPException(
-                status_code=500, detail=f"Failed to store attachment: {str(e)}"
+                status_code=500, detail=f"Failed to store attachment: {e!s}"
             ) from e
 
     async def resolve_attachment_path(

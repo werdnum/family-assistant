@@ -275,8 +275,7 @@ async def db_engine(
         )
 
         # Handle parameterized test names (remove [postgres] suffix)
-        if test_name_safe.endswith("_postgres"):
-            test_name_safe = test_name_safe[:-9]
+        test_name_safe = test_name_safe.removesuffix("_postgres")
 
         # PostgreSQL has a 63 character limit for identifiers
         max_test_name_length = 49
@@ -647,7 +646,7 @@ async def cleanup_task_worker(
     shutdown_event: asyncio.Event,
     new_task_event: asyncio.Event | None = None,
     test_name: str = "",
-    timeout: float = 5.0,  # noqa: ASYNC109
+    timeout: float = 5.0,
 ) -> None:
     """
     Properly clean up a TaskWorker task. Ensures the task is fully stopped

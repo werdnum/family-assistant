@@ -194,7 +194,7 @@ async def read_text_attachment_tool(
         logger.error(
             f"Error reading attachment {attachment_id_str}: {e}", exc_info=True
         )
-        return ToolResult(text=f"Error: Failed to read attachment. {str(e)}")
+        return ToolResult(text=f"Error: Failed to read attachment. {e!s}")
 
 
 async def attach_to_response_tool(

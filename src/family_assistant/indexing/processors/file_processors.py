@@ -39,9 +39,9 @@ class PDFTextExtractor:
     async def process(
         self,
         current_items: list[IndexableContent],
-        original_document: "Document",  # noqa: ARG002
-        initial_content_ref: IndexableContent | None,  # noqa: ARG002
-        context: "ToolExecutionContext",  # noqa: ARG002
+        original_document: "Document",
+        initial_content_ref: IndexableContent | None,
+        context: "ToolExecutionContext",
     ) -> list[IndexableContent]:
         """
         Processes IndexableContent items, converting PDFs to Markdown.

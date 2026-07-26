@@ -495,7 +495,7 @@ async def test_tool_result_attachments_include_complete_metadata(
             # Next line should be data
             try:
                 data = json.loads(lines[i + 1][6:])  # Remove 'data: ' prefix
-                if "attachments" in data and data["attachments"]:
+                if data.get("attachments"):
                     tool_result_found = True
                     attachment_metadata = data["attachments"][0]
                     break

@@ -174,7 +174,6 @@ while i < 5000:
     @pytest.mark.asyncio
     async def test_async_timeout(self, engine_class: type) -> None:
         """Test that long-running scripts timeout in async mode."""
-        pass
 
     @pytest.mark.asyncio
     async def test_concurrent_execution(self, engine_class: type) -> None:
@@ -252,7 +251,6 @@ while i < 5000:
     )
     def test_resource_limits(self, engine_class: type) -> None:
         """Test resource limit configuration."""
-        pass
 
 
 class TestMontyEngineSpecific:

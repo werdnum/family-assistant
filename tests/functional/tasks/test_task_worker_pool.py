@@ -49,8 +49,8 @@ TaskPayload = dict[str, Any]
 
 
 async def _noop_handler(
-    exec_context: ToolExecutionContext,  # noqa: ARG001
-    payload: TaskPayload,  # noqa: ARG001
+    exec_context: ToolExecutionContext,
+    payload: TaskPayload,
 ) -> None:
     """A handler that does nothing (workers stay idle, polling)."""
 
@@ -158,8 +158,8 @@ async def test_two_workers_process_tasks_concurrently(
     started_both = asyncio.Event()
 
     async def slow_handler(
-        exec_context: ToolExecutionContext,  # noqa: ARG001
-        payload: TaskPayload,  # noqa: ARG001
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
     ) -> None:
         nonlocal started
         started += 1
@@ -211,16 +211,16 @@ async def test_parked_worker_unblocked_by_sibling(
     waiter_started = asyncio.Event()
 
     async def waiter_handler(
-        exec_context: ToolExecutionContext,  # noqa: ARG001
-        payload: TaskPayload,  # noqa: ARG001
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
     ) -> None:
         waiter_started.set()
         # Parks until the resolver task (run by a sibling worker) completes it.
         await future
 
     async def resolver_handler(
-        exec_context: ToolExecutionContext,  # noqa: ARG001
-        payload: TaskPayload,  # noqa: ARG001
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
     ) -> None:
         if not future.done():
             future.set_result("resolved")
@@ -275,8 +275,8 @@ async def test_per_task_type_timeout_override_applied(
     long_task_duration = default_timeout + 0.4
 
     async def long_handler(
-        exec_context: ToolExecutionContext,  # noqa: ARG001
-        payload: TaskPayload,  # noqa: ARG001
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
     ) -> None:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - exercising timeout budget
         await asyncio.sleep(long_task_duration)
@@ -319,8 +319,8 @@ async def test_default_timeout_still_applies_without_override(
     default_timeout = 0.3
 
     async def hanging_handler(
-        exec_context: ToolExecutionContext,  # noqa: ARG001
-        payload: TaskPayload,  # noqa: ARG001
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
     ) -> None:
         # ast-grep-ignore: no-asyncio-sleep-in-tests - exercising timeout budget
         await asyncio.sleep(default_timeout + 5.0)
@@ -368,8 +368,8 @@ async def test_enqueue_wakes_idle_sibling_promptly(
     processed = asyncio.Event()
 
     async def quick_handler(
-        exec_context: ToolExecutionContext,  # noqa: ARG001
-        payload: TaskPayload,  # noqa: ARG001
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
     ) -> None:
         processed.set()
 

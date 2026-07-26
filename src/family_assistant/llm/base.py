@@ -32,43 +32,29 @@ class RateLimitError(LLMProviderError):
 class AuthenticationError(LLMProviderError):
     """Raised when authentication fails."""
 
-    pass
-
 
 class ModelNotFoundError(LLMProviderError):
     """Raised when the requested model doesn't exist."""
-
-    pass
 
 
 class ContextLengthError(LLMProviderError):
     """Raised when exceeding model context limits."""
 
-    pass
-
 
 class InvalidRequestError(LLMProviderError):
     """Raised when the request format is invalid."""
-
-    pass
 
 
 class ProviderConnectionError(LLMProviderError):
     """Raised when unable to connect to the provider."""
 
-    pass
-
 
 class ProviderTimeoutError(LLMProviderError):
     """Raised when a provider request times out."""
 
-    pass
-
 
 class ServiceUnavailableError(LLMProviderError):
     """Raised when the service is temporarily unavailable (503 errors)."""
-
-    pass
 
 
 class StructuredOutputError(LLMProviderError):

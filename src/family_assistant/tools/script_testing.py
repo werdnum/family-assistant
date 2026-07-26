@@ -154,7 +154,7 @@ class ScriptTestingToolsProvider(ToolsProvider):
 
     async def close(self) -> None:
         """Do not close the wrapped provider because it is shared."""
-        return None
+        return
 
     async def get_tool_descriptors(self) -> list[ToolDescriptor]:
         """Return descriptors from the wrapped provider when available."""

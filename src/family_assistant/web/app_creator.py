@@ -342,7 +342,7 @@ def get_dev_mode_from_request(request: Request) -> bool:
 
 def create_template_context(
     request: Request,
-    **kwargs: str | int | float | bool | None,
+    **kwargs: str | float | bool | None,
     # ast-grep-ignore: no-dict-any - Jinja2 template context includes Request objects, functions, and arbitrary kwargs
 ) -> dict[str, Any]:
     """Create a template context with common variables including dev_mode."""
@@ -550,8 +550,8 @@ def configure_app_auth(
 # Export the helper functions and app
 __all__ = [
     "app",
+    "configure_app_auth",
     "create_app",
     "create_template_context",
     "get_dev_mode_from_request",
-    "configure_app_auth",
 ]

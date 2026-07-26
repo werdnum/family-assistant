@@ -43,7 +43,7 @@ __all__ = [
 
 def _strip_google_prefix(model: str) -> str:
     prefix = "models/"
-    return model[len(prefix) :] if model.startswith(prefix) else model
+    return model.removeprefix(prefix)
 
 
 def resolve_live_llm_model(llm_client: object) -> str | None:
@@ -271,7 +271,7 @@ async def dump_auth_state(request: Request) -> dict[str, Any]:
 
 
 @debug_api_router.get("/profiles")
-async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builtin
+async def dump_profiles(
     request: Request,
     _user: Annotated[dict, Depends(get_current_user)],
     format: Annotated[
@@ -399,7 +399,7 @@ async def dump_profiles(  # noqa: A002 - FastAPI query param name shadows builti
 
 
 @debug_api_router.get("/profiles/tools")
-async def dump_profile_tool_inventory(  # noqa: A002 - FastAPI query param shadows builtin
+async def dump_profile_tool_inventory(
     request: Request,
     _reader: Annotated[dict, Depends(get_diagnostics_reader)],
     format: Annotated[

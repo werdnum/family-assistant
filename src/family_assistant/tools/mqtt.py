@@ -93,7 +93,7 @@ def _get_mqtt_config(
 async def mqtt_publish_tool(
     exec_context: ToolExecutionContext,
     topic: str,
-    payload: dict[str, object] | list[object] | str | int | float | bool,
+    payload: dict[str, object] | list[object] | str | float | bool,
     retain: bool = True,
 ) -> ToolResult:
     """Publish a JSON message to an MQTT topic."""

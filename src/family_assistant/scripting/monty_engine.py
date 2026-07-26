@@ -414,7 +414,7 @@ class MontyEngine:
             return True
 
         if self.config.deny_all_tools:
-            impls["tools_list"] = lambda: []
+            impls["tools_list"] = list
             impls["tools_get"] = lambda name: None
             logger.debug("All tools denied - added empty tool stubs")
             return

@@ -67,7 +67,7 @@ class MockToolsProvider(ToolsProvider):
         name: str,
         # ast-grep-ignore: no-dict-any - tool arguments from external LLM tool call
         arguments: dict[str, Any],
-        context: ToolExecutionContext | None = None,  # noqa: ANN401 # Mock needs to be flexible
+        context: ToolExecutionContext | None = None,  # Mock needs to be flexible
     ) -> Any:  # noqa: ANN401 # Mock tool can return anything
         """Execute a tool by name."""
         if name not in self.tools:
@@ -103,4 +103,3 @@ class MockToolsProvider(ToolsProvider):
 
     async def close(self) -> None:
         """Close resources (no-op for mock)."""
-        pass

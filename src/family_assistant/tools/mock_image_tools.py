@@ -213,5 +213,5 @@ async def annotate_image_tool(
             f"Error mock-annotating image {image_attachment_id}: {e}", exc_info=True
         )
         return ToolResult(
-            text=f"Error: Failed to annotate image: {str(e)}", attachments=None
+            text=f"Error: Failed to annotate image: {e!s}", attachments=None
         )

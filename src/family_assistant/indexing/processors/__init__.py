@@ -20,9 +20,9 @@ from family_assistant.indexing.processors.text_processors import TextChunker
 
 __all__ = [
     "EmbeddingDispatchProcessor",
-    "PDFTextExtractor",
     "LLMIntelligenceProcessor",
-    "TitleExtractor",
+    "PDFTextExtractor",
     "TextChunker",
+    "TitleExtractor",
     "WebFetcherProcessor",  # Added to __all__
 ]

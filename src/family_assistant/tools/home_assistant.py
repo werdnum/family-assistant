@@ -429,10 +429,10 @@ async def render_home_assistant_template_tool(
 
     except HomeassistantAPIError as e:
         logger.error(f"Home Assistant API error rendering template: {e}", exc_info=True)
-        return f"Error: Home Assistant API error - {str(e)}"
+        return f"Error: Home Assistant API error - {e!s}"
     except Exception as e:
         logger.error(f"Unexpected error rendering template: {e}", exc_info=True)
-        return f"Error: Failed to render template - {str(e)}"
+        return f"Error: Failed to render template - {e!s}"
 
 
 async def get_camera_snapshot_tool(
@@ -493,7 +493,7 @@ async def get_camera_snapshot_tool(
 
         except Exception as e:
             logger.error(f"Error listing cameras: {e}", exc_info=True)
-            return ToolResult(text=f"Error listing available cameras: {str(e)}")
+            return ToolResult(text=f"Error listing available cameras: {e!s}")
 
     # Use the HA client's custom camera snapshot method to get raw binary data
     try:
@@ -530,7 +530,7 @@ async def get_camera_snapshot_tool(
 
     except Exception as e:
         logger.error(f"Error getting camera snapshot: {e}", exc_info=True)
-        return ToolResult(text=f"Error: Failed to retrieve camera snapshot: {str(e)}")
+        return ToolResult(text=f"Error: Failed to retrieve camera snapshot: {e!s}")
 
 
 async def download_state_history_tool(
@@ -598,7 +598,7 @@ async def download_state_history_tool(
     except (ValueError, AttributeError) as e:
         logger.error(f"Error parsing timestamps: {e}", exc_info=True)
         return ToolResult(
-            text=f"Error: Invalid timestamp format. Use ISO 8601 format (e.g., '2024-01-01T00:00:00Z'): {str(e)}"
+            text=f"Error: Invalid timestamp format. Use ISO 8601 format (e.g., '2024-01-01T00:00:00Z'): {e!s}"
         )
 
     # Retrieve history
@@ -713,7 +713,7 @@ async def download_state_history_tool(
 
     except Exception as e:
         logger.error(f"Error retrieving state history: {e}", exc_info=True)
-        return ToolResult(text=f"Error: Failed to retrieve state history: {str(e)}")
+        return ToolResult(text=f"Error: Failed to retrieve state history: {e!s}")
 
 
 async def call_home_assistant_action_tool(
@@ -773,7 +773,7 @@ async def call_home_assistant_action_tool(
             exc_info=True,
         )
         return ToolResult(
-            text=f"Error: Home Assistant API error calling {domain}.{action} - {str(e)}"
+            text=f"Error: Home Assistant API error calling {domain}.{action} - {e!s}"
         )
 
     changed_states = result.get("changed_states", [])
@@ -857,7 +857,7 @@ async def list_home_assistant_actions_tool(
     except HomeassistantAPIError as e:
         logger.error("Home Assistant API error fetching action catalog: %s", e)
         return ToolResult(
-            text=f"Error: Home Assistant API error fetching action catalog - {str(e)}"
+            text=f"Error: Home Assistant API error fetching action catalog - {e!s}"
         )
 
     filtered = catalog
@@ -1034,4 +1034,4 @@ async def list_home_assistant_entities_tool(
 
     except Exception as e:
         logger.error(f"Error listing entities: {e}", exc_info=True)
-        return ToolResult(text=f"Error: Failed to list entities: {str(e)}")
+        return ToolResult(text=f"Error: Failed to list entities: {e!s}")

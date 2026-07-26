@@ -333,7 +333,7 @@ async def test_get_browser_backend_forwards_context_timezone() -> None:
     # construction. There is no public accessor for it, and observing it via the
     # create-session body (covered by the tests above) would require driving a
     # live session with network I/O, which this selection test deliberately avoids.
-    assert backend._timezone_id == "Australia/Sydney"  # noqa: SLF001
+    assert backend._timezone_id == "Australia/Sydney"
     await backend.close()
 
 

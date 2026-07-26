@@ -487,7 +487,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                         )
                 except Exception as e:
                     warnings.append(
-                        f"Could not verify entity existence via API due to {type(e).__name__}: {str(e)}"
+                        f"Could not verify entity existence via API due to {type(e).__name__}: {e!s}"
                     )
 
         # Validate state values if entity_id is valid and present
@@ -566,7 +566,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
 
                 except Exception as e:
                     warnings.append(
-                        f"Could not verify state history via API due to {type(e).__name__}: {str(e)}"
+                        f"Could not verify state history via API due to {type(e).__name__}: {e!s}"
                     )
 
         return ValidationResult(

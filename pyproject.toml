@@ -410,6 +410,19 @@ select = [
     "PLR",
     # pylint warning checks
     "PLW",
+    # Stale or misdirected `noqa` directives
+    "RUF100",
+    "RUF101",
+    # Mechanical simplifications, all autofixable
+    "FURB105",
+    "FURB188",
+    "PIE790",
+    "PIE807",
+    "PYI041",
+    "RET501",
+    "RUF010",
+    "RUF019",
+    "RUF022",
 ]
 ignore = [
         # Line length - fornatter can deal with it
