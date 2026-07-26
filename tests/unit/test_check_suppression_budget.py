@@ -155,8 +155,21 @@ def test_lowered_budget_is_then_enforced(repo: Path) -> None:
 
 
 def test_repository_is_within_its_own_budget() -> None:
-    """The committed budget matches reality, so the check is meaningful in CI."""
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False
-    )
-    assert result.returncode == 0, result.stderr
+    """The committed budget matches reality, so the check is meaningful in CI.
+
+    Counted directly rather than by running `check()`, which would rewrite
+    `.lint-budget.toml` as a side effect of a test.
+    """
+    module = _script()
+    root = module.REPO_ROOT
+    budgets = module.read_budgets(root)
+    assert budgets, "expected at least one budgeted rule"
+
+    assert not module.globally_ignored(root, sorted(budgets))
+    usages = module.find_usages(root, sorted(budgets))
+    over = {
+        rule: (usage.total, budgets[rule])
+        for rule, usage in usages.items()
+        if usage.total > budgets[rule]
+    }
+    assert not over, f"suppression counts exceed their budgets: {over}"
