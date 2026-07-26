@@ -84,10 +84,7 @@ async def get_event_by_summary_from_radicale(
             logger.warning(f"Calendar not found at URL '{calendar_url}' on Radicale.")
             return None
     except Exception as e_get_cal:
-        logger.error(
-            f"Error getting calendar at URL '{calendar_url}': {e_get_cal}",
-            exc_info=True,
-        )
+        logger.exception(f"Error getting calendar at URL '{calendar_url}': {e_get_cal}")
         return None
 
     events = await asyncio.to_thread(target_calendar.events)
@@ -103,7 +100,7 @@ async def get_event_by_summary_from_radicale(
             ):
                 return event_obj
         except Exception as e:
-            logger.error(f"Error parsing event data from Radicale: {e}", exc_info=True)
+            logger.exception(f"Error parsing event data from Radicale: {e}")
     return None
 
 

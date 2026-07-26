@@ -624,7 +624,7 @@ class AsteriskLiveHandler:
                         event="websocket_disconnect",
                     )
                 except Exception as e:
-                    logger.error(f"Error in Asterisk loop: {e}", exc_info=True)
+                    logger.exception(f"Error in Asterisk loop: {e}")
                     await self._trace_event(
                         "error",
                         "fa",
@@ -638,7 +638,7 @@ class AsteriskLiveHandler:
                     await self._save_call_transcript()
 
         except Exception as e:
-            logger.error(f"Error in AsteriskLiveHandler: {e}", exc_info=True)
+            logger.exception(f"Error in AsteriskLiveHandler: {e}")
             await self._trace_event(
                 "error",
                 "fa",
@@ -1179,7 +1179,7 @@ class AsteriskLiveHandler:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Error receiving from Gemini: {e}", exc_info=True)
+            logger.exception(f"Error receiving from Gemini: {e}")
             await self._trace_event(
                 "error",
                 "fa",
@@ -1349,7 +1349,7 @@ class AsteriskLiveHandler:
                     )
                 )
             except Exception as e:
-                logger.error(f"Tool execution failed for '{name}': {e}", exc_info=True)
+                logger.exception(f"Tool execution failed for '{name}': {e}")
                 function_responses.append(
                     FunctionResponse(
                         id=call_id,
@@ -1600,9 +1600,7 @@ async def asterisk_live_endpoint(
             )
 
     except Exception as e:
-        logger.error(
-            f"Error loading profile '{profile_id}' configuration: {e}", exc_info=True
-        )
+        logger.exception(f"Error loading profile '{profile_id}' configuration: {e}")
 
     chat_interfaces = getattr(websocket.app.state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(

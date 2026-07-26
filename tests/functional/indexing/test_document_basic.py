@@ -517,7 +517,7 @@ async def test_document_indexing_and_query_e2e(
             except asyncio.CancelledError:
                 logger.info(f"Worker task {worker_id} cancellation confirmed.")
         except Exception as e:
-            logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
+            logger.exception(f"Error stopping worker task {worker_id}: {e}")
 
         # Clean up document and task
         if document_db_id:

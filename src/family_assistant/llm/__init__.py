@@ -1005,9 +1005,7 @@ class RecordingLLMClient:
             await self._record_interaction(input_data, output_data)
             return output_data
         except Exception as e:
-            logger.error(
-                f"Error in RecordingLLMClient.generate_response: {e}", exc_info=True
-            )
+            logger.exception(f"Error in RecordingLLMClient.generate_response: {e}")
             raise
 
     async def format_user_message_with_file(
@@ -1039,9 +1037,8 @@ class RecordingLLMClient:
             await self._write_record_to_file(record)
             return output_dict
         except Exception as e:
-            logger.error(
-                f"Error in RecordingLLMClient.format_user_message_with_file: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Error in RecordingLLMClient.format_user_message_with_file: {e}"
             )
             raise
 
@@ -1082,9 +1079,8 @@ class RecordingLLMClient:
                 )
             logger.debug(f"Recorded interaction to {self.recording_path}")
         except Exception as file_err:
-            logger.error(
-                f"Failed to write interaction to recording file {self.recording_path}: {file_err}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to write interaction to recording file {self.recording_path}: {file_err}"
             )
 
     async def generate_structured(
@@ -1118,9 +1114,7 @@ class RecordingLLMClient:
             await self._write_record_to_file(record)
             return output_data
         except Exception as e:
-            logger.error(
-                f"Error in RecordingLLMClient.generate_structured: {e}", exc_info=True
-            )
+            logger.exception(f"Error in RecordingLLMClient.generate_structured: {e}")
             raise
 
     async def generate_json(
@@ -1147,9 +1141,7 @@ class RecordingLLMClient:
             await self._write_record_to_file(record)
             return output_data
         except Exception as e:
-            logger.error(
-                f"Error in RecordingLLMClient.generate_json: {e}", exc_info=True
-            )
+            logger.exception(f"Error in RecordingLLMClient.generate_json: {e}")
             raise
 
 
@@ -1216,9 +1208,8 @@ class PlaybackLLMClient:
             logger.error(f"Recording file not found: {self.recording_path}")
             raise
         except Exception as e:
-            logger.error(
-                f"Failed to read or parse recording file {self.recording_path}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to read or parse recording file {self.recording_path}: {e}"
             )
             raise ValueError(
                 f"Failed to load recording file {self.recording_path}: {e}"

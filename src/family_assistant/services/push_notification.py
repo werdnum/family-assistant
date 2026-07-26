@@ -104,9 +104,8 @@ class PushNotificationService:
                     )
                     return None
             except Exception as e:
-                logger.error(
-                    f"An unexpected error occurred while sending push notification to user {user_identifier}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"An unexpected error occurred while sending push notification to user {user_identifier}: {e}"
                 )
                 return None
 

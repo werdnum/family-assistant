@@ -204,10 +204,9 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
                     return actual_response_output
             except Exception as e:
                 # Clarify if error was in matcher or response processing if possible,
-                # but exc_info=True will give the most direct traceback.
-                logger.error(
-                    f"Error processing rule {i + 1} (matcher or response callable) for 'generate_response': {e}",
-                    exc_info=True,
+                # but the logged traceback gives the most direct signal.
+                logger.exception(
+                    f"Error processing rule {i + 1} (matcher or response callable) for 'generate_response': {e}"
                 )
                 # Continue to next rule or default if matcher/response itself fails
                 continue
@@ -410,10 +409,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             except StructuredOutputError:
                 raise
             except Exception as e:
-                logger.error(
-                    f"Error processing structured rule {i + 1}: {e}",
-                    exc_info=True,
-                )
+                logger.exception(f"Error processing structured rule {i + 1}: {e}")
                 continue
 
         # No rule matched - raise an error (unlike generate_response which has a default)

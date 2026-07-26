@@ -136,7 +136,7 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
                 logger.info("  (empty)")
 
         except Exception as dump_exc:
-            logger.error(f"Failed to dump tables on failure: {dump_exc}", exc_info=True)
+            logger.exception(f"Failed to dump tables on failure: {dump_exc}")
     logger.info("--- End table dump ---")
 
 
@@ -511,7 +511,7 @@ async def test_vector_ranking(
         logger.info("--- Vector Ranking Test Passed ---")
     except Exception as e:
         test_failed = True
-        logger.error(f"Test failed: {e}", exc_info=True)
+        logger.exception(f"Test failed: {e}")
         raise
 
     finally:
@@ -702,7 +702,7 @@ async def test_metadata_filtering(
         logger.info("--- Metadata Filtering Test Passed ---")
     except Exception as e:
         test_failed = True
-        logger.error(f"Test failed: {e}", exc_info=True)
+        logger.exception(f"Test failed: {e}")
         raise
     finally:
         # Stop worker
@@ -900,7 +900,7 @@ async def test_keyword_filtering(
         logger.info("--- Keyword Filtering Test Passed ---")
     except Exception as e:
         test_failed = True
-        logger.error(f"Test failed: {e}", exc_info=True)
+        logger.exception(f"Test failed: {e}")
         raise
     finally:
         # Stop worker

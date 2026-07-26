@@ -152,7 +152,7 @@ async def add_message_to_history(
                     f"Value type: {type(field_value)}. Value snippet (first 200 chars): {str(field_value)[:200]}. "
                     f"Original error: {te}"
                 )
-                logger.error(error_message, exc_info=True)
+                logger.exception(error_message)
                 # Raise a new TypeError with detailed info, making it easier to catch upstream if needed,
                 # or to provide a clearer error log.
                 raise TypeError(error_message) from te
@@ -187,9 +187,8 @@ async def add_message_to_history(
         internal_id = result.scalar_one_or_none()
         return internal_id
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in add_message_to_history for conv {interface_type}:{conversation_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error in add_message_to_history for conv {interface_type}:{conversation_id}: {e}"
         )
         raise
 
@@ -207,9 +206,8 @@ async def update_message_interface_id(
         result: Result = await db_context.execute_with_retry(stmt)
         return result.rowcount > 0  # type: ignore[attr-defined]
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in update_message_interface_id(internal_id={internal_id}): {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error in update_message_interface_id(internal_id={internal_id}): {e}"
         )
         raise
 
@@ -356,9 +354,8 @@ async def get_recent_history(
 
         return final_message_list
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in get_recent_history({interface_type}, {conversation_id}): {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error in get_recent_history({interface_type}, {conversation_id}): {e}"
         )
         raise
 
@@ -389,9 +386,8 @@ async def get_message_by_interface_id(
         )  # Cast for type checker
         return cast("MessageHistoryRow", dict(row)) if row else None
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in get_message_by_interface_id({interface_type}, {conversation_id}, {interface_message_id}): {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error in get_message_by_interface_id({interface_type}, {conversation_id}, {interface_message_id}): {e}"
         )
         raise
 
@@ -416,9 +412,8 @@ async def get_messages_by_turn_id(
         )  # Cast for type checker
         return [cast("MessageHistoryRow", dict(row)) for row in rows]
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in get_messages_by_turn_id(turn_id={turn_id}): {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error in get_messages_by_turn_id(turn_id={turn_id}): {e}"
         )
         raise
 
@@ -462,9 +457,8 @@ async def get_messages_by_thread_id(
         )  # Cast for type checker
         return [cast("MessageHistoryRow", dict(row)) for row in rows]
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in get_messages_by_thread_id(thread_root_id={thread_root_id}): {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error in get_messages_by_thread_id(thread_root_id={thread_root_id}): {e}"
         )
         raise
 
@@ -495,8 +489,5 @@ async def get_grouped_message_history(
             grouped_history[group_key].append(row_dict)
         return grouped_history
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in get_grouped_message_history: {e}",
-            exc_info=True,
-        )
+        logger.exception(f"Database error in get_grouped_message_history: {e}")
         raise

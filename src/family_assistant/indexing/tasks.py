@@ -214,9 +214,8 @@ async def handle_embed_and_store_batch(
         try:
             pending_count = await check_document_completion(db_context, document_id)
         except Exception as e:
-            logger.error(
-                f"Failed to check document completion for document_id {document_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to check document completion for document_id {document_id}: {e}"
             )
             return
 
@@ -263,9 +262,8 @@ async def handle_embed_and_store_batch(
                         f"Document {document_id} not found when emitting DOCUMENT_READY event"
                     )
             except Exception as e:
-                logger.error(
-                    f"Failed to emit DOCUMENT_READY event for document {document_id}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Failed to emit DOCUMENT_READY event for document {document_id}: {e}"
                 )
         else:
             logger.debug(

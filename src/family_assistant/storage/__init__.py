@@ -126,10 +126,7 @@ async def _log_current_revision(engine: AsyncEngine) -> None:
                 )
                 return result.scalar_one_or_none()  # Fetch one scalar value or None
             except Exception as query_err:
-                logger.error(
-                    f"Error querying alembic_version table: {query_err!r}",
-                    exc_info=True,
-                )
+                logger.exception(f"Error querying alembic_version table: {query_err!r}")
                 return None
 
         current_revision = await conn_check.run_sync(sync_check_revision)
@@ -201,18 +198,14 @@ async def _run_alembic_command(
                 command_func(config, *args)
                 logger.info(f"[sync] Successfully executed: {command_name}")
             except Exception as e:
-                logger.error(
-                    f"[sync] Error during {command_name}: {e!r}", exc_info=True
-                )
+                logger.exception(f"[sync] Error during {command_name}: {e!r}")
                 raise
 
         try:
             await conn.run_sync(sync_command_wrapper)
             logger.info(f"Alembic command {command_name} completed.")
         except Exception as e:
-            logger.error(
-                f"Failed to run Alembic command {command_name}: {e!r}", exc_info=True
-            )
+            logger.exception(f"Failed to run Alembic command {command_name}: {e!r}")
             raise
 
 
@@ -240,9 +233,8 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
                 await vector_init_context.vector.init_db()
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
-            logger.error(
-                f"Failed to initialize vector database components: {vec_e!r}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to initialize vector database components: {vec_e!r}"
             )
             # Decide if this failure should prevent startup. For now, re-raise.
             raise
@@ -314,10 +306,9 @@ async def init_db(engine: AsyncEngine) -> None:
         except Exception as e:
             last_exception = e
             if not _is_transient_db_error(e):
-                logger.error(
+                logger.exception(
                     f"Non-transient error during database initialization; not "
-                    f"retrying: {e!r}",
-                    exc_info=True,
+                    f"retrying: {e!r}"
                 )
                 raise
             logger.warning(

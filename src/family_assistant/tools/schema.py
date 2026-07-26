@@ -80,7 +80,7 @@ def render_schema_as_html(schema_json_str: str | None) -> str:
             result_html = f.read()
         return result_html
     except Exception as e:
-        logger.error(f"Failed to generate HTML schema: {e}", exc_info=True)
+        logger.exception(f"Failed to generate HTML schema: {e}")
         return f"<pre>Error generating schema HTML: {html.escape(str(e))}</pre>"
     finally:
         # Clean up temporary files

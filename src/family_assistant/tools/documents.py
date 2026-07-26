@@ -289,9 +289,8 @@ def _scan_user_docs(docs_user_dir: pathlib.Path | None = None) -> list[str]:
                 ):
                     available_files.append(item)
         except OSError as e:
-            logger.error(
-                f"Error scanning documentation directory '{docs_user_dir}': {e}",
-                exc_info=True,
+            logger.exception(
+                f"Error scanning documentation directory '{docs_user_dir}': {e}"
             )
     else:
         logger.warning(f"User documentation directory not found: '{docs_user_dir}'")
@@ -427,7 +426,7 @@ async def search_documents_tool(
         return "\n".join(formatted_results)
 
     except Exception as e:
-        logger.error(f"Error executing search_documents_tool: {e}", exc_info=True)
+        logger.exception(f"Error executing search_documents_tool: {e}")
         return f"Error: Failed to execute document search. {e}"
 
 
@@ -569,9 +568,8 @@ async def get_full_document_content_tool(
                         attachments=[attachment],
                     )
             except Exception as file_err:
-                logger.error(
-                    f"Error reading file {file_path} for document ID {document_id}: {file_err}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error reading file {file_path} for document ID {document_id}: {file_err}"
                 )
                 # Fall through to text content
 
@@ -600,9 +598,8 @@ async def get_full_document_content_tool(
         return text_content
 
     except Exception as e:
-        logger.error(
-            f"Error executing get_full_document_content_tool for ID {document_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Error executing get_full_document_content_tool for ID {document_id}: {e}"
         )
         return f"Error: Failed to retrieve content for document ID {document_id}. {e}"
 
@@ -983,9 +980,8 @@ async def ingest_document_from_url_tool(
         return f"URL submitted. Service response: {service_message}. Document ID: {doc_id}. Task Enqueued: {task_enqueued}."
 
     except Exception as e:
-        logger.error(
-            f"Unexpected error calling ingestion service for URL '{url_to_ingest}': {e}",
-            exc_info=True,
+        logger.exception(
+            f"Unexpected error calling ingestion service for URL '{url_to_ingest}': {e}"
         )
         return f"Error: An unexpected error occurred while submitting the URL. {e}"
 
@@ -1051,7 +1047,5 @@ async def get_user_documentation_content_tool(
         logger.warning(f"User documentation file not found: '{file_path}'")
         return f"Error: Documentation file '{filename}' not found."
     except Exception as e:
-        logger.error(
-            f"Error reading user documentation file '{filename}': {e}", exc_info=True
-        )
+        logger.exception(f"Error reading user documentation file '{filename}': {e}")
         return f"Error: Failed to read documentation file '{filename}'. {e}"

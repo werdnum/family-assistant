@@ -144,8 +144,5 @@ async def jq_query_tool(
             return ToolResult(text=f"Error: Invalid jq query. {e!s}")
 
     except Exception as e:
-        logger.error(
-            f"Error executing jq query on attachment {attachment_id}: {e}",
-            exc_info=True,
-        )
+        logger.exception(f"Error executing jq query on attachment {attachment_id}: {e}")
         return ToolResult(text=f"Error: Failed to execute jq query. {e!s}")

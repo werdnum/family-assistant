@@ -224,9 +224,8 @@ class PlaywrightScraper:
                     )
                     return None
             except Exception as e_convert:
-                logger.error(
-                    f"MarkItDown: convert_stream failed for {effective_filename}: {e_convert}",
-                    exc_info=True,
+                logger.exception(
+                    f"MarkItDown: convert_stream failed for {effective_filename}: {e_convert}"
                 )
                 return None
 
@@ -479,7 +478,7 @@ class PlaywrightScraper:
                         page_title_str = None
 
                 except PlaywrightError as e:
-                    logger.error(f"Playwright execution error: {e}", exc_info=True)
+                    logger.exception(f"Playwright execution error: {e}")
                     if "Executable doesn't exist" in str(
                         e
                     ) or "Browser process exited" in str(e):
@@ -490,9 +489,8 @@ class PlaywrightScraper:
                         self.playwright_available = False
                     return None, None, None
                 except Exception as e:
-                    logger.error(
-                        f"Unexpected error during Playwright scraping context: {e}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Unexpected error during Playwright scraping context: {e}"
                     )
                     return None, None, None
                 finally:
@@ -503,9 +501,7 @@ class PlaywrightScraper:
                     if browser:
                         await browser.close()
         except Exception as e:
-            logger.error(
-                f"Error setting up/tearing down Playwright: {e}", exc_info=True
-            )
+            logger.exception(f"Error setting up/tearing down Playwright: {e}")
             if isinstance(e, PlaywrightError) and (
                 "Executable doesn't exist" in str(e)
                 or "Browser process exited" in str(e)
@@ -548,9 +544,8 @@ class PlaywrightScraper:
         except httpx.RequestError as req_err:
             logger.error(f"HTTP request error occurred for {url}: {req_err}")
         except Exception as err:
-            logger.error(
-                f"An unexpected error occurred during async httpx request for {url}: {err}",
-                exc_info=True,
+            logger.exception(
+                f"An unexpected error occurred during async httpx request for {url}: {err}"
             )
         return None, None, url, None  # Return original URL on failure here
 

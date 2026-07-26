@@ -180,9 +180,8 @@ def parse_event(
         )
         return None
     except Exception as e:
-        logger.error(
-            f"Failed to parse VCALENDAR data: {e}\nData: {event_data[:200]}...",
-            exc_info=True,
+        logger.exception(
+            f"Failed to parse VCALENDAR data: {e}\nData: {event_data[:200]}..."
         )
         return None
 
@@ -297,11 +296,10 @@ async def _fetch_ical_events_async(
                                 timezone=timezone,
                             )
                         except Exception as event_parse_error:
-                            logger.error(
+                            logger.exception(
                                 "Failed to parse individual event in iCal URL %s: %s",
                                 url,
                                 event_parse_error,
-                                exc_info=True,
                             )
                             continue
 
@@ -311,9 +309,7 @@ async def _fetch_ical_events_async(
 
                     logger.info(f"Parsed {count} events from iCal URL: {url}")
                 except Exception as e:
-                    logger.error(
-                        f"Error parsing iCal data from {url}: {e}", exc_info=True
-                    )
+                    logger.exception(f"Error parsing iCal data from {url}: {e}")
             elif isinstance(result, Exception):
                 logger.error(
                     f"Error fetching iCal URL {url}: {result}", exc_info=result
@@ -440,23 +436,20 @@ def _fetch_caldav_events_sync(
                             f"Failed to parse event data for event {event_url_attr} in {calendar_url_item}. Skipping."
                         )
                 except (DAVError, NotFoundError, Exception) as event_err:
-                    logger.error(
-                        f"Error processing individual event {getattr(event_resource, 'url', 'N/A')} in {calendar_url_item}: {event_err}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Error processing individual event {getattr(event_resource, 'url', 'N/A')} in {calendar_url_item}: {event_err}"
                     )
         except NotFoundError:
             logger.error(
                 f"Calendar collection not found at URL {calendar_url_item}. Skipping."
             )
         except DAVError as e:
-            logger.error(
-                f"CalDAV error while processing calendar {calendar_url_item}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"CalDAV error while processing calendar {calendar_url_item}: {e}"
             )
         except Exception as e:
-            logger.error(
-                f"Unexpected error during CalDAV fetch for calendar {calendar_url_item}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Unexpected error during CalDAV fetch for calendar {calendar_url_item}: {e}"
             )
         # Continue to the next calendar URL if one fails
 
@@ -841,9 +834,7 @@ async def fetch_event_details_for_confirmation(
             logger.warning(f"Event with UID {uid} not found in calendar {calendar_url}")
             return None
         except (DAVError, ConnectionError, Exception) as e:
-            logger.error(
-                f"Error fetching event details for UID {uid}: {e}", exc_info=True
-            )
+            logger.exception(f"Error fetching event details for UID {uid}: {e}")
             return None
 
     # Execute in thread pool
@@ -852,9 +843,8 @@ async def fetch_event_details_for_confirmation(
         result = await loop.run_in_executor(None, fetch_sync)
         return result
     except Exception as e:
-        logger.error(
-            f"Unexpected error in fetch_event_details_for_confirmation: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Unexpected error in fetch_event_details_for_confirmation: {e}"
         )
         return None
 

@@ -176,7 +176,7 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
                 logger.info("  (empty)")
 
         except Exception as dump_exc:
-            logger.error(f"Failed to dump tables on failure: {dump_exc}", exc_info=True)
+            logger.exception(f"Failed to dump tables on failure: {dump_exc}")
     logger.info("--- End table dump ---")
 
 
@@ -620,7 +620,7 @@ async def test_email_with_pdf_attachment_indexing_e2e(
 
     except Exception as e:
         test_failed = True
-        logger.error(f"Test failed: {e}", exc_info=True)
+        logger.exception(f"Test failed: {e}")
         raise
     finally:
         logger.info(f"Stopping background task worker {worker_id} for PDF test...")
@@ -636,9 +636,8 @@ async def test_email_with_pdf_attachment_indexing_e2e(
             )
             worker_task.cancel()
         except Exception as e:
-            logger.error(
-                f"Error stopping worker task {worker_id} for PDF test: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Error stopping worker task {worker_id} for PDF test: {e}"
             )
 
 
@@ -872,7 +871,7 @@ async def test_email_indexing_with_llm_summary_e2e(
 
     except Exception as e:
         test_failed = True
-        logger.error(f"Test failed: {e}", exc_info=True)
+        logger.exception(f"Test failed: {e}")
         # No need to dump here, will be handled in finally if test_failed is True
         raise
     finally:
@@ -1163,7 +1162,7 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
 
     except Exception as e:
         test_failed = True
-        logger.error(f"Test failed: {e}", exc_info=True)
+        logger.exception(f"Test failed: {e}")
         raise
     finally:
         if test_failed:

@@ -434,7 +434,7 @@ class OpenAIClient(BaseLLMClient):
                 error_message, provider="openai", model=self.model
             )
 
-        logger.error(f"OpenAI API error: {e}", exc_info=True)
+        logger.error(f"OpenAI API error: {e}", exc_info=e)
         return LLMProviderError(error_message, provider="openai", model=self.model)
 
     async def generate_response(
@@ -1070,9 +1070,7 @@ class OpenAIClient(BaseLLMClient):
             elif "timeout" in error_message.lower():
                 error_type = "timeout"
 
-            logger.error(
-                f"OpenAI streaming API error ({error_type}): {e}", exc_info=True
-            )
+            logger.exception(f"OpenAI streaming API error ({error_type}): {e}")
             yield LLMStreamEvent(
                 type="error",
                 error=error_message,

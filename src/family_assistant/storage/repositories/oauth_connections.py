@@ -101,8 +101,8 @@ class OAuthConnectionsRepository(BaseRepository):
             row = await self._db.fetch_one(stmt)
             return _row_to_connection(row) if row is not None else None
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_connection({user_id!r}): {e}", exc_info=True
+            self._logger.exception(
+                f"Database error in get_connection({user_id!r}): {e}"
             )
             raise
 
@@ -116,9 +116,7 @@ class OAuthConnectionsRepository(BaseRepository):
             rows = await self._db.fetch_all(stmt)
             return [_row_to_connection(row) for row in rows]
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in list_connections: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in list_connections: {e}")
             raise
 
     async def upsert_connection(

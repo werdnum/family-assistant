@@ -335,7 +335,7 @@ class NotesRepository(BaseRepository):
             rows = await self._db.fetch_all(stmt)
             return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
-            self._logger.error(f"Database error in get_all: {e}", exc_info=True)
+            self._logger.exception(f"Database error in get_all: {e}")
             raise
 
     async def get_prompt_notes(
@@ -354,9 +354,7 @@ class NotesRepository(BaseRepository):
             rows = await self._db.fetch_all(stmt)
             return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_prompt_notes: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_prompt_notes: {e}")
             raise
 
     async def get_excluded_notes_titles(
@@ -375,9 +373,7 @@ class NotesRepository(BaseRepository):
             rows = await self._db.fetch_all(stmt)
             return [row["title"] for row in rows]
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_excluded_notes_titles: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_excluded_notes_titles: {e}")
             raise
 
     async def get_skills(
@@ -395,7 +391,7 @@ class NotesRepository(BaseRepository):
             rows = await self._db.fetch_all(stmt)
             return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
-            self._logger.error(f"Database error in get_skills: {e}", exc_info=True)
+            self._logger.exception(f"Database error in get_skills: {e}")
             raise
 
     async def get_by_id(
@@ -446,9 +442,7 @@ class NotesRepository(BaseRepository):
                 return _row_to_note_model(row)
             return None
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_by_title({title}): {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_by_title({title}): {e}")
             raise
 
     async def add_or_update(
@@ -590,8 +584,8 @@ class NotesRepository(BaseRepository):
                 await self._enqueue_indexing_task(title)
                 return "Success"
             except SQLAlchemyError as e:
-                self._logger.error(
-                    f"PostgreSQL error in add_or_update({title}): {e}", exc_info=True
+                self._logger.exception(
+                    f"PostgreSQL error in add_or_update({title}): {e}"
                 )
                 raise
 
@@ -670,9 +664,8 @@ class NotesRepository(BaseRepository):
                     return "Success"
                 else:
                     # Re-raise other SQLAlchemy errors
-                    self._logger.error(
-                        f"Database error during INSERT in add_or_update({title}) (SQLite fallback): {e}",
-                        exc_info=True,
+                    self._logger.exception(
+                        f"Database error during INSERT in add_or_update({title}) (SQLite fallback): {e}"
                     )
                     raise e
 
@@ -690,7 +683,7 @@ class NotesRepository(BaseRepository):
                 self._logger.warning(f"Note not found for deletion: {title}")
                 return False
         except SQLAlchemyError as e:
-            self._logger.error(f"Database error in delete({title}): {e}", exc_info=True)
+            self._logger.exception(f"Database error in delete({title}): {e}")
             raise
 
     async def rename_and_update(
@@ -821,9 +814,8 @@ class NotesRepository(BaseRepository):
                 )
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in rename_and_update({original_title} -> {new_title}): {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Database error in rename_and_update({original_title} -> {new_title}): {e}"
             )
             raise
 

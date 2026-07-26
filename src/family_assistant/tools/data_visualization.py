@@ -214,7 +214,7 @@ async def create_vega_chart_tool(
 
             png_data = await asyncio.to_thread(_render_chart)
         except Exception as e:
-            logger.error(f"Error rendering Vega spec: {e}", exc_info=True)
+            logger.exception(f"Error rendering Vega spec: {e}")
             return ToolResult(text=f"Error rendering chart: {e!s}")
 
         # Create attachment
@@ -229,5 +229,5 @@ async def create_vega_chart_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error creating Vega chart: {e}", exc_info=True)
+        logger.exception(f"Error creating Vega chart: {e}")
         return ToolResult(text=f"Error creating chart: {e!s}")

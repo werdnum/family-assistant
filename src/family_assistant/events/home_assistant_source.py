@@ -118,7 +118,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 self._event_queue.shutdown()
                 await self._event_queue.wait_closed()
             except Exception as e:
-                logger.error(f"Error closing janus queue: {e}", exc_info=True)
+                logger.exception(f"Error closing janus queue: {e}")
 
         for task in tasks:
             if task:
@@ -147,9 +147,8 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 self._reconnect_attempts += 1
 
             except Exception as e:
-                logger.error(
-                    f"[{self.source_id}] Home Assistant WebSocket error: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"[{self.source_id}] Home Assistant WebSocket error: {e}"
                 )
                 self._reconnect_attempts += 1
 
@@ -310,7 +309,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 logger.error("Event queue not initialized, dropping event")
 
         except Exception as e:
-            logger.error(f"Error processing {event_type} event: {e}", exc_info=True)
+            logger.exception(f"Error processing {event_type} event: {e}")
 
     async def _process_events(self) -> None:
         """Process events from the queue asynchronously."""
@@ -341,7 +340,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 self._event_queue.async_q.task_done()
 
             except Exception as e:
-                logger.error(f"Error processing queued event: {e}", exc_info=True)
+                logger.exception(f"Error processing queued event: {e}")
 
     async def _health_check_loop(self) -> None:
         """Periodically check connection health."""
@@ -385,7 +384,7 @@ class HomeAssistantSource(BaseEventSource, EventSource):
                 # Task is being cancelled, exit cleanly
                 break
             except Exception as e:
-                logger.error(f"Error in health check loop: {e}", exc_info=True)
+                logger.exception(f"Error in health check loop: {e}")
                 await asyncio.sleep(self._health_check_interval)
 
     async def _test_connection(self) -> bool:

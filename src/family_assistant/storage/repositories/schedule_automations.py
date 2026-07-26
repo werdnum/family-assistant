@@ -294,9 +294,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 ) from e
             raise
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in create_schedule_automation: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in create_schedule_automation: {e}")
             raise
 
     async def create_full(
@@ -798,9 +796,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             return cancelled_count
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Error cancelling tasks for automation {automation_id}: {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Error cancelling tasks for automation {automation_id}: {e}"
             )
             return 0
 
@@ -1115,9 +1112,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in after_task_execution for automation {automation_id}: {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Database error in after_task_execution for automation {automation_id}: {e}"
             )
             raise
 
@@ -1157,8 +1153,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_execution_stats for automation {automation_id}: {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Database error in get_execution_stats for automation {automation_id}: {e}"
             )
             raise

@@ -887,9 +887,8 @@ async def handle_llm_callback(
                     interface_message_id=sent_message_id_str,
                 )
             except Exception as e:
-                logger.error(
-                    f"Failed to update interface_message_id for callback response: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Failed to update interface_message_id for callback response: {e}"
                 )
         elif sent_message_id_str:  # Message sent but no internal_id to update
             logger.warning(
@@ -941,9 +940,7 @@ async def handle_llm_callback(
                 )
                 logger.info("Successfully scheduled follow-up reminder")
             except Exception as e:
-                logger.error(
-                    f"Failed to schedule follow-up reminder: {e}", exc_info=True
-                )
+                logger.exception(f"Failed to schedule follow-up reminder: {e}")
         else:
             logger.debug(
                 f"Not scheduling follow-up reminder for {interface_type}:{conversation_id}: "
@@ -964,9 +961,8 @@ async def handle_llm_callback(
         interface_type = exec_context.interface_type
         conversation_id = exec_context.conversation_id
 
-        logger.error(
-            f"Failed during LLM callback processing for {interface_type}:{conversation_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Failed during LLM callback processing for {interface_type}:{conversation_id}: {e}"
         )
         # Raise the exception to ensure the task is marked as failed
         raise
@@ -1234,10 +1230,8 @@ class TaskWorker:
             # "running" entry guard fails the run without re-executing. The
             # stale-run reaper is the backstop if no retry occurs.
             error = traceback.format_exc()
-            logger.error(
-                "Delegated profile run %s raised during execution.",
-                delegation_id,
-                exc_info=True,
+            logger.exception(
+                "Delegated profile run %s raised during execution.", delegation_id
             )
             await self._fail_delegation_run(
                 exec_context,
@@ -1654,10 +1648,8 @@ class TaskWorker:
             # Definitive negative (bad auth / protocol error): the task will
             # never complete. Fail with the real error.
             error = traceback.format_exc()
-            logger.error(
-                "Polling remote delegation %s hit a permanent error.",
-                delegation_id,
-                exc_info=True,
+            logger.exception(
+                "Polling remote delegation %s hit a permanent error.", delegation_id
             )
             await self._fail_delegation_run(
                 exec_context, delegation_id=delegation_id, error=error
@@ -1677,10 +1669,9 @@ class TaskWorker:
             # not resolve by retrying; fail the run with the actual error instead
             # of masking it as a timeout once the cap expires.
             error = traceback.format_exc()
-            logger.error(
+            logger.exception(
                 "Polling remote delegation %s raised a non-transient error.",
                 delegation_id,
-                exc_info=True,
             )
             await self._fail_delegation_run(
                 exec_context, delegation_id=delegation_id, error=error
@@ -2031,12 +2022,11 @@ class TaskWorker:
                 )
                 return
             except Exception:
-                logger.error(
+                logger.exception(
                     "Failed to wake source profile '%s' for completed delegation %s; "
                     "falling back to direct completion notification.",
                     run["source_profile_id"],
                     run["delegation_id"],
-                    exc_info=True,
                 )
 
         message_text = self._delegation_notification_text(run)
@@ -2638,9 +2628,8 @@ class TaskWorker:
                 )
 
         except Exception as recur_err:
-            logger.error(
-                f"RECURRENCE ERROR: Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}",
-                exc_info=True,
+            logger.exception(
+                f"RECURRENCE ERROR: Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}"
             )
             # Don't mark the original task as failed, just log the recurrence error.
 
@@ -3074,7 +3063,7 @@ class TaskWorker:
         error_str = "\n".join(traceback.format_exception(handler_exc))
         logger.error(
             f"Worker {self.worker_id} failed task {task['task_id']}{interface_info} (Retry {current_retry}/{max_retries}) due to handler error: {error_str}",
-            exc_info=True,
+            exc_info=handler_exc,
         )
 
         can_retry = current_retry < max_retries and not isinstance(
@@ -3410,9 +3399,8 @@ class TaskWorker:
                             current_time=self.clock.now(),  # Pass current time from worker's clock
                         )
                     except Exception as e:
-                        logger.error(
-                            f"Error during task dequeue for worker {self.worker_id}: {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Error during task dequeue for worker {self.worker_id}: {e}"
                         )
                         # Continue to next iteration without processing
 
@@ -3445,9 +3433,8 @@ class TaskWorker:
                         # This eliminates unnecessary delays between tasks
                         continue
                     except Exception as e:
-                        logger.error(
-                            f"Error during task processing for worker {self.worker_id}: {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Error during task processing for worker {self.worker_id}: {e}"
                         )
                         # Task processing failed, continue to next iteration
                         await asyncio.sleep(TASK_POLLING_INTERVAL)
@@ -3467,9 +3454,8 @@ class TaskWorker:
                 # For simplicity, we just exit.
                 break  # Exit the loop cleanly on cancellation
             except Exception as e:
-                logger.error(
-                    f"Task worker {self.worker_id} encountered an unexpected error outside DB context: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Task worker {self.worker_id} encountered an unexpected error outside DB context: {e}"
                 )
                 # If an error occurs outside the db_context (e.g., getting context itself), wait before retrying
                 await asyncio.sleep(
@@ -3502,7 +3488,7 @@ async def handle_system_event_cleanup(
             f"System event cleanup completed. Deleted {deleted_count} events older than {retention_hours} hours."
         )
     except Exception as e:
-        logger.error(f"Error during system event cleanup: {e}", exc_info=True)
+        logger.exception(f"Error during system event cleanup: {e}")
         raise
 
 
@@ -3529,7 +3515,7 @@ async def handle_system_error_log_cleanup(
             f"System error log cleanup completed. Deleted {deleted_count} error logs older than {retention_days} days."
         )
     except Exception as e:
-        logger.error(f"Error during system error log cleanup: {e}", exc_info=True)
+        logger.exception(f"Error during system error log cleanup: {e}")
         raise
 
 
@@ -3606,7 +3592,7 @@ async def handle_worker_task_cleanup(
             f"older than {retention_hours} hours."
         )
     except Exception as e:
-        logger.error(f"Error during worker task cleanup: {e}", exc_info=True)
+        logger.exception(f"Error during worker task cleanup: {e}")
         raise
 
 
@@ -3641,7 +3627,7 @@ async def handle_completed_automation_cleanup(
             f"older than {retention_hours} hours."
         )
     except Exception as e:
-        logger.error(f"Error during completed automation cleanup: {e}", exc_info=True)
+        logger.exception(f"Error during completed automation cleanup: {e}")
         raise
 
 
@@ -4108,18 +4094,14 @@ async def handle_script_execution(
         raise
 
     except ScriptError as e:
-        logger.error(
-            f"Script error for listener {listener_id}: {e}",
-            exc_info=True,
-        )
+        logger.exception(f"Script error for listener {listener_id}: {e}")
         # Re-raise to trigger task retry
         raise
 
     except Exception as e:
         # Catch any unexpected errors
-        logger.error(
-            f"Unexpected error during script execution for listener {listener_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Unexpected error during script execution for listener {listener_id}: {e}"
         )
         # Wrap in ScriptError for consistent handling
         raise ScriptError(f"Unexpected error: {e}") from e

@@ -444,7 +444,7 @@ async def download_media_tool(
             },
         )
     except Exception as e:
-        logger.error(f"Error in download_media_tool: {e}", exc_info=True)
+        logger.exception(f"Error in download_media_tool: {e}")
         return ToolResult(
             text=f"An error occurred: {e!s}",
             data={

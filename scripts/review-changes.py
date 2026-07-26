@@ -1045,7 +1045,7 @@ submit_review(
             except ReviewSubmittedException:
                 logger.debug("Caught ReviewSubmittedException (%s)", label)
             except Exception as e:
-                logger.error(f"Error during {label}: {e}", exc_info=True)
+                logger.exception(f"Error during {label}: {e}")
                 print(f"Error during review ({label}): {e}", file=sys.stderr)
                 return
             finally:
@@ -1111,7 +1111,7 @@ submit_review(
                     sys.stdout = original_stdout
                 return 1, {}
             except Exception as e:
-                logger.error(f"Error calling LLM with schema: {e}", exc_info=True)
+                logger.exception(f"Error calling LLM with schema: {e}")
                 print(f"Error calling LLM: {e}", file=sys.stderr)
                 if output_json:
                     sys.stdout = original_stdout

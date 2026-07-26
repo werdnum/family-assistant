@@ -247,15 +247,13 @@ async def execute_tool_api(
     except (
         TypeError
     ) as te:  # Catch potential argument mismatches within the tool function
-        logger.error(
-            f"Type error during execution of tool '{tool_name}': {te}", exc_info=True
-        )
+        logger.exception(f"Type error during execution of tool '{tool_name}': {te}")
         return await error_response(
             status_code=400,
             detail=f"Argument mismatch or type error in tool '{tool_name}': {te}",
         )
     except Exception as e:
-        logger.error(f"Error executing tool '{tool_name}': {e}", exc_info=True)
+        logger.exception(f"Error executing tool '{tool_name}': {e}")
         return await error_response(
             status_code=500,
             detail=f"An error occurred while executing tool '{tool_name}'.",

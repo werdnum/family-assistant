@@ -1160,9 +1160,8 @@ class Assistant:
                             "homeassistant_api library is not installed, but Home Assistant context provider is configured. Skipping."
                         )
                     except Exception as e:
-                        logger.error(
-                            f"Failed to initialize HomeAssistantContextProvider for profile '{profile_id}': {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Failed to initialize HomeAssistantContextProvider for profile '{profile_id}': {e}"
                         )
                 elif ha_api_url or ha_token or ha_template:
                     logger.warning(
@@ -1932,9 +1931,8 @@ class Assistant:
                             "restarting..."
                         )
                     except Exception as e:
-                        logger.error(
-                            f"Task worker {worker.worker_id} crashed with error: {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Task worker {worker.worker_id} crashed with error: {e}"
                         )
 
                 logger.info(f"Restarting task worker {worker.worker_id}...")
@@ -1979,7 +1977,7 @@ class Assistant:
                 # Shutdown requested
                 break
             except Exception as e:
-                logger.error(f"Error in task worker health monitor: {e}", exc_info=True)
+                logger.exception(f"Error in task worker health monitor: {e}")
                 await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
         logger.info("Task worker health monitor stopped")
@@ -2046,9 +2044,8 @@ class Assistant:
                     try:
                         await service_instance.close()
                     except Exception as e:
-                        logger.error(
-                            f"Error closing remote service '{profile_id}': {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Error closing remote service '{profile_id}': {e}"
                         )
                 elif (
                     hasattr(service_instance, "tools_provider")
@@ -2057,9 +2054,8 @@ class Assistant:
                     try:
                         await service_instance.tools_provider.close()
                     except Exception as e:
-                        logger.error(
-                            f"Error closing tools_provider for profile '{profile_id}': {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Error closing tools_provider for profile '{profile_id}': {e}"
                         )
         elif (
             self.default_processing_service

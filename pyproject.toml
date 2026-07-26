@@ -413,6 +413,12 @@ select = [
     # Stale or misdirected `noqa` directives
     "RUF100",
     "RUF101",
+    # Logging: use logger.exception() rather than logger.error(exc_info=True),
+    # and pass the exception explicitly when logging outside an except handler
+    # (bare `exc_info=True` there depends on an ambient sys.exc_info()).
+    "G201",
+    "G202",
+    "LOG014",
     # Mechanical simplifications, all autofixable
     "FURB105",
     "FURB188",

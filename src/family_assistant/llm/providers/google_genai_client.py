@@ -1343,7 +1343,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 error_message, provider="google", model=self.model_name
             )
         else:
-            logger.error(f"Google GenAI API error: {e}", exc_info=True)
+            logger.error(f"Google GenAI API error: {e}", exc_info=e)
             return LLMProviderError(
                 error_message, provider="google", model=self.model_name
             )
@@ -1817,9 +1817,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 typed_error = e
             else:
                 typed_error = self._map_interactions_error(e)
-            logger.error(
-                f"Google Deep Research error ({type(typed_error).__name__}): {e}",
-                exc_info=True,
+            logger.exception(
+                f"Google Deep Research error ({type(typed_error).__name__}): {e}"
             )
 
             # If no content has been yielded, raise typed exception so
@@ -2153,9 +2152,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
 
             typed_error = self._map_error_to_typed_exception(e)
-            logger.error(
-                f"Google GenAI streaming error ({type(typed_error).__name__}): {e}",
-                exc_info=True,
+            logger.exception(
+                f"Google GenAI streaming error ({type(typed_error).__name__}): {e}"
             )
 
             # If no content has been yielded, raise typed exception so

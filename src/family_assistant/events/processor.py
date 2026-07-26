@@ -123,9 +123,7 @@ class EventProcessor:
                 await source.start(self)
                 logger.info(f"Started event source: {source_id}")
             except Exception as e:
-                logger.error(
-                    f"Failed to start event source {source_id}: {e}", exc_info=True
-                )
+                logger.exception(f"Failed to start event source {source_id}: {e}")
 
     async def stop(self) -> None:
         """Stop all event sources."""
@@ -137,9 +135,7 @@ class EventProcessor:
                 await source.stop()
                 logger.info(f"Stopped event source: {source_id}")
             except Exception as e:
-                logger.error(
-                    f"Failed to stop event source {source_id}: {e}", exc_info=True
-                )
+                logger.exception(f"Failed to stop event source {source_id}: {e}")
 
     # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
     async def process_event(self, source_id: str, event_data: dict[str, Any]) -> None:

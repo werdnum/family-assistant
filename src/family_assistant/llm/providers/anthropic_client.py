@@ -874,7 +874,7 @@ class AnthropicClient(BaseLLMClient):
                 str(e), provider="anthropic", model=self.model
             ) from e
         else:
-            logger.error(f"Anthropic API error: {e}", exc_info=True)
+            logger.error(f"Anthropic API error: {e}", exc_info=e)
             raise LLMProviderError(
                 str(e), provider="anthropic", model=self.model
             ) from e
@@ -1150,10 +1150,7 @@ class AnthropicClient(BaseLLMClient):
                 elif isinstance(e, anthropic.APITimeoutError):
                     error_type = "timeout"
 
-                logger.error(
-                    f"Anthropic streaming API error ({error_type}): {e}",
-                    exc_info=True,
-                )
+                logger.exception(f"Anthropic streaming API error ({error_type}): {e}")
                 yield LLMStreamEvent(
                     type="error",
                     error=error_message,

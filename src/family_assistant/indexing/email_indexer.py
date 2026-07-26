@@ -444,9 +444,8 @@ class EmailIndexer:
                     f"Failed to retrieve document record for ID {doc_db_id} after adding/updating."
                 )
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error fetching document record {doc_db_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Database error fetching document record {doc_db_id}: {e}"
             )
             raise RuntimeError(f"Failed to fetch document record {doc_db_id}") from e
 
@@ -650,9 +649,8 @@ class EmailIndexer:
                 context=exec_context,
             )
         except Exception as e:
-            logger.error(
-                f"Indexing pipeline run failed for email {email_db_id} (Doc ID: {doc_db_id}): {e}",
-                exc_info=True,
+            logger.exception(
+                f"Indexing pipeline run failed for email {email_db_id} (Doc ID: {doc_db_id}): {e}"
             )
             raise RuntimeError(
                 f"Indexing pipeline failed for email {email_db_id}"

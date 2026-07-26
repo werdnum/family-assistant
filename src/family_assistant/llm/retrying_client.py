@@ -150,9 +150,8 @@ class RetryingLLMClient:
                 )
                 last_exception = e
             except Exception as e:
-                logger.error(
-                    f"Attempt 1 (Primary model {self.primary_model}) failed with unexpected error: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Attempt 1 (Primary model {self.primary_model}) failed with unexpected error: {e}"
                 )
                 last_exception = e
 
@@ -191,9 +190,8 @@ class RetryingLLMClient:
                     )
                     last_exception = e
                 except Exception as e:
-                    logger.error(
-                        f"Attempt 2 (Retry Primary model {self.primary_model}) failed with unexpected error: {e}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Attempt 2 (Retry Primary model {self.primary_model}) failed with unexpected error: {e}"
                     )
                     last_exception = e
 
@@ -235,9 +233,8 @@ class RetryingLLMClient:
                     set_usage_span_attributes(span, result.reasoning_info)
                     return result
                 except Exception as e:
-                    logger.error(
-                        f"Attempt 3 (Fallback model {self.fallback_model}) also failed: {e}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Attempt 3 (Fallback model {self.fallback_model}) also failed: {e}"
                     )
                     # Re-raise the last exception from primary attempts as it's likely more informative
                     raise last_exception from e
@@ -297,9 +294,8 @@ class RetryingLLMClient:
                             yield event  # noqa: ASYNC119
                         events_yielded = True
                 except Exception as e:
-                    logger.error(
-                        f"Streaming from primary model {self.primary_model} failed: {e}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Streaming from primary model {self.primary_model} failed: {e}"
                     )
 
                     # Only retry/fallback if no content has been sent to the client
@@ -385,9 +381,8 @@ class RetryingLLMClient:
                                         _record_stream_usage(span, event)
                                         yield event  # noqa: ASYNC119
                             except Exception as fallback_error:
-                                logger.error(
-                                    f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}",
-                                    exc_info=True,
+                                logger.exception(
+                                    f"Fallback streaming model {self.fallback_model} also failed: {fallback_error}"
                                 )
                                 # Raise the original error as it's likely more relevant
                                 span.set_status(StatusCode.ERROR, str(e))
@@ -488,10 +483,9 @@ class RetryingLLMClient:
                 )
                 last_exception = e
             except Exception as e:
-                logger.error(
+                logger.exception(
                     f"{operation_name} attempt 1 (Primary model {self.primary_model}) "
-                    f"failed with unexpected error: {e}",
-                    exc_info=True,
+                    f"failed with unexpected error: {e}"
                 )
                 last_exception = e
 
@@ -524,10 +518,9 @@ class RetryingLLMClient:
                     )
                     last_exception = e
                 except Exception as e:
-                    logger.error(
+                    logger.exception(
                         f"{operation_name} attempt 2 (Retry Primary model {self.primary_model}) "
-                        f"failed with unexpected error: {e}",
-                        exc_info=True,
+                        f"failed with unexpected error: {e}"
                     )
                     last_exception = e
 
@@ -557,10 +550,9 @@ class RetryingLLMClient:
                     )
                     return result
                 except Exception as e:
-                    logger.error(
+                    logger.exception(
                         f"{operation_name} attempt 3 (Fallback model {self.fallback_model}) "
-                        f"also failed: {e}",
-                        exc_info=True,
+                        f"also failed: {e}"
                     )
                     raise last_exception from e
 

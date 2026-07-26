@@ -435,9 +435,7 @@ async def _process_user_attachments(
                 except HTTPException:
                     raise
                 except Exception as e:
-                    logger.error(
-                        f"Error processing user attachment: {e}", exc_info=True
-                    )
+                    logger.exception(f"Error processing user attachment: {e}")
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="Failed to process attachment",

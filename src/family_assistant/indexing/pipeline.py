@@ -201,9 +201,8 @@ class IndexingPipeline:
                     f"Processor '{processor.name}' produced {len(items_for_next_stage)} item(s) for the next stage for document '{original_document.title if original_document else 'Unknown'}'."
                 )
             except Exception as e:
-                logger.error(
-                    f"Error in processor '{processor.name}' for document '{original_document.title if original_document else 'Unknown'}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error in processor '{processor.name}' for document '{original_document.title if original_document else 'Unknown'}': {e}"
                 )
                 # Depending on desired error handling (e.g., continue with next processor or stop)
                 # For now, re-raise to indicate a failure in this pipeline run for this document.

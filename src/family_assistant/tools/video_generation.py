@@ -276,7 +276,7 @@ async def generate_video_tool(
         logger.error(f"Video generation failed: {e}")
         return ToolResult(text=f"Error generating video: {e}", data={"error": str(e)})
     except Exception as e:
-        logger.error(f"Error in generate_video_tool: {e}", exc_info=True)
+        logger.exception(f"Error in generate_video_tool: {e}")
         return ToolResult(
             text=f"An error occurred during video generation: {e!s}",
             data={"error": str(e)},

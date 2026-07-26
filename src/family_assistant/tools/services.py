@@ -277,10 +277,9 @@ async def _delegated_attachment_refs(
             acting_user_id=exec_context.user_id,
         )
     except Exception:
-        logger.error(
+        logger.exception(
             "Error fetching delegated attachment metadata for %s",
             response_attachment_ids,
-            exc_info=True,
         )
         metadata_by_id = {}
 
@@ -385,9 +384,8 @@ async def _synchronous_delegation_result(
             ),
         )
     except Exception as e:
-        logger.error(
-            f"Failed to delegate request to service '{target_service_id}': {e}",
-            exc_info=True,
+        logger.exception(
+            f"Failed to delegate request to service '{target_service_id}': {e}"
         )
         return ToolResult(
             text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",
@@ -827,9 +825,8 @@ async def delegate_to_service_tool(
                     attachments=None,
                 )
             except Exception as e:
-                logger.error(
-                    f"Error during confirmation for delegating to '{target_service_id}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error during confirmation for delegating to '{target_service_id}': {e}"
                 )
                 return ToolResult(
                     text=f"Error during confirmation for delegating to '{target_service_id}': {e}",
@@ -966,19 +963,17 @@ async def delegate_to_service_tool(
                 subconversation_id,
             )
             return _resume_already_in_progress_result(cast("str", resume_delegation_id))
-        logger.error(
+        logger.exception(
             "Failed to delegate request to service '%s' due to a constraint violation.",
             target_service_id,
-            exc_info=True,
         )
         return ToolResult(
             text=f"Error: Failed to delegate task to service '{target_service_id}'.",
             attachments=None,
         )
     except Exception as e:
-        logger.error(
-            f"Failed to delegate request to service '{target_service_id}': {e}",
-            exc_info=True,
+        logger.exception(
+            f"Failed to delegate request to service '{target_service_id}': {e}"
         )
         return ToolResult(
             text=f"Error: Failed to delegate task to service '{target_service_id}'. Details: {e}",

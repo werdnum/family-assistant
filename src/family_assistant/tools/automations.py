@@ -620,7 +620,7 @@ async def create_automation_tool(
         error_msg = str(e)
         return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
     except Exception as e:
-        logger.error(f"Error creating automation: {e}", exc_info=True)
+        logger.exception(f"Error creating automation: {e}")
         error_msg = f"Error creating automation: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})
 
@@ -702,7 +702,7 @@ async def list_automations_tool(
         return ToolResult(text=text, data={"automations": automation_list})
 
     except Exception as e:
-        logger.error(f"Error listing automations: {e}", exc_info=True)
+        logger.exception(f"Error listing automations: {e}")
         error_msg = f"Error listing automations: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})
 
@@ -817,7 +817,7 @@ async def get_automation_tool(
         return ToolResult(text=text, data=result_data)
 
     except Exception as e:
-        logger.error(f"Error getting automation: {e}", exc_info=True)
+        logger.exception(f"Error getting automation: {e}")
         error_msg = f"Error getting automation: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})
 
@@ -998,7 +998,7 @@ async def update_automation_tool(
         error_msg = str(e)
         return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
     except Exception as e:
-        logger.error(f"Error updating automation: {e}", exc_info=True)
+        logger.exception(f"Error updating automation: {e}")
         error_msg = f"Error updating automation: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})
 
@@ -1046,7 +1046,7 @@ async def enable_automation_tool(
         error_msg = str(e)
         return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
     except Exception as e:
-        logger.error(f"Error enabling automation: {e}", exc_info=True)
+        logger.exception(f"Error enabling automation: {e}")
         error_msg = f"Error enabling automation: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})
 
@@ -1094,7 +1094,7 @@ async def disable_automation_tool(
         error_msg = str(e)
         return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
     except Exception as e:
-        logger.error(f"Error disabling automation: {e}", exc_info=True)
+        logger.exception(f"Error disabling automation: {e}")
         error_msg = f"Error disabling automation: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})
 
@@ -1140,7 +1140,7 @@ async def delete_automation_tool(
         error_msg = str(e)
         return ToolResult(text=f"Error: {error_msg}", data={"error": error_msg})
     except Exception as e:
-        logger.error(f"Error deleting automation: {e}", exc_info=True)
+        logger.exception(f"Error deleting automation: {e}")
         error_msg = f"Error deleting automation: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})
 
@@ -1235,6 +1235,6 @@ async def get_automation_stats_tool(
         return ToolResult(text=text, data=stats_data)
 
     except Exception as e:
-        logger.error(f"Error getting automation stats: {e}", exc_info=True)
+        logger.exception(f"Error getting automation stats: {e}")
         error_msg = f"Error getting automation stats: {e}"
         return ToolResult(text=error_msg, data={"error": error_msg})

@@ -192,7 +192,7 @@ async def generate_image_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error generating image: {e}", exc_info=True)
+        logger.exception(f"Error generating image: {e}")
         return ToolResult(text=f"Error generating image: {e!s}")
 
 
@@ -265,5 +265,5 @@ async def transform_image_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error transforming image: {e}", exc_info=True)
+        logger.exception(f"Error transforming image: {e}")
         return ToolResult(text=f"Error transforming image: {e!s}")

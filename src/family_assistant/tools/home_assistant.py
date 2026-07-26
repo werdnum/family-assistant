@@ -428,10 +428,10 @@ async def render_home_assistant_template_tool(
         return result_str
 
     except HomeassistantAPIError as e:
-        logger.error(f"Home Assistant API error rendering template: {e}", exc_info=True)
+        logger.exception(f"Home Assistant API error rendering template: {e}")
         return f"Error: Home Assistant API error - {e!s}"
     except Exception as e:
-        logger.error(f"Unexpected error rendering template: {e}", exc_info=True)
+        logger.exception(f"Unexpected error rendering template: {e}")
         return f"Error: Failed to render template - {e!s}"
 
 
@@ -492,7 +492,7 @@ async def get_camera_snapshot_tool(
             )
 
         except Exception as e:
-            logger.error(f"Error listing cameras: {e}", exc_info=True)
+            logger.exception(f"Error listing cameras: {e}")
             return ToolResult(text=f"Error listing available cameras: {e!s}")
 
     # Use the HA client's custom camera snapshot method to get raw binary data
@@ -529,7 +529,7 @@ async def get_camera_snapshot_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error getting camera snapshot: {e}", exc_info=True)
+        logger.exception(f"Error getting camera snapshot: {e}")
         return ToolResult(text=f"Error: Failed to retrieve camera snapshot: {e!s}")
 
 
@@ -596,7 +596,7 @@ async def download_state_history_tool(
             )
 
     except (ValueError, AttributeError) as e:
-        logger.error(f"Error parsing timestamps: {e}", exc_info=True)
+        logger.exception(f"Error parsing timestamps: {e}")
         return ToolResult(
             text=f"Error: Invalid timestamp format. Use ISO 8601 format (e.g., '2024-01-01T00:00:00Z'): {e!s}"
         )
@@ -712,7 +712,7 @@ async def download_state_history_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error retrieving state history: {e}", exc_info=True)
+        logger.exception(f"Error retrieving state history: {e}")
         return ToolResult(text=f"Error: Failed to retrieve state history: {e!s}")
 
 
@@ -765,12 +765,8 @@ async def call_home_assistant_action_tool(
             return_response=return_response,
         )
     except HomeassistantAPIError as e:
-        logger.error(
-            "Home Assistant API error calling %s.%s: %s",
-            domain,
-            action,
-            e,
-            exc_info=True,
+        logger.exception(
+            "Home Assistant API error calling %s.%s: %s", domain, action, e
         )
         return ToolResult(
             text=f"Error: Home Assistant API error calling {domain}.{action} - {e!s}"
@@ -1033,5 +1029,5 @@ async def list_home_assistant_entities_tool(
         return ToolResult(text=text, data=result_data)
 
     except Exception as e:
-        logger.error(f"Error listing entities: {e}", exc_info=True)
+        logger.exception(f"Error listing entities: {e}")
         return ToolResult(text=f"Error: Failed to list entities: {e!s}")

@@ -459,7 +459,7 @@ async def execute_script_tool(
         )
 
     except Exception as e:
-        logger.error(f"Unexpected error executing script: {e}", exc_info=True)
+        logger.exception(f"Unexpected error executing script: {e}")
         error_msg = f"Unexpected error executing script: {e}"
         return ToolResult(
             text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),

@@ -172,9 +172,8 @@ class DocumentTitleUpdaterProcessor(ContentProcessor):
                 # Note: The original_document object in memory won't reflect this change
                 # unless re-fetched. This is generally fine as its primary use here is for its ID.
             except Exception as e:
-                logger.error(
-                    f"[{self.name}] Failed to update title for document ID {document_id}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"[{self.name}] Failed to update title for document ID {document_id}: {e}"
                 )
         elif potential_title and potential_title == current_doc_title:
             logger.info(

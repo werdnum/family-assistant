@@ -145,5 +145,5 @@ class EventStorage:
                 f"Stored event {event_id} (triggered: {len(triggered_listener_ids or [])} listeners)"
             )
         except Exception as e:
-            logger.error(f"Failed to store event: {e}", exc_info=True)
+            logger.exception(f"Failed to store event: {e}")
             # Don't fail event processing due to storage errors

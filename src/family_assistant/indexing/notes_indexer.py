@@ -102,10 +102,7 @@ class NotesIndexer:
                     f"Failed to retrieve document record for ID {doc_id} after adding/updating."
                 )
         except Exception as e:
-            logger.error(
-                f"Error fetching document record {doc_id}: {e}",
-                exc_info=True,
-            )
+            logger.exception(f"Error fetching document record {doc_id}: {e}")
             raise RuntimeError(f"Failed to fetch document record {doc_id}") from e
 
         # --- 6. Prepare Initial Content for Pipeline ---
@@ -142,9 +139,8 @@ class NotesIndexer:
                 context=exec_context,
             )
         except Exception as e:
-            logger.error(
-                f"Indexing pipeline run failed for note {note_id} (Doc ID: {doc_id}): {e}",
-                exc_info=True,
+            logger.exception(
+                f"Indexing pipeline run failed for note {note_id} (Doc ID: {doc_id}): {e}"
             )
             raise RuntimeError(f"Indexing pipeline failed for note {note_id}") from e
 

@@ -689,9 +689,7 @@ def load_user_documentation(filenames: list[str]) -> str:
                 f"Documentation file not found: '{filename}' in '{docs_user_dir}'"
             )
         except Exception as e:
-            logger.error(
-                f"Error reading documentation file '{filename}': {e}", exc_info=True
-            )
+            logger.exception(f"Error reading documentation file '{filename}': {e}")
 
     return "\n".join(combined_content)
 

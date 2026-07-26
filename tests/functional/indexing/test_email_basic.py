@@ -138,7 +138,7 @@ async def dump_tables_on_failure(engine: AsyncEngine) -> None:
                 logger.info("  (empty)")
 
         except Exception as dump_exc:
-            logger.error(f"Failed to dump tables on failure: {dump_exc}", exc_info=True)
+            logger.exception(f"Failed to dump tables on failure: {dump_exc}")
     logger.info("--- End table dump ---")
 
 
@@ -524,7 +524,7 @@ async def test_email_indexing_and_query_e2e(
 
         except Exception as e:
             test_failed = True
-            logger.error(f"Test failed: {e}", exc_info=True)
+            logger.exception(f"Test failed: {e}")
             raise  # Re-raise the exception after logging
     finally:
         # Stop the worker
@@ -542,4 +542,4 @@ async def test_email_indexing_and_query_e2e(
             logger.warning(f"Timeout stopping worker task {worker_id}. Cancelling.")
             worker_task.cancel()
         except Exception as e:
-            logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
+            logger.exception(f"Error stopping worker task {worker_id}: {e}")

@@ -166,7 +166,7 @@ async def _save_raw_mail_webhook(
             f"Saved raw webhook request body ({len(raw_body_content)} bytes) to: {raw_filepath}"
         )
     except Exception as e:
-        logger.error(f"Failed to save raw webhook request body: {e}", exc_info=True)
+        logger.exception(f"Failed to save raw webhook request body: {e}")
 
 
 @webhooks_router.post("/webhook/mail")
@@ -420,9 +420,8 @@ async def handle_mail_webhook(
                     except EmailIntakePayloadTooLargeError:
                         raise
                     except Exception as e:
-                        logger.error(
-                            f"Failed to save attachment {form_item.filename}: {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Failed to save attachment {form_item.filename}: {e}"
                         )
                     finally:
                         await form_item.close()  # Close the upload file
@@ -493,16 +492,15 @@ async def handle_mail_webhook(
         logger.warning("Rejecting unauthorized inbound email webhook: %s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except ValidationError as ve:
-        logger.error(
-            f"Pydantic validation error processing mail webhook: {ve.errors()}",
-            exc_info=True,
+        logger.exception(
+            f"Pydantic validation error processing mail webhook: {ve.errors()}"
         )
         # Log ve.json() for more details if needed
         raise HTTPException(
             status_code=422, detail=f"Invalid email data: {ve.errors()}"
         ) from ve
     except Exception as e:
-        logger.error(f"Error processing mail webhook: {e}", exc_info=True)
+        logger.exception(f"Error processing mail webhook: {e}")
         raise HTTPException(
             status_code=500, detail="Failed to process incoming email"
         ) from e
@@ -778,4 +776,4 @@ async def _handle_worker_completion(
             logger.warning(f"Worker task {task_id} not found for completion update")
 
     except Exception as e:
-        logger.error(f"Failed to update worker task {task_id}: {e}", exc_info=True)
+        logger.exception(f"Failed to update worker task {task_id}: {e}")

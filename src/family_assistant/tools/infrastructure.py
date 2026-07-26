@@ -685,7 +685,7 @@ class LocalToolsProvider:
                 logger.warning(f"Local tool '{name}' reported an error: {result_str}")
             return result_str
         except Exception as e:
-            logger.error(f"Error executing local tool '{name}': {e}", exc_info=True)
+            logger.exception(f"Error executing local tool '{name}': {e}")
             # Re-raise or return formatted error string? Returning error string for now.
             return f"Error executing tool '{name}': {e}"
 
@@ -715,9 +715,8 @@ class CompositeToolsProvider(ToolsProvider):
                 definitions = await provider.get_tool_definitions()
                 all_definitions.extend(definitions)
             except Exception as e:
-                logger.error(
-                    f"Error getting tool definitions from {type(provider).__name__}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error getting tool definitions from {type(provider).__name__}: {e}"
                 )
         return all_definitions
 
@@ -730,9 +729,8 @@ class CompositeToolsProvider(ToolsProvider):
             try:
                 descriptors.extend(await provider.get_tool_descriptors())
             except Exception as e:
-                logger.error(
-                    f"Error getting tool descriptors from {type(provider).__name__}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error getting tool descriptors from {type(provider).__name__}: {e}"
                 )
         return descriptors
 
@@ -746,9 +744,8 @@ class CompositeToolsProvider(ToolsProvider):
                 if descriptor is not None:
                     return descriptor
             except Exception as e:
-                logger.error(
-                    f"Error getting tool descriptor '{name}' from {type(provider).__name__}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error getting tool descriptor '{name}' from {type(provider).__name__}: {e}"
                 )
         return None
 
@@ -777,9 +774,8 @@ class CompositeToolsProvider(ToolsProvider):
                 continue
             except Exception as e:
                 # Log the error but keep trying other providers
-                logger.error(
-                    f"Error executing tool '{name}' with provider {type(provider).__name__}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error executing tool '{name}' with provider {type(provider).__name__}: {e}"
                 )
                 last_error = e
                 continue
@@ -801,9 +797,8 @@ class CompositeToolsProvider(ToolsProvider):
             try:
                 await provider.close()
             except Exception as e:
-                logger.error(
-                    f"Error closing provider {type(provider).__name__}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error closing provider {type(provider).__name__}: {e}"
                 )
         logger.info("CompositeToolsProvider closed.")
 
@@ -1001,11 +996,10 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                 )
                 return f"Action cancelled: Confirmation request for tool '{name}' was cancelled."
             except Exception as conf_err:
-                logger.error(
+                logger.exception(
                     "Error during confirmation request for tool '%s': %s",
                     name,
                     conf_err,
-                    exc_info=True,
                 )
                 return (
                     f"Error during confirmation process for tool '{name}': {conf_err}"

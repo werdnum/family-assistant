@@ -175,9 +175,8 @@ class WebChatInterface(ChatInterface):
                             f"Failed to send push notification: {e}", exc_info=True
                         )
         except Exception as e:
-            logger.error(
-                f"WebChatInterface: Error sending message to {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"WebChatInterface: Error sending message to {conversation_id}: {e}"
             )
             return None
 

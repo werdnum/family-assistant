@@ -167,9 +167,8 @@ class DocumentIndexer:
                         f"Unknown processor type '{proc_type}' in pipeline config. Skipping."
                     )
             except Exception as e:
-                logger.error(
-                    f"Failed to instantiate processor type '{proc_type}' with config {proc_specific_config}: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Failed to instantiate processor type '{proc_type}' with config {proc_specific_config}: {e}"
                 )
                 # Optionally re-raise or handle more gracefully
                 raise ValueError(f"Error instantiating processor '{proc_type}'") from e
@@ -232,10 +231,7 @@ class DocumentIndexer:
                         f"Document with ID {document_id} not found after {DOCUMENT_FETCH_MAX_ATTEMPTS} attempts."
                     )
             except SQLAlchemyError as e:
-                logger.error(
-                    f"Database error fetching document {document_id}: {e}",
-                    exc_info=True,
-                )
+                logger.exception(f"Database error fetching document {document_id}: {e}")
                 raise RuntimeError(f"Failed to fetch document {document_id}") from e
 
         initial_items: list[IndexableContent] = []
@@ -364,9 +360,8 @@ class DocumentIndexer:
                 context=exec_context,
             )
         except Exception as e:
-            logger.error(
-                f"Indexing pipeline run failed for document {document_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Indexing pipeline run failed for document {document_id}: {e}"
             )
             # Re-raise to mark the task as failed
             # Note: If the pipeline fails, the temporary file (if any) is not cleaned up here.

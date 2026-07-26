@@ -232,7 +232,7 @@ async def query_recent_events_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error querying recent events: {e}", exc_info=True)
+        logger.exception(f"Error querying recent events: {e}")
         return f"Error: Failed to query recent events. {e!s}"
 
 
@@ -401,7 +401,7 @@ async def test_event_listener_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error testing event listener: {e}", exc_info=True)
+        logger.exception(f"Error testing event listener: {e}")
         return json.dumps({
             "error": f"Failed to test event listener: {e!s}",
             "match_conditions": match_conditions,

@@ -138,9 +138,8 @@ class EventsRepository(BaseRepository):
             return True, None
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in check_and_update_rate_limit({listener_id}): {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Database error in check_and_update_rate_limit({listener_id}): {e}"
             )
             # On error, allow execution but log it
             return True, None
@@ -227,9 +226,7 @@ class EventsRepository(BaseRepository):
                 ) from e
             raise
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in create_event_listener: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in create_event_listener: {e}")
             raise
 
     async def get_event_listeners(
@@ -573,7 +570,7 @@ class EventsRepository(BaseRepository):
             await self._db.execute_with_retry(stmt)
 
         except SQLAlchemyError as e:
-            self._logger.error(f"Database error in store_event: {e}", exc_info=True)
+            self._logger.exception(f"Database error in store_event: {e}")
             # Don't raise - event storage failures shouldn't break event processing
 
     async def query_recent_events(
@@ -615,9 +612,7 @@ class EventsRepository(BaseRepository):
             return events
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in query_recent_events: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in query_recent_events: {e}")
             raise
 
     async def cleanup_old_events(
@@ -649,9 +644,7 @@ class EventsRepository(BaseRepository):
             return deleted_count
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in cleanup_old_events: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in cleanup_old_events: {e}")
             raise
 
     async def cleanup_completed_one_time_listeners(
@@ -691,9 +684,8 @@ class EventsRepository(BaseRepository):
             return deleted_count
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in cleanup_completed_one_time_listeners: {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Database error in cleanup_completed_one_time_listeners: {e}"
             )
             raise
 
@@ -798,9 +790,7 @@ class EventsRepository(BaseRepository):
             return events, total_count
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_events_with_listeners: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_events_with_listeners: {e}")
             raise
 
     async def get_listener_execution_stats(
@@ -878,8 +868,8 @@ class EventsRepository(BaseRepository):
             )
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_listener_execution_stats: {e}", exc_info=True
+            self._logger.exception(
+                f"Database error in get_listener_execution_stats: {e}"
             )
             raise
 
@@ -895,7 +885,7 @@ class EventsRepository(BaseRepository):
             return None
 
         except SQLAlchemyError as e:
-            self._logger.error(f"Database error in get_event_by_id: {e}", exc_info=True)
+            self._logger.exception(f"Database error in get_event_by_id: {e}")
             raise
 
     async def get_all_event_listeners(
@@ -941,7 +931,5 @@ class EventsRepository(BaseRepository):
             return listeners, total_count
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_all_event_listeners: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_all_event_listeners: {e}")
             raise

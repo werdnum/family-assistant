@@ -323,7 +323,7 @@ async def create_event_automation(
                 status_code=400,
                 detail=f"An automation named '{request.name}' already exists in this conversation",
             ) from e
-        logger.error(f"Error creating event automation: {e}", exc_info=True)
+        logger.exception(f"Error creating event automation: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to create automation: {e!s}"
         ) from e
@@ -401,7 +401,7 @@ async def create_schedule_automation(
                 status_code=400,
                 detail=f"An automation named '{request.name}' already exists in this conversation",
             ) from e
-        logger.error(f"Error creating schedule automation: {e}", exc_info=True)
+        logger.exception(f"Error creating schedule automation: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to create automation: {e!s}"
         ) from e
@@ -586,7 +586,7 @@ async def update_automation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating automation: {e}", exc_info=True)
+        logger.exception(f"Error updating automation: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to update automation: {e!s}"
         ) from e

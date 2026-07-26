@@ -190,9 +190,7 @@ async def serve(verify_ssl: bool = True) -> None:
                 raise McpError(unknown_error)
 
         except Exception as e:
-            logger.error(
-                f"Error during scraping/conversion for {url}: {e}", exc_info=True
-            )
+            logger.exception(f"Error during scraping/conversion for {url}: {e}")
             raise McpError(f"Error processing scrape request for {url}: {e!s}") from e
 
     # --- Run the server ---

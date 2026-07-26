@@ -678,7 +678,7 @@ async def cleanup_task_worker(
         except asyncio.CancelledError:
             logger.info(f"{label} cancellation confirmed")
     except Exception as e:
-        logger.error(f"Error stopping {label}: {e}", exc_info=True)
+        logger.exception(f"Error stopping {label}: {e}")
         worker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await worker_task
@@ -885,9 +885,8 @@ backtrace_on_debug = True
                 f"Radicale server session ready. User '{RADICALE_TEST_USER}' principal checked/created."
             )
         except Exception as e_prin:
-            logger.error(
-                f"Failed to verify/create user principal for '{RADICALE_TEST_USER}' in Radicale: {e_prin}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to verify/create user principal for '{RADICALE_TEST_USER}' in Radicale: {e_prin}"
             )
             pytest.fail(f"Radicale user principal setup failed: {e_prin}")
 
@@ -973,9 +972,8 @@ async def radicale_server(
         yield base_url, username, password, unique_calendar_url
 
     except Exception as e_create:
-        logger.error(
-            f"Failed during setup of unique Radicale calendar '{unique_calendar_name}': {e_create}",
-            exc_info=True,
+        logger.exception(
+            f"Failed during setup of unique Radicale calendar '{unique_calendar_name}': {e_create}"
         )
         pytest.fail(
             f"Radicale unique calendar creation failed for test {request.node.name}: {e_create}"
@@ -996,9 +994,8 @@ async def radicale_server(
                     f"Unique calendar '{unique_calendar_name}' (URL: {getattr(new_calendar_obj, 'url', 'N/A')}) was not found during cleanup (already deleted)."
                 )
             except Exception as e_delete:
-                logger.error(
-                    f"Error deleting unique Radicale calendar '{unique_calendar_name}' (URL: {getattr(new_calendar_obj, 'url', 'N/A')}): {e_delete}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error deleting unique Radicale calendar '{unique_calendar_name}' (URL: {getattr(new_calendar_obj, 'url', 'N/A')}): {e_delete}"
                 )
                 # Don't fail the test run for cleanup errors, but log them.
         else:

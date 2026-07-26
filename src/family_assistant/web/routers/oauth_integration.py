@@ -468,7 +468,7 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
         try:
             encryption = CredentialEncryption(integration.credential_encryption_key)
         except CredentialEncryptionError:
-            logger.error("Invalid CREDENTIAL_ENCRYPTION_KEY", exc_info=True)
+            logger.exception("Invalid CREDENTIAL_ENCRYPTION_KEY")
             return _settings_redirect({
                 spec.name: "error",
                 "message": "encryption_key_invalid",

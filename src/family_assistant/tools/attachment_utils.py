@@ -78,7 +78,7 @@ async def fetch_attachment_object(
         )
 
     except Exception as e:
-        logger.error(f"Error fetching attachment {attachment_id}: {e}", exc_info=True)
+        logger.exception(f"Error fetching attachment {attachment_id}: {e}")
         return None
 
 
