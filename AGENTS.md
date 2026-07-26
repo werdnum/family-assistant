@@ -87,16 +87,25 @@ and [.ast-grep/EXEMPTIONS.md](.ast-grep/EXEMPTIONS.md) for exemption guidance.
 
 #### Lint Suppression Budgets
 
-`.lint-budget.toml` caps how many times a given ruff rule may be suppressed, counting both
-`per-file-ignores` entries and inline `# noqa` comments. `scripts/check_suppression_budget.py` fails
-if a count rises above its budget, and lowers the budget by itself when a count falls, so the number
-only ever goes down.
+`.lint-budget.toml` caps how many violations of a given ruff rule may go unreported.
+`scripts/check_suppression_budget.py` fails if a count rises above its budget, and lowers the budget
+by itself when a count falls, so the number only ever goes down. Lowering exits nonzero on purpose:
+the rewritten file has to reach the commit, or the ceiling stays high and the headroom you just
+freed is available to the next suppression.
+
+The count comes from ruff, not from reading the config — it is the number of diagnostics that exist
+but are not reported. Two things follow. Every way of spelling a suppression is covered at once (a
+code, a prefix such as `PLW`, a bare directive, a file-wide `per-file-ignores` entry), and a
+file-wide entry is not a blank cheque: **adding another violation to an already-ignored file still
+costs budget.**
 
 A budgeted rule describes a habit rather than a single bug, which makes it cheaper to silence than
-to fix — `PLW0717` (`too-many-statements-in-try-clause`) is the current entry, at a time when it had
-accumulated 99 suppressions. **When this check fails, fix the code, do not raise the budget.** For
-`PLW0717` that means narrowing the `try` to the statements that can actually raise and moving the
-rest out of it. Raising a budget, or removing a rule from the file, needs the user to agree first.
+to fix — `PLW0717` (`too-many-statements-in-try-clause`) is the current entry, at a time when 278 of
+its violations were being suppressed, most of them by file-wide entries covering `src/`. **When this
+check fails, fix the code, do not raise the budget.** For `PLW0717` that means narrowing the `try`
+to the statements that can actually raise and moving the rest out of it; lifting pure computation
+into a helper called from inside the `try` keeps the exception handling identical. Raising a budget,
+or removing a rule from the file, needs the user to agree first.
 
 `scripts/format-and-lint.sh` must pass before committing, and never use `git commit --no-verify` —
 lint failures must be fixed or properly disabled.

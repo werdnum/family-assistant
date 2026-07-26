@@ -13,43 +13,40 @@ the room does not come back. The budget lives in `.lint-budget.toml` beside the
 count it constrains, which means giving yourself more room is a visible edit to
 a file that exists for no other purpose, rather than one more line lost in a
 hundred-line ignore list.
+
+What gets counted is *suppressed violations*, not suppression directives, and
+ruff does the counting: the budget is the number of diagnostics that exist but
+go unreported. Asking ruff has two consequences worth knowing. It closes every
+way of spelling a suppression at once — a code, a prefix such as `PLW`, a bare
+directive, a file-wide `per-file-ignores` entry — because ruff resolves all of
+them itself. And it means a file-wide entry stops being a blank cheque: adding
+another long `try` to an already-ignored file raises the count and fails, where
+counting directives would have let it through for free.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
+import json
 import subprocess
 import sys
 import tomllib
-from dataclasses import dataclass
+from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUDGET_FILENAME = ".lint-budget.toml"
 
-# Matches a ruff suppression comment: the inline form, the comma-separated form,
-# and the file-level `ruff:` form. The codes group is optional because ruff also
-# accepts a bare directive, which silences every rule on the line — counted
-# against every budget rather than being a free pass. Assembled by concatenation
-# so this source line is not itself a suppression comment.
-_NOQA = re.compile(
-    r"#\s*(?:ruff:\s*)?"
-    + "noqa"
-    + r"\b(?::\s*(?P<codes>[A-Z]+[0-9]+(?:[,\s]+[A-Z]+[0-9]+)*))?"
-)
+# Replaces the configured per-file-ignores with a mapping that matches nothing,
+# so a run sees the violations those entries would have hidden. Everything else
+# — excludes, preview, target-version — still comes from the project config.
+_NO_PER_FILE_IGNORES = "__lint_budget_no_such_path__/*.py:E501"
 
 
-@dataclass(frozen=True)
-class Usage:
-    """Where a rule is currently suppressed, and how many times."""
-
-    per_file_ignores: tuple[str, ...]
-    inline: tuple[str, ...]
-
-    @property
-    def total(self) -> int:
-        return len(self.per_file_ignores) + len(self.inline)
+def _ruff() -> str:
+    """The ruff to ask, preferring the one in this interpreter's environment."""
+    candidate = Path(sys.executable).parent / "ruff"
+    return str(candidate) if candidate.exists() else "ruff"
 
 
 def read_budgets(root: Path) -> dict[str, int]:
@@ -67,11 +64,11 @@ def write_budgets(root: Path, budgets: dict[str, int]) -> None:
     header = (
         "# Suppression budgets, enforced by scripts/check_suppression_budget.py.\n"
         "#\n"
-        "# Each number is the count of suppressions for that ruff rule across\n"
-        "# per-file-ignores and inline suppression comments. The check fails if a\n"
-        "# count rises above its budget, and lowers the budget automatically when\n"
-        "# a count falls. Do not raise a number here to make a lint failure go\n"
-        "# away — fix the code the rule is pointing at.\n"
+        "# Each number is how many violations of that ruff rule exist but go\n"
+        "# unreported, whether silenced by per-file-ignores or by a suppression\n"
+        "# comment. The check fails if a count rises above its budget, and lowers\n"
+        "# the budget automatically when a count falls. Do not raise a number here\n"
+        "# to make a lint failure go away — fix the code the rule is pointing at.\n"
         "\n[budgets]\n"
     )
     body = "".join(
@@ -80,91 +77,70 @@ def write_budgets(root: Path, budgets: dict[str, int]) -> None:
     (root / BUDGET_FILENAME).write_text(header + body, encoding="utf-8")
 
 
-def _lint_config(root: Path) -> dict[str, object]:
-    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    tool = config["tool"]
-    assert isinstance(tool, dict)
-    return tool["ruff"]["lint"]
-
-
-def _python_files(root: Path) -> list[Path]:
-    """Every file ruff would actually lint, so the count matches what it reports.
-
-    Asks ruff rather than walking the tree: a suppression in an excluded path
-    (`.ast-grep/tests/**` holds deliberately-broken fixtures) suppresses nothing,
-    and should not spend budget. The count also stays independent of the caller's
-    argv, so a pre-commit run over two files sees the same total as CI.
-    """
-    ruff = Path(sys.executable).parent / "ruff"
+def _count_by_code(root: Path, extra_args: list[str]) -> Counter[str]:
+    """Run ruff and tally the diagnostics it reports, keyed by rule code."""
     result = subprocess.run(
-        [str(ruff) if ruff.exists() else "ruff", "check", "--show-files", "."],
+        [_ruff(), "check", "--output-format", "json", *extra_args, "."],
         cwd=root,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
-    return [Path(line) for line in result.stdout.splitlines() if line.endswith(".py")]
+    if not result.stdout.strip():
+        # No diagnostics at all, or ruff refused the invocation; the latter is a
+        # bug in this script rather than a clean repository, so say which.
+        if result.returncode not in {0, 1}:
+            raise RuntimeError(
+                f"ruff failed ({result.returncode}): {result.stderr.strip()}"
+            )
+        return Counter()
+    return Counter(
+        item["code"] for item in json.loads(result.stdout) if item.get("code")
+    )
 
 
-def find_usages(root: Path, rules: list[str]) -> dict[str, Usage]:
-    """Count every suppression of each rule, wherever it is expressed."""
-    per_file_ignores = _lint_config(root).get("per-file-ignores", {})
-    assert isinstance(per_file_ignores, dict)
+def enabled_rules(root: Path) -> set[str]:
+    """The rule codes ruff would actually report, per its own resolved settings.
 
-    inline: dict[str, list[str]] = {rule: [] for rule in rules}
-    for path in _python_files(root):
-        text = path.read_text(encoding="utf-8")
-        if "noqa" not in text:
-            continue
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            match = _NOQA.search(line)
-            if match is None:
-                continue
-            listed = match.group("codes")
-            # A bare directive silences everything on the line, so it spends a
-            # unit of every budget.
-            codes = re.split(r"[,\s]+", listed) if listed else rules
-            for rule in rules:
-                if rule in codes:
-                    inline[rule].append(f"{path.relative_to(root)}:{lineno}")
-
-    return {
-        rule: Usage(
-            per_file_ignores=tuple(
-                sorted(
-                    pattern
-                    for pattern, codes in per_file_ignores.items()
-                    if rule in codes
-                )
-            ),
-            inline=tuple(inline[rule]),
-        )
-        for rule in rules
-    }
-
-
-def _longest_match(rule: str, selectors: list[str]) -> int:
-    """Length of the longest selector that covers `rule`, or -1 if none does.
-
-    Mirrors ruff's prefix selectors: `PLW` covers `PLW0717`, and a more specific
-    selector wins over a broader one on the other side.
+    Read from ruff rather than from `select`/`ignore`, so `preview = false`,
+    `extend-ignore`, and selector precedence are all accounted for.
     """
-    matching = [selector for selector in selectors if rule.startswith(selector)]
-    return max((len(selector) for selector in matching), default=-1)
+    result = subprocess.run(
+        [_ruff(), "check", "--show-settings", "."],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    codes: set[str] = set()
+    in_block = False
+    for line in result.stdout.splitlines():
+        if line.startswith("linter.rules.enabled"):
+            in_block = True
+            continue
+        if in_block:
+            if line.startswith("]"):
+                break
+            _, _, code = line.strip().rstrip(",").rpartition("(")
+            if code.endswith(")"):
+                codes.add(code[:-1])
+    return codes
 
 
-def globally_ignored(root: Path, rules: list[str]) -> list[str]:
-    """Budgeted rules that have been switched off wholesale, which defeats the budget."""
-    lint_config = _lint_config(root)
-    ignored = lint_config.get("ignore", [])
-    selected = lint_config.get("select", [])
-    assert isinstance(ignored, list)
-    assert isinstance(selected, list)
-    return [
-        rule
-        for rule in rules
-        if _longest_match(rule, selected) <= _longest_match(rule, ignored)
-    ]
+def count_suppressed(root: Path, rules: list[str]) -> dict[str, int]:
+    """How many violations of each rule exist but are not reported."""
+    reported = _count_by_code(root, [])
+    unsuppressed = _count_by_code(
+        root,
+        [
+            "--per-file-ignores",
+            _NO_PER_FILE_IGNORES,
+            "--ignore-noqa",
+            "--select",
+            ",".join(rules),
+        ],
+    )
+    return {rule: max(0, unsuppressed[rule] - reported[rule]) for rule in rules}
 
 
 def check(root: Path) -> int:
@@ -176,27 +152,28 @@ def check(root: Path) -> int:
 
     rules = sorted(budgets)
 
-    disabled = globally_ignored(root, rules)
+    disabled = sorted(set(rules) - enabled_rules(root))
     if disabled:
         print(
-            f"Budgeted rules are not enabled in pyproject.toml: {', '.join(disabled)}.\n"
+            f"Budgeted rules are not enabled in ruff's resolved settings: "
+            f"{', '.join(disabled)}.\n"
             "A budget only means something while the rule is still reported. Either\n"
             "re-enable the rule, or delete its budget deliberately.",
             file=sys.stderr,
         )
         return 1
 
-    usages = find_usages(root, rules)
+    counts = count_suppressed(root, rules)
     failed = False
     lowered: dict[str, int] = {}
 
     for rule in rules:
-        usage = usages[rule]
+        total = counts[rule]
         budget = budgets[rule]
-        if usage.total > budget:
+        if total > budget:
             failed = True
             print(
-                f"{rule}: {usage.total} suppressions, budget is {budget}.\n"
+                f"{rule}: {total} suppressed violations, budget is {budget}.\n"
                 f"\n"
                 f"  Do not raise the budget in {BUDGET_FILENAME} to get past this.\n"
                 f"  The budget exists because silencing {rule} is easier than fixing it,\n"
@@ -204,12 +181,16 @@ def check(root: Path) -> int:
                 f"  PLW0717 that means narrowing the `try` to the statements that can\n"
                 f"  actually raise, and moving the rest out of it.\n"
                 f"\n"
+                f"  Note this counts violations, not `noqa` comments, so a file that\n"
+                f"  already has a per-file-ignores entry still costs budget when you\n"
+                f"  add another violation to it.\n"
+                f"\n"
                 f"  If the suppression really is correct, say so on the pull request and\n"
                 f"  get a human to agree before touching the budget.\n",
                 file=sys.stderr,
             )
-        elif usage.total < budget:
-            lowered[rule] = usage.total
+        elif total < budget:
+            lowered[rule] = total
 
     if lowered:
         budgets.update(lowered)

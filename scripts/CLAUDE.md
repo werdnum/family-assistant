@@ -14,10 +14,14 @@ checked, not ignored.
 
 ### `check_suppression_budget.py`
 
-Enforces the shrink-only lint suppression budgets in `.lint-budget.toml`, counting both
-`per-file-ignores` entries and inline `# noqa` comments for each budgeted ruff rule. Runs from
-`format-and-lint.sh` and as a pre-commit hook; takes filenames only so pre-commit can pass them, and
-always counts the whole repository. The root `AGENTS.md` covers what to do when it fails.
+Enforces the shrink-only lint suppression budgets in `.lint-budget.toml`. For each budgeted rule it
+asks ruff how many violations exist but go unreported: one run with the project config, one with
+`--per-file-ignores` pointed at a path that matches nothing plus `--ignore-noqa`, and the difference
+is the suppressed count. Enablement comes from `ruff check --show-settings`, so `preview`,
+`extend-ignore` and selector precedence are all honoured.
+
+Runs from `format-and-lint.sh` and as a pre-commit hook; takes filenames only so pre-commit can pass
+them, and always counts the whole repository. The root `AGENTS.md` covers what to do when it fails.
 
 ### `run_pytest_adaptive.py`
 
