@@ -12,6 +12,13 @@ argument by extension rather than accepting Python only: `.py` to ruff/basedpyri
 `.sh/.bash` to shellcheck. Pass frontend, documentation and script changes to it too — they are
 checked, not ignored.
 
+### `check_suppression_budget.py`
+
+Enforces the shrink-only lint suppression budgets in `.lint-budget.toml`, counting both
+`per-file-ignores` entries and inline `# noqa` comments for each budgeted ruff rule. Runs from
+`format-and-lint.sh` and as a pre-commit hook; takes filenames only so pre-commit can pass them, and
+always counts the whole repository. The root `AGENTS.md` covers what to do when it fails.
+
 ### `run_pytest_adaptive.py`
 
 Default pytest runner used by `scripts/run-tests.sh`. It collects nodeids, runs serial pytest shards

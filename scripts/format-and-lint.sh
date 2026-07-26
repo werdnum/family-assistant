@@ -177,6 +177,23 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
         fi
     fi
 
+    # Lint suppression budgets (shrink-only)
+    if [ $HAS_ERRORS -eq 0 ]; then
+        echo -n "${BLUE}  ▸ Running lint suppression budget check...${NC}"
+        timer_start
+        if ! "$PYTHON_BIN" scripts/check_suppression_budget.py >/dev/null 2>&1; then
+            timer_end
+            echo ""
+            echo "${RED}❌ Lint suppression budget exceeded${NC}"
+            echo ""
+            "$PYTHON_BIN" scripts/check_suppression_budget.py
+            HAS_ERRORS=1
+        else
+            echo -n "${GREEN} ✓${NC}"
+            timer_end
+        fi
+    fi
+
     echo ""
 fi
 

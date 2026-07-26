@@ -80,10 +80,23 @@ scripts/format-and-lint.sh path/to/file.py       # specific files
 scripts/format-and-lint.sh $(git diff --name-only --cached | grep '\.py$')
 ```
 
-This runs `ruff check --fix`, `ruff format`, `basedpyright`, `pylint`, and code conformance checks
-(ast-grep pattern rules, e.g. banning `asyncio.sleep()` in tests). Rules live in `.ast-grep/rules/`;
-see [.ast-grep/rules/README.md](.ast-grep/rules/README.md) and
-[.ast-grep/EXEMPTIONS.md](.ast-grep/EXEMPTIONS.md) for exemption guidance.
+This runs `ruff check --fix`, `ruff format`, `basedpyright`, `pylint`, code conformance checks
+(ast-grep pattern rules, e.g. banning `asyncio.sleep()` in tests) and the lint suppression budget
+check. Rules live in `.ast-grep/rules/`; see [.ast-grep/rules/README.md](.ast-grep/rules/README.md)
+and [.ast-grep/EXEMPTIONS.md](.ast-grep/EXEMPTIONS.md) for exemption guidance.
+
+#### Lint Suppression Budgets
+
+`.lint-budget.toml` caps how many times a given ruff rule may be suppressed, counting both
+`per-file-ignores` entries and inline `# noqa` comments. `scripts/check_suppression_budget.py` fails
+if a count rises above its budget, and lowers the budget by itself when a count falls, so the number
+only ever goes down.
+
+A budgeted rule describes a habit rather than a single bug, which makes it cheaper to silence than
+to fix — `PLW0717` (`too-many-statements-in-try-clause`) is the current entry, at a time when it had
+accumulated 103 suppressions. **When this check fails, fix the code, do not raise the budget.** For
+`PLW0717` that means narrowing the `try` to the statements that can actually raise and moving the
+rest out of it. Raising a budget, or removing a rule from the file, needs the user to agree first.
 
 `scripts/format-and-lint.sh` must pass before committing, and never use `git commit --no-verify` —
 lint failures must be fixed or properly disabled.
