@@ -11,7 +11,7 @@ from family_assistant.utils.workspace import (
 
 __all__ = [
     "SQLAlchemyErrorHandler",
-    "setup_error_logging",
     "get_workspace_root",
+    "setup_error_logging",
     "validate_workspace_path",
 ]

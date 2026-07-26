@@ -714,7 +714,7 @@ class ProcessingService:
                 save_with_isolated_context=use_isolated_context,
             )
         except Exception:
-            logger.error("Failed to save error message to history", exc_info=True)
+            logger.exception("Failed to save error message to history")
             return None
 
     async def _prepare_turn_messages_for_llm(
@@ -1176,9 +1176,8 @@ class ProcessingService:
             )
 
         except Exception as exc:
-            logger.error(
-                f"Error in handle_chat_interaction for conversation {conversation_id}, turn {turn_id}",
-                exc_info=True,
+            logger.exception(
+                f"Error in handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
             )
             processing_error_traceback = traceback.format_exc()
 
@@ -1361,9 +1360,7 @@ class ProcessingService:
                 except Exception as e:
                     span.set_status(StatusCode.ERROR, str(e))
                     span.record_exception(e)
-                    logger.error(
-                        f"Error in streaming chat interaction: {e}", exc_info=True
-                    )
+                    logger.exception(f"Error in streaming chat interaction: {e}")
                     processing_error_traceback = traceback.format_exc()
                     error_message = _user_friendly_error_message(e)
                     await self._persist_error_history_message(

@@ -46,15 +46,15 @@ class MinimalToolsProvider:
         self.result = result
         self.error = error
         self.executed_tool_names: list[str] = []
-        self.executed_arguments: list[dict] = []  # noqa: A003 - Test fixture shadow builtin dict
+        self.executed_arguments: list[dict] = []
 
-    async def get_tool_definitions(self) -> list:  # noqa: A002 - Test fixture shadow builtin list
+    async def get_tool_definitions(self) -> list:
         return []
 
     async def execute_tool(
         self,
         name: str,
-        arguments: dict,  # noqa: A002 - Test fixture shadow builtin dict
+        arguments: dict,
         context: ToolExecutionContext,
         call_id: str | None = None,
     ) -> str | ToolResult:
@@ -117,7 +117,7 @@ class StubConfirmationCallback:
 
     def __init__(self, outcome: ConfirmationOutcome) -> None:
         self.outcome = outcome
-        self.calls: list[dict] = []  # noqa: A003 - Test fixture shadow builtin dict
+        self.calls: list[dict] = []
 
     async def __call__(
         self,
@@ -126,7 +126,7 @@ class StubConfirmationCallback:
         turn_id: str | None,
         tool_name: str,
         call_id: str,
-        tool_args: dict,  # noqa: A002 - Test fixture shadow builtin dict
+        tool_args: dict,
         timeout_seconds: float,
         context: ToolExecutionContext,
     ) -> ConfirmationOutcome:
@@ -483,7 +483,7 @@ class RaisingConfirmationCallback:
         turn_id: str | None,
         tool_name: str,
         call_id: str,
-        tool_args: dict,  # noqa: A002 - Test fixture shadow builtin dict
+        tool_args: dict,
         timeout_seconds: float,
         context: ToolExecutionContext,
     ) -> ConfirmationOutcome:

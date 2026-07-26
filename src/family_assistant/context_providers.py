@@ -253,9 +253,7 @@ class NotesContextProvider(ContextProvider):
                     len(fragments),
                 )
         except Exception as e:
-            logger.error(
-                f"[{self.name}] Failed to get notes context: {e}", exc_info=True
-            )
+            logger.exception(f"[{self.name}] Failed to get notes context: {e}")
             return []
         return fragments
 
@@ -395,18 +393,15 @@ class HomeAssistantContextProvider(ContextProvider):
                     fragments.append(empty_message)
 
         except HomeassistantAPIError as ha_api_err:  # Specific error for HA API issues
-            logger.error(
-                f"[{self.name}] Home Assistant API error: {ha_api_err}", exc_info=True
-            )
+            logger.exception(f"[{self.name}] Home Assistant API error: {ha_api_err}")
             error_message = self._prompts.get(
                 "home_assistant_api_error", "Error retrieving data from Home Assistant."
             ).strip()
             if error_message:
                 fragments.append(error_message)
         except Exception as e:  # Catch other potential errors (network, etc.)
-            logger.error(
-                f"[{self.name}] Error rendering Home Assistant template: {e}",
-                exc_info=True,
+            logger.exception(
+                f"[{self.name}] Error rendering Home Assistant template: {e}"
             )
             error_message = self._prompts.get(
                 "home_assistant_api_error", "Error retrieving data from Home Assistant."
@@ -508,18 +503,14 @@ class WeatherContextProvider(ContextProvider):
             logger.debug(f"[{self.name}] Weather data fetched and cached.")
             return data
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"[{self.name}] HTTP error fetching weather data: {e.response.status_code} - {e.response.text}",
-                exc_info=True,
+            logger.exception(
+                f"[{self.name}] HTTP error fetching weather data: {e.response.status_code} - {e.response.text}"
             )
         except httpx.RequestError as e:
-            logger.error(
-                f"[{self.name}] Request error fetching weather data: {e}", exc_info=True
-            )
+            logger.exception(f"[{self.name}] Request error fetching weather data: {e}")
         except Exception as e:
-            logger.error(
-                f"[{self.name}] Unexpected error fetching or parsing weather data: {e}",
-                exc_info=True,
+            logger.exception(
+                f"[{self.name}] Unexpected error fetching or parsing weather data: {e}"
             )
         return None
 
@@ -878,9 +869,7 @@ class WeatherContextProvider(ContextProvider):
             fragments.extend(weekly_outlook)
 
         except Exception as e:
-            logger.error(
-                f"[{self.name}] Error formatting weather data: {e}", exc_info=True
-            )
+            logger.exception(f"[{self.name}] Error formatting weather data: {e}")
             # Fallback to a simpler message if formatting fails
             no_data_msg = self._prompts.get(
                 "weather_formatting_error", "Could not format weather details."
@@ -968,9 +957,8 @@ class CalendarContextProvider(ContextProvider):
                 f"[{self.name}] Formatted upcoming events into {len(fragments)} fragment(s)."
             )
         except Exception as e:
-            logger.error(
-                f"[{self.name}] Failed to fetch or format calendar events: {e}",
-                exc_info=True,
+            logger.exception(
+                f"[{self.name}] Failed to fetch or format calendar events: {e}"
             )
             # As per protocol, return empty list on error, error is logged.
             return []
@@ -1036,8 +1024,6 @@ class KnownUsersContextProvider(ContextProvider):
                 f"[{self.name}] Formatted {len(self._chat_id_to_name_map)} known users into {len(fragments)} fragment(s)."
             )
         except Exception as e:
-            logger.error(
-                f"[{self.name}] Failed to get known users context: {e}", exc_info=True
-            )
+            logger.exception(f"[{self.name}] Failed to get known users context: {e}")
             return []
         return fragments

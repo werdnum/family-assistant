@@ -526,7 +526,7 @@ async def spawn_worker_tool(
         return ToolResult(data=result_data)
 
     except Exception as e:
-        logger.error(f"Failed to spawn worker task: {e}", exc_info=True)
+        logger.exception(f"Failed to spawn worker task: {e}")
         return ToolResult(data={"error": f"Failed to spawn worker: {e!s}"})
 
 

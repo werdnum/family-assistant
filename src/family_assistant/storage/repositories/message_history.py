@@ -1193,7 +1193,7 @@ class MessageHistoryRepository(BaseRepository):
             )
 
         except SQLAlchemyError as e:
-            self._logger.error(f"Failed to add message to history: {e}", exc_info=True)
+            self._logger.exception(f"Failed to add message to history: {e}")
             return None
 
         await self._enqueue_message_history_indexing_task(

@@ -36,8 +36,6 @@ class ScriptRow(ScriptModel):
 class ScriptNotFoundError(Exception):
     """Raised when a script cannot be found."""
 
-    pass
-
 
 class ScriptsRepository(BaseRepository):
     """Repository for managing stored scripts."""
@@ -135,9 +133,7 @@ class ScriptsRepository(BaseRepository):
                 return None
             return _row_to_script_row(row)
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_by_name({name}): {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_by_name({name}): {e}")
             raise
 
     async def get_by_id(self, script_id: int) -> ScriptRow | None:
@@ -159,9 +155,7 @@ class ScriptsRepository(BaseRepository):
                 return None
             return _row_to_script_row(row)
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_by_id({script_id}): {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_by_id({script_id}): {e}")
             raise
 
     async def list_all(self) -> list[ScriptRow]:
@@ -178,7 +172,7 @@ class ScriptsRepository(BaseRepository):
             rows = await self._db.fetch_all(stmt)
             return [_row_to_script_row(row) for row in rows]
         except SQLAlchemyError as e:
-            self._logger.error(f"Database error in list_all: {e}", exc_info=True)
+            self._logger.exception(f"Database error in list_all: {e}")
             raise
 
     async def delete(self, name: str) -> bool:
@@ -203,7 +197,7 @@ class ScriptsRepository(BaseRepository):
                 self._logger.warning(f"Script not found for deletion: {name}")
             return deleted
         except SQLAlchemyError as e:
-            self._logger.error(f"Database error in delete({name}): {e}", exc_info=True)
+            self._logger.exception(f"Database error in delete({name}): {e}")
             raise
 
 

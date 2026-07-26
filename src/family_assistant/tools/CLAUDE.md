@@ -35,7 +35,10 @@ SOMETHING_TOOLS_DEFINITION: list[ToolDefinition] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "param1": {"type": "string", "description": "Description of param1"},
+                    "param1": {
+                        "type": "string",
+                        "description": "Description of param1",
+                    },
                 },
                 "required": ["param1"],
             },

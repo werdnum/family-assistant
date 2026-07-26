@@ -100,7 +100,7 @@ async def upload_attachment(
         # Re-raise HTTPExceptions from the service
         raise
     except Exception as e:
-        logger.error(f"Unexpected error during attachment upload: {e}", exc_info=True)
+        logger.exception(f"Unexpected error during attachment upload: {e}")
         raise HTTPException(
             status_code=500,
             detail="An unexpected error occurred while uploading the attachment",

@@ -101,12 +101,11 @@ async def create_api_token(
         )
 
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to create API token for user %s (Name: %s): %s",
             user_identifier,
             token_data.name,
             e,
-            exc_info=True,
         )
         # Check for specific database errors if needed, e.g., unique constraint on prefix
         # For now, a generic 500 error.
@@ -145,11 +144,8 @@ async def list_api_tokens(
         )
         return tokens
     except Exception as e:
-        logger.error(
-            "Failed to fetch API tokens for user %s: %s",
-            user_identifier,
-            e,
-            exc_info=True,
+        logger.exception(
+            "Failed to fetch API tokens for user %s: %s", user_identifier, e
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -199,12 +195,11 @@ async def revoke_api_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Error revoking token ID %s for user %s via API: %s",
             token_id,
             user_identifier,
             e,
-            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

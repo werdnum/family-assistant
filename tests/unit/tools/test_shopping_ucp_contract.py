@@ -750,14 +750,14 @@ def test_cart_parser_reads_spec_shaped_response_and_rejects_legacy_wrapper() -> 
     }
     # SLF001: this test deliberately pins the module-private response parser to
     # the spec, so calling it directly is the point of the test.
-    assert shopping._cart_from_response(response)["id"] == spec_cart["id"]  # noqa: SLF001
+    assert shopping._cart_from_response(response)["id"] == spec_cart["id"]
 
     wrapped: dict[str, object] = {
         "response": {"result": {"structuredContent": {"cart": spec_cart}}}
     }
     with pytest.raises(ValueError, match="did not include a cart"):
         # SLF001: same rationale — exercise the private parser directly.
-        shopping._cart_from_response(wrapped)  # noqa: SLF001
+        shopping._cart_from_response(wrapped)
 
 
 async def test_rest_create_cart_request_conforms_to_spec(

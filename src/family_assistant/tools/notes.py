@@ -140,7 +140,7 @@ async def add_or_update_note_tool(
     except NoteWritePolicyError as e:
         return f"Error: {e}"
     except Exception as e:
-        logger.error(f"Error adding/updating note '{title}': {e}", exc_info=True)
+        logger.exception(f"Error adding/updating note '{title}': {e}")
         return f"Error: Failed to add/update note '{title}'. {e}"
 
 
@@ -395,9 +395,8 @@ async def get_note_tool(
                         f"Attachment {attachment_id} referenced in note '{title}' not found"
                     )
             except Exception as e:
-                logger.error(
-                    f"Error fetching attachment {attachment_id} for note '{title}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error fetching attachment {attachment_id} for note '{title}': {e}"
                 )
 
     return ToolResult(

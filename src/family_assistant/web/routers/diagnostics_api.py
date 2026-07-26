@@ -292,7 +292,7 @@ async def export_diagnostics(
     max_llm_requests: Annotated[int, Query(ge=1, le=100)] = 20,
     max_messages: Annotated[int, Query(ge=1, le=500)] = 100,
     conversation_id: str | None = None,
-    format: ExportFormat = "json",  # noqa: A002 - shadows builtin but matches API convention
+    format: ExportFormat = "json",
 ) -> DiagnosticsExportResponse | PlainTextResponse:
     """Export diagnostic data for debugging.
 

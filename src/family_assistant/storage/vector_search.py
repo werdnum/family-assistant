@@ -388,9 +388,9 @@ async def query_vector_store(
         # Convert RowMapping objects (which behave like dicts) to actual dicts
         return [dict(row) for row in results]
     except Exception as e:
-        logger.error(f"Error executing vector search query: {e}", exc_info=True)
+        logger.exception(f"Error executing vector search query: {e}")
         # Depending on desired behavior, either return empty list or re-raise
         raise  # Re-raise the exception for the caller (web server) to handle
 
 
-__all__ = ["VectorSearchQuery", "MetadataFilter", "query_vector_store"]
+__all__ = ["MetadataFilter", "VectorSearchQuery", "query_vector_store"]

@@ -43,7 +43,5 @@ class BaseRepository:
         try:
             return await self._db.execute_with_retry(query, params)
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in {operation_name}: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in {operation_name}: {e}")
             raise

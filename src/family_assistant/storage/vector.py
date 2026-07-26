@@ -15,7 +15,7 @@ from typing import (
 
 import sqlalchemy as sa
 from pgvector.sqlalchemy import (  # type: ignore[import-untyped]
-    Vector,  # noqa F401 - Needs to be imported for SQLAlchemy type mapping
+    Vector,
 )
 from sqlalchemy import (
     JSON,
@@ -218,9 +218,7 @@ async def init_vector_db(db_context: DatabaseContext) -> None:
 
         except SQLAlchemyError as e:
             # Catch potential errors during extension creation
-            logger.error(
-                f"Database error during vector DB initialization: {e}", exc_info=True
-            )
+            logger.exception(f"Database error during vector DB initialization: {e}")
             raise  # Re-raise to indicate failure
 
         logger.info("PostgreSQL vector database extension initialized.")
@@ -294,9 +292,8 @@ async def add_document(
         )
         return doc_id
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error adding/updating document with source_id {doc.source_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error adding/updating document with source_id {doc.source_id}: {e}"
         )
         raise
 
@@ -340,17 +337,15 @@ async def get_document_by_source_id(
             return None
 
     except SQLAlchemyError as e:  # Catch database-specific errors
-        logger.error(
-            f"Database error retrieving document with source_id {source_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error retrieving document with source_id {source_id}: {e}"
         )
         raise
     except (
         Exception
     ) as e:  # Catch other potential errors like RuntimeError from pre-checks
-        logger.error(
-            f"Unexpected error retrieving document with source_id {source_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Unexpected error retrieving document with source_id {source_id}: {e}"
         )
         raise
 
@@ -397,17 +392,15 @@ async def get_document_by_id(
             )
             return None
     except SQLAlchemyError as e:  # Catch database-specific errors
-        logger.error(
-            f"Database error retrieving document with ID {document_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error retrieving document with ID {document_id}: {e}"
         )
         raise
     except (
         Exception
     ) as e:  # Catch other potential errors like RuntimeError from pre-checks
-        logger.error(
-            f"Unexpected error retrieving document with ID {document_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Unexpected error retrieving document with ID {document_id}: {e}"
         )
         raise
 
@@ -483,9 +476,8 @@ async def add_embedding(
             f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
         )
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error adding/updating embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error adding/updating embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}: {e}"
         )
         raise
 
@@ -511,9 +503,7 @@ async def delete_document(db_context: DatabaseContext, document_id: int) -> bool
             logger.warning(f"No document found with ID {document_id} to delete.")
             return False
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error deleting document {document_id}: {e}", exc_info=True
-        )
+        logger.exception(f"Database error deleting document {document_id}: {e}")
         raise
 
 
@@ -743,7 +733,7 @@ async def query_vectors(
         # fetch_all already returns list of dict-like mappings
         return rows
     except SQLAlchemyError as e:
-        logger.error(f"Database error during vector query: {e}", exc_info=True)
+        logger.exception(f"Database error during vector query: {e}")
         raise
 
 
@@ -781,9 +771,8 @@ async def update_document_title_in_db(
                 f"No document found with ID {document_id} to update title, or title was already the same."
             )
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error updating title for document ID {document_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error updating title for document ID {document_id}: {e}"
         )
         raise  # Re-raise to allow task retry or failure handling
 
@@ -808,25 +797,24 @@ async def delete_document_embeddings(
             f"Deleted {deleted_count} existing embeddings for document ID {document_id}"
         )
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error deleting embeddings for document {document_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error deleting embeddings for document {document_id}: {e}"
         )
         raise
 
 
 # Export functions explicitly for clarity when importing elsewhere
 __all__ = [
-    "init_vector_db",
-    "update_document_title_in_db",  # Add new function to __all__
+    "Document",  # Export the protocol
+    "DocumentEmbeddingRecord",  # Export SQLAlchemy ORM model
+    "DocumentRecord",  # Export SQLAlchemy ORM model
     "add_document",
-    "get_document_by_source_id",
-    "get_document_by_id",
     "add_embedding",
     "delete_document",
     "delete_document_embeddings",  # Add new function
+    "get_document_by_id",
+    "get_document_by_source_id",
+    "init_vector_db",
     "query_vectors",
-    "DocumentRecord",  # Export SQLAlchemy ORM model
-    "DocumentEmbeddingRecord",  # Export SQLAlchemy ORM model
-    "Document",  # Export the protocol
+    "update_document_title_in_db",  # Add new function to __all__
 ]

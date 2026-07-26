@@ -151,7 +151,7 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
         token = await auth_service.oauth.oidc_provider.authorize_access_token(request)
         user_info = token.get("userinfo")
     except Exception as e:
-        logger.error("OIDC callback failed during app auth: %s", e, exc_info=True)
+        logger.exception("OIDC callback failed during app auth: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Authentication failed: {e}",

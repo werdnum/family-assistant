@@ -187,9 +187,7 @@ async def indexing_task_worker(
                 except asyncio.CancelledError:
                     logger.info("Worker task (fixture) cancellation confirmed.")
             except Exception as e:
-                logger.error(
-                    f"Error stopping worker task (fixture): {e}", exc_info=True
-                )
+                logger.exception(f"Error stopping worker task (fixture): {e}")
 
 
 @pytest.mark.asyncio

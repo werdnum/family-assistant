@@ -102,7 +102,7 @@ class AuthService:
                     "OAuth successfully initialized and OIDC provider registered"
                 )
             except Exception as e:
-                logger.error(f"Failed to initialize OAuth: {e}", exc_info=True)
+                logger.exception(f"Failed to initialize OAuth: {e}")
                 self.oauth = None
                 # Don't raise here - let create_auth_router handle it
                 # This allows the app to start but with proper error logging
@@ -299,9 +299,7 @@ class AuthService:
             # Re-raise HTTPExceptions as-is (e.g., 403 Forbidden from allowlist)
             raise
         except Exception as e:
-            logger.error(
-                f"Error during OIDC authentication callback: {e}", exc_info=True
-            )
+            logger.exception(f"Error during OIDC authentication callback: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Authentication failed: {e}",

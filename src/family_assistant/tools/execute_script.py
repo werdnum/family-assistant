@@ -35,7 +35,7 @@ def _is_valid_uuid(value: str) -> bool:
         return False
 
 
-def _extract_ids_from_list(items: list[Any]) -> list[str]:  # noqa: ANN401
+def _extract_ids_from_list(items: list[Any]) -> list[str]:
     """Extract attachment IDs from a list of items (recursively handles nested lists)."""
     ids = []
     for item in items:
@@ -423,7 +423,7 @@ async def execute_script_tool(
         error_msg = "Syntax error in script"
         if e.line:
             error_msg += f" at line {e.line}"
-        error_msg += f": {str(e)}"
+        error_msg += f": {e!s}"
         logger.error(error_msg)
         return ToolResult(
             text=f"Error: {error_msg}",
@@ -447,7 +447,7 @@ async def execute_script_tool(
         )
 
     except ScriptExecutionError as e:
-        error_msg = f"Script execution failed: {str(e)}"
+        error_msg = f"Script execution failed: {e!s}"
         logger.error(error_msg)
         return ToolResult(
             text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),
@@ -459,7 +459,7 @@ async def execute_script_tool(
         )
 
     except Exception as e:
-        logger.error(f"Unexpected error executing script: {e}", exc_info=True)
+        logger.exception(f"Unexpected error executing script: {e}")
         error_msg = f"Unexpected error executing script: {e}"
         return ToolResult(
             text=_prepend_captured_output(f"Error: {error_msg}", output_buffer),

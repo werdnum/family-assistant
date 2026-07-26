@@ -607,9 +607,8 @@ async def add_calendar_event_tool(
 
             return result
         except (DAVError, ConnectionError, Exception) as sync_err:
-            logger.error(
-                f"Error during synchronous CalDAV save operation: {sync_err}",
-                exc_info=True,
+            logger.exception(
+                f"Error during synchronous CalDAV save operation: {sync_err}"
             )
             # Provide a more specific error if possible
             if "authentication" in str(sync_err).lower():
@@ -625,7 +624,7 @@ async def add_calendar_event_tool(
         logger.error(f"Invalid arguments for adding calendar event: {ve}")
         return f"Error: Invalid arguments provided. {ve}"
     except Exception as e:
-        logger.error(f"Unexpected error adding calendar event: {e}", exc_info=True)
+        logger.exception(f"Unexpected error adding calendar event: {e}")
         return f"Error: An unexpected error occurred while adding the event. {e}"
 
 
@@ -864,14 +863,14 @@ async def search_calendar_events_tool(
 
             return "\n".join(result_lines)
         except Exception as sync_err:
-            logger.error(f"Error during calendar search: {sync_err}", exc_info=True)
+            logger.exception(f"Error during calendar search: {sync_err}")
             return f"Error: Failed to search calendar events. {sync_err}"
 
     except ValueError as ve:
         logger.error(f"Invalid search parameters: {ve}")
         return f"Error: Invalid search parameters. {ve}"
     except Exception as e:
-        logger.error(f"Unexpected error searching calendar events: {e}", exc_info=True)
+        logger.exception(f"Unexpected error searching calendar events: {e}")
         return f"Error: An unexpected error occurred while searching events. {e}"
 
 
@@ -1094,7 +1093,7 @@ async def modify_calendar_event_tool(
                 except NotFoundError:
                     return f"Error: Event with UID '{uid}' not found in calendar."
                 except Exception as e:
-                    logger.error(f"Error modifying event: {e}", exc_info=True)
+                    logger.exception(f"Error modifying event: {e}")
                     return f"Error: Failed to modify event. {e}"
 
         try:
@@ -1102,16 +1101,14 @@ async def modify_calendar_event_tool(
             result = await loop.run_in_executor(None, modify_event_sync)
             return result
         except Exception as sync_err:
-            logger.error(
-                f"Error during calendar modification: {sync_err}", exc_info=True
-            )
+            logger.exception(f"Error during calendar modification: {sync_err}")
             return f"Error: Failed to modify calendar event. {sync_err}"
 
     except ValueError as ve:
         logger.error(f"Invalid modification parameters: {ve}")
         return f"Error: Invalid modification parameters. {ve}"
     except Exception as e:
-        logger.error(f"Unexpected error modifying calendar event: {e}", exc_info=True)
+        logger.exception(f"Unexpected error modifying calendar event: {e}")
         return f"Error: An unexpected error occurred while modifying the event. {e}"
 
 
@@ -1218,7 +1215,7 @@ async def delete_calendar_event_tool(
                 except NotFoundError:
                     return f"Error: Event with UID '{uid}' not found in calendar."
                 except Exception as e:
-                    logger.error(f"Error deleting event: {e}", exc_info=True)
+                    logger.exception(f"Error deleting event: {e}")
                     return f"Error: Failed to delete event. {e}"
 
         try:
@@ -1226,9 +1223,9 @@ async def delete_calendar_event_tool(
             result = await loop.run_in_executor(None, delete_event_sync)
             return result
         except Exception as sync_err:
-            logger.error(f"Error during calendar deletion: {sync_err}", exc_info=True)
+            logger.exception(f"Error during calendar deletion: {sync_err}")
             return f"Error: Failed to delete calendar event. {sync_err}"
 
     except Exception as e:
-        logger.error(f"Unexpected error deleting calendar event: {e}", exc_info=True)
+        logger.exception(f"Unexpected error deleting calendar event: {e}")
         return f"Error: An unexpected error occurred while deleting the event. {e}"

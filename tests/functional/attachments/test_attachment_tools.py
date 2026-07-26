@@ -70,7 +70,7 @@ class TestAttachToResponseTool:
 
     async def test_attach_to_response_success(
         self,
-        db_engine: AsyncEngine,  # noqa: ANN001
+        db_engine: AsyncEngine,
         mock_attachment_registry: Mock,
         mock_attachment_metadata: MockAttachmentMetadata,
     ) -> None:

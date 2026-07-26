@@ -209,9 +209,7 @@ async def annotate_image_tool(
         return ToolResult(text=success_message, attachments=[annotated_attachment])
 
     except Exception as e:
-        logger.error(
-            f"Error mock-annotating image {image_attachment_id}: {e}", exc_info=True
-        )
+        logger.exception(f"Error mock-annotating image {image_attachment_id}: {e}")
         return ToolResult(
-            text=f"Error: Failed to annotate image: {str(e)}", attachments=None
+            text=f"Error: Failed to annotate image: {e!s}", attachments=None
         )

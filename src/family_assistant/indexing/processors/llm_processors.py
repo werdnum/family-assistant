@@ -62,8 +62,8 @@ class LLMIntelligenceProcessor(ContentProcessor):
     async def process(
         self,
         current_items: list[IndexableContent],
-        original_document: "Document",  # noqa: ARG002
-        initial_content_ref: IndexableContent | None,  # noqa: ARG002
+        original_document: "Document",
+        initial_content_ref: IndexableContent | None,
         context: "ToolExecutionContext",
     ) -> list[IndexableContent]:
         processed_items: list[IndexableContent] = []
@@ -188,9 +188,8 @@ class LLMIntelligenceProcessor(ContentProcessor):
                                     f"Processor '{self.name}': Failed to parse LLM tool call arguments: {arguments_str}. Error: {e}"
                                 )
                             except Exception as e:
-                                logger.error(
-                                    f"Processor '{self.name}': Error processing LLM tool call: {e}",
-                                    exc_info=True,
+                                logger.exception(
+                                    f"Processor '{self.name}': Error processing LLM tool call: {e}"
                                 )
                         else:
                             logger.warning(
@@ -206,9 +205,8 @@ class LLMIntelligenceProcessor(ContentProcessor):
                     )
 
             except Exception as e:
-                logger.error(
-                    f"Processor '{self.name}': Error during LLM call or processing response for item type '{item.embedding_type}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Processor '{self.name}': Error during LLM call or processing response for item type '{item.embedding_type}': {e}"
                 )
                 # Original item is already in output_items if we adopt the new strategy below.
                 # If not, and an error occurs, the original item might be lost if not re-added.
@@ -524,9 +522,8 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                             except (
                                 Exception
                             ) as e:  # Catch other errors during argument processing
-                                logger.error(
-                                    f"Processor '{self.name}': Error processing LLM tool call arguments for link extraction: {e}",
-                                    exc_info=True,
+                                logger.exception(
+                                    f"Processor '{self.name}': Error processing LLM tool call arguments for link extraction: {e}"
                                 )
                         else:  # LLM called an unexpected tool
                             logger.warning(
@@ -541,9 +538,8 @@ class LLMPrimaryLinkExtractorProcessor(LLMIntelligenceProcessor):
                         f"Processor '{self.name}': LLM response for link extraction had no tool calls and no content for item type '{item.embedding_type}'."
                     )
             except Exception as e:
-                logger.error(
-                    f"Processor '{self.name}': Error during LLM call or response processing for link extraction from item type '{item.embedding_type}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Processor '{self.name}': Error during LLM call or response processing for link extraction from item type '{item.embedding_type}': {e}"
                 )
 
             processed_items.append(item)  # Always pass through the original item

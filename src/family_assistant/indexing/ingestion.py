@@ -117,9 +117,8 @@ async def process_document_ingestion_request(
                         f"Detected MIME type for '{uploaded_file_filename}' (path: {file_ref}): {detected_mime_type}"
                     )
             except Exception as fe:
-                logger.error(
-                    f"Error detecting file type for '{uploaded_file_filename}' (path: {file_ref}): {fe}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error detecting file type for '{uploaded_file_filename}' (path: {file_ref}): {fe}"
                 )
                 detected_mime_type = uploaded_file_content_type
                 logger.warning(
@@ -186,9 +185,8 @@ async def process_document_ingestion_request(
                 "error_detail": None,
             }
         except Exception as task_err:
-            logger.error(
-                f"Failed to enqueue indexing task for document ID {document_id}: {task_err}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to enqueue indexing task for document ID {document_id}: {task_err}"
             )
             return {
                 "message": (
@@ -203,9 +201,8 @@ async def process_document_ingestion_request(
         ValueError,
         json.JSONDecodeError,
     ) as val_err:  # Should be caught by caller usually
-        logger.error(
-            f"Validation or JSON error during ingestion processing for {source_id}: {val_err}",
-            exc_info=True,
+        logger.exception(
+            f"Validation or JSON error during ingestion processing for {source_id}: {val_err}"
         )
         return {
             "message": "Ingestion request failed due to validation or JSON error.",
@@ -216,9 +213,8 @@ async def process_document_ingestion_request(
     except (
         FileNotFoundError
     ) as fnf_err:  # If document_storage_path is invalid during file ops
-        logger.error(
-            f"File not found error during ingestion processing for {source_id}: {fnf_err}",
-            exc_info=True,
+        logger.exception(
+            f"File not found error during ingestion processing for {source_id}: {fnf_err}"
         )
         return {
             "message": (
@@ -229,9 +225,8 @@ async def process_document_ingestion_request(
             "error_detail": str(fnf_err),
         }
     except Exception as db_err:  # Covers storage.add_document errors primarily
-        logger.error(
-            f"Database or unexpected error storing document record for {source_id}: {db_err}",
-            exc_info=True,
+        logger.exception(
+            f"Database or unexpected error storing document record for {source_id}: {db_err}"
         )
         error_detail = str(db_err)
         if (

@@ -101,15 +101,13 @@ class EmailRepository(BaseRepository):
             # Don't re-raise - email already exists
             return None
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error storing email {parsed_email.message_id_header}: {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Database error storing email {parsed_email.message_id_header}: {e}"
             )
             raise
         except Exception as e:
-            self._logger.error(
-                f"Unexpected error storing email {parsed_email.message_id_header}: {e}",
-                exc_info=True,
+            self._logger.exception(
+                f"Unexpected error storing email {parsed_email.message_id_header}: {e}"
             )
             raise
 

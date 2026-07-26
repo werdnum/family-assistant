@@ -336,7 +336,7 @@ class MontyEngine:
 
         except Exception as e:
             error_msg = f"Script execution failed: {e}"
-            logger.error(error_msg, exc_info=True)
+            logger.exception(error_msg)
             raise ScriptExecutionError(error_msg) from e
 
     async def _build_execution_context_async(
@@ -414,7 +414,7 @@ class MontyEngine:
             return True
 
         if self.config.deny_all_tools:
-            impls["tools_list"] = lambda: []
+            impls["tools_list"] = list
             impls["tools_get"] = lambda name: None
             logger.debug("All tools denied - added empty tool stubs")
             return
@@ -654,10 +654,9 @@ class MontyEngine:
                                 f"{registered_metadata.attachment_id}"
                             )
                         except Exception as e:
-                            logger.error(
+                            logger.exception(
                                 f"Failed to store attachment from tool "
-                                f"'{tool_name}': {e}",
-                                exc_info=True,
+                                f"'{tool_name}': {e}"
                             )
                     elif attachment.attachment_id:
                         attachment_ids.append(attachment.attachment_id)

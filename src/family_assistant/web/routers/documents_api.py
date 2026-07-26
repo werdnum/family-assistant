@@ -371,7 +371,7 @@ async def upload_document(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err)
         ) from val_err
     except Exception as e:  # Catch errors during file read
-        logger.error(f"Error reading uploaded file for {source_id}: {e}", exc_info=True)
+        logger.exception(f"Error reading uploaded file for {source_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing uploaded file.",

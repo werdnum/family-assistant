@@ -210,27 +210,18 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                         "Failed to send plain text confirmation message: "
                         f"{fallback_err}"
                     )
-                    logger.error(
-                        message,
-                        exc_info=True,
-                    )
+                    logger.exception(message)
                     return TelegramConfirmationSendFailure(message=message)
             message = (
                 f"Failed to send confirmation message to chat {chat_id}: {parse_err}"
             )
-            logger.error(
-                message,
-                exc_info=True,
-            )
+            logger.exception(message)
             return TelegramConfirmationSendFailure(message=message)
         except TelegramError as send_err:
             message = (
                 f"Failed to send confirmation message to chat {chat_id}: {send_err}"
             )
-            logger.error(
-                message,
-                exc_info=True,
-            )
+            logger.exception(message)
             return TelegramConfirmationSendFailure(message=message)
 
     async def send_existing_confirmation_request(

@@ -266,7 +266,7 @@ async def test_repository_rename_applies_policy(db_engine: AsyncEngine) -> None:
                 "Old Title",
                 "New Title",
                 "content",
-                True,  # noqa: FBT003 - positional include_in_prompt matches signature
+                True,
                 visibility_labels=["family"],
                 write_policy=_confined_policy(),
             )

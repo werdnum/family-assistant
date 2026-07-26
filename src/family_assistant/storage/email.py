@@ -290,17 +290,16 @@ async def store_incoming_email(
         elif email_db_id and task_id:
             failed_stage = "updating email with task_id"
 
-        logger.error(
-            f"Database error during {failed_stage} for email Message-ID {parsed_email.message_id_header} (DB ID: {email_db_id}, Task ID: {task_id}): {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error during {failed_stage} for email Message-ID {parsed_email.message_id_header} (DB ID: {email_db_id}, Task ID: {task_id}): {e}"
         )
         raise
 
 
 # Export symbols for use elsewhere
 __all__ = [
+    "AttachmentData",
+    "ParsedEmailData",
     "received_emails_table",
     "store_incoming_email",
-    "ParsedEmailData",
-    "AttachmentData",
 ]

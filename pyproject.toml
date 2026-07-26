@@ -180,7 +180,7 @@ dev = [
     "pytest-timeout",
     "pytest-json-report",
     "pytest-alembic>=0.11.0",
-    "ruff",
+    "ruff>=0.16.0",
     "pre-commit>=4.6.0",
     "basedpyright",
     "pytype",
@@ -410,6 +410,25 @@ select = [
     "PLR",
     # pylint warning checks
     "PLW",
+    # Stale or misdirected `noqa` directives
+    "RUF100",
+    "RUF101",
+    # Logging: use logger.exception() rather than logger.error(exc_info=True),
+    # and pass the exception explicitly when logging outside an except handler
+    # (bare `exc_info=True` there depends on an ambient sys.exc_info()).
+    "G201",
+    "G202",
+    "LOG014",
+    # Mechanical simplifications, all autofixable
+    "FURB105",
+    "FURB188",
+    "PIE790",
+    "PIE807",
+    "PYI041",
+    "RET501",
+    "RUF010",
+    "RUF019",
+    "RUF022",
 ]
 ignore = [
         # Line length - fornatter can deal with it
@@ -437,6 +456,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"contrib/scrape_mcp.py" = ["PLW0717"]
 "src/family_assistant/__main__.py" = ["PLW0717"]
 "src/family_assistant/a2a/client.py" = ["PLW0717"]
 "src/family_assistant/assistant.py" = ["PLW0717"]

@@ -21,7 +21,7 @@ async def list_documentation(request: Request) -> list[str]:
         available_docs = _scan_user_docs(docs_user_dir)
         return available_docs
     except Exception as e:
-        logger.error(f"Error listing documentation files: {e}", exc_info=True)
+        logger.exception(f"Error listing documentation files: {e}")
         raise HTTPException(
             status_code=500, detail="Error listing documentation files"
         ) from e
@@ -62,9 +62,7 @@ async def get_documentation(request: Request, filename: str) -> dict:
             "title": Path(filename).stem.replace("_", " ").title(),
         }
     except Exception as e:
-        logger.error(
-            f"Error reading documentation file '{filename}': {e}", exc_info=True
-        )
+        logger.exception(f"Error reading documentation file '{filename}': {e}")
         raise HTTPException(
             status_code=500, detail="Error reading documentation file"
         ) from e

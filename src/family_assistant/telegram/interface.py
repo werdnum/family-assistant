@@ -139,21 +139,18 @@ class TelegramChatInterface(ChatInterface):
                     )
                     return str(sent_msg.message_id)
                 except Exception as fallback_err:
-                    logger.error(
-                        f"TelegramChatInterface failed to send plain text message to {conversation_id}: {fallback_err}",
-                        exc_info=True,
+                    logger.exception(
+                        f"TelegramChatInterface failed to send plain text message to {conversation_id}: {fallback_err}"
                     )
                     return None
             else:
-                logger.error(
-                    f"TelegramChatInterface failed to send message to {conversation_id}: {parse_err}",
-                    exc_info=True,
+                logger.exception(
+                    f"TelegramChatInterface failed to send message to {conversation_id}: {parse_err}"
                 )
                 return None
         except Exception as e:
-            logger.error(
-                f"TelegramChatInterface failed to send message to {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"TelegramChatInterface failed to send message to {conversation_id}: {e}"
             )
             return None
 
@@ -231,7 +228,7 @@ class TelegramChatInterface(ChatInterface):
                 return resized_content, size_note
 
         except Exception as e:
-            logger.error(f"Failed to resize image {attachment_id}: {e}", exc_info=True)
+            logger.exception(f"Failed to resize image {attachment_id}: {e}")
             return content, None
 
     async def _send_attachments(
@@ -298,9 +295,8 @@ class TelegramChatInterface(ChatInterface):
                             "content": content,
                         })
                     except Exception as e:
-                        logger.error(
-                            f"Error fetching attachment {attachment_id}: {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Error fetching attachment {attachment_id}: {e}"
                         )
                         continue
 
@@ -493,6 +489,6 @@ class TelegramChatInterface(ChatInterface):
                         i += 1
 
         except Exception as e:
-            logger.error(f"Error in _send_attachments: {e}", exc_info=True)
+            logger.exception(f"Error in _send_attachments: {e}")
 
         return message_ids

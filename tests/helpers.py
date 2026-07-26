@@ -199,7 +199,7 @@ async def wait_for_tasks_to_complete(
                     logger.debug(f"Waiting for {pending_count} tasks to complete...")
 
         except Exception as e:
-            logger.error(f"Error polling task status: {e}", exc_info=True)
+            logger.exception(f"Error polling task status: {e}")
             raise  # Re-raise database errors
 
         # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling helper interval
@@ -264,9 +264,8 @@ async def wait_for_tasks_to_complete(
             else:
                 pending_tasks_details = "No pending tasks found matching criteria."
     except Exception as fetch_err:
-        logger.error(
-            f"Failed to fetch pending task details on timeout: {fetch_err}",
-            exc_info=True,
+        logger.exception(
+            f"Failed to fetch pending task details on timeout: {fetch_err}"
         )
         pending_tasks_details = f"Error fetching pending task details: {fetch_err}"
     # --- End fetching details ---
@@ -421,9 +420,9 @@ async def wait_for_server(
 
 
 __all__ = [
-    "wait_for_tasks_to_complete",
-    "wait_for_condition",
     "find_free_port",
     "require_executable",
+    "wait_for_condition",
     "wait_for_server",
+    "wait_for_tasks_to_complete",
 ]

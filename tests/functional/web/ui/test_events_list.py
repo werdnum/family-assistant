@@ -1,7 +1,7 @@
 """Playwright-based functional tests for Events React UI - List view and filtering."""
 
-import asyncio  # noqa: F401
-import time  # noqa: F401
+import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -551,7 +551,7 @@ async def test_events_filter_changes_trigger_api_calls(
         ):
             break
         # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling interval in condition-checking loop
-        await asyncio.sleep(0.1)  # noqa: ASYNC110 # Poll every 100ms
+        await asyncio.sleep(0.1)  # Poll every 100ms
 
     # Should have made a new API call with filter parameter
     assert len(api_requests) > 0

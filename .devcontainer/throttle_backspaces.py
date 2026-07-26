@@ -39,7 +39,7 @@ async def handle_stdin(queue: asyncio.Queue[bytes | None], master_fd: int) -> No
 
             os.write(master_fd, char)
             # You need to wait _after_ a backspace - backspaces seem to break handling of the _next_ character.
-            if char in (b"\x08", b"\x7f"):
+            if char in {b"\x08", b"\x7f"}:
                 await asyncio.sleep(BACKSPACE_DELAY)
         queue.task_done()
 

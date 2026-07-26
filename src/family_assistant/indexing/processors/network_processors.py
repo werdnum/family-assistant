@@ -259,9 +259,8 @@ class WebFetcherProcessor:
                         items_to_pass_through.append(item)
 
                 except Exception as e:
-                    logger.error(
-                        f"{self.name}: Exception during scraping URL '{url_to_fetch}': {e}",
-                        exc_info=True,
+                    logger.exception(
+                        f"{self.name}: Exception during scraping URL '{url_to_fetch}': {e}"
                     )
                     items_to_pass_through.append(item)
             else:

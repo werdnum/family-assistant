@@ -47,9 +47,8 @@ async def view_context_page(
                     "error": None,
                 })
             except Exception as e:
-                logger.error(
-                    f"Error getting context fragments from provider '{provider.name}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error getting context fragments from provider '{provider.name}': {e}"
                 )
                 context_fragments.append({
                     "provider_name": provider.name,
@@ -83,9 +82,9 @@ async def view_context_page(
             },
         )
     except Exception as e:
-        logger.error(f"Error in context viewer: {e}", exc_info=True)
+        logger.exception(f"Error in context viewer: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Error viewing context: {str(e)}"
+            status_code=500, detail=f"Error viewing context: {e!s}"
         ) from e
 
 
@@ -135,9 +134,8 @@ async def _get_context_data(
                     "fragment_count": len(fragments) if fragments else 0,
                 })
             except Exception as e:
-                logger.error(
-                    f"Error getting context fragments from provider '{provider.name}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error getting context fragments from provider '{provider.name}': {e}"
                 )
                 context_data.append({
                     "provider_name": provider.name,
@@ -231,9 +229,9 @@ async def _get_context_data(
             "formatted_system_prompt": formatted_system_prompt,
         }
     except Exception as e:
-        logger.error(f"Error in context API: {e}", exc_info=True)
+        logger.exception(f"Error in context API: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Error getting context: {str(e)}"
+            status_code=500, detail=f"Error getting context: {e!s}"
         ) from e
 
 
@@ -289,9 +287,9 @@ async def get_processing_profiles(request: Request) -> list[dict]:
 
         return profiles
     except Exception as e:
-        logger.error(f"Error getting processing profiles: {e}", exc_info=True)
+        logger.exception(f"Error getting processing profiles: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Error getting profiles: {str(e)}"
+            status_code=500, detail=f"Error getting profiles: {e!s}"
         ) from e
 
 

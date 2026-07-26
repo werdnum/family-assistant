@@ -310,7 +310,7 @@ async def query_database(
             }
         )
     except Exception as e:
-        logger.error("query_database failed: %s", e, exc_info=True)
+        logger.exception("query_database failed: %s", e)
         return ToolResult(data={"error": f"Query failed: {e}"})
 
 

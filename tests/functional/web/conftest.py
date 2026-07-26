@@ -1030,7 +1030,7 @@ def connect_options() -> dict[str, str] | None:
 @pytest_asyncio.fixture(scope="session")
 async def browser(
     launch_browser: Any,  # noqa: ANN401  # From playwright's fixtures
-) -> AsyncGenerator[Any]:  # noqa: ANN401  # playwright browser object
+) -> AsyncGenerator[Any]:  # playwright browser object
     """Override playwright's browser fixture to add timeout on close.
 
     This prevents the test suite from hanging when browser.close() gets stuck

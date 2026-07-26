@@ -160,7 +160,7 @@ async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, Any]]:
             for row in rows
         ]
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_all_notes: {e}", exc_info=True)
+        logger.exception(f"Database error in get_all_notes: {e}")
         raise  # Re-raise after logging
 
 
@@ -175,7 +175,7 @@ async def get_prompt_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
         rows = await db_context.fetch_all(stmt)
         return [{"title": row["title"], "content": row["content"]} for row in rows]
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_prompt_notes: {e}", exc_info=True)
+        logger.exception(f"Database error in get_prompt_notes: {e}")
         raise  # Re-raise after logging
 
 
@@ -192,9 +192,7 @@ async def get_note_by_title(
         row = await db_context.fetch_one(stmt)
         return row if row else None
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in get_note_by_title({title}): {e}", exc_info=True
-        )
+        logger.exception(f"Database error in get_note_by_title({title}): {e}")
         raise
 
 
@@ -216,7 +214,7 @@ async def get_note_by_id(
         row = await db_context.fetch_one(stmt)
         return dict(row) if row else None
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_note_by_id({note_id}): {e}", exc_info=True)
+        logger.exception(f"Database error in get_note_by_id({note_id}): {e}")
         raise
 
 
@@ -257,9 +255,7 @@ async def add_or_update_note(
             await _enqueue_note_indexing_task(db_context, title)
             return "Success"
         except SQLAlchemyError as e:
-            logger.error(
-                f"PostgreSQL error in add_or_update_note({title}): {e}", exc_info=True
-            )
+            logger.exception(f"PostgreSQL error in add_or_update_note({title}): {e}")
             raise
 
     else:
@@ -314,9 +310,8 @@ async def add_or_update_note(
                 return "Success"
             else:
                 # Re-raise other SQLAlchemy errors
-                logger.error(
-                    f"Database error during INSERT in add_or_update_note({title}) (SQLite fallback): {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Database error during INSERT in add_or_update_note({title}) (SQLite fallback): {e}"
                 )
                 raise e
 
@@ -335,7 +330,7 @@ async def delete_note(db_context: DatabaseContext, title: str) -> bool:
             logger.warning(f"Note not found for deletion: {title}")
             return False
     except SQLAlchemyError as e:
-        logger.error(f"Database error in delete_note({title}): {e}", exc_info=True)
+        logger.exception(f"Database error in delete_note({title}): {e}")
         raise
 
 

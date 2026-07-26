@@ -701,7 +701,7 @@ class ReolinkBackend:
 
                 # Get authentication token via Login API
                 host = await self._get_or_create_host(camera_id)
-                token = host._token  # noqa: SLF001 - accessing private for direct API
+                token = host._token
 
                 if not token:
                     raise RuntimeError("Failed to get authentication token")

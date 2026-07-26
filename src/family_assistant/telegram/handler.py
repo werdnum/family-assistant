@@ -135,7 +135,7 @@ class TelegramMidTurnController:
 
 
 class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
-    """Handles specific Telegram updates (messages, commands) and delegates processing."""  # noqa: E501
+    """Handles specific Telegram updates (messages, commands) and delegates processing."""
 
     def __init__(
         self,
@@ -583,9 +583,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 f"Stored Telegram attachment: {attachment_metadata.attachment_id} ({filename_log})"
                             )
                         except Exception as attach_err:
-                            logger.error(
-                                f"Error storing individual attachment '{attachment.filename}' from batch: {attach_err}",
-                                exc_info=True,
+                            logger.exception(
+                                f"Error storing individual attachment '{attachment.filename}' from batch: {attach_err}"
                             )
                             # Continue to process other attachments
                             continue
@@ -676,9 +675,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     f"Using default processing service ('{selected_processing_service.service_config.id}')."
                                 )
                         except Exception as thread_err:
-                            logger.error(
-                                f"Error determining thread root ID or profile from reply: {thread_err}",
-                                exc_info=True,
+                            logger.exception(
+                                f"Error determining thread root ID or profile from reply: {thread_err}"
                             )
                     else:
                         logger.info(
@@ -861,9 +859,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     f"Updated interface_message_id for internal_id {last_assistant_internal_id} to {sent_assistant_message.message_id}"
                                 )
                             except Exception as update_err:
-                                logger.error(
-                                    f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}",
-                                    exc_info=True,
+                                logger.exception(
+                                    f"Failed to update interface_message_id for internal_id {last_assistant_internal_id}: {update_err}"
                                 )
                         elif sent_assistant_message:
                             logger.warning(
@@ -879,9 +876,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     on_behalf_of_user_id=resolved_user.user_id,
                                 )
                             except Exception as attachment_err:
-                                logger.error(
-                                    f"Failed to send attachments {response_attachment_ids}: {attachment_err}",
-                                    exc_info=True,
+                                logger.exception(
+                                    f"Failed to send attachments {response_attachment_ids}: {attachment_err}"
                                 )
                     elif processing_error_traceback and reply_target_message_id:
                         error_message_to_send = (
@@ -936,8 +932,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
             except Exception as e:
                 logger.exception(
-                    f"Unhandled error in process_chat_queue for chat {chat_id}: {e}",
-                    exc_info=True,
+                    f"Unhandled error in process_chat_queue for chat {chat_id}: {e}"
                 )
                 if not processing_error_traceback:
                     processing_error_traceback = traceback.format_exc()
@@ -988,9 +983,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                     "Could not find user message record to attach error traceback."
                                 )
                     except Exception as db_err_save:
-                        logger.error(
-                            f"Failed to save error traceback to DB for chat {chat_id}: {db_err_save}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Failed to save error traceback to DB for chat {chat_id}: {db_err_save}"
                         )
 
                 raise e
@@ -1221,9 +1215,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     f"Photo from slash command message {update.message.message_id} loaded."
                 )
             except Exception as img_err:
-                logger.error(
-                    f"Failed to process photo for slash command {update.message.message_id}: {img_err}",
-                    exc_info=True,
+                logger.exception(
+                    f"Failed to process photo for slash command {update.message.message_id}: {img_err}"
                 )
                 await update.message.reply_text(
                     "Sorry, error processing attached image with command."
@@ -1391,9 +1384,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 )
                             )
                         except Exception as attachment_err:
-                            logger.error(
-                                f"Failed to send attachments {response_attachment_ids}: {attachment_err}",
-                                exc_info=True,
+                            logger.exception(
+                                f"Failed to send attachments {response_attachment_ids}: {attachment_err}"
                             )
                 elif processing_error_traceback:
                     error_message_to_send = (
@@ -1426,8 +1418,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
             except Exception as e:
                 logger.exception(
-                    f"Unhandled error in handle_generic_slash_command for chat {chat_id}: {e}",
-                    exc_info=True,
+                    f"Unhandled error in handle_generic_slash_command for chat {chat_id}: {e}"
                 )
                 if not processing_error_traceback:
                     processing_error_traceback = traceback.format_exc()
@@ -1475,9 +1466,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 f"Saved error traceback to user message (slash command) internal_id {user_msg_record['internal_id']}"
                             )
                     except Exception as db_err_save:
-                        logger.error(
-                            f"Failed to save error traceback to DB for slash command in chat {chat_id}: {db_err_save}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Failed to save error traceback to DB for slash command in chat {chat_id}: {db_err_save}"
                         )
                 raise
 
@@ -1695,9 +1685,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     "Sorry, that file is too large. Telegram limits file downloads to 20MB."
                 )
             else:
-                logger.error(
-                    f"BadRequest processing attachments for message {update.message.message_id}: {br_err}",
-                    exc_info=True,
+                logger.exception(
+                    f"BadRequest processing attachments for message {update.message.message_id}: {br_err}"
                 )
                 await update.message.reply_text(
                     "Sorry, error processing attached media."
@@ -1705,9 +1694,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             return
         except Exception as img_err:
             await self._cancel_pending_media_group_if_any(update, context)
-            logger.error(
-                f"Failed to process attachments for message {update.message.message_id}: {img_err}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to process attachments for message {update.message.message_id}: {img_err}"
             )
             await update.message.reply_text("Sorry, error processing attached media.")
             return

@@ -114,7 +114,7 @@ _evaluate()
             raise
         except Exception as e:
             # Wrap other errors
-            raise ScriptExecutionError(f"Script execution failed: {str(e)}") from e
+            raise ScriptExecutionError(f"Script execution failed: {e!s}") from e
 
     async def validate_script(self, script: str) -> tuple[bool, str | None]:
         """
@@ -140,11 +140,11 @@ _evaluate()
             return True, None
 
         except ScriptSyntaxError as e:
-            return False, f"Syntax error: {str(e)}"
+            return False, f"Syntax error: {e!s}"
         except ScriptExecutionError as e:
-            return False, f"Execution error: {str(e)}"
+            return False, f"Execution error: {e!s}"
         except Exception as e:
-            return False, f"Validation error: {str(e)}"
+            return False, f"Validation error: {e!s}"
 
 
 class EventConditionValidator:

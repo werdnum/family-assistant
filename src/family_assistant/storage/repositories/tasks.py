@@ -30,7 +30,7 @@ class TasksRepository(BaseRepository):
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,
         original_task_id: str | None = None,
-    ) -> None:  # noqa: PLR0913
+    ) -> None:
         """Adds a task to the queue with automatic notification for immediate tasks.
 
         Args:
@@ -141,22 +141,18 @@ class TasksRepository(BaseRepository):
         except IntegrityError as e:
             # For non-system tasks, this is an error
             if not is_system_task:
-                logger.error(
-                    f"ENQUEUE FAILED: Task with ID '{task_id}' already exists in the queue: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"ENQUEUE FAILED: Task with ID '{task_id}' already exists in the queue: {e}"
                 )
                 raise RuntimeError(f"Task ID '{task_id}' already exists") from e
             else:
                 # For system tasks, integrity error during PostgreSQL upsert shouldn't happen
-                logger.error(
-                    f"Unexpected integrity error for system task '{task_id}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Unexpected integrity error for system task '{task_id}': {e}"
                 )
                 raise
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error enqueueing task {task_id}: {e}", exc_info=True
-            )
+            logger.exception(f"Database error enqueueing task {task_id}: {e}")
             raise
 
     async def dequeue(
@@ -483,9 +479,7 @@ class TasksRepository(BaseRepository):
             return tasks, total_count
 
         except SQLAlchemyError as e:
-            self._logger.error(
-                f"Database error in get_tasks_for_listener: {e}", exc_info=True
-            )
+            self._logger.exception(f"Database error in get_tasks_for_listener: {e}")
             raise
 
     async def manually_retry(self, internal_task_id: int) -> bool:

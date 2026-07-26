@@ -348,12 +348,11 @@ async def run_turn_producer(
         )
         raise
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "Turn producer failed for conv=%s turn=%s: %s",
             conversation_id,
             turn_id,
             exc,
-            exc_info=True,
         )
         debug_mode = getattr(app_state, "debug_mode", False)
         error_detail = str(exc) if debug_mode else GENERIC_TURN_ERROR_MESSAGE

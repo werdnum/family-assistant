@@ -101,8 +101,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BROWSER_DOM_TOOLS_DEFINITION",
-    "browser_click_tool",
     "browser_claim_handback_tool",
+    "browser_click_tool",
     "browser_exec_tool",
     "browser_extract_tool",
     "browser_fill_tool",

@@ -231,9 +231,8 @@ class MCPToolsProvider:
         except asyncio.CancelledError:
             logger.debug("MCP initialization logging task cancelled.")
         except Exception as e:
-            logger.error(
-                f"Unexpected error in MCP initialization logging task: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Unexpected error in MCP initialization logging task: {e}"
             )
         finally:
             logger.debug("MCP initialization logging task finished.")
@@ -441,9 +440,8 @@ class MCPToolsProvider:
             return session, discovered_tools, discovered_descriptors, tool_map
 
         except Exception as e:
-            logger.error(
-                f"Failed connection/discovery for MCP server '{server_id}': {e}",
-                exc_info=True,
+            logger.exception(
+                f"Failed connection/discovery for MCP server '{server_id}': {e}"
             )
             self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             with contextlib.suppress(Exception):
@@ -520,9 +518,7 @@ class MCPToolsProvider:
                     # or its initial empty list. This is handled by the processing loop below.
             # If not done, results remains empty, which is also handled.
         except Exception as e:
-            logger.error(
-                f"Unexpected error during MCP connection gathering: {e}", exc_info=True
-            )
+            logger.exception(f"Unexpected error during MCP connection gathering: {e}")
             # Try to get results if possible
             if (
                 connection_tasks_future.done()
@@ -680,9 +676,8 @@ class MCPToolsProvider:
 
                 formatted_defs.append(tool_dict)  # Add the formatted dict
             except Exception as e:
-                logger.error(
-                    f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}"
                 )
 
         return formatted_defs
@@ -823,9 +818,7 @@ class MCPToolsProvider:
                 logger.info("Health check loop cancelled")
                 break
             except Exception as e:
-                logger.error(
-                    f"Unexpected error in health check loop: {e}", exc_info=True
-                )
+                logger.exception(f"Unexpected error in health check loop: {e}")
                 # Continue the loop despite errors
 
         logger.info("Health check loop stopped")
@@ -920,9 +913,7 @@ class MCPToolsProvider:
                 return False
 
         except Exception as e:
-            logger.error(
-                f"Error reconnecting MCP server '{server_id}': {e}", exc_info=True
-            )
+            logger.exception(f"Error reconnecting MCP server '{server_id}': {e}")
             self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
             return False
 
@@ -1033,16 +1024,14 @@ class MCPToolsProvider:
                             logger.error(f"Failed to reconnect to server '{server_id}'")
                     else:
                         # Not a connection error, don't retry
-                        logger.error(
-                            f"Non-connection error calling MCP tool '{name}': {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Non-connection error calling MCP tool '{name}': {e}"
                         )
                         return f"Error calling MCP tool '{name}': {e}"
 
                 # If we get here, either it's the second attempt or reconnection failed
-                logger.error(
-                    f"Error calling MCP tool '{name}' on server '{server_id}': {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Error calling MCP tool '{name}' on server '{server_id}': {e}"
                 )
                 return f"Error calling MCP tool '{name}': {e}"
 

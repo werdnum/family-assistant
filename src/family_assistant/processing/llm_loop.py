@@ -508,7 +508,7 @@ class LLMStreamingLoop:
                     continue
 
                 except Exception as e:
-                    logger.error(f"Error in LLM streaming: {e}", exc_info=True)
+                    logger.exception(f"Error in LLM streaming: {e}")
                     raise
 
             # Combine accumulated content

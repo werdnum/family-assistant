@@ -223,7 +223,7 @@ async def _get_formatted_system_prompt(
         return formatted.strip() + voice_instruction
 
     except Exception as e:
-        logger.error(f"Error getting system prompt: {e}", exc_info=True)
+        logger.exception(f"Error getting system prompt: {e}")
         return "You are a helpful voice assistant. Keep responses concise and conversational."
 
 
@@ -332,7 +332,7 @@ async def create_ephemeral_token(
             detail="Voice mode dependencies not installed. Please install google-genai.",
         ) from e
     except Exception as e:
-        logger.error(f"Error creating ephemeral token: {e}", exc_info=True)
+        logger.exception(f"Error creating ephemeral token: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create voice session: {e!s}",

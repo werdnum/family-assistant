@@ -310,7 +310,7 @@ async def get_message_history_tool(
             }
         )
     except Exception as exc:
-        logger.error("Error executing get_message_history_tool: %s", exc, exc_info=True)
+        logger.exception("Error executing get_message_history_tool: %s", exc)
         return ToolResult(
             data={
                 "error": "query_failed",
@@ -700,9 +700,8 @@ async def send_message_to_user_tool(
                     f"Message sent to chat_id {target_chat_id} was recorded in history."
                 )
             except Exception as db_err:
-                logger.error(
-                    f"Message sent to chat_id {target_chat_id}, but failed to record in history: {db_err}",
-                    exc_info=True,
+                logger.exception(
+                    f"Message sent to chat_id {target_chat_id}, but failed to record in history: {db_err}"
                 )
                 # Still return success for sending, but note the history failure.
                 return f"Message sent to user with Chat ID {target_chat_id}{attachment_msg}, but failed to record in history."
@@ -710,9 +709,7 @@ async def send_message_to_user_tool(
         return f"Message sent successfully to user with Chat ID {target_chat_id}{attachment_msg}."
 
     except Exception as e:
-        logger.error(
-            f"Failed to send message to chat_id {target_chat_id}: {e}", exc_info=True
-        )
+        logger.exception(f"Failed to send message to chat_id {target_chat_id}: {e}")
         return (
             f"Error: Could not send message to Chat ID {target_chat_id}. Details: {e}"
         )
@@ -758,7 +755,5 @@ async def get_attachment_info_tool(
         return json.dumps(metadata_dict, indent=2)
 
     except Exception as e:
-        logger.error(
-            f"Error retrieving attachment info for {attachment_id}: {e}", exc_info=True
-        )
+        logger.exception(f"Error retrieving attachment info for {attachment_id}: {e}")
         return f"Error: Failed to retrieve attachment information. {e}"

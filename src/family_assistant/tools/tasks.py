@@ -365,7 +365,7 @@ async def schedule_reminder_tool(
         logger.error(f"Invalid reminder parameters: {ve}")
         return f"Error: Invalid reminder parameters. {ve}"
     except Exception as e:
-        logger.error(f"Failed to schedule reminder: {e}", exc_info=True)
+        logger.exception(f"Failed to schedule reminder: {e}")
         return "Error: Failed to schedule the reminder."
 
 
@@ -445,7 +445,7 @@ async def schedule_future_callback_tool(
         logger.error(f"Invalid callback time format or value: {callback_time} - {ve}")
         return f"Error: Invalid callback time provided. Ensure it's a future ISO 8601 datetime with timezone. {ve}"
     except Exception as e:
-        logger.error(f"Failed to schedule callback task: {e}", exc_info=True)
+        logger.exception(f"Failed to schedule callback task: {e}")
         return "Error: Failed to schedule the callback."
 
 
@@ -531,9 +531,8 @@ async def list_pending_callbacks_tool(
         return "\n".join(formatted_callbacks)
 
     except Exception as e:
-        logger.error(
-            f"Error listing pending callbacks for {interface_type}:{conversation_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Error listing pending callbacks for {interface_type}:{conversation_id}: {e}"
         )
         return f"Error: Failed to list pending callbacks. {e}"
 
@@ -630,9 +629,8 @@ async def modify_pending_callback_tool(
             return f"Error: Failed to modify callback task '{task_id}'. It might have been processed or deleted."
 
     except Exception as e:
-        logger.error(
-            f"Error modifying callback task '{task_id}' for {interface_type}:{conversation_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Error modifying callback task '{task_id}' for {interface_type}:{conversation_id}: {e}"
         )
         return f"Error: Failed to modify callback task. {e}"
 
@@ -691,9 +689,8 @@ async def cancel_pending_callback_tool(
         return f"Callback task '{task_id}' cancelled successfully."
 
     except Exception as e:
-        logger.error(
-            f"Error cancelling callback task '{task_id}' for {interface_type}:{conversation_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Error cancelling callback task '{task_id}' for {interface_type}:{conversation_id}: {e}"
         )
         return f"Error: Failed to cancel callback task. {e}"
 
@@ -771,5 +768,5 @@ async def schedule_action_tool(
 
         return f"OK. {action_type} action scheduled for {schedule_time}"
     except Exception as e:
-        logger.error(f"Error scheduling action: {e}", exc_info=True)
+        logger.exception(f"Error scheduling action: {e}")
         return f"Error: Failed to schedule action. {e}"

@@ -852,7 +852,7 @@ async def test_url_indexing_e2e(
             with contextlib.suppress(asyncio.CancelledError):
                 await worker_task
         except Exception as e:
-            logger.error(f"Error stopping worker task {worker_id}: {e}", exc_info=True)
+            logger.exception(f"Error stopping worker task {worker_id}: {e}")
 
         if document_db_id:
             try:

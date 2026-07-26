@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.security.taint import (
-    TaintMetadata,  # noqa: TCH001 - Pydantic resolves this TypedDict at runtime
+    TaintMetadata,  # noqa: TC001 - Pydantic resolves this TypedDict at runtime
 )
-from family_assistant.tools.types import (  # noqa: TCH001  # Pydantic needs runtime import for field validation
+from family_assistant.tools.types import (  # noqa: TC001  # Pydantic needs runtime import for field validation
     ToolAttachment,
     ToolResult,
 )
@@ -39,7 +39,7 @@ from .content_parts import (
     text_content,
 )
 from .tool_call import (
-    ToolCallItem,  # noqa: TCH001  # Pydantic needs runtime import for field validation
+    ToolCallItem,  # noqa: TC001  # Pydantic needs runtime import for field validation
 )
 
 
@@ -114,14 +114,14 @@ class MessageReasoningInfo(TypedDict, total=False):
 
 # Re-export content part types and helpers for backward compatibility
 __all__ = [
-    "ContentPartDict",
-    "TextContentPartDict",
-    "ImageUrlContentPartDict",
     "AttachmentContentPartDict",
+    "ContentPartDict",
     "FileContentPartDict",
-    "text_content",
-    "image_url_content",
+    "ImageUrlContentPartDict",
+    "TextContentPartDict",
     "attachment_content",
+    "image_url_content",
+    "text_content",
 ]
 
 # ===== Content Parts =====

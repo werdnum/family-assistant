@@ -204,10 +204,9 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
                     return actual_response_output
             except Exception as e:
                 # Clarify if error was in matcher or response processing if possible,
-                # but exc_info=True will give the most direct traceback.
-                logger.error(
-                    f"Error processing rule {i + 1} (matcher or response callable) for 'generate_response': {e}",
-                    exc_info=True,
+                # but the logged traceback gives the most direct signal.
+                logger.exception(
+                    f"Error processing rule {i + 1} (matcher or response callable) for 'generate_response': {e}"
                 )
                 # Continue to next rule or default if matcher/response itself fails
                 continue
@@ -410,10 +409,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             except StructuredOutputError:
                 raise
             except Exception as e:
-                logger.error(
-                    f"Error processing structured rule {i + 1}: {e}",
-                    exc_info=True,
-                )
+                logger.exception(f"Error processing structured rule {i + 1}: {e}")
                 continue
 
         # No rule matched - raise an error (unlike generate_response which has a default)
@@ -541,14 +537,14 @@ def get_system_prompt(messages: list[LLMMessage]) -> str | None:
 
 
 __all__ = [
-    "RuleBasedMockLLMClient",
-    "Rule",
     "MatcherFunction",
-    "StructuredRule",
+    "Rule",
+    "RuleBasedMockLLMClient",
     "StructuredResponseGenerator",
-    "get_last_message_text",
-    "get_system_prompt",
-    "get_message_role",
-    "get_message_content",
+    "StructuredRule",
     "extract_text_from_content",
+    "get_last_message_text",
+    "get_message_content",
+    "get_message_role",
+    "get_system_prompt",
 ]

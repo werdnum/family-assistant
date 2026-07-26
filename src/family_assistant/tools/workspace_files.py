@@ -284,7 +284,7 @@ async def workspace_read_tool(
                 }
             )
     except Exception as e:
-        logger.error(f"Failed to read file {path}: {e}", exc_info=True)
+        logger.exception(f"Failed to read file {path}: {e}")
         return ToolResult(data={"error": f"Failed to read file: {e}"})
 
 
@@ -325,7 +325,7 @@ async def workspace_write_tool(
             data={"path": path, "size": size, "success": True},
         )
     except Exception as e:
-        logger.error(f"Failed to write file {path}: {e}", exc_info=True)
+        logger.exception(f"Failed to write file {path}: {e}")
         return ToolResult(data={"error": f"Failed to write file: {e}"})
 
 
@@ -398,7 +398,7 @@ async def workspace_glob_tool(
             }
         )
     except Exception as e:
-        logger.error(f"Failed to search pattern {pattern}: {e}", exc_info=True)
+        logger.exception(f"Failed to search pattern {pattern}: {e}")
         return ToolResult(data={"error": f"Failed to search: {e}"})
 
 
@@ -459,7 +459,7 @@ async def workspace_delete_tool(
         else:
             return ToolResult(data={"error": f"Unknown path type: {path}"})
     except Exception as e:
-        logger.error(f"Failed to delete {path}: {e}", exc_info=True)
+        logger.exception(f"Failed to delete {path}: {e}")
         return ToolResult(data={"error": f"Failed to delete: {e}"})
 
 
@@ -503,7 +503,7 @@ async def workspace_mkdir_tool(
             data={"path": path, "created": True},
         )
     except Exception as e:
-        logger.error(f"Failed to create directory {path}: {e}", exc_info=True)
+        logger.exception(f"Failed to create directory {path}: {e}")
         return ToolResult(data={"error": f"Failed to create directory: {e}"})
 
 
@@ -692,7 +692,7 @@ include_in_prompt: {str(include_in_prompt).lower()}
             },
         )
     except Exception as e:
-        logger.error(f"Failed to export notes: {e}", exc_info=True)
+        logger.exception(f"Failed to export notes: {e}")
         return ToolResult(data={"error": f"Failed to export notes: {e}"})
 
 
@@ -795,7 +795,7 @@ async def workspace_import_note_tool(
             },
         )
     except Exception as e:
-        logger.error(f"Failed to import note from {path}: {e}", exc_info=True)
+        logger.exception(f"Failed to import note from {path}: {e}")
         return ToolResult(data={"error": f"Failed to import note: {e}"})
 
 

@@ -32,14 +32,14 @@ def merge_settings(base_file: str, oneshot_file: str) -> dict:
         Merged settings dictionary
     """
     try:
-        with open(base_file) as f:
+        with open(base_file, encoding="utf-8") as f:
             base = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"Error reading base settings file '{base_file}': {e}", file=sys.stderr)
         sys.exit(1)
 
     try:
-        with open(oneshot_file) as f:
+        with open(oneshot_file, encoding="utf-8") as f:
             oneshot = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(
@@ -76,7 +76,7 @@ def main() -> None:
             "Usage: merge-settings.py <base_settings.json> <oneshot_settings.json>",
             file=sys.stderr,
         )
-        print("", file=sys.stderr)
+        print(file=sys.stderr)
         print(
             "Merges two JSON settings files, concatenating permission arrays.",
             file=sys.stderr,

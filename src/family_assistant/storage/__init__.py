@@ -58,10 +58,10 @@ logger = logging.getLogger(__name__)
 # --- Vector Storage Imports ---
 try:
     # Use absolute package path
-    from family_assistant.storage.vector import (  # noqa: PLC0415
+    from family_assistant.storage.vector import (
         Base as VectorBase,  # For ORM
     )
-    from family_assistant.storage.vector import (  # noqa: PLC0415
+    from family_assistant.storage.vector import (
         Document,  # Protocol for document structure
     )
 
@@ -126,10 +126,7 @@ async def _log_current_revision(engine: AsyncEngine) -> None:
                 )
                 return result.scalar_one_or_none()  # Fetch one scalar value or None
             except Exception as query_err:
-                logger.error(
-                    f"Error querying alembic_version table: {query_err!r}",
-                    exc_info=True,
-                )
+                logger.exception(f"Error querying alembic_version table: {query_err!r}")
                 return None
 
         current_revision = await conn_check.run_sync(sync_check_revision)
@@ -201,18 +198,14 @@ async def _run_alembic_command(
                 command_func(config, *args)
                 logger.info(f"[sync] Successfully executed: {command_name}")
             except Exception as e:
-                logger.error(
-                    f"[sync] Error during {command_name}: {e!r}", exc_info=True
-                )
+                logger.exception(f"[sync] Error during {command_name}: {e!r}")
                 raise
 
         try:
             await conn.run_sync(sync_command_wrapper)
             logger.info(f"Alembic command {command_name} completed.")
         except Exception as e:
-            logger.error(
-                f"Failed to run Alembic command {command_name}: {e!r}", exc_info=True
-            )
+            logger.exception(f"Failed to run Alembic command {command_name}: {e!r}")
             raise
 
 
@@ -240,9 +233,8 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
                 await vector_init_context.vector.init_db()
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
-            logger.error(
-                f"Failed to initialize vector database components: {vec_e!r}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to initialize vector database components: {vec_e!r}"
             )
             # Decide if this failure should prevent startup. For now, re-raise.
             raise
@@ -314,10 +306,9 @@ async def init_db(engine: AsyncEngine) -> None:
         except Exception as e:
             last_exception = e
             if not _is_transient_db_error(e):
-                logger.error(
+                logger.exception(
                     f"Non-transient error during database initialization; not "
-                    f"retrying: {e!r}",
-                    exc_info=True,
+                    f"retrying: {e!r}"
                 )
                 raise
             logger.warning(
@@ -343,32 +334,32 @@ async def init_db(engine: AsyncEngine) -> None:
 # Re-export functions and tables from specific modules to maintain the facade
 # Define __all__ AFTER all functions/variables it references are defined.
 __all__ = [
-    "init_db",  # Now defined above
-    "create_engine_with_sqlite_optimizations",
-    # Tables - still exported for direct use
-    "notes_table",
-    "message_history_table",
-    "tasks_table",
-    "confirmation_requests_table",
-    "received_emails_table",
-    "error_logs_table",
-    "event_listeners_table",
-    "recent_events_table",
-    "schedule_automations_table",
-    "push_subscriptions_table",
-    "ios_push_tokens_table",
-    "scripts_table",
-    "metadata",
     "DatabaseContext",  # Export the new context manager
-    "get_db_context",
     # Enums
     "EventActionType",
     "EventSourceType",
     "InterfaceType",
+    "confirmation_requests_table",
+    "create_engine_with_sqlite_optimizations",
     "delegation_runs_table",
-    "taint_audit_events_table",
-    "user_oauth_connections_table",
+    "error_logs_table",
+    "event_listeners_table",
+    "get_db_context",
+    "init_db",  # Now defined above
+    "ios_push_tokens_table",
+    "message_history_table",
+    "metadata",
+    # Tables - still exported for direct use
+    "notes_table",
     "pending_oauth_flows_table",
+    "push_subscriptions_table",
+    "received_emails_table",
+    "recent_events_table",
+    "schedule_automations_table",
+    "scripts_table",
+    "taint_audit_events_table",
+    "tasks_table",
+    "user_oauth_connections_table",
     # Vector Storage Exports are added conditionally below
     # The names themselves will be defined (real or placeholder)
     # __all__ controls `from .storage import *` and documents the public API
@@ -378,7 +369,7 @@ __all__ = [
 # Check if vector_storage specific names are available and if the feature is enabled.
 if VECTOR_STORAGE_ENABLED:
     __all__.extend([
-        "VectorBase",
         "Document",  # Protocol for document structure
+        "VectorBase",
     ])
 # --- Email Storage (Moved to storage/email.py, re-exported here for compatibility) ---

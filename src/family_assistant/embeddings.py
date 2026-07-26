@@ -370,9 +370,8 @@ class SentenceTransformerEmbeddingGenerator:
                 f"SentenceTransformer model {model_name_or_path} loaded successfully."
             )
         except Exception as e:
-            logger.error(
-                f"Failed to load SentenceTransformer model '{model_name_or_path}': {e}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to load SentenceTransformer model '{model_name_or_path}': {e}"
             )
             raise ValueError(
                 f"Could not load SentenceTransformer model '{model_name_or_path}'"
@@ -423,9 +422,8 @@ class SentenceTransformerEmbeddingGenerator:
                 embeddings=embeddings_list, model_name=self.model_name
             )
         except Exception as e:
-            logger.error(
-                f"Error during SentenceTransformer embedding generation for model {self.model_name}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Error during SentenceTransformer embedding generation for model {self.model_name}: {e}"
             )
             raise RuntimeError(
                 f"Failed to generate embeddings with SentenceTransformer: {e}"
@@ -569,13 +567,13 @@ class MockEmbeddingGenerator:
 
 
 __all__ = [
-    "EmbeddingResult",
     "EmbeddingGenerator",
+    "EmbeddingResult",
     "GoogleEmbeddingGenerator",
-    "OpenAIEmbeddingGenerator",
     "HashingWordEmbeddingGenerator",  # Added new class
-    "SentenceTransformerEmbeddingGenerator",
     "MockEmbeddingGenerator",
+    "OpenAIEmbeddingGenerator",
+    "SentenceTransformerEmbeddingGenerator",
 ]
 
 # Conditionally remove SentenceTransformerEmbeddingGenerator from __all__ if not available

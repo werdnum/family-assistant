@@ -45,7 +45,7 @@ async def test_refresh_recovers_after_activate_tools_stream_error(
         *,
         messages: list[object],
         tools: list[dict[str, object]] | None = None,
-        tool_choice: str | None = "auto",  # noqa: ARG001
+        tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         async def _stream() -> AsyncIterator[LLMStreamEvent]:
             has_tool_result = any(

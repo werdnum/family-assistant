@@ -39,9 +39,9 @@ class PDFTextExtractor:
     async def process(
         self,
         current_items: list[IndexableContent],
-        original_document: "Document",  # noqa: ARG002
-        initial_content_ref: IndexableContent | None,  # noqa: ARG002
-        context: "ToolExecutionContext",  # noqa: ARG002
+        original_document: "Document",
+        initial_content_ref: IndexableContent | None,
+        context: "ToolExecutionContext",
     ) -> list[IndexableContent]:
         """
         Processes IndexableContent items, converting PDFs to Markdown.
@@ -109,9 +109,8 @@ class PDFTextExtractor:
                         )
 
                 except Exception as e:
-                    logger.error(
-                        f"Error converting PDF '{item.metadata.get('original_filename', item.ref)}' with markitdown: {e}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Error converting PDF '{item.metadata.get('original_filename', item.ref)}' with markitdown: {e}"
                     )
                 # If PDF processing failed or resulted in no content, the original PDF item is consumed
                 # and not added to output_items.

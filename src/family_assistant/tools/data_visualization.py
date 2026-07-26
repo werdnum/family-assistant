@@ -102,7 +102,7 @@ async def create_vega_chart_tool(
         try:
             spec_dict = json.loads(spec)
         except json.JSONDecodeError as e:
-            return ToolResult(text=f"Invalid JSON in spec: {str(e)}")
+            return ToolResult(text=f"Invalid JSON in spec: {e!s}")
 
         # Build data_dict from both sources
         # ast-grep-ignore: no-dict-any - Data can be any valid JSON structure
@@ -214,8 +214,8 @@ async def create_vega_chart_tool(
 
             png_data = await asyncio.to_thread(_render_chart)
         except Exception as e:
-            logger.error(f"Error rendering Vega spec: {e}", exc_info=True)
-            return ToolResult(text=f"Error rendering chart: {str(e)}")
+            logger.exception(f"Error rendering Vega spec: {e}")
+            return ToolResult(text=f"Error rendering chart: {e!s}")
 
         # Create attachment
         attachment = ToolAttachment(
@@ -229,5 +229,5 @@ async def create_vega_chart_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error creating Vega chart: {e}", exc_info=True)
-        return ToolResult(text=f"Error creating chart: {str(e)}")
+        logger.exception(f"Error creating Vega chart: {e}")
+        return ToolResult(text=f"Error creating chart: {e!s}")

@@ -183,7 +183,7 @@ async def test_thought_signature_reconstruction(
     model_msg_with_tool = None
     for msg in model_messages:
         if isinstance(msg, dict):
-            if "parts" in msg and msg["parts"]:
+            if msg.get("parts"):
                 model_msg_with_tool = msg
                 break
         elif hasattr(msg, "parts"):

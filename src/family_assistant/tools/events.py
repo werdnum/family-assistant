@@ -232,8 +232,8 @@ async def query_recent_events_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error querying recent events: {e}", exc_info=True)
-        return f"Error: Failed to query recent events. {str(e)}"
+        logger.exception(f"Error querying recent events: {e}")
+        return f"Error: Failed to query recent events. {e!s}"
 
 
 async def test_event_listener_tool(
@@ -383,7 +383,7 @@ async def test_event_listener_tool(
                             analysis.append(f"Field '{key}' not found in events")
                         elif actual_value != expected_value:
                             analysis.append(
-                                f"Field '{key}' exists but has value: {repr(actual_value)}"
+                                f"Field '{key}' exists but has value: {actual_value!r}"
                             )
             except Exception:
                 pass
@@ -401,9 +401,9 @@ async def test_event_listener_tool(
         )
 
     except Exception as e:
-        logger.error(f"Error testing event listener: {e}", exc_info=True)
+        logger.exception(f"Error testing event listener: {e}")
         return json.dumps({
-            "error": f"Failed to test event listener: {str(e)}",
+            "error": f"Failed to test event listener: {e!s}",
             "match_conditions": match_conditions,
         })
 

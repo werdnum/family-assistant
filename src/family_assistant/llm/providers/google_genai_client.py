@@ -154,7 +154,7 @@ def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
         decoded = base64.b64decode(raw_value, validate=True)
         if base64.b64encode(decoded).rstrip(b"=") == raw_value.rstrip(b"="):
             return decoded
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
     return raw_value
@@ -633,7 +633,7 @@ class GoogleGenAIClient(BaseLLMClient):
             except Exception as e:
                 # Error reading file - fall back to description
                 parts.append({
-                    "text": f"[File: {attachment.file_path} - Error reading file: {str(e)}]"
+                    "text": f"[File: {attachment.file_path} - Error reading file: {e!s}]"
                 })
 
         # Return UserMessage with parts for provider-specific handling
@@ -776,7 +776,7 @@ class GoogleGenAIClient(BaseLLMClient):
                                         dict(tc_metadata)
                                     ).thought_signature.to_google_format()  # type: ignore[union-attr]
                                 )
-                            except Exception as e:  # noqa: BLE001
+                            except Exception as e:
                                 logger.debug(
                                     "Failed to decode thought_signature from provider_metadata: %s",
                                     e,
@@ -1343,7 +1343,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 error_message, provider="google", model=self.model_name
             )
         else:
-            logger.error(f"Google GenAI API error: {e}", exc_info=True)
+            logger.error(f"Google GenAI API error: {e}", exc_info=e)
             return LLMProviderError(
                 error_message, provider="google", model=self.model_name
             )
@@ -1817,9 +1817,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 typed_error = e
             else:
                 typed_error = self._map_interactions_error(e)
-            logger.error(
-                f"Google Deep Research error ({type(typed_error).__name__}): {e}",
-                exc_info=True,
+            logger.exception(
+                f"Google Deep Research error ({type(typed_error).__name__}): {e}"
             )
 
             # If no content has been yielded, raise typed exception so
@@ -2153,9 +2152,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
 
             typed_error = self._map_error_to_typed_exception(e)
-            logger.error(
-                f"Google GenAI streaming error ({type(typed_error).__name__}): {e}",
-                exc_info=True,
+            logger.exception(
+                f"Google GenAI streaming error ({type(typed_error).__name__}): {e}"
             )
 
             # If no content has been yielded, raise typed exception so

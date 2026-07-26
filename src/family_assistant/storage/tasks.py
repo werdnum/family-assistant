@@ -142,7 +142,7 @@ async def enqueue_task(
     max_retries_override: int | None = None,
     recurrence_rule: str | None = None,
     original_task_id: str | None = None,
-) -> None:  # noqa: PLR0913
+) -> None:
     """Adds a task to the queue with automatic notification for immediate tasks.
 
     Args:
@@ -262,7 +262,7 @@ async def enqueue_task(
     except ValueError:  # Re-raise specific errors
         raise
     except SQLAlchemyError as e:
-        logger.error(f"Database error in enqueue_task {task_id}: {e}", exc_info=True)
+        logger.exception(f"Database error in enqueue_task {task_id}: {e}")
         raise
 
 
@@ -348,11 +348,11 @@ async def dequeue_task(
             return None  # No suitable task found
 
     except SQLAlchemyError as e:
-        logger.error(f"Database error in dequeue_task: {e}", exc_info=True)
+        logger.exception(f"Database error in dequeue_task: {e}")
         # Rollback is handled by the context manager's __aexit__ on exception
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in dequeue_task: {e}", exc_info=True)
+        logger.exception(f"Unexpected error in dequeue_task: {e}")
         # Rollback is handled by the context manager's __aexit__ on exception
         raise
 
@@ -385,10 +385,7 @@ async def update_task_status(
             )
             return False
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in update_task_status({task_id}): {e}",
-            exc_info=True,
-        )
+        logger.exception(f"Database error in update_task_status({task_id}): {e}")
         raise
 
 
@@ -429,10 +426,7 @@ async def reschedule_task_for_retry(
     except ValueError:  # Re-raise specific errors
         raise
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error in reschedule_task_for_retry({task_id}): {e}",
-            exc_info=True,
-        )
+        logger.exception(f"Database error in reschedule_task_for_retry({task_id}): {e}")
         raise
 
 
@@ -511,15 +505,13 @@ async def manually_retry_task(
             return False
 
     except SQLAlchemyError as e:
-        logger.error(
-            f"Database error during manual retry for task internal ID {internal_task_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Database error during manual retry for task internal ID {internal_task_id}: {e}"
         )
         raise  # Re-raise to be handled by context manager or caller
     except Exception as e:
-        logger.error(
-            f"Unexpected error during manual retry for task internal ID {internal_task_id}: {e}",
-            exc_info=True,
+        logger.exception(
+            f"Unexpected error during manual retry for task internal ID {internal_task_id}: {e}"
         )
         raise
 
@@ -536,5 +528,5 @@ async def get_all_tasks(
         rows = await db_context.fetch_all(stmt)
         return rows  # type: ignore[return-value]
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_all_tasks: {e}", exc_info=True)
+        logger.exception(f"Database error in get_all_tasks: {e}")
         raise

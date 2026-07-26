@@ -11,54 +11,55 @@ from pathlib import Path
 def mark_postgres_tests(file_path: Path) -> bool:
     """Mark tests using pg_vector_db_engine with @pytest.mark.postgres."""
     try:
-        content = file_path.read_text()
-        original_content = content
-
-        # Pattern to find test functions using pg_vector_db_engine
-        pattern = r"((?:^|\n)((?:    )*)async def test_\w+\([^)]*pg_vector_db_engine[^)]*\)(?:\s*->.*?)?:\n)"
-
-        # Find all matches
-        matches = list(re.finditer(pattern, content, re.MULTILINE))
-
-        if not matches:
+        original_content = file_path.read_text(encoding="utf-8")
+        content = _add_postgres_markers(original_content)
+        if content == original_content:
             return False
-
-        # Process matches in reverse to maintain positions
-        for match in reversed(matches):
-            indent = match.group(2)
-            start_pos = match.start(1)
-
-            # Check if already marked
-            check_start = max(0, start_pos - 100)
-            check_text = content[check_start:start_pos]
-            if "@pytest.mark.postgres" in check_text:
-                continue
-
-            # Add the marker
-            marker = f"\n{indent}@pytest.mark.postgres"
-            content = content[:start_pos] + marker + content[start_pos:]
-
-        # Add import if needed
-        if content != original_content and "import pytest" not in content:
-            # Find where to add import
-            import_match = re.search(
-                r"^((?:from|import)\s+.*\n)+", content, re.MULTILINE
-            )
-            if import_match:
-                end_pos = import_match.end()
-                content = content[:end_pos] + "import pytest\n" + content[end_pos:]
-            else:
-                content = "import pytest\n\n" + content
-
-        if content != original_content:
-            file_path.write_text(content)
-            return True
-
-        return False
-
+        file_path.write_text(content, encoding="utf-8")
     except Exception as e:
         print(f"Error processing {file_path}: {e}")
         return False
+
+    return True
+
+
+def _add_postgres_markers(content: str) -> str:
+    """Return `content` with @pytest.mark.postgres on every pg_vector_db_engine test."""
+    original_content = content
+
+    # Pattern to find test functions using pg_vector_db_engine
+    pattern = r"((?:^|\n)((?:    )*)async def test_\w+\([^)]*pg_vector_db_engine[^)]*\)(?:\s*->.*?)?:\n)"
+
+    matches = list(re.finditer(pattern, content, re.MULTILINE))
+    if not matches:
+        return content
+
+    # Process matches in reverse to maintain positions
+    for match in reversed(matches):
+        indent = match.group(2)
+        start_pos = match.start(1)
+
+        # Check if already marked
+        check_start = max(0, start_pos - 100)
+        check_text = content[check_start:start_pos]
+        if "@pytest.mark.postgres" in check_text:
+            continue
+
+        # Add the marker
+        marker = f"\n{indent}@pytest.mark.postgres"
+        content = content[:start_pos] + marker + content[start_pos:]
+
+    # Add import if needed
+    if content != original_content and "import pytest" not in content:
+        # Find where to add import
+        import_match = re.search(r"^((?:from|import)\s+.*\n)+", content, re.MULTILINE)
+        if import_match:
+            end_pos = import_match.end()
+            content = content[:end_pos] + "import pytest\n" + content[end_pos:]
+        else:
+            content = "import pytest\n\n" + content
+
+    return content
 
 
 def main() -> None:
@@ -82,7 +83,7 @@ def main() -> None:
     files_to_process = []
     for file_path in test_files:
         try:
-            content = file_path.read_text()
+            content = file_path.read_text(encoding="utf-8")
             if "pg_vector_db_engine" in content:
                 files_to_process.append(file_path)
         except Exception:

@@ -122,7 +122,7 @@ class IndexingSource(BaseEventSource, EventSource):
                 # No event within timeout, continue loop to check _running
                 continue
             except Exception as e:
-                logger.error(f"Error processing queued event: {e}", exc_info=True)
+                logger.exception(f"Error processing queued event: {e}")
 
     async def wait_for_pending_events(self, timeout: float = 10.0) -> None:
         """Wait for all pending events to be processed.

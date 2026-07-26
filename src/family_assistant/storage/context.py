@@ -324,10 +324,7 @@ class DatabaseContext:
                     else:
                         error_type = "UnknownError"  # Should not happen given the outer condition
 
-                    logger.error(
-                        f"Non-retryable {error_type} encountered: {e}",
-                        exc_info=True,
-                    )
+                    logger.exception(f"Non-retryable {error_type} encountered: {e}")
                     raise  # Re-raise immediately, do not retry
 
                 # Check for PostgreSQL-specific non-retryable errors
@@ -335,19 +332,16 @@ class DatabaseContext:
                 is_non_retryable, error_type = _is_non_retryable_postgres_error(e.orig)
                 if is_non_retryable:
                     if error_type == "transaction_aborted":
-                        logger.error(
-                            "PostgreSQL transaction is aborted. Cannot retry within same transaction.",
-                            exc_info=True,
+                        logger.exception(
+                            "PostgreSQL transaction is aborted. Cannot retry within same transaction."
                         )
                     elif error_type == "encoding_error":
-                        logger.error(
-                            f"Non-retryable encoding error (invalid characters in data): {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Non-retryable encoding error (invalid characters in data): {e}"
                         )
                     else:
-                        logger.error(
-                            f"Non-retryable PostgreSQL error ({error_type}): {e}",
-                            exc_info=True,
+                        logger.exception(
+                            f"Non-retryable PostgreSQL error ({error_type}): {e}"
                         )
                     raise  # Re-raise immediately, retrying won't help
 
@@ -368,7 +362,7 @@ class DatabaseContext:
                 logger.info(f"Retrying in {delay:.2f} seconds...")
                 await asyncio.sleep(delay)
             except Exception as e:
-                logger.error(f"Non-retryable error: {e}", exc_info=True)
+                logger.exception(f"Non-retryable error: {e}")
                 raise
 
         # This should ideally not be reached if retry logic works
@@ -436,7 +430,7 @@ class DatabaseContext:
             )
 
         # Wrapper to call the original callback without arguments
-        def event_listener_wrapper(*args: object, **kwargs: object) -> None:  # noqa: ARG001
+        def event_listener_wrapper(*args: object, **kwargs: object) -> None:
             callback()
 
         # Register the wrapper with the transaction context manager

@@ -298,7 +298,7 @@ class TelegramService:
             )
             # Optionally set global commands or other scopes if needed
         except Exception as e:
-            logger.error(f"Failed to set bot commands: {e}", exc_info=True)
+            logger.exception(f"Failed to set bot commands: {e}")
 
     async def start_polling(self) -> None:
         """Initializes the application, sets commands, and starts polling for updates."""
@@ -340,7 +340,7 @@ class TelegramService:
                 else:
                     logger.info("Telegram polling was not running.")
             except Exception as e:
-                logger.error(f"Error stopping Telegram updater: {e}", exc_info=True)
+                logger.exception(f"Error stopping Telegram updater: {e}")
 
         if self.application:
             logger.info("Shutting down Telegram application...")
@@ -363,13 +363,10 @@ class TelegramService:
                     except Exception as e2:
                         logger.error(f"Error forcing Telegram shutdown: {e2}")
                 else:
-                    logger.error(
-                        f"RuntimeError shutting down Telegram application: {e}",
-                        exc_info=True,
+                    logger.exception(
+                        f"RuntimeError shutting down Telegram application: {e}"
                     )
             except Exception as e:
-                logger.error(
-                    f"Error shutting down Telegram application: {e}", exc_info=True
-                )
+                logger.exception(f"Error shutting down Telegram application: {e}")
         else:
             logger.info("Telegram application instance not found for shutdown.")

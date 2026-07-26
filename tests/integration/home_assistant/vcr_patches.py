@@ -36,19 +36,18 @@ def patch_vcr_mock_client_response() -> Generator[None]:
 
     # Create new property with both getter and setter
     # ruff: noqa: ANN401 - Any is appropriate for monkey-patching VCR internals
-    def content_getter(self: Any) -> Any:  # noqa: ANN401
+    def content_getter(self: Any) -> Any:
         """Delegate to original getter."""
         if original_property.fget is None:
             raise RuntimeError("Original content property has no getter")
         return original_property.fget(self)
 
-    def content_setter(self: Any, value: Any) -> None:  # noqa: ANN401
+    def content_setter(self: Any, value: Any) -> None:
         """Allow setting for compatibility, but ignore the value.
 
         VCR manages content via _body internally and reconstructs it
         on access via the getter. We don't need to store the value.
         """
-        pass
 
     # Replace the property with one that has both getter and setter
     # Type ignore: monkey-patching class attribute is expected here

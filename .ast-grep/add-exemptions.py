@@ -45,33 +45,28 @@ def find_violations(rule_id: str, files: list[str] | None = None) -> list[dict]:
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-        # Check for errors - fail loudly instead of silently
-        if result.returncode != 0:
-            error_msg = (
-                result.stderr.strip()
-                if result.stderr
-                else f"Exit code {result.returncode}"
-            )
-            print(f"Error running check-conformance.py: {error_msg}", file=sys.stderr)
-            sys.exit(1)
-
-        if not result.stdout:
-            return []
-
-        # Parse JSON output
-        all_violations = json.loads(result.stdout)
-
-        # Filter to only the specified rule
-        violations = [v for v in all_violations if v.get("ruleId") == rule_id]
-        return violations
-
-    except json.JSONDecodeError as e:
-        print(f"Error parsing ast-grep output: {e}", file=sys.stderr)
-        sys.exit(1)
     except FileNotFoundError:
         print("Error: ast-grep not found in PATH", file=sys.stderr)
         sys.exit(1)
+
+    # Check for errors - fail loudly instead of silently
+    if result.returncode != 0:
+        error_msg = (
+            result.stderr.strip() if result.stderr else f"Exit code {result.returncode}"
+        )
+        print(f"Error running check-conformance.py: {error_msg}", file=sys.stderr)
+        sys.exit(1)
+
+    if not result.stdout:
+        return []
+
+    try:
+        all_violations = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        print(f"Error parsing ast-grep output: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    return [v for v in all_violations if v.get("ruleId") == rule_id]
 
 
 def get_indentation(line: str) -> str:
