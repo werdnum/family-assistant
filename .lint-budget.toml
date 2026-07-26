@@ -7,4 +7,4 @@
 # away — fix the code the rule is pointing at.
 
 [budgets]
-"PLW0717" = 103
+"PLW0717" = 99

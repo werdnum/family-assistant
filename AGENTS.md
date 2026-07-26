@@ -94,7 +94,7 @@ only ever goes down.
 
 A budgeted rule describes a habit rather than a single bug, which makes it cheaper to silence than
 to fix — `PLW0717` (`too-many-statements-in-try-clause`) is the current entry, at a time when it had
-accumulated 103 suppressions. **When this check fails, fix the code, do not raise the budget.** For
+accumulated 99 suppressions. **When this check fails, fix the code, do not raise the budget.** For
 `PLW0717` that means narrowing the `try` to the statements that can actually raise and moving the
 rest out of it. Raising a budget, or removing a rule from the file, needs the user to agree first.
 

@@ -132,30 +132,35 @@ def load_file_exemptions(
 
     try:
         with open(exemptions_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-
-        if not data or "exemptions" not in data:
-            return exemptions
-
-        for entry in data["exemptions"]:
-            rule_id = entry.get("rule", "")
-            files = entry.get("files", [])
-            reason = entry.get("reason", "No reason provided")
-
-            for file_pattern in files:
-                # Convert glob patterns to exemptions
-                exemptions.append(
-                    Exemption(
-                        rule_id=rule_id,
-                        file_path=file_pattern,
-                        line_number=None,
-                        reason=reason,
-                        exemption_type="file",
-                    )
-                )
-
+            exemptions = _parse_file_exemptions(yaml.safe_load(f))
     except Exception as e:
         print(f"Warning: Failed to load exemptions file: {e}", file=sys.stderr)
+
+    return exemptions
+
+
+def _parse_file_exemptions(data: object) -> list[Exemption]:
+    """Convert the parsed exemptions YAML into file-level exemptions."""
+    if not isinstance(data, dict) or "exemptions" not in data:
+        return []
+
+    exemptions = []
+    for entry in data["exemptions"]:
+        rule_id = entry.get("rule", "")
+        files = entry.get("files", [])
+        reason = entry.get("reason", "No reason provided")
+
+        for file_pattern in files:
+            # Convert glob patterns to exemptions
+            exemptions.append(
+                Exemption(
+                    rule_id=rule_id,
+                    file_path=file_pattern,
+                    line_number=None,
+                    reason=reason,
+                    exemption_type="file",
+                )
+            )
 
     return exemptions
 
@@ -169,60 +174,65 @@ def run_ast_grep(files: list[str]) -> list[Violation]:
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-        if not result.stdout:
-            return []
-
-        # Parse JSON output
-        data = json.loads(result.stdout)
-
-        # Rules that only apply to test files
-        test_only_rules = {
-            "no-asyncio-sleep-in-tests",
-            "no-time-sleep-in-tests",
-            "no-playwright-wait-for-timeout",
-            "no-strict-assistant-message-wait",
-        }
-
-        violations = []
-        for item in data:
-            file_path = item.get("file", "")
-            rule_id = item.get("ruleId", "unknown")
-            severity = item.get("severity", "error")
-
-            # Ignore ast-grep's builtin unused-suppression diagnostics because we
-            # implement exemption tracking ourselves.
-            if rule_id == "unused-suppression":
-                continue
-
-            # Skip hint-level violations (hints are handled separately by check-hints.py)
-            if severity == "hint":
-                continue
-
-            # Skip test-only rules for non-test files
-            if rule_id in test_only_rules and not file_path.startswith("tests/"):
-                continue
-
-            start_line = item.get("range", {}).get("start", {}).get("line", 0)
-            # ast-grep's JSON output reports zero-based line numbers; convert to 1-based
-            violations.append(
-                Violation(
-                    rule_id=rule_id,
-                    file_path=file_path,
-                    line_number=start_line + 1,
-                    message=item.get("message", ""),
-                    raw_data=item,
-                )
-            )
-
-        return violations
-
     except subprocess.CalledProcessError as e:
         print(f"Error running ast-grep: {e}", file=sys.stderr)
         return []
+
+    if not result.stdout:
+        return []
+
+    try:
+        data = json.loads(result.stdout)
     except json.JSONDecodeError as e:
         print(f"Error parsing ast-grep output: {e}", file=sys.stderr)
         return []
+
+    return _violations_from_ast_grep(data)
+
+
+# Rules that only apply to test files
+_TEST_ONLY_RULES = {
+    "no-asyncio-sleep-in-tests",
+    "no-time-sleep-in-tests",
+    "no-playwright-wait-for-timeout",
+    "no-strict-assistant-message-wait",
+}
+
+
+def _violations_from_ast_grep(data: list[dict]) -> list[Violation]:
+    """Convert ast-grep's JSON diagnostics into the violations we report on."""
+    violations = []
+    for item in data:
+        file_path = item.get("file", "")
+        rule_id = item.get("ruleId", "unknown")
+        severity = item.get("severity", "error")
+
+        # Ignore ast-grep's builtin unused-suppression diagnostics because we
+        # implement exemption tracking ourselves.
+        if rule_id == "unused-suppression":
+            continue
+
+        # Skip hint-level violations (hints are handled separately by check-hints.py)
+        if severity == "hint":
+            continue
+
+        # Skip test-only rules for non-test files
+        if rule_id in _TEST_ONLY_RULES and not file_path.startswith("tests/"):
+            continue
+
+        start_line = item.get("range", {}).get("start", {}).get("line", 0)
+        # ast-grep's JSON output reports zero-based line numbers; convert to 1-based
+        violations.append(
+            Violation(
+                rule_id=rule_id,
+                file_path=file_path,
+                line_number=start_line + 1,
+                message=item.get("message", ""),
+                raw_data=item,
+            )
+        )
+
+    return violations
 
 
 def is_violation_exempted(

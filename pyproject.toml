@@ -456,11 +456,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-".ast-grep/add-exemptions.py" = ["PLW0717"]
-".ast-grep/check-conformance.py" = ["PLW0717"]
 "contrib/scrape_mcp.py" = ["PLW0717"]
-"scripts/mark_postgres_tests_simple.py" = ["PLW0717"]
-"scripts/review-changes.py" = ["PLW0717"]
 "src/family_assistant/__main__.py" = ["PLW0717"]
 "src/family_assistant/a2a/client.py" = ["PLW0717"]
 "src/family_assistant/assistant.py" = ["PLW0717"]

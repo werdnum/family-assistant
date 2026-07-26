@@ -127,17 +127,23 @@ class CodeReviewToolbox(llm.Toolbox):
             if file_size > self.max_file_size and not start_line:
                 return f"File too large ({file_size} bytes). Please specify line range with start_line and end_line."
 
-            with open(full_path, encoding="utf-8") as f:
-                if start_line:
-                    lines = f.readlines()
-                    start_idx = max(0, start_line - 1)
-                    end_idx = end_line if end_line else len(lines)
-                    return "".join(lines[start_idx:end_idx])
-                return f.read(self.max_file_size)
+            return self._read_text_range(full_path, start_line, end_line)
         except UnicodeDecodeError:
             return f"ERROR: {path} appears to be a binary file"
         except Exception as e:
             return f"ERROR: Failed to read {path}: {e}"
+
+    def _read_text_range(
+        self, full_path: Path, start_line: int | None, end_line: int | None
+    ) -> str:
+        """Read the file as text, optionally narrowed to a 1-based line range."""
+        with open(full_path, encoding="utf-8") as f:
+            if start_line:
+                lines = f.readlines()
+                start_idx = max(0, start_line - 1)
+                end_idx = end_line if end_line else len(lines)
+                return "".join(lines[start_idx:end_idx])
+            return f.read(self.max_file_size)
 
     def search_pattern(
         self, pattern: str, file_glob: str | None = None, max_results: int = 30
@@ -190,30 +196,37 @@ class CodeReviewToolbox(llm.Toolbox):
                 check=True,
             )
 
-            matches = []
-            for line in result.stdout.splitlines():
-                if line:
-                    try:
-                        data = json.loads(line)
-                        if data.get("type") == "match":
-                            match_data = data["data"]
-                            path = match_data["path"]["text"]
-                            line_no = match_data["line_number"]
-                            text = match_data["lines"]["text"].strip()
-                            matches.append(f"{path}:{line_no}: {text}")
-                    except json.JSONDecodeError:
-                        continue
-
-            if not matches:
-                return "No matches found"
-            return "\n".join(matches[:max_results])
-
+            matches = self._parse_ripgrep_matches(result.stdout)
         except subprocess.TimeoutExpired:
             return "ERROR: Search timed out after 5 seconds"
         except subprocess.CalledProcessError as e:
             return f"ERROR: Search failed: {e}"
         except Exception as e:
             return f"ERROR: Unexpected error during search: {e}"
+
+        if not matches:
+            return "No matches found"
+        return "\n".join(matches[:max_results])
+
+    @staticmethod
+    def _parse_ripgrep_matches(stdout: str) -> list[str]:
+        """Extract `path:line: text` entries from ripgrep's JSON lines output."""
+        matches = []
+        for line in stdout.splitlines():
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") != "match":
+                continue
+            match_data = data["data"]
+            path = match_data["path"]["text"]
+            line_no = match_data["line_number"]
+            text = match_data["lines"]["text"].strip()
+            matches.append(f"{path}:{line_no}: {text}")
+        return matches
 
     def get_file_context(self, file: str, line: int, context_lines: int = 5) -> str:
         """
@@ -1088,31 +1101,31 @@ submit_review(
                 response_text = (
                     response.text() if hasattr(response, "text") else str(response)
                 )
+            except Exception as e:
+                logger.exception(f"Error calling LLM with schema: {e}")
+                print(f"Error calling LLM: {e}", file=sys.stderr)
+                if output_json:
+                    sys.stdout = original_stdout
+                return 1, {}
 
-                if response_text:
-                    logger.debug(
-                        f"Schema-based review completed, parsing JSON ({len(response_text)} chars)"
-                    )
-                    review_data = json.loads(response_text)
-                else:
-                    logger.error("Empty response from LLM with schema")
-                    print("Error: Empty response from LLM", file=sys.stderr)
-                    if output_json:
-                        sys.stdout = original_stdout
-                    return 1, {}
+            if not response_text:
+                logger.error("Empty response from LLM with schema")
+                print("Error: Empty response from LLM", file=sys.stderr)
+                if output_json:
+                    sys.stdout = original_stdout
+                return 1, {}
 
+            logger.debug(
+                f"Schema-based review completed, parsing JSON ({len(response_text)} chars)"
+            )
+            try:
+                review_data = json.loads(response_text)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse LLM response as JSON: {e}")
                 print(
                     f"Error: Failed to parse LLM response as JSON: {e}", file=sys.stderr
                 )
                 print(f"Response was: {response_text[:500]}", file=sys.stderr)
-                if output_json:
-                    sys.stdout = original_stdout
-                return 1, {}
-            except Exception as e:
-                logger.exception(f"Error calling LLM with schema: {e}")
-                print(f"Error calling LLM: {e}", file=sys.stderr)
                 if output_json:
                     sys.stdout = original_stdout
                 return 1, {}
