@@ -1,7 +1,7 @@
 # Suppression budgets, enforced by scripts/check_suppression_budget.py.
 #
 # Each number is the count of suppressions for that ruff rule across
-# per-file-ignores and inline `# noqa` comments. The check fails if a
+# per-file-ignores and inline suppression comments. The check fails if a
 # count rises above its budget, and lowers the budget automatically when
 # a count falls. Do not raise a number here to make a lint failure go
 # away — fix the code the rule is pointing at.

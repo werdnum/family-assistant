@@ -28,13 +28,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUDGET_FILENAME = ".lint-budget.toml"
 
-# Matches a ruff suppression comment and captures its codes: the inline form,
-# the comma-separated form, and the file-level `ruff:` form. Written as a
-# concatenation so this source line is not itself a suppression comment.
+# Matches a ruff suppression comment: the inline form, the comma-separated form,
+# and the file-level `ruff:` form. The codes group is optional because ruff also
+# accepts a bare directive, which silences every rule on the line — counted
+# against every budget rather than being a free pass. Assembled by concatenation
+# so this source line is not itself a suppression comment.
 _NOQA = re.compile(
     r"#\s*(?:ruff:\s*)?"
     + "noqa"
-    + r":\s*(?P<codes>[A-Z]+[0-9]+(?:[,\s]+[A-Z]+[0-9]+)*)"
+    + r"\b(?::\s*(?P<codes>[A-Z]+[0-9]+(?:[,\s]+[A-Z]+[0-9]+)*))?"
 )
 
 
@@ -86,15 +88,22 @@ def _lint_config(root: Path) -> dict[str, object]:
 
 
 def _python_files(root: Path) -> list[Path]:
-    """Every tracked Python file, so the count does not depend on the caller's argv."""
+    """Every file ruff would actually lint, so the count matches what it reports.
+
+    Asks ruff rather than walking the tree: a suppression in an excluded path
+    (`.ast-grep/tests/**` holds deliberately-broken fixtures) suppresses nothing,
+    and should not spend budget. The count also stays independent of the caller's
+    argv, so a pre-commit run over two files sees the same total as CI.
+    """
+    ruff = Path(sys.executable).parent / "ruff"
     result = subprocess.run(
-        ["git", "ls-files", "-z", "*.py"],
+        [str(ruff) if ruff.exists() else "ruff", "check", "--show-files", "."],
         cwd=root,
         capture_output=True,
         text=True,
         check=True,
     )
-    return [root / name for name in result.stdout.split("\0") if name]
+    return [Path(line) for line in result.stdout.splitlines() if line.endswith(".py")]
 
 
 def find_usages(root: Path, rules: list[str]) -> dict[str, Usage]:
@@ -111,7 +120,10 @@ def find_usages(root: Path, rules: list[str]) -> dict[str, Usage]:
             match = _NOQA.search(line)
             if match is None:
                 continue
-            codes = re.split(r"[,\s]+", match.group("codes"))
+            listed = match.group("codes")
+            # A bare directive silences everything on the line, so it spends a
+            # unit of every budget.
+            codes = re.split(r"[,\s]+", listed) if listed else rules
             for rule in rules:
                 if rule in codes:
                     inline[rule].append(f"{path.relative_to(root)}:{lineno}")
@@ -203,7 +215,14 @@ def check(root: Path) -> int:
         budgets.update(lowered)
         write_budgets(root, budgets)
         for rule, total in sorted(lowered.items()):
-            print(f"{rule}: budget lowered to {total}. Commit {BUDGET_FILENAME}.")
+            print(
+                f"{rule}: budget lowered to {total}. Commit {BUDGET_FILENAME}.",
+                file=sys.stderr,
+            )
+        # Nonzero even though nothing is wrong with the code: the rewritten file
+        # has to reach the commit, or the ceiling stays high and the headroom the
+        # fix just freed is available to the next suppression.
+        failed = True
 
     return 1 if failed else 0
 

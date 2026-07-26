@@ -6,7 +6,6 @@ an inline suppression comment, a file-level one, and switching the rule off.
 """
 
 import importlib.util
-import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -25,6 +24,11 @@ def _suppress(codes: str, *, file_level: bool = False) -> str:
     """
     prefix = "# ruff: " if file_level else "# "
     return prefix + "noqa" + f": {codes}"
+
+
+def _bare_suppress() -> str:
+    """Build a suppression comment with no codes, which silences everything."""
+    return "# " + "noqa"
 
 
 def _script() -> ModuleType:
@@ -66,9 +70,6 @@ def _write_repo(
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
-
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
 
 
 @pytest.fixture
@@ -117,6 +118,18 @@ def test_counts_noqa_listing_several_codes(repo: Path) -> None:
     assert _script().check(repo) == 1
 
 
+def test_counts_bare_noqa_against_every_budget(repo: Path) -> None:
+    """A directive with no codes silences every rule on the line, budget included."""
+    _write_repo(
+        repo,
+        budget=0,
+        sources={
+            "src/a.py": f"try:  {_bare_suppress()}\n    pass\nexcept Exception:\n    pass\n"
+        },
+    )
+    assert _script().check(repo) == 1
+
+
 def test_ignores_noqa_for_other_rules(repo: Path) -> None:
     _write_repo(
         repo,
@@ -137,8 +150,18 @@ def test_lowers_budget_when_count_drops(repo: Path) -> None:
     _write_repo(repo, budget=5, per_file_ignores={"src/a.py": ["PLW0717"]})
     module = _script()
 
-    assert module.check(repo) == 0
+    # Nonzero so the rewritten file has to reach the commit; a run that lowered
+    # the ceiling and passed would leave the old ceiling in the merged tree.
+    assert module.check(repo) == 1
     assert module.read_budgets(repo) == {"PLW0717": 1}
+
+
+def test_passes_once_lowered_budget_is_committed(repo: Path) -> None:
+    _write_repo(repo, budget=5, per_file_ignores={"src/a.py": ["PLW0717"]})
+    module = _script()
+    module.check(repo)
+
+    assert module.check(repo) == 0
 
 
 def test_lowered_budget_is_then_enforced(repo: Path) -> None:
