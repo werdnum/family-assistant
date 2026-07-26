@@ -11,7 +11,7 @@ from pathlib import Path
 def mark_postgres_tests(file_path: Path) -> bool:
     """Mark tests using pg_vector_db_engine with @pytest.mark.postgres."""
     try:
-        content = file_path.read_text()
+        content = file_path.read_text(encoding="utf-8")
         original_content = content
 
         # Pattern to find test functions using pg_vector_db_engine
@@ -51,7 +51,7 @@ def mark_postgres_tests(file_path: Path) -> bool:
                 content = "import pytest\n\n" + content
 
         if content != original_content:
-            file_path.write_text(content)
+            file_path.write_text(content, encoding="utf-8")
             return True
 
         return False
@@ -82,7 +82,7 @@ def main() -> None:
     files_to_process = []
     for file_path in test_files:
         try:
-            content = file_path.read_text()
+            content = file_path.read_text(encoding="utf-8")
             if "pg_vector_db_engine" in content:
                 files_to_process.append(file_path)
         except Exception:

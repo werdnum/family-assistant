@@ -58,7 +58,7 @@ def validate_cassette(file_path: Path) -> list[str]:
         headers = request.get("headers", {})
         for header_name, header_values in headers.items():
             header_lower = header_name.lower()
-            if header_lower in ["authorization", "x-api-key", "api-key"]:
+            if header_lower in {"authorization", "x-api-key", "api-key"}:
                 for value in header_values:
                     if value != "REDACTED":
                         issues.append(
