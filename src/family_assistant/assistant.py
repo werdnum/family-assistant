@@ -138,6 +138,7 @@ from family_assistant.tools import (
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
+    ToolsProvider,
     _scan_user_docs,
     build_local_tool_registrations,
 )
@@ -165,6 +166,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
+    from family_assistant.tools import ToolRegistration
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -176,6 +178,36 @@ def _calendar_config_to_dict(
 ) -> CalendarConfigDict:
     """Convert Pydantic CalendarConfig to TypedDict format for tool functions."""
     return cast("CalendarConfigDict", pydantic_config.model_dump(exclude_none=True))
+
+
+def _root_provider_for_profile(
+    shared_root: ToolsProvider,
+    profile_calendar_config: PydanticCalendarConfig | None,
+    local_registrations: Sequence[ToolRegistration],
+    mcp_provider: ToolsProvider,
+    embedding_generator: EmbeddingGenerator | None,
+) -> ToolsProvider:
+    """The provider a profile's policy chain wraps.
+
+    Calendar tools read the calendar from the `LocalToolsProvider` they were built
+    with, so a profile naming its own calendar needs its own local provider.
+    Sharing the root one would let the profile's prompt context and its tool calls
+    disagree about which calendar it is looking at -- events listed from one, added
+    to another. Profiles without their own calendar share the root provider; the
+    MCP provider is shared either way, since nothing in it is calendar-scoped.
+    """
+    if profile_calendar_config is None:
+        return shared_root
+    return CompositeToolsProvider(
+        providers=[
+            LocalToolsProvider(
+                registrations=list(local_registrations),
+                embedding_generator=embedding_generator,
+                calendar_config=_calendar_config_to_dict(profile_calendar_config),
+            ),
+            mcp_provider,
+        ]
+    )
 
 
 # Helper function (can be moved to utils if used elsewhere)
@@ -883,6 +915,9 @@ class Assistant:
         root_local_registrations = filter_oauth_tool_registrations(
             root_local_registrations, google_integration_state
         )
+        # Kept so a profile with its own calendar_config can be given a local
+        # provider built against that calendar; see the profile loop below.
+        self._root_local_registrations = root_local_registrations
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
             embedding_generator=self.embedding_generator,
@@ -899,6 +934,7 @@ class Assistant:
             mcp_server_configs=all_mcp_servers_config,
             initialization_timeout_seconds=60,
         )
+        self._root_mcp_provider = root_mcp_provider
 
         # Create composite root provider
         self.root_tools_provider = CompositeToolsProvider(
@@ -1069,13 +1105,21 @@ class Assistant:
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
 
+            profile_root_provider = _root_provider_for_profile(
+                shared_root=self.root_tools_provider,
+                profile_calendar_config=profile_proc_conf.calendar_config,
+                local_registrations=self._root_local_registrations,
+                mcp_provider=self._root_mcp_provider,
+                embedding_generator=self.embedding_generator,
+            )
+
             # Build provider chain: Policy → root. The provider chain is
             # shared by all consumers (LLM loop, scripts, web UI listings),
             # so it must reflect the full set of tools the profile is allowed
             # to use. On-demand gating is an LLM-loop concern only and lives
             # in a sibling ``OnDemandToolsView`` below.
             policy_provider = PolicyEnforcingToolsProvider(
-                wrapped_provider=self.root_tools_provider,
+                wrapped_provider=profile_root_provider,
                 policy_engine=policy_engine,
                 confirmation_timeout=confirmation_timeout,
             )

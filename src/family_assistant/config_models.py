@@ -109,6 +109,13 @@ CONTEXT_PROVIDER_NAMES: frozenset[str] = frozenset({
     "home_assistant",
 })
 
+_GLOB_METACHARACTERS = "*?["
+
+
+def _is_glob(name: str) -> bool:
+    """Whether a tool name contains `fnmatch` wildcard syntax."""
+    return any(char in name for char in _GLOB_METACHARACTERS)
+
 
 class ProcessingConfig(BaseModel):
     """Configuration for message processing behavior.
@@ -1481,7 +1488,11 @@ class AppConfig(BaseSettings):
         resolves them with `fnmatchcase`. Comparing them as literals would reject
         a working config -- a grant of `read_*` excluded as `read_text_attachment`,
         or the reverse -- and refusing to start is a worse failure than the no-op
-        this guards against.
+        this guards against. When both sides are patterns, neither matches the
+        other's literal text even where their match sets overlap (`read_*` and
+        `*_attachment` meet on `read_text_attachment`), so such a pair is left
+        alone: deciding whether two globs can intersect is not worth doing to
+        reach a stricter answer than "cannot tell".
         """
         if self.global_tools_policy is None:
             granted: set[str] = set()
@@ -1506,7 +1517,9 @@ class AppConfig(BaseSettings):
                 # the grant concrete, or the other way round. Overlap in either
                 # sense means the two rules can meet on a real tool.
                 if not any(
-                    fnmatchcase(grant, excluded) or fnmatchcase(excluded, grant)
+                    fnmatchcase(grant, excluded)
+                    or fnmatchcase(excluded, grant)
+                    or (_is_glob(grant) and _is_glob(excluded))
                     for grant in granted
                 )
             )

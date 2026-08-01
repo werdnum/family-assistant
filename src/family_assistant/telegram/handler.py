@@ -1490,7 +1490,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             return
 
         attachments: list[AttachmentData] = []
-        max_file_size = self.telegram_service.attachment_registry.max_file_size
+        registry = self.telegram_service.attachment_registry
+        max_file_size = registry.max_file_size
+        # Photos, audio, voice notes and video only ever reach a model as media,
+        # so they are held to the tighter multimodal bound. Checking it here means
+        # an oversized recording is refused with its size instead of being
+        # downloaded and then rejected at registration.
+        max_media_size = registry.media_size_limit
 
         if self._resolve_telegram_user(user_id) is None:
             logger.warning(f"Ignoring message from unauthorized user {user_id}")
@@ -1514,22 +1520,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 # Photos in Telegram usually don't have file_size in the Update object immediately available
                 # or it's reliable. However, get_file() will return an object with file_size.
                 # But to avoid network call if possible, we check photo_size.file_size
-                if photo_size.file_size and photo_size.file_size > max_file_size:
+                if photo_size.file_size and photo_size.file_size > max_media_size:
                     logger.warning(
-                        f"Photo size {photo_size.file_size} exceeds limit {max_file_size}. Skipping."
+                        f"Photo size {photo_size.file_size} exceeds limit {max_media_size}. Skipping."
                     )
                     await update.message.reply_text(
-                        f"Skipping photo: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        f"Skipping photo: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                     )
                 else:
                     photo_file = await photo_size.get_file()
                     # Double check size from get_file() result
-                    if photo_file.file_size and photo_file.file_size > max_file_size:
+                    if photo_file.file_size and photo_file.file_size > max_media_size:
                         logger.warning(
-                            f"Photo size {photo_file.file_size} exceeds limit {max_file_size}. Skipping."
+                            f"Photo size {photo_file.file_size} exceeds limit {max_media_size}. Skipping."
                         )
                         await update.message.reply_text(
-                            f"Skipping photo: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                            f"Skipping photo: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                         )
                     else:
                         with io.BytesIO() as buf:
@@ -1598,21 +1604,21 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     f"Message {update.message.message_id} from chat {chat_id} contains audio ({audio.file_size} bytes)."
                 )
 
-                if audio.file_size and audio.file_size > max_file_size:
+                if audio.file_size and audio.file_size > max_media_size:
                     logger.warning(
-                        f"Audio size {audio.file_size} exceeds limit {max_file_size}. Skipping."
+                        f"Audio size {audio.file_size} exceeds limit {max_media_size}. Skipping."
                     )
                     await update.message.reply_text(
-                        f"Skipping audio: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        f"Skipping audio: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                     )
                 else:
                     audio_file = await audio.get_file()
-                    if audio_file.file_size and audio_file.file_size > max_file_size:
+                    if audio_file.file_size and audio_file.file_size > max_media_size:
                         logger.warning(
-                            f"Audio size {audio_file.file_size} exceeds limit {max_file_size}. Skipping."
+                            f"Audio size {audio_file.file_size} exceeds limit {max_media_size}. Skipping."
                         )
                         await update.message.reply_text(
-                            f"Skipping audio: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                            f"Skipping audio: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                         )
                     else:
                         with io.BytesIO() as buf:
@@ -1644,12 +1650,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     f"Message {update.message.message_id} from chat {chat_id} contains a voice note ({voice.file_size} bytes)."
                 )
 
-                if voice.file_size and voice.file_size > max_file_size:
+                if voice.file_size and voice.file_size > max_media_size:
                     logger.warning(
-                        f"Voice size {voice.file_size} exceeds limit {max_file_size}. Skipping."
+                        f"Voice size {voice.file_size} exceeds limit {max_media_size}. Skipping."
                     )
                     await update.message.reply_text(
-                        f"Skipping voice note: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        f"Skipping voice note: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                     )
                 else:
                     voice_file = await voice.get_file()
@@ -1658,12 +1664,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # before downloading keeps an oversized note out of memory and
                     # gives the same explicit reply as the audio and video paths,
                     # rather than a generic error later at registration.
-                    if voice_file.file_size and voice_file.file_size > max_file_size:
+                    if voice_file.file_size and voice_file.file_size > max_media_size:
                         logger.warning(
-                            f"Voice size {voice_file.file_size} exceeds limit {max_file_size}. Skipping."
+                            f"Voice size {voice_file.file_size} exceeds limit {max_media_size}. Skipping."
                         )
                         await update.message.reply_text(
-                            f"Skipping voice note: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                            f"Skipping voice note: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                         )
                     else:
                         with io.BytesIO() as buf:
@@ -1691,21 +1697,21 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     f"Message {update.message.message_id} from chat {chat_id} contains video ({video.file_size} bytes)."
                 )
 
-                if video.file_size and video.file_size > max_file_size:
+                if video.file_size and video.file_size > max_media_size:
                     logger.warning(
-                        f"Video size {video.file_size} exceeds limit {max_file_size}. Skipping."
+                        f"Video size {video.file_size} exceeds limit {max_media_size}. Skipping."
                     )
                     await update.message.reply_text(
-                        f"Skipping video: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        f"Skipping video: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                     )
                 else:
                     video_file = await video.get_file()
-                    if video_file.file_size and video_file.file_size > max_file_size:
+                    if video_file.file_size and video_file.file_size > max_media_size:
                         logger.warning(
-                            f"Video size {video_file.file_size} exceeds limit {max_file_size}. Skipping."
+                            f"Video size {video_file.file_size} exceeds limit {max_media_size}. Skipping."
                         )
                         await update.message.reply_text(
-                            f"Skipping video: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                            f"Skipping video: File size exceeds the {max_media_size // 1024 // 1024}MB limit."
                         )
                     else:
                         with io.BytesIO() as buf:

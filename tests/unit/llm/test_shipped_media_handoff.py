@@ -237,3 +237,52 @@ def test_an_exclusion_that_withholds_nothing_is_rejected(tmp_path: Path) -> None
 
     with pytest.raises(ValidationError, match="withholds nothing"):
         load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+
+def test_two_overlapping_globs_are_not_rejected(tmp_path: Path) -> None:
+    """A grant pattern and an exclusion pattern may overlap without either
+    matching the other's literal text.
+
+    `read_*` and `*_attachment` both match `read_text_attachment`, so the
+    exclusion is effective, but neither `fnmatchcase` direction says so.
+    Deciding whether two globs intersect is not worth doing to reach a stricter
+    answer than "cannot tell", and refusing to start on a working config is the
+    worse failure, so the pair is accepted.
+    """
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "global_tools_policy:\n"
+        "  rules:\n"
+        "    - match:\n"
+        "        names:\n"
+        '          - "read_*"\n'
+        '      decision: "allow"\n'
+        "      priority: 50\n"
+        "service_profiles:\n"
+        '  - id: "media_analyst"\n'
+        "    excluded_global_tools:\n"
+        '      - "*_attachment"\n'
+    )
+
+    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+    profile = next(p for p in config.service_profiles if p.id == _HANDOFF_PROFILE_ID)
+    assert profile.excluded_global_tools == ["*_attachment"]
+
+
+def test_a_glob_exclusion_matching_no_grant_is_still_rejected(tmp_path: Path) -> None:
+    """Leniency is limited to glob-vs-glob pairs.
+
+    A pattern exclusion against concrete grants can still be shown to withhold
+    nothing, so a typo in the pattern fails at startup as before.
+    """
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "service_profiles:\n"
+        '  - id: "media_analyst"\n'
+        "    excluded_global_tools:\n"
+        '      - "write_*"\n'
+    )
+
+    with pytest.raises(ValidationError, match="withholds nothing"):
+        load_config(config_file_path=str(config_file), load_dotenv_file=False)
