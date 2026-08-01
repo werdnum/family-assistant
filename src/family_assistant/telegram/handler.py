@@ -1119,6 +1119,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     | filters.Document.ALL
                     | filters.VIDEO
                     | filters.AUDIO
+                    | filters.VOICE
                 )
                 & ~filters.COMMAND,
                 self.message_handler,
@@ -1631,6 +1632,44 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         logger.debug(
                             f"Audio from message {update.message.message_id} loaded."
                         )
+
+            # Handle Voice notes. A separate Telegram type from AUDIO: a voice
+            # note arrives as `message.voice` and is not matched by filters.AUDIO,
+            # so without this the update never reaches this handler at all. It is
+            # the everyday way a person sends speech, and the transcription
+            # handoff exists for it.
+            if update.message.voice:
+                voice = update.message.voice
+                logger.info(
+                    f"Message {update.message.message_id} from chat {chat_id} contains a voice note ({voice.file_size} bytes)."
+                )
+
+                if voice.file_size and voice.file_size > max_file_size:
+                    logger.warning(
+                        f"Voice size {voice.file_size} exceeds limit {max_file_size}. Skipping."
+                    )
+                    await update.message.reply_text(
+                        f"Skipping voice note: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                    )
+                else:
+                    voice_file = await voice.get_file()
+                    with io.BytesIO() as buf:
+                        await voice_file.download_to_memory(out=buf)
+                        buf.seek(0)
+                        voice_bytes = buf.read()
+                        attachments.append(
+                            AttachmentData(
+                                content=voice_bytes,
+                                filename=f"voice_{voice.file_id}.ogg",
+                                # Telegram encodes voice notes as OGG/Opus.
+                                mime_type=voice.mime_type or "audio/ogg",
+                                description=update.message.caption
+                                or "Telegram voice note",
+                            )
+                        )
+                    logger.debug(
+                        f"Voice note from message {update.message.message_id} loaded."
+                    )
 
             # Handle Video
             if update.message.video:

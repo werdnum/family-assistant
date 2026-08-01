@@ -56,8 +56,25 @@ describe('FileAttachmentAdapter', () => {
   describe('constructor', () => {
     test('sets correct accept pattern', () => {
       expect(adapter.accept).toBe(
-        'image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,application/pdf'
+        'image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,application/pdf,audio/mpeg,audio/wav,audio/ogg,audio/webm,video/mp4,video/webm,video/ogg'
       );
+    });
+
+    // A type absent here is rejected before upload, so the backend transcription
+    // handoff never sees it. These must stay in step with
+    // attachment_config.allowed_mime_types in defaults.yaml.
+    test('accepts the audio and video the assistant can transcribe', () => {
+      for (const type of [
+        'audio/mpeg',
+        'audio/wav',
+        'audio/ogg',
+        'audio/webm',
+        'video/mp4',
+        'video/webm',
+        'video/ogg',
+      ]) {
+        expect(adapter.accept).toContain(type);
+      }
     });
   });
 
