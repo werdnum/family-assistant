@@ -618,7 +618,7 @@ service_profiles:
     # 'default_profile_settings', overriding only max_iterations so the main
     # assistant has more headroom before hitting the tool-call limit.
     processing_config:
-      max_iterations: 25
+      max_iterations: 50
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
     processing_config:
