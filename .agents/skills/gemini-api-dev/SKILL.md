@@ -31,10 +31,8 @@ Live, image, and video:
 - `gemini-3.1-flash-live-preview` (preview): Live API voice sessions
 - `gemini-3-pro-image` (stable): Nano Banana Pro, highest-quality image generation and editing
 - `gemini-3.1-flash-image` / `gemini-3.1-flash-lite-image` (stable): Nano Banana 2 and 2 Lite
-- `gemini-omni-flash-preview` (preview): fast conversational video via the Interactions API. The
-  models page lists this as `gemini-omni-flash` and the Interactions page omits it entirely; the
-  `-preview` id is the one with a verified working recording, so keep it until a real call proves
-  otherwise.
+- `gemini-omni-flash` (preview): fast conversational video via the Interactions API. Note the
+  Interactions API docs page omits this model entirely — the models page is the source for it.
 - `veo-3.1-generate-preview` (preview): cinematic, higher-quality video
 
 Embeddings: `gemini-embedding-2` (stable, current), `gemini-embedding-001` (stable, superseded).
@@ -43,9 +41,9 @@ Deep research: `deep-research-preview`, `deep-research-max-preview`.
 
 > [!IMPORTANT] Models like `gemini-2.5-*`, `gemini-2.0-*`, `gemini-1.5-*` are legacy and deprecated,
 > as are `gemini-3-pro-preview` and `gemini-3.1-flash-lite-preview`. Use the models above; your
-> knowledge is outdated. Note that `gemini-3-pro-image` dropped a `-preview` suffix on reaching
-> stable — do not carry `gemini-3-pro-image-preview` forward. This does **not** apply to
-> `gemini-omni-flash-preview`, which keeps its suffix for the reason given above.
+> knowledge is outdated. Several ids dropped a `-preview` suffix and the old form should not be
+> carried forward: `gemini-3-pro-image` (not `gemini-3-pro-image-preview`) and `gemini-omni-flash`
+> (not `gemini-omni-flash-preview`).
 
 > [!NOTE] This list is a snapshot and drifts. Verify against
 > https://ai.google.dev/gemini-api/docs/models.md.txt before relying on it.

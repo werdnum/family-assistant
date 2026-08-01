@@ -74,7 +74,7 @@ VIDEO_GENERATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "model": {
                         "type": "string",
-                        "description": "Optional model override. Defaults to Gemini Omni Flash (gemini-omni-flash-preview) for fast conversational video. A `veo-*` id, or use of `negative_prompt` or `last_frame_image` without a model override, selects Veo for cinematic, higher-quality clips instead.",
+                        "description": "Optional model override. Defaults to Gemini Omni Flash (gemini-omni-flash) for fast conversational video. A `veo-*` id, or use of `negative_prompt` or `last_frame_image` without a model override, selects Veo for cinematic, higher-quality clips instead.",
                     },
                 },
                 "required": ["prompt"],

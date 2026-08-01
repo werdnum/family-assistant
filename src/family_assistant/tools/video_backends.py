@@ -304,7 +304,7 @@ class GeminiOmniVideoBackend:
     Interactions ``input`` content blocks and reads the resulting outputs.
     """
 
-    DEFAULT_MODEL = "gemini-omni-flash-preview"
+    DEFAULT_MODEL = "gemini-omni-flash"
     _POLL_INTERVAL_SECONDS = 5
     _TIMEOUT_SECONDS = 600
 

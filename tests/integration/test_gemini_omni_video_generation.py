@@ -1,6 +1,6 @@
 """Integration test for GeminiOmniVideoBackend using VCR record/replay.
 
-Exercises Gemini Omni Flash (``gemini-omni-flash-preview``) video generation
+Exercises Gemini Omni Flash (``gemini-omni-flash``) video generation
 end-to-end against the real Interactions API. Unlike the Gemini chat/image/
 embedding paths (which use the SDK's DebugConfig replay), the Interactions
 client is a separate httpx transport, so this test records/replays at the HTTP
@@ -82,7 +82,7 @@ async def test_omni_flash_video_generation() -> None:
         )
     )
 
-    assert result.model == "gemini-omni-flash-preview"
+    assert result.model == "gemini-omni-flash"
     assert result.mime_type == "video/mp4"
     assert result.content, "backend returned no video bytes"
     # ISO base media (MP4) files carry an 'ftyp' box near the start.

@@ -70,16 +70,16 @@ def test_auto_select_defaults_to_gemini_omni() -> None:
     config = AppConfig(gemini_api_key="key")
     backend = _create_video_backend(_ctx_with_config(config), model_override=None)
     assert isinstance(backend, GeminiOmniVideoBackend)
-    assert backend.model == "gemini-omni-flash-preview"
+    assert backend.model == "gemini-omni-flash"
 
 
 def test_auto_select_infers_omni_from_model() -> None:
     config = AppConfig(gemini_api_key="key")
     backend = _create_video_backend(
-        _ctx_with_config(config), model_override="gemini-omni-flash-preview"
+        _ctx_with_config(config), model_override="gemini-omni-flash"
     )
     assert isinstance(backend, GeminiOmniVideoBackend)
-    assert backend.model == "gemini-omni-flash-preview"
+    assert backend.model == "gemini-omni-flash"
 
 
 def test_auto_select_infers_veo_from_model() -> None:
@@ -106,7 +106,7 @@ def test_omni_model_override_remains_authoritative_for_veo_only_features() -> No
     config = AppConfig(gemini_api_key="key")
     backend = _create_video_backend(
         _ctx_with_config(config),
-        model_override="gemini-omni-flash-preview",
+        model_override="gemini-omni-flash",
         requires_veo_features=True,
     )
     assert isinstance(backend, GeminiOmniVideoBackend)
@@ -361,10 +361,10 @@ async def test_omni_returns_video_bytes(omni_async_client: MagicMock) -> None:
 
     assert result.content == b"omni-video"
     assert result.mime_type == "video/mp4"
-    assert result.model == "gemini-omni-flash-preview"
+    assert result.model == "gemini-omni-flash"
 
     _, kwargs = omni_async_client.interactions.create.call_args
-    assert kwargs["model"] == "gemini-omni-flash-preview"
+    assert kwargs["model"] == "gemini-omni-flash"
     assert kwargs["input"] == "a dancing robot"
     assert kwargs["response_format"] == {
         "type": "video",

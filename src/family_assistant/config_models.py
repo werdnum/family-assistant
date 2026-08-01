@@ -1230,7 +1230,7 @@ class GeminiOmniVideoConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-omni-flash-preview"
+    model: str = "gemini-omni-flash"
 
 
 class AppConfig(BaseSettings):

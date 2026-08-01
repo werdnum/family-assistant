@@ -63,6 +63,21 @@ llm_parameters:
     thinking:
       type: "disabled"
     max_tokens: 16000
+  # GPT-5.6 reasoning effort accepts none/low/medium/high/xhigh/max and defaults
+  # to medium. Both entries below are set explicitly so the tier separation
+  # between the two profiles is a deliberate choice rather than a default.
+  #
+  # complex_tasks exists for the hardest multi-step work and is reached by
+  # delegation rather than sitting on the interactive path, so it can afford to
+  # think longer. high is a step up from the default without max's tendency to
+  # overthink; xhigh and max are the next dials if it still falls short.
+  "gpt-5.6-sol":
+    reasoning_effort: "high"
+  # default_assistant answers Telegram and web chat, where time-to-first-token
+  # is felt directly, so this stays at medium. Raise it if agentic tool calling
+  # still lags -- effort is the lever here, not the model.
+  "gpt-5.6-terra":
+    reasoning_effort: "medium"
   # Example for another model type
   # "anthropic/claude-3-":
   #   temperature: 0.75
@@ -614,10 +629,24 @@ default_profile_settings:
 service_profiles:
   - id: "default_assistant"
     description: "Main assistant using default settings, without browser tools. Suitable for general tasks, note-taking, calendar management, and information retrieval from stored documents."
-    # This profile inherits the default non-browser tool access from
-    # 'default_profile_settings', overriding only max_iterations so the main
-    # assistant has more headroom before hitting the tool-call limit.
+    # Inherits the default non-browser tool access from
+    # 'default_profile_settings', overriding the model and iteration ceiling.
+    #
+    # Terra rather than the inherited gemini-3.6-flash: the capability gap to
+    # complex_tasks' gpt-5.6-sol is wide for agentic tool calling, and Terra
+    # sits squarely between the two at well under half Sol's cost. The override
+    # is scoped to this profile on purpose -- the shared default still serves
+    # telephone (latency-critical) and data_visualization (charts), where
+    # Gemini is the better fit. Gemini stays as the fallback, which also keeps
+    # the two providers split across primary and fallback.
     processing_config:
+      retry_config:
+        primary:
+          provider: "openai"
+          model: "gpt-5.6-terra"
+        fallback:
+          provider: "google"
+          model: "gemini-3.6-flash"
       max_iterations: 50
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
@@ -686,7 +715,18 @@ service_profiles:
     slash_commands: []
   - id: "reminder"
     description: "Assistant profile for handling system reminders. Its sole purpose is to formulate the reminder message to be sent to the user."
+    # Writing a reminder sentence is a small text-only task run at volume, which
+    # is what Luna is for -- roughly a seventh of gemini-3.6-flash per token.
+    # Gemini stays as the fallback because a reminder that never fires is
+    # user-visible.
     processing_config:
+      retry_config:
+        primary:
+          provider: "openai"
+          model: "gpt-5.6-luna"
+        fallback:
+          provider: "google"
+          model: "gemini-3.6-flash"
       prompts:
         system_prompt: "You are a reminder delivery system. Your goal is to write the text of the reminder message that will be sent to the user.\n\nInstructions:\n1. Read the reminder context provided.\n2. You may use read-only tools (calendar, notes, docs) to gather context if the reminder is vague or refers to stored information.\n3. Write a clear, friendly reminder message addressed to {user_name}.\n4. Your final response must be ONLY the message content. Do NOT describe your actions.\n5. If the reminder context contains a task, simply state the task.\n\nExample:\nContext: 'Pick up milk'\nResponse: 'Hi {user_name}, this is your reminder to pick up milk.'\n\nCurrent time: {current_time}"
     tools_policy:
@@ -861,7 +901,7 @@ service_profiles:
       - "/visualize"
       - "/chart"
   - id: "event_handler"
-    description: "Restricted assistant profile for automated script-event integration. Uses Gemini 3 Flash with read-only and non-destructive tools only."
+    description: "Restricted assistant profile for automated script-event integration. Read-only and non-destructive tools only."
     # Write-side quarantine: event wakes carry untrusted trigger content (email,
     # webhooks), so notes written by this profile are confined to 'event_logs',
     # which is deliberately NOT granted to the default assistant. An injected
@@ -869,9 +909,16 @@ service_profiles:
     # trusted assistant's prompt context. 'default' stays granted for reads;
     # 'event_logs' is granted so the handler can read back its own notes.
     visibility_grants: ["default", "event_logs"]
+    # Event wakes are high-volume and text-shaped, so Luna carries them at a
+    # fraction of gemini-3.6-flash's cost, with Gemini as the fallback.
     processing_config:
-      provider: "google"
-      llm_model: "gemini-3.6-flash"
+      retry_config:
+        primary:
+          provider: "openai"
+          model: "gpt-5.6-luna"
+        fallback:
+          provider: "google"
+          model: "gemini-3.6-flash"
       # Notes written while handling an untrusted event are confined to the
       # event_logs label (floor and ceiling), enforced in the repository.
       default_note_visibility_labels: ["event_logs"]
