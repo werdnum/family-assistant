@@ -24,6 +24,7 @@ from typing import TypedDict
 import pytest
 import vcr
 from vcr.record_mode import RecordMode
+from vcr.request import Request
 
 from family_assistant.tools.video_backends import (
     GeminiOmniVideoBackend,
@@ -55,6 +56,18 @@ def _sanitize_response(response: _VCRResponse) -> _VCRResponse:
     return response
 
 
+def _match_method_case_insensitively(recorded: Request, outgoing: Request) -> None:
+    """Match the HTTP method ignoring case.
+
+    The video download follows a redirect, and VCR rebuilds redirected requests
+    from aiohttp's ``request_info``, which upper-cases the method. google-genai
+    issues it lower-case, so a faithfully recorded ``GET`` can never match the
+    ``get`` the client replays. Both name the same method.
+    """
+    if recorded.method.upper() != outgoing.method.upper():
+        raise AssertionError(f"{recorded.method} != {outgoing.method}")
+
+
 @pytest.fixture
 def omni_cassette(llm_record_mode: str) -> Iterator[None]:
     """Enforce record/replay preconditions and keep the cassette open for the test.
@@ -71,11 +84,23 @@ def omni_cassette(llm_record_mode: str) -> Iterator[None]:
 
     my_vcr = vcr.VCR(
         record_mode=_RECORD_MODE_MAP[llm_record_mode],
-        match_on=["method", "scheme", "host", "port", "path", "query"],
+        # "body" is matched so a superseded recording of the same endpoint (an
+        # earlier `delivery: inline` create, say) cannot shadow the request the
+        # test actually makes and pass replay without exercising it.
+        match_on=[
+            "method_case_insensitive",
+            "scheme",
+            "host",
+            "port",
+            "path",
+            "query",
+            "body",
+        ],
         filter_headers=["authorization", "x-goog-api-key", "x-api-key", "api-key"],
         filter_query_parameters=["key", "api_key"],
         before_record_response=_sanitize_response,
     )
+    my_vcr.register_matcher("method_case_insensitive", _match_method_case_insensitively)
     with my_vcr.use_cassette(CASSETTE):
         yield
 

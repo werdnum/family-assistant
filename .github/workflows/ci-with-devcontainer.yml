@@ -124,6 +124,7 @@ jobs:
               - 'src/family_assistant/llm/**/*.py'
               - 'tests/integration/llm/**/*.py'
               - 'tests/integration/test_google_embedding.py'
+              - 'tests/integration/test_gemini_omni_video_generation.py'
               - 'tests/cassettes/llm/**'
               - 'tests/cassettes/gemini/**'
             ios:
@@ -158,7 +159,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build CI devcontainer image
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: .devcontainer/Dockerfile.ci
@@ -209,7 +210,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build main application image (verification + cache)
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: Dockerfile
@@ -259,7 +260,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build devcontainer image (verification + cache)
-        uses: docker/build-push-action@v7.2.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           file: .devcontainer/Dockerfile
@@ -884,3 +885,4 @@ jobs:
           echo "✅ All tests passed or were skipped!"
 
 # Note: Test images with unique tags will be cleaned up by GHCR retention policies
+
