@@ -677,12 +677,15 @@ service_profiles:
     # It inverts the inherited retry_config: Terra primary, Gemini fallback.
     # This is the profile users talk to directly, so it gets the stronger
     # agentic tool-caller, and Gemini becomes the safety net rather than the
-    # default. Terra reads the media users actually send here -- Telegram
-    # (handler.py) and web chat (chat_api.py) attach images, video, audio and
-    # PDFs as image_url content parts, and the Responses API accepts images and
-    # PDFs. Audio and video it cannot accept at all; those turns get an explicit
-    # note naming the attachment and are handed to the 'media_analyst' profile,
-    # which is Gemini, to transcribe or describe.
+    # default. Terra reads the media users actually send here. The two surfaces
+    # deliver it differently: Telegram (handler.py) attaches everything as
+    # image_url parts, while web chat (chat_api.py) sends only images that way
+    # and routes PDFs, audio and video through attachment_content, which reaches
+    # the provider via create_attachment_injection. Both paths now use the same
+    # MIME-aware conversion, so images and PDFs reach the Responses API as
+    # input_image and input_file. Audio and video it cannot accept in any form;
+    # those get an explicit note naming the attachment and are handed to the
+    # 'media_analyst' profile, which is Gemini, to transcribe or describe.
     processing_config:
       max_iterations: 50
       retry_config:
