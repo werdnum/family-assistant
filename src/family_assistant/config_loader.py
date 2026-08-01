@@ -985,6 +985,50 @@ def load_indexing_pipeline_config(
             logger.error(f"Error parsing INDEXING_PIPELINE_CONFIG_JSON: {e}")
 
 
+def _shipped_base_for_operator_override(
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    shipped: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    operator: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+) -> dict[str, Any]:
+    """Drop a shipped retry chain the operator's chosen model would lose to.
+
+    An operator naming a `provider`/`llm_model` without their own `retry_config`
+    means "run this model". `assistant.py` prefers `retry_config` over those
+    fields, so a chain left behind by the shipped profile silently wins and the
+    operator's choice never reaches the API.
+
+    `resolve_service_profile` already applies this rule to a chain inherited from
+    `default_profile_settings`, but it can only test whether the key is present
+    in the merged definition -- and after this merge it always is, for any profile
+    that ships its own chain (`default_assistant` does). Provenance is only
+    knowable here, where the two layers are still separate.
+    """
+    operator_processing = operator.get("processing_config") or {}
+    shipped_processing = shipped.get("processing_config") or {}
+    operator_declares_model = any(
+        operator_processing.get(key) is not None for key in ("provider", "llm_model")
+    )
+    if (
+        not operator_declares_model
+        or "retry_config" in operator_processing
+        or "retry_config" not in shipped_processing
+    ):
+        return shipped
+
+    without_chain = copy.deepcopy(shipped)
+    without_chain["processing_config"].pop("retry_config", None)
+    logger.info(
+        "Profile '%s': operator selected %s/%s without a retry_config, so the "
+        "shipped retry chain is dropped rather than overriding that choice.",
+        shipped.get("id"),
+        operator_processing.get("provider"),
+        operator_processing.get("llm_model"),
+    )
+    return without_chain
+
+
 def _merge_service_profiles_by_id(
     defaults_profiles: list[Any],
     merged_profiles: list[Any],
@@ -1052,7 +1096,12 @@ def _merge_service_profiles_by_id(
                     # Override: deep-merge operator's partial definition on
                     # top of the default so unmentioned fields are preserved.
                     result.append(
-                        deep_merge_dicts(defaults_by_id[pid], operator_by_id[pid])
+                        deep_merge_dicts(
+                            _shipped_base_for_operator_override(
+                                defaults_by_id[pid], operator_by_id[pid]
+                            ),
+                            operator_by_id[pid],
+                        )
                     )
                 else:
                     result.append(operator_by_id[pid])

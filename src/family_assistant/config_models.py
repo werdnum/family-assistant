@@ -1460,6 +1460,51 @@ class AppConfig(BaseSettings):
     max_response_attachments: int = 6  # Max attachments per response
 
     @model_validator(mode="after")
+    def validate_excluded_global_tools_are_granted(self) -> AppConfig:
+        """Reject an exclusion that withholds nothing.
+
+        `excluded_global_tools` exists to take a globally granted tool away from a
+        profile that must hold no privileges. A name that no global rule grants
+        withholds nothing — whether it is a typo or a tool that was never global —
+        and the generated matcher silently matches nothing, leaving the grant it
+        was meant to remove in place. For a profile processing untrusted input
+        that is a security control that reads as configured and does nothing, so
+        it fails at startup instead.
+
+        Only enforced against name-based global rules. A rule matching by tag or
+        MCP server could still grant the named tool, and this cannot tell, so a
+        policy containing one of those is left alone rather than risking a false
+        rejection.
+        """
+        if self.global_tools_policy is None:
+            granted: set[str] = set()
+            has_unanalysable_rule = False
+        else:
+            granted = {
+                name
+                for rule in self.global_tools_policy.rules
+                for name in (rule.match.names or ())
+            }
+            has_unanalysable_rule = any(
+                rule.match.names is None for rule in self.global_tools_policy.rules
+            )
+        if has_unanalysable_rule:
+            return self
+
+        for profile in self.service_profiles:
+            ineffective = sorted(set(profile.excluded_global_tools) - granted)
+            if ineffective:
+                msg = (
+                    f"Profile {profile.id!r} excludes global tool(s) "
+                    f"{', '.join(ineffective)}, which global_tools_policy does not "
+                    "grant, so the exclusion withholds nothing. Remove the entry, "
+                    "or correct it to one of: "
+                    f"{', '.join(sorted(granted)) or '(none granted)'}."
+                )
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
     def validate_user_identity_uniqueness(self) -> AppConfig:
         user_ids: set[str] = set()
         oidc_emails: dict[str, str] = {}

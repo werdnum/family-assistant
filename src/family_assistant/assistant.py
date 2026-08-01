@@ -1110,8 +1110,13 @@ class Assistant:
                 visibility_grants=profile_grants,
                 note_registry=note_registry,
             )
+            # A profile's own calendar_config wins over the application-wide one.
+            # Without this the field resolves onto the profile and is then read by
+            # nothing, so configuring it looks effective and changes no behaviour.
             calendar_provider = CalendarContextProvider(
-                calendar_config=_calendar_config_to_dict(self.config.calendar_config),
+                calendar_config=_calendar_config_to_dict(
+                    profile_proc_conf.calendar_config or self.config.calendar_config
+                ),
                 timezone=ZoneInfo(profile_proc_conf.timezone),
                 prompts=profile_proc_conf.prompts,
             )

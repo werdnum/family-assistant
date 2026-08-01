@@ -2592,3 +2592,73 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "resolve_service_profile, so setting them on a profile would be "
         "silently ignored. Add explicit handling and list them here."
     )
+
+
+def _resolved_default_assistant(tmp_path: Path, operator_yaml: str) -> ProcessingConfig:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(operator_yaml)
+    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config is not None
+    return profile.processing_config
+
+
+def test_operator_model_override_drops_the_shipped_retry_chain(
+    tmp_path: Path,
+) -> None:
+    """An operator naming a model without a chain means "run this model".
+
+    `assistant.py` prefers `retry_config` over `provider`/`llm_model`, so a chain
+    left behind by the shipped profile silently wins and the operator's choice
+    never reaches the API. `resolve_service_profile` already applies this rule to
+    a chain inherited from `default_profile_settings`, but it can only ask whether
+    the key is present — and once a shipped profile carries its own chain, it
+    always is.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n',
+    )
+
+    assert processing_config.provider == "anthropic"
+    assert processing_config.llm_model == "claude-sonnet-5"
+    assert processing_config.retry_config is None
+
+
+def test_operator_supplied_retry_chain_is_kept(tmp_path: Path) -> None:
+    """An operator who wants a fallback alongside their model gets one."""
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n'
+        '        fallback: {provider: "google", model: "gemini-3.6-flash"}\n',
+    )
+
+    assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.provider == "anthropic"
+
+
+def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
+    tmp_path: Path,
+) -> None:
+    """Only a model selection drops the chain; other overrides must not."""
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      max_iterations: 7\n",
+    )
+
+    assert processing_config.max_iterations == 7
+    assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.model == "gpt-5.6-terra"

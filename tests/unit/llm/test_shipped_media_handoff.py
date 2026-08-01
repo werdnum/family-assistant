@@ -8,7 +8,11 @@ model cannot follow. These tests are that connection.
 """
 
 import inspect
+from pathlib import Path
 from typing import cast
+
+import pytest
+from pydantic import ValidationError
 
 from family_assistant.assistant import (
     _build_profile_policy_engine,  # noqa: PLC2701 - the only helper that applies global_tools_policy injection, which is the whole point of the assertion
@@ -193,3 +197,43 @@ def test_context_provider_names_match_config() -> None:
     }
 
     assert live_names == CONTEXT_PROVIDER_NAMES
+
+
+def test_shipped_config_admits_the_media_the_handoff_transcribes() -> None:
+    """A type absent from the allowlist is rejected before any model sees it.
+
+    `AttachmentRegistry` refuses an upload whose MIME type is not in
+    `attachment_config.allowed_mime_types`, so the handoff can only ever run for
+    types listed there. This was shipping without any `audio/*`: the code default
+    in `attachment_registry.py` includes them, but `defaults.yaml` supplies the
+    key and therefore wins, which made audio work under test and fail in
+    production — the profile and its note were reachable only in theory.
+
+    Telegram sends audio as `audio/mpeg` and voice notes as `audio/ogg`.
+    """
+    allowed = set(_load_defaults().attachment_config.allowed_mime_types)
+
+    assert {"audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"} <= allowed
+    assert {"video/mp4", "video/webm", "video/ogg"} <= allowed
+    # The two the Responses API reads directly, for contrast: if these ever left
+    # the list the OpenAI path would break rather than degrade to the handoff.
+    assert {"image/png", "application/pdf"} <= allowed
+
+
+def test_an_exclusion_that_withholds_nothing_is_rejected(tmp_path: Path) -> None:
+    """A misspelled exclusion must not validate as a working security control.
+
+    The generated matcher silently matches nothing, so the global grant the
+    operator meant to remove stays active on a profile built to hold no
+    privileges. Startup rejects it rather than accepting the insecure config.
+    """
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "service_profiles:\n"
+        '  - id: "media_analyst"\n'
+        "    excluded_global_tools:\n"
+        '      - "report_technical_problm"\n'
+    )
+
+    with pytest.raises(ValidationError, match="withholds nothing"):
+        load_config(config_file_path=str(config_file), load_dotenv_file=False)

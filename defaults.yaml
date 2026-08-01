@@ -2031,7 +2031,17 @@ attachment_config:
     - "text/markdown"
     - "application/json"
     - "text/csv"
+    # Audio and video have to be admitted here or they never reach a model: an
+    # upload whose type is absent from this list is rejected at registration, so
+    # the voice-note handoff to media_analyst would be advertised and unreachable.
+    # Telegram sends audio as audio/mpeg and voice notes as audio/ogg.
     - "video/mp4"
+    - "video/webm"
+    - "video/ogg"
+    - "audio/mpeg"
+    - "audio/wav"
+    - "audio/ogg"
+    - "audio/webm"
     - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     - "application/vnd.openxmlformats-officedocument.presentationml.presentation"
