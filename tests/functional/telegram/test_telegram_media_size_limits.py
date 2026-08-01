@@ -64,8 +64,10 @@ async def test_an_oversized_pdf_document_is_still_accepted(
 ) -> None:
     """The tighter bound follows the MIME type, not the document branch.
 
-    A PDF the same size is text to be extracted, so `max_file_size` governs it
-    and nothing is refused.
+    A PDF is not held to it -- not because it never reaches a model as bytes,
+    which on the Responses API it now does, but because `read_text_attachment`
+    can extract its text with no model involved. `max_file_size` governs it and
+    nothing is refused.
     """
     fix = telegram_handler_fixture
     fix.handler.telegram_service.attachment_registry.max_multimodal_size = _MEDIA_LIMIT
