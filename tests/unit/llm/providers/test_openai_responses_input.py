@@ -108,28 +108,35 @@ def test_responses_preserves_string_tool_call_arguments() -> None:
     assert input_items[0]["arguments"] == arguments
 
 
-def _reasoning_message(encrypted_content: str | None) -> AssistantMessage:
+def _reasoning_message(
+    encrypted_content: str | None,
+    *,
+    originating_response_stored: bool | None = None,
+) -> AssistantMessage:
     """An assistant turn whose stored output holds a reasoning item."""
+    provider_metadata: dict[str, object] = {
+        "openai_response_output": [
+            {
+                "type": "reasoning",
+                "id": "rs_123",
+                "summary": [],
+                "encrypted_content": encrypted_content,
+            },
+            {
+                "type": "function_call",
+                "id": "fc_123",
+                "call_id": "call_123",
+                "name": "calculate",
+                "arguments": '{"expression":"42 * 17"}',
+            },
+        ]
+    }
+    if originating_response_stored is not None:
+        provider_metadata["openai_response_stored"] = originating_response_stored
     return AssistantMessage(
         content="",
         tool_calls=[],
-        provider_metadata={
-            "openai_response_output": [
-                {
-                    "type": "reasoning",
-                    "id": "rs_123",
-                    "summary": [],
-                    "encrypted_content": encrypted_content,
-                },
-                {
-                    "type": "function_call",
-                    "id": "fc_123",
-                    "call_id": "call_123",
-                    "name": "calculate",
-                    "arguments": '{"expression":"42 * 17"}',
-                },
-            ]
-        },
+        provider_metadata=provider_metadata,
     )
 
 
@@ -141,9 +148,7 @@ def test_reasoning_without_encrypted_content_is_dropped_when_unstored() -> None:
     """
     client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
 
-    input_items = client._messages_to_responses_input(
-        [_reasoning_message(None)], store=False
-    )
+    input_items = client._messages_to_responses_input([_reasoning_message(None)])
 
     assert [item["type"] for item in input_items] == ["function_call"]
 
@@ -152,23 +157,40 @@ def test_reasoning_with_encrypted_content_is_replayed() -> None:
     """The normal case still carries reasoning state forward."""
     client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
 
-    input_items = client._messages_to_responses_input(
-        [_reasoning_message("gAAAAAB-encrypted")], store=False
-    )
+    input_items = client._messages_to_responses_input([
+        _reasoning_message("gAAAAAB-encrypted")
+    ])
 
     assert [item["type"] for item in input_items] == ["reasoning", "function_call"]
     assert input_items[0]["encrypted_content"] == "gAAAAAB-encrypted"
 
 
-def test_reasoning_without_encrypted_content_is_kept_when_stored() -> None:
-    """With store=true the server resolves the item by id, so it stays."""
+def test_reasoning_without_encrypted_content_is_kept_when_origin_was_stored() -> None:
+    """The server can resolve an item whose originating response was stored."""
     client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
 
-    input_items = client._messages_to_responses_input(
-        [_reasoning_message(None)], store=True
-    )
+    input_items = client._messages_to_responses_input([
+        _reasoning_message(None, originating_response_stored=True)
+    ])
 
     assert [item["type"] for item in input_items] == ["reasoning", "function_call"]
+
+
+def test_current_store_setting_does_not_rescue_unstored_history() -> None:
+    """Changing store later cannot make a historical reasoning ID resolvable."""
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-sol",
+        model_parameters={"gpt-5.6-sol": {"store": True}},
+    )
+
+    params = client._build_responses_params(
+        [_reasoning_message(None)], None, None, stream=False
+    )
+
+    input_items = params["input"]
+    assert isinstance(input_items, list)
+    assert [item["type"] for item in input_items] == ["function_call"]
 
 
 def test_responses_api_requires_explicit_opt_in() -> None:

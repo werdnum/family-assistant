@@ -150,7 +150,12 @@ class AnthropicClient(BaseLLMClient):
         """Pull thinking blocks off a response's content as plain JSON dicts."""
         blocks: list[JsonObject] = []
         for block in content:
-            if getattr(block, "type", None) not in _THINKING_BLOCK_TYPES:
+            block_type = (
+                block.get("type")
+                if isinstance(block, dict)
+                else getattr(block, "type", None)
+            )
+            if block_type not in _THINKING_BLOCK_TYPES:
                 continue
             model_dump = getattr(block, "model_dump", None)
             if callable(model_dump):
@@ -184,7 +189,9 @@ class AnthropicClient(BaseLLMClient):
             return []
         blocks = provider_metadata.get("thinking_blocks")
         if not isinstance(blocks, list):
-            return []
+            raise TypeError(
+                "Anthropic provider metadata thinking_blocks must be a list"
+            )
         return [
             block
             for block in blocks
@@ -973,6 +980,8 @@ class AnthropicClient(BaseLLMClient):
 
     def _raise_mapped_error(self, e: Exception) -> NoReturn:
         """Map Anthropic SDK exceptions to our exception hierarchy."""
+        if isinstance(e, LLMProviderError):
+            raise e
         if isinstance(e, anthropic.AuthenticationError):
             raise AuthenticationError(
                 str(e), provider="anthropic", model=self.model
@@ -1273,7 +1282,9 @@ class AnthropicClient(BaseLLMClient):
 
                 error_message = str(e)
                 error_type = "unknown"
-                if isinstance(e, anthropic.AuthenticationError):
+                if isinstance(e, InvalidRequestError):
+                    error_type = "invalid_request"
+                elif isinstance(e, anthropic.AuthenticationError):
                     error_type = "authentication"
                 elif isinstance(e, anthropic.RateLimitError):
                     error_type = "rate_limit"

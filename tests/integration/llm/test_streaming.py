@@ -377,6 +377,7 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
     provider_metadata = done_event.metadata.get("provider_metadata")
     assert isinstance(provider_metadata, dict)
     assert "openai_response_output" in provider_metadata
+    assert provider_metadata["openai_response_stored"] is False
 
     continuation_messages = [
         *messages,

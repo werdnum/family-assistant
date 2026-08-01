@@ -5,6 +5,11 @@ these tests are mostly about fidelity: what comes out of a response must go back
 in unchanged, in the right position, and must not leak into other providers.
 """
 
+from collections.abc import AsyncIterator
+from types import SimpleNamespace
+from typing import Self
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
@@ -55,6 +60,17 @@ def test_extract_thinking_blocks_keeps_only_thinking_types() -> None:
         _Block({"type": "text", "text": "hello"}),
         _Block(REDACTED_BLOCK),
         _Block({"type": "tool_use", "id": "toolu_1", "name": "calculate"}),
+    ])
+
+    assert blocks == [THINKING_BLOCK, REDACTED_BLOCK]
+
+
+def test_extract_thinking_blocks_accepts_plain_dicts() -> None:
+    """JSON-shaped SDK substitutes preserve thinking metadata too."""
+    blocks = AnthropicClient._extract_thinking_blocks([
+        THINKING_BLOCK,
+        {"type": "text", "text": "hello"},
+        REDACTED_BLOCK,
     ])
 
     assert blocks == [THINKING_BLOCK, REDACTED_BLOCK]
@@ -116,18 +132,31 @@ def test_assistant_turn_without_thinking_metadata_is_unchanged(
         pytest.param(
             {"openai_response_output": [{"type": "reasoning"}]}, id="openai-responses"
         ),
-        pytest.param({"provider": "anthropic"}, id="anthropic-without-blocks"),
+    ],
+)
+def test_foreign_metadata_yields_no_thinking_blocks(
+    provider_metadata: object,
+) -> None:
+    """A provider switch mid-thread degrades to a plain replay."""
+    assert AnthropicClient._thinking_blocks_from_metadata(provider_metadata) == []
+
+
+@pytest.mark.parametrize(
+    "provider_metadata",
+    [
+        pytest.param({"provider": "anthropic"}, id="missing-blocks"),
         pytest.param(
             {"provider": "anthropic", "thinking_blocks": "not-a-list"},
-            id="malformed-blocks",
+            id="wrong-block-type",
         ),
     ],
 )
-def test_foreign_or_malformed_metadata_yields_no_thinking_blocks(
+def test_malformed_anthropic_metadata_is_rejected(
     provider_metadata: object,
 ) -> None:
-    """A provider switch mid-thread degrades to a plain replay, never an error."""
-    assert AnthropicClient._thinking_blocks_from_metadata(provider_metadata) == []
+    """Same-provider corruption must be surfaced instead of losing reasoning."""
+    with pytest.raises(TypeError, match="thinking_blocks must be a list"):
+        AnthropicClient._thinking_blocks_from_metadata(provider_metadata)
 
 
 def test_tool_results_still_convert_alongside_thinking(
@@ -211,3 +240,102 @@ def test_adaptive_thinking_shape_is_not_budget_checked() -> None:
 
     assert params["thinking"] == {"type": "adaptive"}
     assert params["output_config"] == {"effort": "high"}
+
+
+async def test_nonstreaming_thinking_budget_error_keeps_invalid_request_type() -> None:
+    """Local config validation is not remapped as a generic provider error."""
+    client = AnthropicClient(
+        api_key="test-key",
+        model="claude-sonnet-4-6",
+        model_parameters={
+            "claude-sonnet-4-6": {
+                "thinking": {"type": "enabled", "budget_tokens": 8192}
+            }
+        },
+    )
+
+    with pytest.raises(InvalidRequestError, match="must be less than max_tokens"):
+        await client.generate_response([UserMessage(content="Think carefully")])
+
+
+async def test_streaming_thinking_budget_error_is_typed_invalid_request() -> None:
+    """Stream error metadata maps the same local config failure correctly."""
+    client = AnthropicClient(
+        api_key="test-key",
+        model="claude-sonnet-4-6",
+        model_parameters={
+            "claude-sonnet-4-6": {
+                "thinking": {"type": "enabled", "budget_tokens": 8192}
+            }
+        },
+    )
+
+    events = [
+        event
+        async for event in client.generate_response_stream([
+            UserMessage(content="Think carefully")
+        ])
+    ]
+
+    assert len(events) == 1
+    assert events[0].type == "error"
+    assert events[0].metadata is not None
+    assert events[0].metadata.get("error_type") == "invalid_request"
+
+
+class _FakeAnthropicStream:
+    """Minimal SDK-shaped stream that exercises the production event loop."""
+
+    def __init__(self) -> None:
+        self._events = [
+            SimpleNamespace(
+                type="content_block_delta",
+                delta=SimpleNamespace(
+                    type="thinking_delta", thinking="Checking the arithmetic"
+                ),
+            )
+        ]
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        _exc_type: object,
+        _exc_value: object,
+        _traceback: object,
+    ) -> None:
+        return None
+
+    async def __aiter__(self) -> AsyncIterator[object]:
+        for event in self._events:
+            yield event
+
+    async def get_final_message(self) -> object:
+        return SimpleNamespace(content=[THINKING_BLOCK], usage=None)
+
+
+async def test_production_stream_loop_emits_thinking_delta() -> None:
+    """The production messages.stream branch keeps thinking separate from text."""
+    client = AnthropicClient(api_key="test-key", model="claude-sonnet-4-6")
+    fake_stream = _FakeAnthropicStream()
+
+    with (
+        patch.object(
+            client,
+            "_maybe_parse_vcr_stream",
+            new=AsyncMock(return_value=None),
+        ),
+        patch.object(client.client.messages, "stream", return_value=fake_stream),
+    ):
+        events = [
+            event
+            async for event in client.generate_response_stream([
+                UserMessage(content="What is 42 times 17?")
+            ])
+        ]
+
+    assert [event.type for event in events] == ["thinking", "done"]
+    assert events[0].content == "Checking the arithmetic"
+    assert events[1].metadata is not None
+    assert events[1].metadata.get("provider_metadata") == _thinking_metadata()

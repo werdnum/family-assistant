@@ -237,7 +237,7 @@ class OpenAIClient(BaseLLMClient):
         store = bool(model_params.pop("store", False))
         params: dict[str, object] = {
             "model": self.model,
-            "input": self._messages_to_responses_input(messages, store=store),
+            "input": self._messages_to_responses_input(messages),
             "include": ["reasoning.encrypted_content"],
             "stream": stream,
         }
@@ -267,28 +267,27 @@ class OpenAIClient(BaseLLMClient):
         return params
 
     @staticmethod
-    def _is_replayable_reasoning_item(item: dict[str, object], *, store: bool) -> bool:
+    def _is_replayable_reasoning_item(
+        item: dict[str, object], *, originating_response_stored: bool
+    ) -> bool:
         """Whether a stored ``reasoning`` output item can be sent back as input.
 
-        With ``store=false`` the server keeps no copy of the item, so the only
-        way it can be resolved is by the ``encrypted_content`` returned when
-        ``include: ["reasoning.encrypted_content"]`` was requested. Items
-        recorded before that include was added carry a null there and would be
-        rejected as unresolvable, taking the whole request down with them.
-        Dropping them costs continuity of reasoning on old turns, which is
-        already lost, and keeps the conversation usable.
+        The server can resolve an item by ID only when its originating response
+        was stored. The current request's ``store`` setting says nothing about
+        historical items. Otherwise the encrypted content returned by
+        ``include: ["reasoning.encrypted_content"]`` is required. Older metadata
+        has no storage marker, so null encrypted content is conservatively
+        dropped rather than replayed as an unresolvable item.
         """
         if item.get("type") != "reasoning":
             return True
-        if store:
+        if originating_response_stored:
             return True
         return bool(item.get("encrypted_content"))
 
     def _messages_to_responses_input(
         self,
         messages: Sequence[LLMMessage],
-        *,
-        store: bool = False,
     ) -> list[dict[str, object]]:
         """Convert application messages to stateless Responses API input items."""
         input_items: list[dict[str, object]] = []
@@ -318,13 +317,17 @@ class OpenAIClient(BaseLLMClient):
                 if isinstance(provider_metadata, dict) and isinstance(
                     provider_metadata.get("openai_response_output"), list
                 ):
+                    originating_response_stored = (
+                        provider_metadata.get("openai_response_stored") is True
+                    )
                     for output_item in provider_metadata["openai_response_output"]:
                         if not isinstance(output_item, dict):
                             raise TypeError(
                                 "OpenAI Responses output metadata must contain objects"
                             )
                         if not self._is_replayable_reasoning_item(
-                            output_item, store=store
+                            output_item,
+                            originating_response_stored=originating_response_stored,
                         ):
                             logger.debug(
                                 "Dropping reasoning item %s with no encrypted_content",
@@ -521,11 +524,10 @@ class OpenAIClient(BaseLLMClient):
             processed_messages = self._process_tool_messages(list(messages))
 
             if self._uses_responses_api():
-                response = await cast("Any", self.client.responses.create)(
-                    **self._build_responses_params(
-                        processed_messages, tools, tool_choice, stream=False
-                    )
+                params = self._build_responses_params(
+                    processed_messages, tools, tool_choice, stream=False
                 )
+                response = await cast("Any", self.client.responses.create)(**params)
                 llm_output = LLMOutput(
                     content=response.output_text or None,
                     tool_calls=self._responses_tool_calls(response),
@@ -533,7 +535,8 @@ class OpenAIClient(BaseLLMClient):
                     provider_metadata={
                         "openai_response_output": [
                             item.model_dump(mode="json") for item in response.output
-                        ]
+                        ],
+                        "openai_response_stored": params["store"] is True,
                     },
                 )
 
@@ -1150,13 +1153,16 @@ class OpenAIClient(BaseLLMClient):
         tool_choice: str | None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """Stream a Responses API request as the application's common events."""
-        stream = await cast("Any", self.client.responses.create)(
-            **self._build_responses_params(messages, tools, tool_choice, stream=True)
-        )
+        params = self._build_responses_params(messages, tools, tool_choice, stream=True)
+        stream = await cast("Any", self.client.responses.create)(**params)
+        originating_response_stored = params["store"] is True
         response: Any | None = None
         vcr_events = await self._maybe_parse_vcr_stream(stream)
         if vcr_events is not None:
-            async for event in self._emit_events_from_responses_dicts(vcr_events):
+            async for event in self._emit_events_from_responses_dicts(
+                vcr_events,
+                originating_response_stored=originating_response_stored,
+            ):
                 yield event
             return
 
@@ -1202,13 +1208,16 @@ class OpenAIClient(BaseLLMClient):
             metadata["provider_metadata"] = {
                 "openai_response_output": [
                     item.model_dump(mode="json") for item in response.output
-                ]
+                ],
+                "openai_response_stored": originating_response_stored,
             }
         yield LLMStreamEvent(type="done", metadata=metadata)
 
     async def _emit_events_from_responses_dicts(
         self,
         event_dicts: list[dict[str, object]],
+        *,
+        originating_response_stored: bool,
     ) -> AsyncIterator[LLMStreamEvent]:
         """Emit common stream events from VCR-replayed Responses API frames."""
         metadata: StreamEventMetadata = {}
@@ -1259,7 +1268,8 @@ class OpenAIClient(BaseLLMClient):
                     output = response.get("output")
                     if isinstance(output, list):
                         metadata["provider_metadata"] = {
-                            "openai_response_output": output
+                            "openai_response_output": output,
+                            "openai_response_stored": originating_response_stored,
                         }
             elif event_type in {"response.failed", "response.incomplete"}:
                 response = event.get("response")

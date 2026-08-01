@@ -103,13 +103,14 @@ reasoning model silently drops to Chat Completions with no signal.
 
 `include: ["reasoning.encrypted_content"]` was added in `277af7d9b`, after the Responses path
 already shipped. Assistant rows written before that commit hold reasoning items with
-`encrypted_content: null`. `_messages_to_responses_input` strips only `status`, so those items are
-replayed as-is; with `store=false` the API has no server-side copy to resolve the `rs_…` id against
-and rejects the request.
+`encrypted_content: null`. The server can resolve a reasoning item by ID only when its originating
+response was stored; changing `store` on a later request cannot retroactively store the historical
+item. Replaying an unstored item with no encrypted content therefore rejects the request.
 
 Bounded — it only affects conversations that straddle that commit and are still being continued —
-but the fix is one line: drop `reasoning` items that have no `encrypted_content` when `store` is
-false.
+but the fix is small: persist whether each response was stored, and drop a `reasoning` item with no
+`encrypted_content` unless its originating response is known to have been stored. Older rows have no
+storage marker and are conservatively treated as unstored.
 
 ### F4 — Reasoning state is dropped when a turn produces neither text nor tool calls
 
@@ -224,8 +225,10 @@ gone, and `defaults.yaml` carries the opt-in for that model. Control keys are fi
 `_get_model_specific_params`, the single accessor all five request-building paths share, so they
 cannot leak into a request from a call site someone forgot to update.
 
-Reasoning items with no `encrypted_content` are dropped when `store=false`, which unblocks
-conversations whose history predates the `include: ["reasoning.encrypted_content"]` request.
+Each response records whether it was stored. Reasoning items with no `encrypted_content` are kept
+only when their originating response is known to have been stored, which unblocks conversations
+whose history predates the `include: ["reasoning.encrypted_content"]` request even if the current
+request changes `store`.
 
 ### F4, F5
 
