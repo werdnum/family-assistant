@@ -1653,23 +1653,36 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
                 else:
                     voice_file = await voice.get_file()
-                    with io.BytesIO() as buf:
-                        await voice_file.download_to_memory(out=buf)
-                        buf.seek(0)
-                        voice_bytes = buf.read()
-                        attachments.append(
-                            AttachmentData(
-                                content=voice_bytes,
-                                filename=f"voice_{voice.file_id}.ogg",
-                                # Telegram encodes voice notes as OGG/Opus.
-                                mime_type=voice.mime_type or "audio/ogg",
-                                description=update.message.caption
-                                or "Telegram voice note",
-                            )
+                    # `Voice.file_size` is optional on the message, so the size
+                    # returned by get_file() is the first reliable one. Checking it
+                    # before downloading keeps an oversized note out of memory and
+                    # gives the same explicit reply as the audio and video paths,
+                    # rather than a generic error later at registration.
+                    if voice_file.file_size and voice_file.file_size > max_file_size:
+                        logger.warning(
+                            f"Voice size {voice_file.file_size} exceeds limit {max_file_size}. Skipping."
                         )
-                    logger.debug(
-                        f"Voice note from message {update.message.message_id} loaded."
-                    )
+                        await update.message.reply_text(
+                            f"Skipping voice note: File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        )
+                    else:
+                        with io.BytesIO() as buf:
+                            await voice_file.download_to_memory(out=buf)
+                            buf.seek(0)
+                            voice_bytes = buf.read()
+                            attachments.append(
+                                AttachmentData(
+                                    content=voice_bytes,
+                                    filename=f"voice_{voice.file_id}.ogg",
+                                    # Telegram encodes voice notes as OGG/Opus.
+                                    mime_type=voice.mime_type or "audio/ogg",
+                                    description=update.message.caption
+                                    or "Telegram voice note",
+                                )
+                            )
+                        logger.debug(
+                            f"Voice note from message {update.message.message_id} loaded."
+                        )
 
             # Handle Video
             if update.message.video:

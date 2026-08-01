@@ -14,8 +14,11 @@ move between tools and people.
 
 **Supported types** depend on where you're sending from:
 
-- **Web and iOS chat:** JPEG, PNG, GIF, and WebP images, plus PDF, plain text, and Markdown.
-- **Telegram:** images and documents, including formats the web chat won't take.
+- **Web chat:** JPEG, PNG, GIF, and WebP images; PDF, plain text, and Markdown; MP3, WAV, OGG, and
+  WebM audio; MP4, WebM, and OGG video.
+- **iOS chat:** JPEG, PNG, GIF, and WebP images, plus PDF, plain text, and Markdown.
+- **Telegram:** images, documents, audio files, video, and voice notes — including formats the web
+  chat won't take.
 - **Upload Document page:** PDF, TXT, DOCX, DOC, HTML, and MD — documents rather than images, since
   the point of that page is indexing text you can search later.
 

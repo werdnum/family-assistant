@@ -20,6 +20,7 @@ import os
 import zoneinfo
 from contextvars import ContextVar
 from email.utils import parseaddr
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -1475,6 +1476,12 @@ class AppConfig(BaseSettings):
         MCP server could still grant the named tool, and this cannot tell, so a
         policy containing one of those is left alone rather than risking a false
         rejection.
+
+        Names are glob patterns on both sides, because `ToolMatcher.matches`
+        resolves them with `fnmatchcase`. Comparing them as literals would reject
+        a working config -- a grant of `read_*` excluded as `read_text_attachment`,
+        or the reverse -- and refusing to start is a worse failure than the no-op
+        this guards against.
         """
         if self.global_tools_policy is None:
             granted: set[str] = set()
@@ -1492,7 +1499,17 @@ class AppConfig(BaseSettings):
             return self
 
         for profile in self.service_profiles:
-            ineffective = sorted(set(profile.excluded_global_tools) - granted)
+            ineffective = sorted(
+                excluded
+                for excluded in set(profile.excluded_global_tools)
+                # Either direction counts: the exclusion may be the pattern and
+                # the grant concrete, or the other way round. Overlap in either
+                # sense means the two rules can meet on a real tool.
+                if not any(
+                    fnmatchcase(grant, excluded) or fnmatchcase(excluded, grant)
+                    for grant in granted
+                )
+            )
             if ineffective:
                 msg = (
                     f"Profile {profile.id!r} excludes global tool(s) "
