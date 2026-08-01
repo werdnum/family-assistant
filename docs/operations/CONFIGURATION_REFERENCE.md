@@ -1597,11 +1597,11 @@ such as the Anthropic client's `max_tokens`.
 
 Settings currently shipped in `defaults.yaml`:
 
-| Key               | Setting                                           | Why                                                                                                                                                                |
-| ----------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `claude-sonnet-5` | `thinking: {type: disabled}`, `max_tokens: 16000` | Sonnet 5 would otherwise run adaptive thinking, and the Anthropic adapter cannot yet replay thinking blocks across tool turns. See the comment in `defaults.yaml`. |
-| `gpt-5.6-sol`     | `reasoning_effort: high`                          | `complex_tasks` is reached by delegation, so it can afford to think longer.                                                                                        |
-| `gpt-5.6-terra`   | `reasoning_effort: medium`                        | `default_assistant` answers interactive chat, where time-to-first-token is felt directly.                                                                          |
+| Key               | Setting                                                                            | Why                                                                                                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-sonnet-5` | `thinking: {type: adaptive}`, `output_config: {effort: high}`, `max_tokens: 16000` | Thinking on for `automation_creation` and `engineer`, whose long tool loops benefit most. `max_tokens` is raised because thinking shares that budget with the response. See the comment in `defaults.yaml`. |
+| `gpt-5.6-sol`     | `reasoning_effort: high`                                                           | `complex_tasks` is reached by delegation, so it can afford to think longer.                                                                                                                                 |
+| `gpt-5.6-terra`   | `reasoning_effort: medium`                                                         | `default_assistant` answers interactive chat, where time-to-first-token is felt directly.                                                                                                                   |
 
 `reasoning_effort` accepts `none`, `low`, `medium`, `high`, `xhigh` or `max` on GPT-5.6 models and
 defaults to `medium` when unset. Raising it trades latency and tokens for capability; it is the

@@ -45,23 +45,35 @@ llm_parameters:
       effort: medium
       # Other top-level parameters for this model could still go here
       # temperature: 0.8
-  # Sonnet 5 runs adaptive thinking whenever `thinking` is unset, where Sonnet
-  # 4.6 ran without it. Thinking has to be disabled explicitly here because the
-  # Anthropic adapter cannot round-trip thinking blocks: AssistantMessage has no
-  # field to carry one, and _convert_messages_to_anthropic_format rebuilds
-  # assistant turns from `text` and `tool_use` alone. With thinking on, the turn
-  # after the model's first tool call would replay an assistant message whose
-  # thinking block and signature are missing, which the API rejects -- breaking
-  # exactly the multi-step profiles that use this model at 100 iterations.
-  # Removing this needs thinking blocks captured and replayed first.
+  # Thinking on for the two Anthropic profiles (automation_creation, engineer).
+  # Both run long tool loops at 100 iterations -- writing and validating
+  # automations, and diagnosing the running system -- which is the work adaptive
+  # thinking helps most. Safe now that thinking blocks are captured into
+  # provider_metadata and replayed verbatim; before that, the turn after the
+  # model's first tool call replayed a turn missing its thinking block and
+  # signature, which the API rejects.
   #
-  # max_tokens is raised off the client's hard-coded 8192 because Sonnet 5
-  # writes longer responses than 4.6. 16000 is the practical ceiling: two of the
-  # three call sites are non-streaming, and the Anthropic SDK refuses
-  # non-streaming requests it estimates will exceed its HTTP timeout.
+  # Sonnet 5 takes the `adaptive` shape and rejects `enabled` + `budget_tokens`
+  # with a 400, so this is not interchangeable with the claude-sonnet-4-6
+  # example below. Effort `high` is Sonnet 5's own default, set explicitly to
+  # make it a choice: `medium` is the cost-saving step down (roughly Sonnet 4.6
+  # at high), `xhigh` the step up for the hardest agentic work.
+  #
+  # Two known costs. Thinking shares the max_tokens budget with the response,
+  # which is why the client's hard-coded 8192 is raised here; 16000 is the
+  # ceiling because two of the three call sites are non-streaming and the SDK
+  # refuses non-streaming requests it estimates will exceed its HTTP timeout.
+  # And llm_parameters is keyed by model, not by call path, so structured-output
+  # calls -- which force tool_choice and cannot use the reasoning -- also pay
+  # for thinking. Accepted rather than worked around: per-path control would
+  # need to know which generations accept an explicit `disabled` (Fable 5 400s
+  # on it), which is the model-specific abstraction this config deliberately
+  # avoids.
   "claude-sonnet-5":
     thinking:
-      type: "disabled"
+      type: "adaptive"
+    output_config:
+      effort: "high"
     max_tokens: 16000
   # GPT-5.6 reasoning effort accepts none/low/medium/high/xhigh/max and defaults
   # to medium. Both entries below are set explicitly so the tier separation
