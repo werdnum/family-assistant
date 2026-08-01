@@ -54,6 +54,8 @@ _CALCULATE_TOOL: "ToolDefinition" = {
     },
 }
 
+_CASSETTE_DIR = pathlib.Path("tests/cassettes/llm")
+
 _PDF = pathlib.Path(__file__).parent.parent.parent / "data" / "test_doc.pdf"
 # A short real recording rather than synthesised silence: an empty track proves
 # nothing about whether the provider accepted audio it could work with.
@@ -80,6 +82,25 @@ def _skip_unless_replayable(llm_record_mode: str, env_var: str) -> None:
         pytest.skip(f"Recording this test requires {env_var}")
 
 
+@pytest.fixture
+def _require_cassette(request: pytest.FixtureRequest, llm_record_mode: str) -> None:
+    """Fail with the missing cassette's path rather than a connection error.
+
+    In replay mode CI has no network, so a VCR test with no recording fails with
+    `ProviderConnectionError: Connection error` -- or worse, the client swallows
+    it and a later assertion fails for an unrelated-looking reason. Neither names
+    the file to record. Gemini's SDK replay reports the missing id itself, so this
+    only guards the VCR-backed tests, which request it explicitly.
+    """
+    if llm_record_mode != "replay":
+        return
+    cassette = _CASSETTE_DIR / f"{request.node.name}.yaml"
+    if not cassette.exists():
+        pytest.fail(
+            f"Cassette missing at {cassette}. Record with LLM_RECORD_MODE=record."
+        )
+
+
 def _audio_data_uri() -> str:
     return "data:audio/wav;base64," + base64.b64encode(_AUDIO.read_bytes()).decode()
 
@@ -87,6 +108,7 @@ def _audio_data_uri() -> str:
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("_require_cassette")
 async def test_shipped_openai_model_reads_an_injected_pdf(
     llm_record_mode: str,
 ) -> None:
@@ -130,6 +152,7 @@ async def test_shipped_openai_model_reads_an_injected_pdf(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("_require_cassette")
 async def test_shipped_openai_model_accepts_the_unreadable_media_note(
     llm_record_mode: str,
 ) -> None:
@@ -213,6 +236,7 @@ async def test_media_analyst_provider_can_actually_read_audio(
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("_require_cassette")
 async def test_shipped_openai_model_calls_a_tool(llm_record_mode: str) -> None:
     """Agentic tool calling on the default assistant's primary.
 
@@ -238,6 +262,7 @@ async def test_shipped_openai_model_calls_a_tool(llm_record_mode: str) -> None:
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("_require_cassette")
 async def test_shipped_default_retry_pair_completes_a_turn(
     llm_record_mode: str,
 ) -> None:

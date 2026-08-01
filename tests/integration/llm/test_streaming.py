@@ -46,6 +46,7 @@ a single, consistent interface for all providers.
 import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -402,9 +403,29 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
     assert continuation_done_event is not None
 
 
+@pytest.fixture
+def require_thinking_cassette(llm_record_mode: str) -> None:
+    """Name the missing recording instead of failing on a downstream assertion.
+
+    Without this, replay in a network-less CI fails on `assert tool_calls`: the
+    connection error is swallowed and the stream yields nothing, so the failure
+    reads as a model that declined to call a tool rather than as a cassette that
+    needs recording. Synchronous on purpose -- the filesystem check must not run
+    on the event loop.
+    """
+    cassette = Path(
+        "tests/cassettes/llm/test_anthropic_streaming_thinking_round_trip.yaml"
+    )
+    if llm_record_mode == "replay" and not cassette.exists():
+        pytest.fail(
+            f"Cassette missing at {cassette}. Record with LLM_RECORD_MODE=record."
+        )
+
+
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("require_thinking_cassette")
 async def test_anthropic_streaming_thinking_round_trip(
     sample_tools: list[ToolDefinition],
     llm_record_mode: str,
