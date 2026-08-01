@@ -206,10 +206,14 @@ class AttachmentProcessor:
                     base64_data = base64.b64encode(file_bytes).decode("utf-8")
                     data_uri = f"data:{content_type};base64,{base64_data}"
 
-                    # Replace with data URI
+                    # Replace with a data URI, keeping the attachment's identity.
+                    # Inlining the bytes is what lets a provider read the file;
+                    # carrying the id alongside is what lets one that cannot read
+                    # it still name the file and hand it to a model that can.
                     converted_parts.append({
                         "type": "image_url",
                         "image_url": {"url": data_uri},
+                        "attachment_id": attachment_id,
                     })
                     logger.info(
                         "Converted attachment URL to data URI for attachment %s (type: %s)",

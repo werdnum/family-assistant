@@ -435,12 +435,20 @@ def test_text_and_image_parts_still_convert() -> None:
     ]
 
 
-def _sole_user_content_part(url: str) -> dict[str, object]:
+def _sole_user_content_part(
+    url: str, attachment_id: str | None = None
+) -> dict[str, object]:
     """Convert a single media part through a direct-OpenAI client."""
     client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra")
     items = client._messages_to_responses_input([
         UserMessage(
-            content=[ImageUrlContentPart(type="image_url", image_url={"url": url})]
+            content=[
+                ImageUrlContentPart(
+                    type="image_url",
+                    image_url={"url": url},
+                    attachment_id=attachment_id,
+                )
+            ]
         )
     ])
     content = items[0]["content"]
@@ -494,3 +502,30 @@ def test_plain_url_without_a_data_uri_is_still_an_image() -> None:
     url = "https://example.com/photo.png"
 
     assert _sole_user_content_part(url) == {"type": "input_image", "image_url": url}
+
+
+def test_unreadable_media_note_hands_off_the_attachment_by_id() -> None:
+    """The note is only actionable if it names the attachment to delegate.
+
+    There is no tool that lists a conversation's attachments, so an id-less note
+    leaves the model unable to refer to the file at all.
+    """
+    part = _sole_user_content_part(
+        "data:audio/ogg;base64,aGVsbG8=", attachment_id="att-1234"
+    )
+
+    text = part["text"]
+    assert isinstance(text, str)
+    assert "att-1234" in text
+    assert "delegate_to_service" in text
+    assert "media_analyst" in text
+
+
+def test_unreadable_media_without_an_id_asks_the_user_instead() -> None:
+    """With no id there is nothing to delegate, so it must not invent a handoff."""
+    part = _sole_user_content_part("data:audio/ogg;base64,aGVsbG8=")
+
+    text = part["text"]
+    assert isinstance(text, str)
+    assert "delegate_to_service" not in text
+    assert "None" not in text

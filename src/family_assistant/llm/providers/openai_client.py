@@ -412,7 +412,9 @@ class OpenAIClient(BaseLLMClient):
         if isinstance(part, TextContentPart):
             return {"type": "input_text", "text": part.text}
         if isinstance(part, ImageUrlContentPart):
-            return self._media_part_to_responses_input(part.image_url["url"])
+            return self._media_part_to_responses_input(
+                part.image_url["url"], part.attachment_id
+            )
         raise InvalidRequestError(
             f"Cannot send content part of type '{part.type}' to the OpenAI "
             "Responses API; it should have been resolved before reaching the "
@@ -429,7 +431,9 @@ class OpenAIClient(BaseLLMClient):
         header = url[len("data:") :].split(",", 1)[0]
         return header.split(";", 1)[0].strip().lower() or None
 
-    def _media_part_to_responses_input(self, url: str) -> dict[str, object]:
+    def _media_part_to_responses_input(
+        self, url: str, attachment_id: str | None = None
+    ) -> dict[str, object]:
         """Render one media part as whatever the Responses API accepts for it.
 
         The application carries every attachment -- images, PDFs, audio and
@@ -458,14 +462,23 @@ class OpenAIClient(BaseLLMClient):
             # a matching extension; the original name does not reach this layer.
             return {"type": "input_file", "filename": filename, "file_data": url}
 
+        # Name the attachment when it has an id. Without one the model has no
+        # way to refer to the file -- there is no tool that lists a
+        # conversation's attachments -- so the difference between this and an
+        # actionable turn is whether the id reached us.
+        handoff = (
+            f"Call delegate_to_service with target_service_id='media_analyst' and "
+            f"attachment_ids=['{attachment_id}'] to have a multimodal model "
+            f"describe or transcribe it"
+            if attachment_id is not None
+            else "Ask the user to describe it or to send a transcript"
+        )
         return {
             "type": "input_text",
             "text": (
-                f"[Attachment of type {mime_type} was provided but cannot be read "
-                f"by this model, which accepts images and PDFs only. Its contents "
-                f"are unavailable for this turn: ask the user to describe it, or "
-                f"delegate to a profile whose model supports {mime_type} if you "
-                f"need them.]"
+                f"[A {mime_type} attachment was provided. This model reads images "
+                f"and PDFs only, so its contents are not part of this turn. "
+                f"{handoff}. Do not answer as though you had read it.]"
             ),
         }
 

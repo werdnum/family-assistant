@@ -7,7 +7,7 @@ used in LLM messages. It's separated from messages.py to avoid circular imports.
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 # ===== Content Part Dicts (for API boundary) =====
 
@@ -25,6 +25,8 @@ class ImageUrlContentPartDict(TypedDict):
     type: Literal["image_url"]
     # ast-grep-ignore: no-dict-any - Provider API compatibility (OpenAI/Google format)
     image_url: dict[str, Any]
+    # Set when this part was resolved from an attachment; see ImageUrlContentPart.
+    attachment_id: NotRequired[str]
 
 
 class AttachmentContentPartDict(TypedDict):
@@ -59,9 +61,14 @@ def text_content(text: str) -> TextContentPartDict:
     return {"type": "text", "text": text}
 
 
-def image_url_content(url: str) -> ImageUrlContentPartDict:
+def image_url_content(
+    url: str, attachment_id: str | None = None
+) -> ImageUrlContentPartDict:
     """Create an image URL content part dict."""
-    return {"type": "image_url", "image_url": {"url": url}}
+    part: ImageUrlContentPartDict = {"type": "image_url", "image_url": {"url": url}}
+    if attachment_id is not None:
+        part["attachment_id"] = attachment_id
+    return part
 
 
 def attachment_content(attachment_id: str) -> AttachmentContentPartDict:
