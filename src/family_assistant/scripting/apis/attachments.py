@@ -439,6 +439,9 @@ class AttachmentAPI:
             file_content=content_bytes,
             filename=filename,
             content_type=mime_type,
+            # Script output, like tool output: the limit on what a model will
+            # accept is not a reason to throw away what the script produced.
+            media_limited=False,
         )
 
         async def _do_register(db_ctx: DatabaseContext) -> AttachmentMetadata:

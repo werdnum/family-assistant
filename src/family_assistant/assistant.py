@@ -125,9 +125,7 @@ from family_assistant.tools import (
     LOCAL_TOOL_METADATA_BY_NAME as local_tool_metadata_by_name,
 )
 from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
+    MAX_POLICY_RULE_PRIORITY,
     CompositeToolsProvider,
     LocalToolsProvider,
     MCPServerConfig,
@@ -140,8 +138,12 @@ from family_assistant.tools import (
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
+    ToolsProvider,
     _scan_user_docs,
     build_local_tool_registrations,
+)
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
 )
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.worker import reconcile_stale_tasks
@@ -155,6 +157,7 @@ from .telegram.service import TelegramService
 
 if TYPE_CHECKING:
     import socket
+    from collections.abc import Sequence
 
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -163,6 +166,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
+    from family_assistant.tools import ToolRegistration
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -174,6 +178,36 @@ def _calendar_config_to_dict(
 ) -> CalendarConfigDict:
     """Convert Pydantic CalendarConfig to TypedDict format for tool functions."""
     return cast("CalendarConfigDict", pydantic_config.model_dump(exclude_none=True))
+
+
+def _root_provider_for_profile(
+    shared_root: ToolsProvider,
+    profile_calendar_config: PydanticCalendarConfig | None,
+    local_registrations: Sequence[ToolRegistration],
+    mcp_provider: ToolsProvider,
+    embedding_generator: EmbeddingGenerator | None,
+) -> ToolsProvider:
+    """The provider a profile's policy chain wraps.
+
+    Calendar tools read the calendar from the `LocalToolsProvider` they were built
+    with, so a profile naming its own calendar needs its own local provider.
+    Sharing the root one would let the profile's prompt context and its tool calls
+    disagree about which calendar it is looking at -- events listed from one, added
+    to another. Profiles without their own calendar share the root provider; the
+    MCP provider is shared either way, since nothing in it is calendar-scoped.
+    """
+    if profile_calendar_config is None:
+        return shared_root
+    return CompositeToolsProvider(
+        providers=[
+            LocalToolsProvider(
+                registrations=list(local_registrations),
+                embedding_generator=embedding_generator,
+                calendar_config=_calendar_config_to_dict(profile_calendar_config),
+            ),
+            mcp_provider,
+        ]
+    )
 
 
 # Helper function (can be moved to utils if used elsewhere)
@@ -193,6 +227,7 @@ def _build_profile_policy_engine(
     profile_tools_policy: ToolPolicyConfig | None,
     operator_tools_policy: ToolPolicyConfig | None,
     global_tools_policy: ToolPolicyConfig | None = None,
+    excluded_global_tools: Sequence[str] | None = None,
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config.
 
@@ -212,7 +247,35 @@ def _build_profile_policy_engine(
         )
         raise ValueError(msg)
 
-    synthetic_rules: list[PolicyRule] = [
+    synthetic_rules: list[PolicyRule] = []
+
+    # Withheld global tools are denied FIRST, in the same layer the global rules
+    # are injected into. Both position and priority are load-bearing.
+    #
+    # Priority alone is not enough: MAX_POLICY_RULE_PRIORITY is also the highest
+    # a configured global rule may declare, so a global allow at 99 ties with
+    # this deny. Ties resolve on declaration order within a layer, so the deny
+    # has to be declared before the rules it overrides -- appended after them, a
+    # priority-99 global allow wins and the profile silently keeps a tool it
+    # asked to give up.
+    #
+    # The layer matters too: the equivalent rule in a profile's own
+    # `tools_policy` cannot work at any priority, because that policy lands in
+    # the lower-ranked `defaults` layer. Operator policy still outranks this,
+    # which is intended -- the operator's word stays final.
+    if excluded_global_tools:
+        synthetic_rules.append(
+            PolicyRule(
+                match=ToolMatcher(names=list(excluded_global_tools)),
+                decision=ToolPolicyDecision.DENY,
+                priority=MAX_POLICY_RULE_PRIORITY,
+                description=(
+                    f"Profile '{profile_id}' withholds these globally granted tools."
+                ),
+            )
+        )
+
+    synthetic_rules.append(
         PolicyRule(
             match=ToolMatcher(
                 names=["delegate_to_service"],
@@ -221,8 +284,8 @@ def _build_profile_policy_engine(
             decision=ToolPolicyDecision.ALLOW,
             priority=50,
             description=f"Allow self-delegation for profile '{profile_id}'",
-        ),
-    ]
+        )
+    )
     if global_tools_policy is not None:
         synthetic_rules.extend(global_tools_policy.rules)
 
@@ -852,6 +915,9 @@ class Assistant:
         root_local_registrations = filter_oauth_tool_registrations(
             root_local_registrations, google_integration_state
         )
+        # Kept so a profile with its own calendar_config can be given a local
+        # provider built against that calendar; see the profile loop below.
+        self._root_local_registrations = root_local_registrations
         root_local_provider = LocalToolsProvider(
             registrations=root_local_registrations,
             embedding_generator=self.embedding_generator,
@@ -868,6 +934,7 @@ class Assistant:
             mcp_server_configs=all_mcp_servers_config,
             initialization_timeout_seconds=60,
         )
+        self._root_mcp_provider = root_mcp_provider
 
         # Create composite root provider
         self.root_tools_provider = CompositeToolsProvider(
@@ -1033,9 +1100,18 @@ class Assistant:
                 profile_tools_policy,
                 profile_operator_tools_policy,
                 self.config.global_tools_policy,
+                profile_conf.excluded_global_tools,
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
+
+            profile_root_provider = _root_provider_for_profile(
+                shared_root=self.root_tools_provider,
+                profile_calendar_config=profile_proc_conf.calendar_config,
+                local_registrations=self._root_local_registrations,
+                mcp_provider=self._root_mcp_provider,
+                embedding_generator=self.embedding_generator,
+            )
 
             # Build provider chain: Policy → root. The provider chain is
             # shared by all consumers (LLM loop, scripts, web UI listings),
@@ -1043,7 +1119,7 @@ class Assistant:
             # to use. On-demand gating is an LLM-loop concern only and lives
             # in a sibling ``OnDemandToolsView`` below.
             policy_provider = PolicyEnforcingToolsProvider(
-                wrapped_provider=self.root_tools_provider,
+                wrapped_provider=profile_root_provider,
                 policy_engine=policy_engine,
                 confirmation_timeout=confirmation_timeout,
             )
@@ -1078,8 +1154,13 @@ class Assistant:
                 visibility_grants=profile_grants,
                 note_registry=note_registry,
             )
+            # A profile's own calendar_config wins over the application-wide one.
+            # Without this the field resolves onto the profile and is then read by
+            # nothing, so configuring it looks effective and changes no behaviour.
             calendar_provider = CalendarContextProvider(
-                calendar_config=_calendar_config_to_dict(self.config.calendar_config),
+                calendar_config=_calendar_config_to_dict(
+                    profile_proc_conf.calendar_config or self.config.calendar_config
+                ),
                 timezone=ZoneInfo(profile_proc_conf.timezone),
                 prompts=profile_proc_conf.prompts,
             )
@@ -1169,6 +1250,14 @@ class Assistant:
                         "but missing essential settings (URL, token, or template). Skipping."
                     )
             # --- End Home Assistant Context Provider ---
+
+            excluded_providers = set(profile_proc_conf.excluded_context_providers)
+            if excluded_providers:
+                context_providers = [
+                    provider
+                    for provider in context_providers
+                    if provider.name not in excluded_providers
+                ]
 
             service_config = ProcessingServiceConfig(
                 prompts=profile_proc_conf.prompts,

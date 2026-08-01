@@ -392,7 +392,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
     """Primary-only retry_config profiles must not falsely advertise a fallback.
 
     ``RetryingLLMClient.__init__`` always stores a default string on
-    ``self.fallback_model`` (currently ``"openai/gpt-5.5"``) even when
+    ``self.fallback_model`` (currently ``"openai/gpt-5.6-terra"``) even when
     ``fallback_client=None``, so a naive read of ``fallback_model`` would
     misrepresent every primary-only retry profile as having a fallback.
     """
@@ -403,9 +403,9 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
             self.primary_model = "anthropic/claude-sonnet-4-6"
             # Mirrors RetryingLLMClient: fallback_client=None but
             # fallback_model retains its default string because of the
-            # ``fallback_model or "openai/gpt-5.5"`` constructor logic.
+            # ``fallback_model or "openai/gpt-5.6-terra"`` constructor logic.
             self.fallback_client = None
-            self.fallback_model = "openai/gpt-5.5"
+            self.fallback_model = "openai/gpt-5.6-terra"
 
     class _PrimaryOnlyService:
         kind = "local"
@@ -426,7 +426,7 @@ async def test_dump_profiles_retrying_llm_client_without_fallback_reports_no_fal
         assert runtime["llm_fallback_model"] is None
         # Sanity: the default fallback string must not leak into the response
         # anywhere, since no fallback_client is configured.
-        assert "openai/gpt-5.5" not in response.text
+        assert "openai/gpt-5.6-terra" not in response.text
     finally:
         _restore_registry(original_registry)
         _restore_config(original_config)

@@ -87,7 +87,9 @@ class RetryingLLMClient:
         self.primary_client = primary_client
         self.primary_model = primary_model
         self.fallback_client = fallback_client
-        self.fallback_model = fallback_model or "openai/gpt-5.5"  # Default fallback
+        self.fallback_model = (
+            fallback_model or "openai/gpt-5.6-terra"
+        )  # Default fallback
 
         logger.info(
             f"RetryingLLMClient initialized with primary model: {primary_model}, "

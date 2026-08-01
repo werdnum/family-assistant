@@ -14,15 +14,21 @@ move between tools and people.
 
 **Supported types** depend on where you're sending from:
 
-- **Web and iOS chat:** JPEG, PNG, GIF, and WebP images, plus PDF, plain text, and Markdown.
-- **Telegram:** images and documents, including formats the web chat won't take.
+- **Web chat:** JPEG, PNG, GIF, and WebP images; PDF, plain text, and Markdown; MP3, WAV, OGG, and
+  WebM audio; MP4, WebM, and OGG video.
+- **iOS chat:** JPEG, PNG, GIF, and WebP images, plus PDF, plain text, and Markdown.
+- **Telegram:** images, documents, audio files, video, and voice notes — including formats the web
+  chat won't take.
 - **Upload Document page:** PDF, TXT, DOCX, DOC, HTML, and MD — documents rather than images, since
   the point of that page is indexing text you can search later.
 
 If a file is rejected, converting it to a nearby format (an image to PNG, a spreadsheet to CSV sent
 through Telegram) is usually the quickest way through.
 
-Size limits apply: typically 20 MB for images and 100 MB for other files.
+Size limits apply: typically 20 MB for anything a model looks at or listens to —
+images, audio and video — and 100 MB for other files. A recording over the limit is
+refused with its size rather than accepted and then failed on, so trimming a long
+recording, or sending a lower-quality version of a video, gets it through.
 
 ## What you can do with them
 
@@ -40,6 +46,17 @@ an object, changing the style), combine several, or use one image as a style ref
 in a chat stays with that conversation; to make its content permanently searchable, upload it on the
 web interface's **Upload Document** page instead. See
 [documents-and-search.md](documents-and-search.md).
+
+**Transcribe or describe audio and video:**
+
+- "What does this voice note say?"
+- "Summarise what's discussed in this recording."
+- "What happens in this video?"
+
+Not every model the assistant runs on can listen to audio or watch video. When one can't, it hands
+the file to a model that can and works from what comes back, so asking is the same either way — it
+just means an extra step before you get an answer. If part of a recording is inaudible, you'll be
+told that rather than given a guess at it.
 
 **Ask about an attachment itself:**
 

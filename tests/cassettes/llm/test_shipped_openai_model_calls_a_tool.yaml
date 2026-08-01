@@ -1,0 +1,113 @@
+interactions:
+  - request:
+      body: '{"include":["reasoning.encrypted_content"],"input":[{"role":"user","content":"What is 42 times 17? Use the calculate tool."}],"model":"gpt-5.6-terra","store":false,"stream":false,"tool_choice":"auto","tools":[{"type":"function","name":"calculate","description":"Evaluate an arithmetic expression.","parameters":{"type":"object","properties":{"expression":{"type":"string"}},"required":["expression"]},"strict":false}]}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '418'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+        user-agent:
+          - AsyncOpenAI/Python 1.109.1
+        x-stainless-arch:
+          - arm64
+        x-stainless-async:
+          - async:asyncio
+        x-stainless-lang:
+          - python
+        x-stainless-os:
+          - Linux
+        x-stainless-package-version:
+          - 1.109.1
+        x-stainless-read-timeout:
+          - '600'
+        x-stainless-retry-count:
+          - '0'
+        x-stainless-runtime:
+          - CPython
+        x-stainless-runtime-version:
+          - 3.13.9
+      method: POST
+      uri: https://api.openai.com/v1/responses
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAA/61VS2/jNhC+51cYOhbZwFL83GOLAm2PRQ8LNAthTI5kNhSp8uGNG/i/d0hKsiQ7
+          ix56Maz5NO/vG70/LBaZ4NnnRWbQtuVyj5wxVmzyHc9xj8t8AxvcwHpd5LDa5fv1juN+VRwqjofn
+          3YpvsscQQh/+Qub6MFpZTHZmEBzyEgKWb3frTZEvt9uIWQfO2+DDdNNKpPeS0wHYa220V6GuCqTF
+          ZBZSClWT7Z0eydDCGU3w53hCqVt6IOCSEvchZ6l3EUVjdPBUXspoqAz+7VGxc9miAunOBC6flhET
+          qg9WcnQgpB17CmWd8cwJanpsb+Ct1N613pVOv+It6LSWJQM5DddojjL0VLfu0/pp88lRrZANmIGQ
+          aeyRkpDlzziVNJthqxX7zk6B7dJOiyIvqny7LRh7XmPaaQzizi3GMF7FFmPBV/ijFUYQTO0bVC7i
+          7y8ZvrVEDktRXrLPL9mq+CHfvmSXq0OIXaay498v7S9/aPn7j+r862l/+um3+ss/juGuvnooaLB7
+          nXlJTMsicqHfr3E4LRiKhHI6bVpYolQoiLaOd7ZO0Elob8ue0KmyYeytoY4dhWRHLF/x/CFmaCqq
+          W1pWrI5pl6QLq9WEzkwrh29RRKF75w2RJrWaYVVpE6EGufBNbw+UCFZahOJg+uln1jcNmL6oQRUW
+          KnRn6iRUVAmcaMCiOQmahRO9qirw0mWdWLXBiRwdNm2go4/2vBtb10HXEhXdwPV5RKj4XlpWV/IJ
+          zUFbEZfQdzkUntZ31FRfnI93OrsC3kKN16yioceyRjVOLNREisvHe8BI4L3jEO/WtWt3hHTAZQg+
+          vwDL+8j/ntdpB3L+Qj/pb3goLYJhx/GAlG/KeAWtG7lMNmBvr8z8QFy1ydEyI9qe+T+fQHpS6ALU
+          AoxwxwadYIvrUXj6nqznY7OkrAZG7O0+CIY86WLOBtkX2X2lRnMkpRKJifFTj6C4obAZMopHlz8o
+          eARehv+XUZYwVmGQD+O7zTGYv97sMmSJ39aovdmBc7otpa6pj8PAkWhs4y3bp+8dHTzF+i9HxoWF
+          g+y/tnPxTHWyfn58+C8yydKx+0abvUfZBPOPGDmXSb6/B9xLO9zRj0LPlLAtBkZ7O71/xBzg4AKr
+          3i8Pl38Bqx60kxsJAAA=
+      headers:
+        Access-Control-Expose-Headers:
+          - CF-Ray
+        CF-Cache-Status:
+          - DYNAMIC
+        CF-Ray:
+          - a24810336fc23f0f-FRA
+        Connection:
+          - keep-alive
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Sat, 01 Aug 2026 21:51:18 GMT
+        Server:
+          - cloudflare
+        Strict-Transport-Security:
+          - max-age=31536000; includeSubDomains; preload
+        Transfer-Encoding:
+          - chunked
+        X-Content-Type-Options:
+          - nosniff
+        access-control-expose-headers:
+          - X-Request-ID
+          - CF-Ray
+        alt-svc:
+          - h3=":443"; ma=86400
+        openai-organization:
+          - REDACTED
+        openai-processing-ms:
+          - '958'
+        openai-project:
+          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
+        openai-version:
+          - '2020-10-01'
+        set-cookie:
+          - __cf_bm=TOE7xXMWCM2CaxthFY0j84cH5NOGBkusjhVFgAFSokk-1785621077.0261416-1.0.1.1-VCS1A12z3LGigHzbbvF30mRUAQlWs407FsTqJTou9mYNoW1szvtYh_0Js1KN5qKuv.PlTYbT9YZpGSruCekQJfCI4qwlVctTiLoyB7wXYZQytawwNx1xnPQbkfjQmI0W; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Sat, 01 Aug 2026 22:21:18 GMT
+        x-ratelimit-limit-requests:
+          - '10000'
+        x-ratelimit-limit-tokens:
+          - '4000000'
+        x-ratelimit-remaining-requests:
+          - '9999'
+        x-ratelimit-remaining-tokens:
+          - '4000000'
+        x-ratelimit-reset-requests:
+          - 6ms
+        x-ratelimit-reset-tokens:
+          - 0s
+        x-request-id:
+          - req_236b0bf1b1134901ad64a9aabf94c77e
+      status:
+        code: 200
+        message: OK
+version: 1

@@ -137,6 +137,7 @@ class TestAttachmentWorkflows:
                 camera_content,
                 "camera_snapshot.png",
                 camera_mime,
+                media_limited=False,
             )
             camera_attachment_id = camera_data.attachment_id
 
@@ -184,6 +185,7 @@ class TestAttachmentWorkflows:
                 annotated_content,
                 "annotated_image.png",
                 annotated_mime,
+                media_limited=False,
             )
             annotated_attachment_id = annotated_data.attachment_id
 
@@ -323,6 +325,7 @@ class TestAttachmentWorkflows:
                 processed_content,
                 "processed_photo.jpg",
                 processed_mime,
+                media_limited=False,
             )
             processed_attachment_id = processed_data.attachment_id
 

@@ -11,6 +11,7 @@ from typing import Self
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import BaseModel
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.base import InvalidRequestError
@@ -21,6 +22,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
+from family_assistant.tools.types import ToolDefinition
 
 THINKING_BLOCK: dict[str, object] = {
     "type": "thinking",
@@ -359,3 +361,103 @@ async def test_production_stream_loop_emits_thinking_delta() -> None:
     assert events[0].content == "Checking the arithmetic"
     assert events[1].metadata is not None
     assert events[1].metadata.get("provider_metadata") == _thinking_metadata()
+
+
+_SHIPPED_THINKING_PARAMS: dict[str, dict[str, object]] = {
+    "claude-sonnet-5": {
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "high"},
+        "max_tokens": 16000,
+    }
+}
+
+_CALC_TOOL: list[ToolDefinition] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "calc",
+            "description": "Calculate.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+]
+
+
+def _shipped_client() -> AnthropicClient:
+    return AnthropicClient(
+        api_key="test-key",
+        model="claude-sonnet-5",
+        model_parameters=_SHIPPED_THINKING_PARAMS,
+    )
+
+
+@pytest.mark.parametrize("tool_choice", ["required", "calc"])
+def test_forced_tool_choice_drops_thinking(tool_choice: str) -> None:
+    """Anthropic rejects thinking combined with a forced tool choice.
+
+    `llm_parameters` is keyed by model, not by call path, so a model configured
+    for thinking carries it into requests that force a tool — where the reasoning
+    could not be used anyway. Covers both spellings of forcing: `any` (from
+    "required") and a named tool.
+    """
+    params = _shipped_client()._build_request_params(
+        api_messages=[{"role": "user", "content": "hi"}],
+        system_blocks=None,
+        tools=_CALC_TOOL,
+        tool_choice=tool_choice,
+    )
+
+    assert params["tool_choice"]["type"] in {"any", "tool"}
+    assert "thinking" not in params
+    assert "output_config" not in params
+    # Only the incompatible keys go; the token ceiling the model needs stays.
+    assert params["max_tokens"] == 16000
+
+
+def test_auto_tool_choice_keeps_thinking() -> None:
+    """The agentic path must be untouched — this is where thinking earns its cost."""
+    params = _shipped_client()._build_request_params(
+        api_messages=[{"role": "user", "content": "hi"}],
+        system_blocks=None,
+        tools=_CALC_TOOL,
+        tool_choice="auto",
+    )
+
+    assert params["tool_choice"] == {"type": "auto"}
+    assert params["thinking"] == {"type": "adaptive"}
+    assert params["output_config"] == {"effort": "high"}
+
+
+async def test_structured_output_request_omits_thinking() -> None:
+    """`generate_structured` forces its output tool, so it can never send thinking.
+
+    Asserted on the request the client actually builds rather than on the helper,
+    because this path assembles its params inline instead of going through
+    `_build_request_params`.
+    """
+
+    class _Model(BaseModel):
+        answer: str
+
+    client = _shipped_client()
+    response = SimpleNamespace(
+        content=[
+            SimpleNamespace(
+                type="tool_use",
+                name="return_structured_response",
+                input={"answer": "42"},
+            )
+        ],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        stop_reason="tool_use",
+    )
+    create = AsyncMock(return_value=response)
+
+    with patch.object(client.client.messages, "create", new=create):
+        await client.generate_structured([UserMessage(content="hi")], _Model)
+
+    assert create.await_args is not None
+    sent = create.await_args.kwargs
+    assert sent["tool_choice"]["type"] == "tool"
+    assert "thinking" not in sent
+    assert "output_config" not in sent

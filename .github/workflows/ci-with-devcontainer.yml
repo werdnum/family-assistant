@@ -124,6 +124,7 @@ jobs:
               - 'src/family_assistant/llm/**/*.py'
               - 'tests/integration/llm/**/*.py'
               - 'tests/integration/test_google_embedding.py'
+              - 'tests/integration/test_gemini_omni_video_generation.py'
               - 'tests/cassettes/llm/**'
               - 'tests/cassettes/gemini/**'
             ios:
@@ -884,3 +885,4 @@ jobs:
           echo "✅ All tests passed or were skipped!"
 
 # Note: Test images with unique tags will be cleaned up by GHCR retention policies
+

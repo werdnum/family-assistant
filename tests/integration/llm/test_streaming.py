@@ -46,6 +46,7 @@ a single, consistent interface for all providers.
 import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -402,9 +403,29 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
     assert continuation_done_event is not None
 
 
+@pytest.fixture
+def require_thinking_cassette(llm_record_mode: str) -> None:
+    """Name the missing recording instead of failing on a downstream assertion.
+
+    Without this, replay in a network-less CI fails on `assert tool_calls`: the
+    connection error is swallowed and the stream yields nothing, so the failure
+    reads as a model that declined to call a tool rather than as a cassette that
+    needs recording. Synchronous on purpose -- the filesystem check must not run
+    on the event loop.
+    """
+    cassette = Path(
+        "tests/cassettes/llm/test_anthropic_streaming_thinking_round_trip.yaml"
+    )
+    if llm_record_mode == "replay" and not cassette.exists():
+        pytest.fail(
+            f"Cassette missing at {cassette}. Record with LLM_RECORD_MODE=record."
+        )
+
+
 @pytest.mark.no_db
 @pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
+@pytest.mark.usefixtures("require_thinking_cassette")
 async def test_anthropic_streaming_thinking_round_trip(
     sample_tools: list[ToolDefinition],
     llm_record_mode: str,
@@ -422,17 +443,46 @@ async def test_anthropic_streaming_thinking_round_trip(
     if llm_record_mode != "replay" and not os.getenv("ANTHROPIC_API_KEY"):
         pytest.skip("Recording this test requires ANTHROPIC_API_KEY")
 
+    # Pinned to the shipped model and the shipped thinking shape. Both matter:
+    # `claude-sonnet-5` is what automation_creation and engineer run, and it
+    # rejects the `enabled` + `budget_tokens` form this test used to pass with a
+    # 400. Verifying replay against a model/shape combination no profile uses
+    # would leave the mechanism those two profiles depend on unexercised, which
+    # is the one thing this test exists to prevent.
+    #
+    # `display` is the one field set here that the profiles do not set. Sonnet 5
+    # defaults it to `omitted`, which still returns thinking blocks carrying the
+    # signature -- so capture and replay, the mechanism under test, behave
+    # identically either way -- but their text is empty, and a turn with no
+    # thinking text cannot show that reasoning stays out of the reply. The
+    # profiles leave the default because nothing renders reasoning text: the
+    # `thinking` stream events are ignored by the processing loop and by the web
+    # and iOS transports, so paying for summaries would buy nothing.
     client = LLMClientFactory.create_client({
         "provider": "anthropic",
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "api_key": os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key"),
         "model_parameters": {
-            "claude-sonnet-4-6": {
-                "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "claude-sonnet-5": {
+                "thinking": {"type": "adaptive", "display": "summarized"},
+                "output_config": {"effort": "high"},
+                "max_tokens": 16000,
             }
         },
     })
-    messages = [create_user_message("What is 42 times 17? Use the calculate tool.")]
+    # Adaptive thinking decides per turn whether to think at all, and skips it on
+    # a single multiplication -- which recorded a turn with no thinking block to
+    # replay. Multi-step arithmetic earns the thinking this test needs on the
+    # large majority of runs, but the decision is still the model's: a re-record
+    # that lands on a no-thinking turn fails here rather than committing a
+    # cassette with nothing to replay, and should just be run again.
+    messages = [
+        create_user_message(
+            "A tank holds 4200 litres. It drains at 17 litres per minute for 42 "
+            "minutes, then is refilled at 23 litres per minute for 31 minutes. "
+            "Work out the final volume, using the calculate tool for the arithmetic."
+        )
+    ]
 
     tool_calls = []
     thinking_chunks = []

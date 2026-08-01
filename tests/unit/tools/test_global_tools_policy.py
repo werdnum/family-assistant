@@ -15,6 +15,7 @@ from family_assistant.assistant import (
 )
 from family_assistant.tools.metadata import ToolTag, build_tool_descriptor
 from family_assistant.tools.policy import (
+    MAX_POLICY_RULE_PRIORITY,
     PolicyRule,
     ToolMatcher,
     ToolPolicyConfig,
@@ -104,4 +105,35 @@ def test_operator_policy_overrides_global_allow() -> None:
         operator_policy,
         _GLOBAL_POLICY,
     )
+    assert engine.evaluate(_DESCRIPTOR).decision == ToolPolicyDecision.DENY
+
+
+def test_exclusion_beats_a_global_allow_at_the_maximum_priority() -> None:
+    """A global rule may legally declare the same priority the exclusion uses.
+
+    `MAX_POLICY_RULE_PRIORITY` is the ceiling for *any* rule, including a
+    configured `global_tools_policy` entry, so priority alone cannot separate the
+    two. Ties resolve on declaration order within a layer, which is why the
+    exclusion is declared ahead of the global rules rather than appended after
+    them -- appended, a priority-99 allow wins and the profile silently keeps a
+    tool it asked to give up.
+    """
+    global_policy_at_max_priority = ToolPolicyConfig(
+        rules=[
+            PolicyRule(
+                match=ToolMatcher(names=[_TOOL_NAME]),
+                decision=ToolPolicyDecision.ALLOW,
+                priority=MAX_POLICY_RULE_PRIORITY,
+            )
+        ]
+    )
+
+    engine = _build_profile_policy_engine(
+        "media_analyst",
+        _RESTRICTIVE_PROFILE_POLICY,
+        None,
+        global_policy_at_max_priority,
+        [_TOOL_NAME],
+    )
+
     assert engine.evaluate(_DESCRIPTOR).decision == ToolPolicyDecision.DENY

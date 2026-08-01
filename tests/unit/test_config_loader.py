@@ -24,6 +24,8 @@ from pydantic import ValidationError
 
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
+    PROFILE_OVERRIDABLE_PROCESSING_KEYS,
+    PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS,
     USER_IDENTITIES_FILE_ENV_VAR,
     apply_calendar_env_vars,
     apply_env_var_overrides,
@@ -36,7 +38,7 @@ from family_assistant.config_loader import (
     resolve_service_profile,
     set_nested_value,
 )
-from family_assistant.config_models import AppConfig, ProcessingConfig
+from family_assistant.config_models import AppConfig, ProcessingConfig, ServiceProfile
 from family_assistant.config_sources import (
     DeepMergedYamlSource,
     deep_merge_dicts,
@@ -483,7 +485,7 @@ class TestAppConfigBackwardCompat:
     def test_no_args_gives_field_defaults(self) -> None:
         """AppConfig() with no args produces field defaults only."""
         config = AppConfig()
-        assert config.model == "gemini/gemini-3.1-pro-preview"
+        assert config.model == "gemini/gemini-3.6-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
         assert config.telegram_token is None
 
@@ -491,7 +493,7 @@ class TestAppConfigBackwardCompat:
         """AppConfig(field=value) overrides field defaults."""
         config = AppConfig(telegram_token="test-token")
         assert config.telegram_token == "test-token"
-        assert config.model == "gemini/gemini-3.1-pro-preview"
+        assert config.model == "gemini/gemini-3.6-flash"
 
     def test_model_validate(self) -> None:
         """AppConfig.model_validate({...}) works as before."""
@@ -1375,7 +1377,7 @@ class TestLoadConfig:
                 load_dotenv_file=False,
             )
 
-        assert config.model == "gemini/gemini-3.1-pro-preview"
+        assert config.model == "gemini/gemini-3.6-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
 
     def test_defaults_yaml_overrides_field_defaults(self, tmp_path: Path) -> None:
@@ -2506,3 +2508,201 @@ class TestEnvVarMappingsComplete:
         mapped_env_vars = {m.env_var for m in ENV_VAR_MAPPINGS}
         for secret in secret_env_vars:
             assert secret in mapped_env_vars, f"Secret {secret} not mapped"
+
+
+def test_every_processing_config_field_is_accounted_for() -> None:
+    """A ProcessingConfig field in neither set is silently dropped from profiles.
+
+    `resolve_service_profile` copies profile overrides across by an explicit key
+    list. A field missing from it parses and validates on the profile, then never
+    reaches the resolved config — so the profile runs with the inherited value
+    while the YAML says otherwise. For a field that gates behaviour, that fails
+    open silently, which is exactly what this project's no-silent-failures rule
+    exists to prevent.
+    """
+    unaccounted = (
+        set(ProcessingConfig.model_fields)
+        - set(PROFILE_OVERRIDABLE_PROCESSING_KEYS)
+        - PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS
+    )
+
+    assert not unaccounted, (
+        f"ProcessingConfig field(s) {sorted(unaccounted)} are neither profile-"
+        "overridable nor specially handled, so setting them on a profile in "
+        "defaults.yaml or config.yaml would be silently ignored. Add them to "
+        "PROFILE_OVERRIDABLE_PROCESSING_KEYS, or to "
+        "PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS if a dedicated code path "
+        "already applies them."
+    )
+
+
+def test_shipped_telephone_profile_keeps_its_greeting() -> None:
+    """A profile-level greeting must survive resolution.
+
+    `telephone_external` is the one shipped profile that sets
+    `greeting_wav_path`, and it reached `None` for as long as the field was
+    missing from the overridable key list — external callers got no greeting,
+    with nothing anywhere reporting that the configured path had been dropped.
+    This is the concrete case the completeness test above generalises.
+    """
+    config = load_config(
+        config_file_path="nonexistent-so-only-defaults.yaml",
+        load_dotenv_file=False,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "telephone_external")
+
+    assert profile.processing_config is not None
+    assert profile.processing_config.greeting_wav_path == (
+        "resources/greeting_external.wav"
+    )
+
+
+def test_every_service_profile_field_is_accounted_for() -> None:
+    """A top-level ServiceProfile field also needs explicit copying.
+
+    `resolve_service_profile` handles top-level keys one `if` at a time, the same
+    trap as the processing_config key list: a field nothing copies is accepted by
+    validation and then dropped. `excluded_global_tools` withholds tools that
+    `global_tools_policy` grants to every profile, so dropping that one would
+    silently restore access a profile deliberately gave up.
+    """
+    handled = {
+        # Copied or merged by name in resolve_service_profile.
+        "processing_config",
+        "tools_config",
+        "tools_policy",
+        "taint_policy",
+        "chat_id_to_name_map",
+        "slash_commands",
+        "visibility_grants",
+        "excluded_global_tools",
+        "remote_a2a",
+        # Set from the profile definition directly rather than merged.
+        "id",
+        "description",
+        # Injected by the operator-policy layer, never from a profile block.
+        "operator_tools_policy",
+    }
+
+    unaccounted = set(ServiceProfile.model_fields) - handled
+
+    assert not unaccounted, (
+        f"ServiceProfile field(s) {sorted(unaccounted)} are not copied by "
+        "resolve_service_profile, so setting them on a profile would be "
+        "silently ignored. Add explicit handling and list them here."
+    )
+
+
+def _resolved_default_assistant(tmp_path: Path, operator_yaml: str) -> ProcessingConfig:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(operator_yaml)
+    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config is not None
+    return profile.processing_config
+
+
+def test_operator_model_override_drops_the_shipped_retry_chain(
+    tmp_path: Path,
+) -> None:
+    """An operator naming a model without a chain means "run this model".
+
+    `assistant.py` prefers `retry_config` over `provider`/`llm_model`, so a chain
+    left behind by the shipped profile silently wins and the operator's choice
+    never reaches the API. `resolve_service_profile` already applies this rule to
+    a chain inherited from `default_profile_settings`, but it can only ask whether
+    the key is present — and once a shipped profile carries its own chain, it
+    always is.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n',
+    )
+
+    assert processing_config.provider == "anthropic"
+    assert processing_config.llm_model == "claude-sonnet-5"
+    assert processing_config.retry_config is None
+
+
+def test_operator_supplied_retry_chain_is_kept(tmp_path: Path) -> None:
+    """An operator who wants a fallback alongside their model gets one."""
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n'
+        '        fallback: {provider: "google", model: "gemini-3.6-flash"}\n',
+    )
+
+    assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.provider == "anthropic"
+
+
+def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
+    tmp_path: Path,
+) -> None:
+    """Only a model selection drops the chain; other overrides must not."""
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      max_iterations: 7\n",
+    )
+
+    assert processing_config.max_iterations == 7
+    assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.model == "gpt-5.6-terra"
+
+
+def test_explicit_null_retry_config_with_a_model_drops_the_shipped_chain(
+    tmp_path: Path,
+) -> None:
+    """`retry_config: null` is asking for no chain, not declaring one.
+
+    The presence check that protects an operator-supplied chain treated a null
+    value as a declaration, so the shipped chain survived and `assistant.py`
+    preferred it over the model the operator selected — the same silent override
+    the presence check exists to prevent.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        "      retry_config: null\n",
+    )
+
+    assert processing_config.provider == "anthropic"
+    assert processing_config.llm_model == "claude-sonnet-5"
+    assert processing_config.retry_config is None
+
+
+def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None:
+    """`retry_config: null` with no model reads as "no chain of my own".
+
+    The merged definition can only carry presence, and an absent key means
+    inherit — so this keeps the chain from `default_profile_settings`. Turning a
+    shipped chain off while keeping the shipped model has no expression today;
+    naming the model alongside the null does it.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config: null\n",
+    )
+
+    assert processing_config.retry_config is not None

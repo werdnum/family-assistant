@@ -20,6 +20,7 @@ import os
 import zoneinfo
 from contextvars import ContextVar
 from email.utils import parseaddr
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -36,7 +37,8 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .security.taint import TaintPolicyConfig
 from .tools.policy import (
-    ToolPolicyConfig,  # noqa: TC001 - Pydantic resolves this model at runtime
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 
 
@@ -95,6 +97,27 @@ class CameraConfig(BaseModel):
     cameras_config: dict[str, ReolinkCameraItemConfig] = Field(default_factory=dict)
 
 
+# The `name` of every context provider the assistant can attach to a profile.
+# Duplicated here rather than imported so config validation does not depend on
+# the provider module; `test_context_provider_names_match_config` keeps the two
+# in step, since a name drifting out of this set would silently turn an
+# exclusion into a no-op.
+CONTEXT_PROVIDER_NAMES: frozenset[str] = frozenset({
+    "notes",
+    "calendar",
+    "known_users",
+    "weather",
+    "home_assistant",
+})
+
+_GLOB_METACHARACTERS = "*?["
+
+
+def _is_glob(name: str) -> bool:
+    """Whether a tool name contains `fnmatch` wildcard syntax."""
+    return any(char in name for char in _GLOB_METACHARACTERS)
+
+
 class ProcessingConfig(BaseModel):
     """Configuration for message processing behavior.
 
@@ -131,6 +154,26 @@ class ProcessingConfig(BaseModel):
     home_assistant_context_template: str | None = None
     home_assistant_verify_ssl: bool = True
     include_system_docs: list[str] | None = None
+    # Context providers inject the user's own data -- notes, calendar, known
+    # users, weather, Home Assistant state -- into the system prompt. A profile
+    # that exists to look at one attachment and answer in text has no use for
+    # any of it, and injecting it hands private data to a prompt built around
+    # untrusted content. Listing a provider name here drops it for this profile.
+    excluded_context_providers: list[str] = Field(default_factory=list)
+
+    @field_validator("excluded_context_providers")
+    @classmethod
+    def validate_excluded_context_providers(cls, v: list[str]) -> list[str]:
+        unknown = sorted(set(v) - CONTEXT_PROVIDER_NAMES)
+        if unknown:
+            msg = (
+                f"Unknown context provider(s) in excluded_context_providers: "
+                f"{', '.join(unknown)}. Valid names: "
+                f"{', '.join(sorted(CONTEXT_PROVIDER_NAMES))}."
+            )
+            raise ValueError(msg)
+        return v
+
     max_iterations: int = 5
     context_pruning_min_turns: int = 3
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config
@@ -265,6 +308,13 @@ class ServiceProfile(BaseModel):
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
+    # Tool names to withhold from this profile even though `global_tools_policy`
+    # grants them to every profile. A profile's own `tools_policy` cannot deny a
+    # global grant -- global rules are injected at the `profile` policy layer,
+    # which outranks the `defaults` layer a profile's own policy occupies, so
+    # layer beats priority. This is the only way for a profile that must hold no
+    # privileges to actually hold none.
+    excluded_global_tools: list[str] = Field(default_factory=list)
     remote_a2a: RemoteA2AConfig | None = None
 
 
@@ -1214,7 +1264,7 @@ class GeminiImageConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-3-pro-image-preview"
+    model: str = "gemini-3-pro-image"
 
 
 class VeoVideoConfig(BaseModel):
@@ -1318,7 +1368,7 @@ class AppConfig(BaseSettings):
     )
 
     # Model configuration
-    model: str = "gemini/gemini-3.1-pro-preview"
+    model: str = "gemini/gemini-3.6-flash"
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dimensions: int = 1536
     # Optional explicit embedding provider selection. When None, the provider is
@@ -1417,6 +1467,80 @@ class AppConfig(BaseSettings):
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
+
+    @model_validator(mode="after")
+    def validate_excluded_global_tools_are_granted(self) -> AppConfig:
+        """Reject an exclusion that withholds nothing.
+
+        `excluded_global_tools` exists to take a globally granted tool away from a
+        profile that must hold no privileges. A name that no global rule grants
+        withholds nothing — whether it is a typo or a tool that was never global —
+        and the generated matcher silently matches nothing, leaving the grant it
+        was meant to remove in place. For a profile processing untrusted input
+        that is a security control that reads as configured and does nothing, so
+        it fails at startup instead.
+
+        Only enforced against name-based global rules that can actually confer
+        access. A rule matching by tag or MCP server could still grant the named
+        tool, and this cannot tell, so a policy containing one of those is left
+        alone rather than risking a false rejection. A `deny` rule is the reverse
+        error: counting the names it denies as granted would let an exclusion
+        matching only that deny validate while withholding nothing, which is the
+        no-op this exists to reject. `confirm` counts as granted, since a tool
+        reachable behind a confirmation is still reachable.
+
+        Names are glob patterns on both sides, because `ToolMatcher.matches`
+        resolves them with `fnmatchcase`. Comparing them as literals would reject
+        a working config -- a grant of `read_*` excluded as `read_text_attachment`,
+        or the reverse -- and refusing to start is a worse failure than the no-op
+        this guards against. When both sides are patterns, neither matches the
+        other's literal text even where their match sets overlap (`read_*` and
+        `*_attachment` meet on `read_text_attachment`), so such a pair is left
+        alone: deciding whether two globs can intersect is not worth doing to
+        reach a stricter answer than "cannot tell".
+        """
+        if self.global_tools_policy is None:
+            granted: set[str] = set()
+            has_unanalysable_rule = False
+        else:
+            granting_rules = [
+                rule
+                for rule in self.global_tools_policy.rules
+                if rule.decision is not ToolPolicyDecision.DENY
+            ]
+            granted = {
+                name for rule in granting_rules for name in (rule.match.names or ())
+            }
+            has_unanalysable_rule = any(
+                rule.match.names is None for rule in granting_rules
+            )
+        if has_unanalysable_rule:
+            return self
+
+        for profile in self.service_profiles:
+            ineffective = sorted(
+                excluded
+                for excluded in set(profile.excluded_global_tools)
+                # Either direction counts: the exclusion may be the pattern and
+                # the grant concrete, or the other way round. Overlap in either
+                # sense means the two rules can meet on a real tool.
+                if not any(
+                    fnmatchcase(grant, excluded)
+                    or fnmatchcase(excluded, grant)
+                    or (_is_glob(grant) and _is_glob(excluded))
+                    for grant in granted
+                )
+            )
+            if ineffective:
+                msg = (
+                    f"Profile {profile.id!r} excludes global tool(s) "
+                    f"{', '.join(ineffective)}, which global_tools_policy does not "
+                    "grant, so the exclusion withholds nothing. Remove the entry, "
+                    "or correct it to one of: "
+                    f"{', '.join(sorted(granted)) or '(none granted)'}."
+                )
+                raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def validate_user_identity_uniqueness(self) -> AppConfig:

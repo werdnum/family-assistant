@@ -1,0 +1,4 @@
+interface:
+  display_name: "Anthropic API Development"
+  short_description: "Build with current Claude API models and official docs"
+  default_prompt: "Use official Anthropic documentation to implement or update this Claude API integration."

@@ -15,6 +15,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.providers.openai_client import OpenAIClient
+from family_assistant.tools.types import ToolAttachment
 
 
 def test_responses_continuation_omits_response_status() -> None:
@@ -433,3 +434,162 @@ def test_text_and_image_parts_still_convert() -> None:
         {"type": "input_text", "text": "What is in this image?"},
         {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
     ]
+
+
+def _sole_user_content_part(
+    url: str, attachment_id: str | None = None
+) -> dict[str, object]:
+    """Convert a single media part through a direct-OpenAI client."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra")
+    items = client._messages_to_responses_input([
+        UserMessage(
+            content=[
+                ImageUrlContentPart(
+                    type="image_url",
+                    image_url={"url": url},
+                    attachment_id=attachment_id,
+                )
+            ]
+        )
+    ])
+    content = items[0]["content"]
+    assert isinstance(content, list)
+    assert len(content) == 1
+    return content[0]
+
+
+def test_image_data_uri_becomes_an_input_image() -> None:
+    url = "data:image/png;base64,aGVsbG8="
+
+    assert _sole_user_content_part(url) == {"type": "input_image", "image_url": url}
+
+
+def test_pdf_data_uri_becomes_an_input_file() -> None:
+    """A PDF has a real Responses representation, so it must use it."""
+    url = "data:application/pdf;base64,aGVsbG8="
+
+    assert _sole_user_content_part(url) == {
+        "type": "input_file",
+        "filename": "attachment.pdf",
+        "file_data": url,
+    }
+
+
+@pytest.mark.parametrize(
+    "mime_type",
+    [
+        pytest.param("audio/ogg", id="telegram-voice-note"),
+        pytest.param("video/mp4", id="video"),
+    ],
+)
+def test_unreadable_media_becomes_a_text_note_naming_the_type(mime_type: str) -> None:
+    """Audio and video have no Responses representation.
+
+    Forcing them into `input_image` -- which is what happens if the MIME type is
+    not inspected -- sends the API a malformed image. The turn has to stay
+    intelligible instead, so the model can ask or delegate.
+    """
+    part = _sole_user_content_part(f"data:{mime_type};base64,aGVsbG8=")
+
+    assert part["type"] == "input_text"
+    text = part["text"]
+    assert isinstance(text, str)
+    assert mime_type in text
+    assert "base64" not in text
+
+
+def test_plain_url_without_a_data_uri_is_still_an_image() -> None:
+    """Only images are fetchable by URL, so an untyped URL means an image."""
+    url = "https://example.com/photo.png"
+
+    assert _sole_user_content_part(url) == {"type": "input_image", "image_url": url}
+
+
+def test_unreadable_media_note_hands_off_the_attachment_by_id() -> None:
+    """The note is only actionable if it names the attachment to delegate.
+
+    There is no tool that lists a conversation's attachments, so an id-less note
+    leaves the model unable to refer to the file at all.
+    """
+    part = _sole_user_content_part(
+        "data:audio/ogg;base64,aGVsbG8=", attachment_id="att-1234"
+    )
+
+    text = part["text"]
+    assert isinstance(text, str)
+    assert "att-1234" in text
+    assert "delegate_to_service" in text
+    assert "media_analyst" in text
+
+
+def test_unreadable_media_without_an_id_asks_the_user_instead() -> None:
+    """With no id there is nothing to delegate, so it must not invent a handoff."""
+    part = _sole_user_content_part("data:audio/ogg;base64,aGVsbG8=")
+
+    text = part["text"]
+    assert isinstance(text, str)
+    assert "delegate_to_service" not in text
+    assert "None" not in text
+
+
+def _injected_responses_parts(
+    mime_type: str, *, base_url: str | None = None
+) -> list[dict[str, object]]:
+    """Run an attachment through injection and the Responses conversion."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra", base_url=base_url)
+    attachment = ToolAttachment(
+        content=b"hello",
+        mime_type=mime_type,
+        attachment_id="att-9",
+        description="a file",
+    )
+    message = client.create_attachment_injection(attachment)
+    items = client._messages_to_responses_input([message])
+    content = items[0]["content"]
+    assert isinstance(content, list)
+    # The first part is the "[System: File from previous tool response]" preamble.
+    return content[1:]
+
+
+def test_injected_pdf_reaches_the_responses_api_as_a_file() -> None:
+    """Web chat sends PDFs down the injection path, not as image_url parts.
+
+    `chat_api.py` routes every non-image upload through `attachment_content`, so
+    this path — not the chat content-part path — is what a web user's PDF takes.
+    It used to be replaced with `[PDF Document: ...]` placeholder text on a model
+    that reads PDFs natively, losing the document silently.
+    """
+    parts = _injected_responses_parts("application/pdf")
+
+    assert [part["type"] for part in parts] == ["input_file"]
+
+
+def test_injected_audio_carries_the_handoff_id() -> None:
+    """Audio has no Responses representation, so it must name itself instead.
+
+    Without the attachment id reaching this path the note would tell the model
+    to delegate a file it cannot identify.
+    """
+    parts = _injected_responses_parts("audio/ogg")
+
+    assert [part["type"] for part in parts] == ["input_text"]
+    text = parts[0]["text"]
+    assert isinstance(text, str)
+    assert "att-9" in text
+    assert "media_analyst" in text
+
+
+def test_injected_pdf_on_a_compatible_endpoint_stays_text() -> None:
+    """Chat Completions has no `input_file`, so the text degradation stands there.
+
+    A `base_url` backend implements Chat Completions only. Sending it a PDF data
+    URI as an image part would be a malformed request rather than a graceful one.
+    """
+    parts = _injected_responses_parts(
+        "application/pdf", base_url="https://openrouter.ai/api/v1"
+    )
+
+    assert [part["type"] for part in parts] == ["input_text"]
+    text = parts[0]["text"]
+    assert isinstance(text, str)
+    assert "PDF Document" in text

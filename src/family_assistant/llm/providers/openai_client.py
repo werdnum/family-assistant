@@ -77,6 +77,46 @@ _CONTROL_PARAMS = frozenset({"use_responses_api"})
 # implements Chat Completions but not necessarily Responses.
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
+# What the Responses API will actually accept as a non-text user input part.
+# Images become `input_image`; PDFs become `input_file`, which the API parses for
+# both text and page images on a vision-capable model. Everything else -- audio
+# and video in practice -- has no representation at all: the Responses API takes
+# text and images only, and audio input is confined to Chat Completions with a
+# dedicated audio model. Those become a text note rather than being forced into
+# an `input_image`, which is what the API would reject or misread.
+_RESPONSES_IMAGE_MIME_PREFIX = "image/"
+_RESPONSES_FILE_MIME_TYPES: dict[str, str] = {"application/pdf": "attachment.pdf"}
+
+# Types worth inlining as bytes on the Responses API: the two it reads directly,
+# plus the two a multimodal profile can be handed. Anything else -- an archive, a
+# spreadsheet -- gets a description instead, because base64-encoding it into the
+# request only to substitute a note would cost the whole payload for nothing.
+_HANDOFF_MEDIA_MIME_PREFIXES = ("image/", "audio/", "video/")
+
+
+def _is_media_mime_type(mime_type: str) -> bool:
+    """Whether this type is readable by the Responses API or by the handoff."""
+    return (
+        mime_type.startswith(_HANDOFF_MEDIA_MIME_PREFIXES)
+        or mime_type in _RESPONSES_FILE_MIME_TYPES
+    )
+
+
+def _describe_unrepresentable_attachment(attachment: "ToolAttachment") -> str:
+    """Text standing in for a media part a provider may not carry.
+
+    Names the type, the size and the id, so a model that never receives the bytes
+    can still say what arrived and hand the id to `delegate_to_service`. Phrased
+    as a description rather than "you cannot read this": the same message goes to
+    the provider that *can* read it, and telling that model the file is
+    unreadable would be false.
+    """
+    size_mb = len(attachment.content or b"") / (1024 * 1024)
+    described = f"{attachment.mime_type}, {size_mb:.1f}MB"
+    if attachment.attachment_id:
+        described += f", attachment_id={attachment.attachment_id}"
+    return f"[System: File from previous tool response: {described}]"
+
 
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
@@ -144,6 +184,47 @@ class OpenAIClient(BaseLLMClient):
                 type="text", text="[System: File from previous tool response]"
             )
         ]
+
+        # On the Responses API every binary type is handled by the same
+        # MIME-aware conversion the chat path uses: images become `input_image`,
+        # PDFs `input_file`, and audio/video a note naming the attachment so the
+        # model can hand it to a profile that reads it. Carrying the
+        # attachment_id is what makes that note actionable -- this path is how
+        # web chat sends PDFs, audio and video (`chat_api.py` routes every
+        # non-image upload through `attachment_content`), so without it a web
+        # user's PDF became placeholder text on a model that can read PDFs.
+        if (
+            attachment.content
+            and self._uses_responses_api()
+            and _is_media_mime_type(attachment.mime_type)
+        ):
+            b64_data = attachment.get_content_as_base64()
+            if b64_data:
+                # A type no other provider can represent needs its description in
+                # the *text* part as well. `RetryingLLMClient` builds this message
+                # from the primary's adapter and hands the same message list to
+                # the fallback, and Anthropic drops any data URI that is not an
+                # image -- so on a cross-provider fallback the media part vanishes
+                # and only this prelude survives. Before this branch these types
+                # produced descriptive text, so leaving the prelude bare would
+                # have made the fallback strictly less informed than it was.
+                # Images are exempt: every configured adapter renders them, so
+                # their part is never the thing that disappears.
+                if not attachment.mime_type.startswith(_RESPONSES_IMAGE_MIME_PREFIX):
+                    content_parts[0] = TextContentPart(
+                        type="text",
+                        text=_describe_unrepresentable_attachment(attachment),
+                    )
+                content_parts.append(
+                    ImageUrlContentPart(
+                        type="image_url",
+                        image_url={
+                            "url": f"data:{attachment.mime_type};base64,{b64_data}"
+                        },
+                        attachment_id=attachment.attachment_id,
+                    )
+                )
+                return UserMessage(content=content_parts)
 
         if attachment.content and attachment.mime_type.startswith("image/"):
             # Use image_url format for images
@@ -369,7 +450,10 @@ class OpenAIClient(BaseLLMClient):
 
         ``provider_metadata`` is our own bookkeeping -- Gemini thought
         signatures, OpenAI Responses output, Anthropic thinking blocks -- and is
-        not part of the Chat Completions message schema.
+        not part of the Chat Completions message schema. ``attachment_id`` on an
+        image part is ours too: it exists so the Responses path can name an
+        attachment the model cannot read, and Chat Completions has neither that
+        handoff nor that field.
 
         Real OpenAI tolerates the unknown field and answers normally, so this is
         not a live bug there. It is stripped because an OpenAI-*compatible*
@@ -386,6 +470,11 @@ class OpenAIClient(BaseLLMClient):
         """
         message_dict = message_to_json_dict(message)
         message_dict.pop("provider_metadata", None)
+        content = message_dict.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    part.pop("attachment_id", None)
         return message_dict
 
     def _content_part_to_responses_input(self, part: ContentPart) -> dict[str, object]:
@@ -402,7 +491,9 @@ class OpenAIClient(BaseLLMClient):
         if isinstance(part, TextContentPart):
             return {"type": "input_text", "text": part.text}
         if isinstance(part, ImageUrlContentPart):
-            return {"type": "input_image", "image_url": part.image_url["url"]}
+            return self._media_part_to_responses_input(
+                part.image_url["url"], part.attachment_id
+            )
         raise InvalidRequestError(
             f"Cannot send content part of type '{part.type}' to the OpenAI "
             "Responses API; it should have been resolved before reaching the "
@@ -410,6 +501,76 @@ class OpenAIClient(BaseLLMClient):
             provider="openai",
             model=self.model,
         )
+
+    @staticmethod
+    def _data_uri_mime_type(url: str) -> str | None:
+        """Return a base64 data URI's MIME type, or None for a plain URL.
+
+        Only the header is sliced. Attachments run to 100 MB, so ~133 MB encoded
+        once inlined; slicing past the comma first, or splitting on it, would copy
+        the whole payload twice over to read a few leading bytes. `find` scans
+        without allocating, and a URI with no comma is not a data URI at all
+        rather than one whose MIME type is its entire body.
+        """
+        prefix = "data:"
+        if not url.startswith(prefix):
+            return None
+        comma = url.find(",", len(prefix))
+        if comma == -1:
+            return None
+        header = url[len(prefix) : comma]
+        return header.split(";", 1)[0].strip().lower() or None
+
+    def _media_part_to_responses_input(
+        self, url: str, attachment_id: str | None = None
+    ) -> dict[str, object]:
+        """Render one media part as whatever the Responses API accepts for it.
+
+        The application carries every attachment -- images, PDFs, audio and
+        video alike -- as an ``image_url`` part, because that is the shape Gemini
+        accepts for all four. The type therefore has to be recovered from the
+        data URI here rather than trusted from the part, or a voice note is sent
+        as an `input_image` and the API rejects or misreads it.
+
+        Audio and video have no Responses representation, so they become a text
+        note naming the type. That keeps the turn intelligible: the model is told
+        a file arrived and that it cannot read it, which is something it can act
+        on by asking or delegating, rather than being handed a malformed image or
+        having the attachment silently disappear.
+        """
+        mime_type = self._data_uri_mime_type(url)
+
+        # A plain URL carries no type to inspect. Only images are fetchable by
+        # the API, and every attachment this application builds is a data URI,
+        # so anything else here came from a caller that meant an image.
+        if mime_type is None or mime_type.startswith(_RESPONSES_IMAGE_MIME_PREFIX):
+            return {"type": "input_image", "image_url": url}
+
+        filename = _RESPONSES_FILE_MIME_TYPES.get(mime_type)
+        if filename is not None:
+            # `filename` is how the API infers the file type, so it has to carry
+            # a matching extension; the original name does not reach this layer.
+            return {"type": "input_file", "filename": filename, "file_data": url}
+
+        # Name the attachment when it has an id. Without one the model has no
+        # way to refer to the file -- there is no tool that lists a
+        # conversation's attachments -- so the difference between this and an
+        # actionable turn is whether the id reached us.
+        handoff = (
+            f"Call delegate_to_service with target_service_id='media_analyst' and "
+            f"attachment_ids=['{attachment_id}'] to have a multimodal model "
+            f"describe or transcribe it"
+            if attachment_id is not None
+            else "Ask the user to describe it or to send a transcript"
+        )
+        return {
+            "type": "input_text",
+            "text": (
+                f"[A {mime_type} attachment was provided. This model reads images "
+                f"and PDFs only, so its contents are not part of this turn. "
+                f"{handoff}. Do not answer as though you had read it.]"
+            ),
+        }
 
     def _messages_to_responses_input(
         self,

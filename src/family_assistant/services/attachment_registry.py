@@ -107,6 +107,15 @@ logger = logging.getLogger(__name__)
 # Default configuration values (fallbacks if not specified in config.yaml)
 DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
+
+# MIME classes with no use except being handed to a model, so
+# `max_multimodal_size` is the binding limit on them rather than `max_file_size`.
+#
+# PDFs are deliberately absent even though the Responses API is now sent their
+# bytes: a PDF too large for a model is still useful to `read_text_attachment`,
+# which extracts its text without a model seeing the file at all. Bounding them
+# here would refuse an upload that has a working use.
+MULTIMODAL_MIME_PREFIXES = ("image/", "audio/", "video/")
 # NOTE: In production, allowed_mime_types is configured in config.yaml under
 # attachments.allowed_mime_types. This default is only used when config is not provided
 # (e.g., in tests). To add new MIME types, update config.yaml.
@@ -313,6 +322,26 @@ class AttachmentRegistry:
             f"max_multimodal_size: {self.max_multimodal_size // (1024 * 1024)}MB, "
             f"allowed_types: {len(self.allowed_mime_types)} types"
         )
+
+    @property
+    def media_size_limit(self) -> int:
+        """The bound on any MIME type in ``MULTIMODAL_MIME_PREFIXES``."""
+        return min(self.max_file_size, self.max_multimodal_size)
+
+    def size_limit_for_mime(self, content_type: str | None) -> int:
+        """The largest accepted size for an attachment of this MIME type.
+
+        Media is bounded by ``max_multimodal_size`` because there is nothing to do
+        with an oversized image, recording or video but send it to a model, and the
+        provider rejects it there. Enforcing the bound at registration turns that
+        into an explicit size error at upload rather than a failed turn later.
+
+        A document keeps ``max_file_size``: its text can be extracted without a
+        model, so a size only a model objects to is not a reason to refuse it.
+        """
+        if content_type and content_type.startswith(MULTIMODAL_MIME_PREFIXES):
+            return self.media_size_limit
+        return self.max_file_size
 
     @staticmethod
     def _owner_visibility_clause(acting_user_id: str | None) -> ColumnElement[bool]:
@@ -593,7 +622,9 @@ class AttachmentRegistry:
             AttachmentMetadata object
         """
         # Store the attachment file
-        attachment_data = await self._store_file_only(content, filename, mime_type)
+        attachment_data = await self._store_file_only(
+            content, filename, mime_type, media_limited=True
+        )
 
         # Register in metadata database
         return await self.register_attachment(
@@ -1069,6 +1100,7 @@ class AttachmentRegistry:
             file_content=file_content,
             filename=filename,
             content_type=content_type,
+            media_limited=False,
         )
 
         # Merge metadata from file storage (contains original_filename) with provided metadata
@@ -1163,10 +1195,11 @@ class AttachmentRegistry:
             # Seek back to original position
             file.file.seek(current_pos)
 
-            if file_size > self.max_file_size:
+            size_limit = self.size_limit_for_mime(file.content_type)
+            if file_size > size_limit:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File size {file_size} bytes exceeds maximum allowed size of {self.max_file_size} bytes",
+                    detail=f"File size {file_size} bytes exceeds maximum allowed size of {size_limit} bytes",
                 )
 
     def _sanitize_filename(self, filename: str) -> str:
@@ -1203,6 +1236,8 @@ class AttachmentRegistry:
         file_content: bytes,
         filename: str,
         content_type: str = "image/jpeg",
+        *,
+        media_limited: bool,
     ) -> AttachmentMetadata:
         """
         Store raw bytes as an attachment file (private method for internal use).
@@ -1211,6 +1246,11 @@ class AttachmentRegistry:
             file_content: Raw file content bytes
             filename: Original filename
             content_type: MIME type of the file
+            media_limited: Whether `max_multimodal_size` applies. True for what a
+                user sends in, since oversized media has nowhere to go but a model
+                that will refuse it. False for what a tool produces: a generated
+                video too large to inject is still the result the user asked for,
+                and discarding it to protect a later injection would lose the work.
 
         Returns:
             AttachmentMetadata object
@@ -1219,9 +1259,14 @@ class AttachmentRegistry:
             ValueError: If file validation fails
         """
         # Basic validation
-        if len(file_content) > self.max_file_size:
+        size_limit = (
+            self.size_limit_for_mime(content_type)
+            if media_limited
+            else self.max_file_size
+        )
+        if len(file_content) > size_limit:
             raise ValueError(
-                f"File size {len(file_content)} bytes exceeds maximum allowed size of {self.max_file_size} bytes"
+                f"File size {len(file_content)} bytes exceeds maximum allowed size of {size_limit} bytes"
             )
 
         if content_type not in self.allowed_mime_types:

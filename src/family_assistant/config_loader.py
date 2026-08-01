@@ -694,6 +694,53 @@ def load_user_documentation(filenames: list[str]) -> str:
     return "\n".join(combined_content)
 
 
+# ProcessingConfig keys a profile may override by simple replacement. A field
+# absent from this set and not handled explicitly below is silently dropped from
+# a profile's processing_config -- it parses, validates, and then does nothing,
+# which for a field that gates behaviour means failing open.
+# `test_every_processing_config_field_is_accounted_for` fails when a new field is
+# added to neither this set nor PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS.
+PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
+    "provider",
+    "llm_model",
+    "timezone",
+    "max_history_messages",
+    "history_max_age_hours",
+    "web_max_history_messages",
+    "web_history_max_age_hours",
+    "max_iterations",
+    "context_pruning_min_turns",
+    "delegation_security_level",
+    "allowed_delegation_sources",
+    "retry_config",
+    "camera_config",
+    "default_note_visibility_labels",
+    "required_note_visibility_labels",
+    "allowed_note_visibility_labels",
+    "allow_wake_llm",
+    "enable_computer_use",
+    "computer_use_excluded_functions",
+    "excluded_context_providers",
+    "poll_interval_seconds",
+    "max_async_seconds",
+    "calendar_config",
+    "home_assistant_api_url",
+    "home_assistant_token",
+    "home_assistant_context_template",
+    "home_assistant_verify_ssl",
+    "greeting_wav_path",
+)
+
+# Keys deliberately left out of the set above because a dedicated code path
+# below applies them. Keep this set honest: an entry here asserts that handling
+# exists, so exempting a field that nothing actually copies makes the
+# completeness test pass while the field stays silently discarded.
+PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
+    "prompts",  # deep-merged with the inherited prompts, not replaced
+    "include_system_docs",  # loaded into prompts.system_prompt_docs
+})
+
+
 def resolve_service_profile(
     profile_def: dict[str, Any],
     default_settings: dict[str, Any],
@@ -744,30 +791,7 @@ def resolve_service_profile(
         # Replace scalar values only if explicitly set (not None from Pydantic defaults)
         # This ensures profiles inherit values from default_profile_settings when they
         # don't explicitly override them.
-        scalar_keys = [
-            "provider",
-            "llm_model",
-            "timezone",
-            "max_history_messages",
-            "history_max_age_hours",
-            "web_max_history_messages",
-            "web_history_max_age_hours",
-            "max_iterations",
-            "context_pruning_min_turns",
-            "delegation_security_level",
-            "allowed_delegation_sources",
-            "retry_config",
-            "camera_config",
-            "default_note_visibility_labels",
-            "required_note_visibility_labels",
-            "allowed_note_visibility_labels",
-            "allow_wake_llm",
-            "enable_computer_use",
-            "computer_use_excluded_functions",
-            "poll_interval_seconds",
-            "max_async_seconds",
-        ]
-        for key in scalar_keys:
+        for key in PROFILE_OVERRIDABLE_PROCESSING_KEYS:
             if (
                 key in profile_def["processing_config"]
                 and profile_def["processing_config"][key] is not None
@@ -848,6 +872,14 @@ def resolve_service_profile(
         profile_def["visibility_grants"], list
     ):
         resolved["visibility_grants"] = profile_def["visibility_grants"]
+
+    # Handle excluded_global_tools (replace if present). This withholds tools
+    # that global_tools_policy grants to every profile, so dropping it here would
+    # silently restore access a profile deliberately gave up.
+    if "excluded_global_tools" in profile_def and isinstance(
+        profile_def["excluded_global_tools"], list
+    ):
+        resolved["excluded_global_tools"] = profile_def["excluded_global_tools"]
 
     # Handle remote_a2a (replace if present)
     if "remote_a2a" in profile_def:
@@ -953,6 +985,82 @@ def load_indexing_pipeline_config(
             logger.error(f"Error parsing INDEXING_PIPELINE_CONFIG_JSON: {e}")
 
 
+def _shipped_base_for_operator_override(
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    shipped: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    operator: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+) -> dict[str, Any]:
+    """Drop a shipped retry chain the operator's chosen model would lose to.
+
+    An operator naming a `provider`/`llm_model` without their own `retry_config`
+    means "run this model". `assistant.py` prefers `retry_config` over those
+    fields, so a chain left behind by the shipped profile silently wins and the
+    operator's choice never reaches the API.
+
+    `resolve_service_profile` already applies this rule to a chain inherited from
+    `default_profile_settings`, but it can only test whether the key is present
+    in the merged definition -- and after this merge it always is, for any profile
+    that ships its own chain (`default_assistant` does). Provenance is only
+    knowable here, where the two layers are still separate.
+
+    An explicit `retry_config: null` is not the operator declaring a chain; it is
+    asking for no chain, so it drops the shipped one too.
+    """
+    operator_processing = operator.get("processing_config") or {}
+    shipped_processing = shipped.get("processing_config") or {}
+    operator_declares_model = any(
+        operator_processing.get(key) is not None for key in ("provider", "llm_model")
+    )
+    operator_declares_chain = operator_processing.get("retry_config") is not None
+    operator_clears_chain = (
+        "retry_config" in operator_processing and not operator_declares_chain
+    )
+    if (
+        operator_declares_chain
+        or "retry_config" not in shipped_processing
+        or not (operator_declares_model or operator_clears_chain)
+    ):
+        return shipped
+
+    without_chain = copy.deepcopy(shipped)
+    without_chain["processing_config"].pop("retry_config", None)
+    logger.info(
+        "Profile '%s': operator asked for no retry chain (model=%s/%s, "
+        "retry_config explicitly null: %s), so the shipped retry chain is "
+        "dropped rather than overriding that choice.",
+        shipped.get("id"),
+        operator_processing.get("provider"),
+        operator_processing.get("llm_model"),
+        operator_clears_chain,
+    )
+    return without_chain
+
+
+# ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+def _drop_explicitly_nulled_retry_config(merged: dict[str, Any]) -> dict[str, Any]:
+    """Turn an operator's `retry_config: null` into an absent key.
+
+    `resolve_service_profile` reads the merged definition, where it can only ask
+    whether the key is present -- a null counts as a declaration there, which
+    suppresses the rule that drops a chain inherited from
+    `default_profile_settings` when a model is declared. So an operator writing a
+    model alongside `retry_config: null` kept the inherited chain and had their
+    model ignored, which is the same silent override the rule exists to prevent.
+
+    Removing the key is what "no chain of my own" looks like to that rule. It
+    does not reach the inherited chain on its own: `retry_config: null` with no
+    model still inherits, because inheriting is what an absent key means.
+    """
+    processing = merged.get("processing_config")
+    if not isinstance(processing, dict):
+        return merged
+    if "retry_config" in processing and processing["retry_config"] is None:
+        processing.pop("retry_config")
+    return merged
+
+
 def _merge_service_profiles_by_id(
     defaults_profiles: list[Any],
     merged_profiles: list[Any],
@@ -1020,10 +1128,19 @@ def _merge_service_profiles_by_id(
                     # Override: deep-merge operator's partial definition on
                     # top of the default so unmentioned fields are preserved.
                     result.append(
-                        deep_merge_dicts(defaults_by_id[pid], operator_by_id[pid])
+                        _drop_explicitly_nulled_retry_config(
+                            deep_merge_dicts(
+                                _shipped_base_for_operator_override(
+                                    defaults_by_id[pid], operator_by_id[pid]
+                                ),
+                                operator_by_id[pid],
+                            )
+                        )
                     )
                 else:
-                    result.append(operator_by_id[pid])
+                    result.append(
+                        _drop_explicitly_nulled_retry_config(operator_by_id[pid])
+                    )
             else:
                 result.append(prof_def)
 

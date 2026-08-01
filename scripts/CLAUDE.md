@@ -38,6 +38,19 @@ Useful environment variables:
 - `PYTEST_ADAPTIVE_MEM_THRESHOLD`: cgroup memory ratio that stops new shards, defaults to `0.80`
 - `PYTEST_ADAPTIVE_LOAD`: GNU Parallel `--load` value, defaults to `100%`
 
+### `refresh-provider-model-skills.py`
+
+Regenerates the current-model references for the Gemini, OpenAI, and Anthropic API development
+skills from each provider's official public Markdown documentation. Pass `--check` to report drift
+without writing files. The scheduled `refresh-provider-model-skills.yml` workflow opens a PR when
+the generated snapshots change.
+
+Gemini ids come from each detail page's "Model code" row, **not** the page's URL slug: the two
+differ, and `gemini-omni-flash-preview` is served from a page slugged `gemini-omni-flash`. When a
+page has no such row the slug is the only thing left, so that entry is written with
+`"id_source": "url-slug (no documented Model code row)"` — treat those ids as unverified against the
+API until a real call confirms them, rather than as equivalent to a documented code.
+
 ## Adding New Scripts
 
 Development and deployment scripts go in `scripts/`; container build/run tooling goes in

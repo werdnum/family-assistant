@@ -142,6 +142,13 @@ class ImageUrlContentPart(BaseModel):
     type: Literal["image_url"]
     # ast-grep-ignore: no-dict-any - OpenAI API compatibility
     image_url: dict[str, str]  # {"url": str}
+    # The attachment this part was resolved from, where it came from one. The
+    # bytes are inlined as a data URI above, which loses the identity a provider
+    # needs to say anything useful about a file it cannot read -- naming the
+    # attachment is what lets the model hand it to a model that can. Optional
+    # because parts also arrive from callers with no attachment behind them, and
+    # because history persisted before this field must still load.
+    attachment_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 

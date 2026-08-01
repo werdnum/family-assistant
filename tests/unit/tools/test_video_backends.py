@@ -337,9 +337,6 @@ def omni_async_client() -> Generator[MagicMock]:
         return_value=_omni_interaction(output_video=_video_output(b"omni-video"))
     )
     async_client.interactions.get = AsyncMock()
-    async_client.files.get = AsyncMock(
-        return_value=SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
-    )
     async_client.files.download = AsyncMock(return_value=b"uri-video")
 
     with (
@@ -443,7 +440,6 @@ async def test_omni_downloads_uri_when_no_inline_data(
     result = await backend.generate_video(VideoGenerationRequest(prompt="big video"))
 
     assert result.content == b"uri-video"
-    omni_async_client.files.get.assert_called_once_with(name="files/video")
     omni_async_client.files.download.assert_called_once_with(file="https://files/video")
 
 

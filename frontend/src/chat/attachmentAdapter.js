@@ -12,12 +12,27 @@ const MAX_FILE_SIZE =
     : 100 * 1024 * 1024; // 100MB default - matches backend AttachmentService
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
+// Audio and video the assistant can have transcribed or described. A type
+// missing here is rejected before upload, so the backend handoff never sees it.
+// Keep in step with attachment_config.allowed_mime_types in defaults.yaml and
+// with the picker's accept list in components/assistant-ui/attachment.tsx.
+const SUPPORTED_MEDIA_TYPES = [
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
+  'audio/webm',
+  'video/mp4',
+  'video/webm',
+  'video/ogg',
+];
+
 // Additional supported file types from backend AttachmentService
 const SUPPORTED_FILE_TYPES = [
   ...SUPPORTED_IMAGE_TYPES,
   'text/plain',
   'text/markdown',
   'application/pdf',
+  ...SUPPORTED_MEDIA_TYPES,
 ];
 
 /**
@@ -85,10 +100,17 @@ export class FileAttachmentAdapter {
       // Validate the file
       validateFile(file);
 
-      // Determine attachment type based on file MIME type
+      // Determine attachment type based on file MIME type. The backend processes
+      // image, video, audio and document and ignores anything else, so a type
+      // left as 'file' is uploaded and then dropped from the turn -- the model
+      // answers without ever seeing it.
       let attachmentType = 'file';
       if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
         attachmentType = 'image';
+      } else if (file.type.startsWith('audio/')) {
+        attachmentType = 'audio';
+      } else if (file.type.startsWith('video/')) {
+        attachmentType = 'video';
       } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
         attachmentType = 'document';
       }

@@ -1532,6 +1532,28 @@ The rules apply regardless of the profile's own `tools_policy`, which otherwise 
 defaults wholesale rather than merging with them. Use it for tools that must be available in all
 contexts. Operator policy still overrides global rules.
 
+**A profile's own `tools_policy` cannot opt out.** Global rules are injected at the `profile` policy
+layer, which outranks the `defaults` layer a profile's own `tools_policy` occupies, so a deny rule
+written there does not override a global allow at any priority — layer beats priority.
+
+Use `excluded_global_tools` on the profile to withhold one. It denies in the same layer as the
+global rules at the maximum priority, which is what makes it effective. The shipped `media_analyst`
+profile withholds all three, because none is safe in a fully untrusted context:
+`read_text_attachment` and `jq_query` resolve any attachment the acting user owns rather than only
+the current turn's artifacts, and `report_technical_problem` persists model-supplied text.
+
+```yaml
+service_profiles:
+  - id: "media_analyst"
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
+```
+
+Keep this section to broadly safe tools, and treat anything that reads user-owned data by id, or
+writes, as needing an exclusion in every profile that processes untrusted input.
+
 The shipped default uses it for two things:
 
 - `report_technical_problem`, so the assistant can always report bugs — these surface through the
@@ -1553,6 +1575,40 @@ global_tools_policy:
           - "jq_query"
       decision: "allow"
       priority: 50
+```
+
+______________________________________________________________________
+
+### excluded_context_providers
+
+Per-profile `processing_config` list naming context providers to drop for that profile.
+
+| Property  | Value                                                           |
+| --------- | --------------------------------------------------------------- |
+| Required  | No                                                              |
+| Default   | `[]` (every applicable provider is attached)                    |
+| Sensitive | No                                                              |
+| Values    | `notes`, `calendar`, `known_users`, `weather`, `home_assistant` |
+
+Context providers inject the user's own data into the system prompt, and they are attached to every
+profile by default (`weather` and `home_assistant` only when configured). An unrecognised name is a
+startup error rather than a no-op, since a silently-ignored entry would leave a profile holding data
+the config says it doesn't.
+
+Use it to keep private data out of a profile that has no need for it. The shipped `media_analyst`
+profile excludes all five: it exists to transcribe attacker-controlled media, so pairing the user's
+notes with that input is precisely the combination the Rule of Two is meant to prevent.
+
+```yaml
+service_profiles:
+  - id: "media_analyst"
+    processing_config:
+      excluded_context_providers:
+        - "notes"
+        - "calendar"
+        - "known_users"
+        - "weather"
+        - "home_assistant"
 ```
 
 ______________________________________________________________________
@@ -1586,6 +1642,26 @@ Operator merge note for tool policy:
   higher precedence.
 - `default_profile_settings.tools_policy.default_decision` still overrides the shipped default when
   explicitly set.
+
+### llm_parameters
+
+Per-model keyword arguments, passed through to whichever provider SDK serves that model. Keys are
+matched as **substrings** of the model name, so `"gpt-5.6-"` covers every variant in that line while
+`"gpt-5.6-terra"` targets one. Every matching entry is merged, and the result is applied **over**
+the provider client's own defaults — so this is the supported way to override a hard-coded default
+such as the Anthropic client's `max_tokens`.
+
+Settings currently shipped in `defaults.yaml`:
+
+| Key               | Setting                                                                            | Why                                                                                                                                                                                                         |
+| ----------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-sonnet-5` | `thinking: {type: adaptive}`, `output_config: {effort: high}`, `max_tokens: 16000` | Thinking on for `automation_creation` and `engineer`, whose long tool loops benefit most. `max_tokens` is raised because thinking shares that budget with the response. See the comment in `defaults.yaml`. |
+| `gpt-5.6-sol`     | `reasoning_effort: high`                                                           | `complex_tasks` is reached by delegation, so it can afford to think longer.                                                                                                                                 |
+| `gpt-5.6-terra`   | `reasoning_effort: medium`                                                         | `default_assistant` answers interactive chat, where time-to-first-token is felt directly.                                                                                                                   |
+
+`reasoning_effort` accepts `none`, `low`, `medium`, `high`, `xhigh` or `max` on GPT-5.6 models and
+defaults to `medium` when unset. Raising it trades latency and tokens for capability; it is the
+first dial to turn when a profile's agentic performance falls short, ahead of changing the model.
 
 ### mcp_config.json
 

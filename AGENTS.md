@@ -273,12 +273,27 @@ supervision requirements based on input trust level:
    confirmation — creating GitHub issues, reconnecting an MCP server, and delegation in either
    direction, so a human approves before the engineer hands off a fix or another profile hands it an
    investigation. Example: "Why isn't my daily brief firing?"
-5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) with a
-   higher iteration limit (100) for deep multi-step reasoning. Used via `/complex` or delegation
-   from the default assistant. **Not to be confused with `spawn_worker`**, which launches isolated
+5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) at
+   `reasoning_effort: high`, with a higher iteration limit (100) for deep multi-step reasoning. Used
+   via `/complex` or delegation from the default assistant, which runs GPT-5.6-terra at medium
+   effort with 50 iterations. **Not to be confused with `spawn_worker`**, which launches isolated
    coding agents (Claude Code / Gemini CLI) in sandboxed containers with NO access to Family
    Assistant tools or data. Use `complex_tasks` when the task needs FA context (notes, calendar,
    documents, Home Assistant, etc.); use `spawn_worker` for standalone coding or computing tasks.
+6. **Media Analyst Profile [A]**: describes and transcribes audio, video, images and PDFs on Gemini,
+   which is the only configured provider whose adapter represents audio and video at all. Delegated
+   to with `attachment_ids` when a profile's own model cannot read an attachment. It reads untrusted
+   media, so it holds neither [B] nor [C], and denying each takes more than an empty tool policy:
+   context providers inject the user's notes, calendar and known users into every profile's system
+   prompt by default, so they are turned off via `excluded_context_providers`; and
+   `global_tools_policy` rules are injected at the `profile` layer, which outranks the `defaults`
+   layer a profile's own `tools_policy` occupies, so a profile cannot refuse a global grant through
+   its own policy at any priority — `excluded_global_tools` is the mechanism for that, denying in
+   the same layer at a higher priority. All three globally granted tools are withheld here:
+   `read_text_attachment` and `jq_query` resolve any attachment the acting user owns rather than
+   only the current turn's artifacts, and `report_technical_problem` persists model-supplied text.
+   The profile therefore reaches no tools at all. Deliberately has no `retry_config`: falling back
+   to a provider that cannot read the media would return a confident description of nothing.
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.

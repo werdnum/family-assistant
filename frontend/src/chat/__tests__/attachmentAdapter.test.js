@@ -56,8 +56,25 @@ describe('FileAttachmentAdapter', () => {
   describe('constructor', () => {
     test('sets correct accept pattern', () => {
       expect(adapter.accept).toBe(
-        'image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,application/pdf'
+        'image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,application/pdf,audio/mpeg,audio/wav,audio/ogg,audio/webm,video/mp4,video/webm,video/ogg'
       );
+    });
+
+    // A type absent here is rejected before upload, so the backend transcription
+    // handoff never sees it. These must stay in step with
+    // attachment_config.allowed_mime_types in defaults.yaml.
+    test('accepts the audio and video the assistant can transcribe', () => {
+      for (const type of [
+        'audio/mpeg',
+        'audio/wav',
+        'audio/ogg',
+        'audio/webm',
+        'video/mp4',
+        'video/webm',
+        'video/ogg',
+      ]) {
+        expect(adapter.accept).toContain(type);
+      }
     });
   });
 
@@ -72,6 +89,27 @@ describe('FileAttachmentAdapter', () => {
       expect(result.name).toBe('test.png');
       expect(result.file).toBe(file);
       expect(result.status.type).toBe('running');
+    });
+
+    // The backend processes image, video, audio and document and ignores
+    // anything else, so a media file left as 'file' is uploaded and then dropped
+    // from the turn: the model answers without it and nothing reports an error.
+    test('classifies audio and video as their backend types', async () => {
+      for (const [mimeType, expected] of [
+        ['audio/mpeg', 'audio'],
+        ['audio/ogg', 'audio'],
+        ['audio/wav', 'audio'],
+        ['audio/webm', 'audio'],
+        ['video/mp4', 'video'],
+        ['video/webm', 'video'],
+        ['video/ogg', 'video'],
+      ]) {
+        const file = createMockFile(`clip.${expected}`, mimeType, 1024);
+
+        const result = await adapter.add({ file });
+
+        expect(result.type).toBe(expected);
+      }
     });
 
     test('successfully adds valid text file', async () => {
