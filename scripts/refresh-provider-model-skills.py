@@ -25,6 +25,13 @@ class Model:
     model_id: str
     description: str
     source_url: str
+    # Whether `model_id` came from the detail page's "Model code" row (the
+    # documented API identifier) or was inferred from the page's URL slug. The
+    # two differ for real models -- gemini-omni-flash-preview is served from a
+    # page slugged gemini-omni-flash -- and reading the slug is how that id was
+    # previously got wrong, so a slug-derived id is marked rather than presented
+    # as equivalent.
+    model_id_verified: bool = True
 
 
 def _fetch(url: str) -> str:
@@ -124,6 +131,11 @@ def _extract_gemini_models(markdown: str) -> list[Model]:
     for name, description, page_url in _gemini_catalog_entries(markdown):
         detail = _fetch(f"{page_url}.md.txt")
         codes = re.findall(r"\| Model code \|[^\n]*?`([^`]+)`", detail)
+        # A detail page without a "Model code" row leaves only the URL slug,
+        # which is not always the API model code. Recorded as unverified rather
+        # than presented as authoritative, so the one thing this generator exists
+        # to prevent -- shipping a slug as an API id -- stays visible instead of
+        # looking identical to a documented code.
         model_id = codes[0] if codes else page_url.rsplit("/", maxsplit=1)[-1]
         if model_id in seen_ids:
             continue
@@ -134,6 +146,7 @@ def _extract_gemini_models(markdown: str) -> list[Model]:
                 model_id=model_id,
                 description=description.rstrip("."),
                 source_url=page_url,
+                model_id_verified=bool(codes),
             )
         )
     return models
@@ -150,6 +163,11 @@ def _render(provider: str, source_url: str, models: list[Model]) -> str:
                 "name": model.name,
                 "description": model.description,
                 "source": model.source_url,
+                **(
+                    {}
+                    if model.model_id_verified
+                    else {"id_source": "url-slug (no documented Model code row)"}
+                ),
             }
             for model in models
         ],

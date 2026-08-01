@@ -145,19 +145,22 @@
       "id": "deep-research-preview-04-2026",
       "name": "Gemini Deep Research Preview",
       "description": "An agentic model that autonomously plans and executes multi-step research across hundreds of sources to produce cited, interactive reports",
-      "source": "https://ai.google.dev/gemini-api/docs/models/deep-research-preview-04-2026"
+      "source": "https://ai.google.dev/gemini-api/docs/models/deep-research-preview-04-2026",
+      "id_source": "url-slug (no documented Model code row)"
     },
     {
       "id": "deep-research-max-preview-04-2026",
       "name": "Gemini Deep Research Max Preview",
       "description": "Maximum comprehensiveness for automated context gathering and synthesis across hundreds of sources",
-      "source": "https://ai.google.dev/gemini-api/docs/models/deep-research-max-preview-04-2026"
+      "source": "https://ai.google.dev/gemini-api/docs/models/deep-research-max-preview-04-2026",
+      "id_source": "url-slug (no documented Model code row)"
     },
     {
       "id": "antigravity-preview-05-2026",
       "name": "Antigravity Agent Preview",
       "description": "A general-purpose managed agent that autonomously plans, reasons, runs code, manages files, and browses the web inside a secure, isolated Linux sandbox",
-      "source": "https://ai.google.dev/gemini-api/docs/models/antigravity-preview-05-2026"
+      "source": "https://ai.google.dev/gemini-api/docs/models/antigravity-preview-05-2026",
+      "id_source": "url-slug (no documented Model code row)"
     },
     {
       "id": "gemini-embedding-2",
