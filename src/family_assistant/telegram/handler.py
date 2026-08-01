@@ -1491,11 +1491,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         attachments: list[AttachmentData] = []
         registry = self.telegram_service.attachment_registry
-        max_file_size = registry.max_file_size
         # Photos, audio, voice notes and video only ever reach a model as media,
         # so they are held to the tighter multimodal bound. Checking it here means
         # an oversized recording is refused with its size instead of being
-        # downloaded and then rejected at registration.
+        # downloaded and then rejected at registration. Documents take their limit
+        # from their own MIME type further down, since media can arrive as a file.
         max_media_size = registry.media_size_limit
 
         if self._resolve_telegram_user(user_id) is None:
@@ -1562,21 +1562,25 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     f"Message {update.message.message_id} from chat {chat_id} contains document: {doc.file_name} ({doc.file_size} bytes)."
                 )
 
-                if doc.file_size and doc.file_size > max_file_size:
+                # A video or recording sent as a file lands here rather than in the
+                # media branches, so the limit follows the document's MIME type
+                # instead of the branch it arrived in.
+                doc_size_limit = registry.size_limit_for_mime(doc.mime_type)
+                if doc.file_size and doc.file_size > doc_size_limit:
                     logger.warning(
-                        f"Document size {doc.file_size} exceeds limit {max_file_size}. Skipping."
+                        f"Document size {doc.file_size} exceeds limit {doc_size_limit}. Skipping."
                     )
                     await update.message.reply_text(
-                        f"Skipping document '{doc.file_name}': File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                        f"Skipping document '{doc.file_name}': File size exceeds the {doc_size_limit // 1024 // 1024}MB limit."
                     )
                 else:
                     doc_file = await doc.get_file()
-                    if doc_file.file_size and doc_file.file_size > max_file_size:
+                    if doc_file.file_size and doc_file.file_size > doc_size_limit:
                         logger.warning(
-                            f"Document size {doc_file.file_size} exceeds limit {max_file_size}. Skipping."
+                            f"Document size {doc_file.file_size} exceeds limit {doc_size_limit}. Skipping."
                         )
                         await update.message.reply_text(
-                            f"Skipping document '{doc.file_name}': File size exceeds the {max_file_size // 1024 // 1024}MB limit."
+                            f"Skipping document '{doc.file_name}': File size exceeds the {doc_size_limit // 1024 // 1024}MB limit."
                         )
                     else:
                         with io.BytesIO() as buf:

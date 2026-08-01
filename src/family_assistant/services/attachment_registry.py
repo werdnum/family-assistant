@@ -614,7 +614,9 @@ class AttachmentRegistry:
             AttachmentMetadata object
         """
         # Store the attachment file
-        attachment_data = await self._store_file_only(content, filename, mime_type)
+        attachment_data = await self._store_file_only(
+            content, filename, mime_type, media_limited=True
+        )
 
         # Register in metadata database
         return await self.register_attachment(
@@ -1090,6 +1092,7 @@ class AttachmentRegistry:
             file_content=file_content,
             filename=filename,
             content_type=content_type,
+            media_limited=False,
         )
 
         # Merge metadata from file storage (contains original_filename) with provided metadata
@@ -1225,6 +1228,8 @@ class AttachmentRegistry:
         file_content: bytes,
         filename: str,
         content_type: str = "image/jpeg",
+        *,
+        media_limited: bool,
     ) -> AttachmentMetadata:
         """
         Store raw bytes as an attachment file (private method for internal use).
@@ -1233,6 +1238,11 @@ class AttachmentRegistry:
             file_content: Raw file content bytes
             filename: Original filename
             content_type: MIME type of the file
+            media_limited: Whether `max_multimodal_size` applies. True for what a
+                user sends in, since oversized media has nowhere to go but a model
+                that will refuse it. False for what a tool produces: a generated
+                video too large to inject is still the result the user asked for,
+                and discarding it to protect a later injection would lose the work.
 
         Returns:
             AttachmentMetadata object
@@ -1241,7 +1251,11 @@ class AttachmentRegistry:
             ValueError: If file validation fails
         """
         # Basic validation
-        size_limit = self.size_limit_for_mime(content_type)
+        size_limit = (
+            self.size_limit_for_mime(content_type)
+            if media_limited
+            else self.max_file_size
+        )
         if len(file_content) > size_limit:
             raise ValueError(
                 f"File size {len(file_content)} bytes exceeds maximum allowed size of {size_limit} bytes"

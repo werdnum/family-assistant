@@ -2662,3 +2662,47 @@ def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
     assert processing_config.max_iterations == 7
     assert processing_config.retry_config is not None
     assert processing_config.retry_config.primary.model == "gpt-5.6-terra"
+
+
+def test_explicit_null_retry_config_with_a_model_drops_the_shipped_chain(
+    tmp_path: Path,
+) -> None:
+    """`retry_config: null` is asking for no chain, not declaring one.
+
+    The presence check that protects an operator-supplied chain treated a null
+    value as a declaration, so the shipped chain survived and `assistant.py`
+    preferred it over the model the operator selected — the same silent override
+    the presence check exists to prevent.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        "      retry_config: null\n",
+    )
+
+    assert processing_config.provider == "anthropic"
+    assert processing_config.llm_model == "claude-sonnet-5"
+    assert processing_config.retry_config is None
+
+
+def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None:
+    """`retry_config: null` with no model reads as "no chain of my own".
+
+    The merged definition can only carry presence, and an absent key means
+    inherit — so this keeps the chain from `default_profile_settings`. Turning a
+    shipped chain off while keeping the shipped model has no expression today;
+    naming the model alongside the null does it.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config: null\n",
+    )
+
+    assert processing_config.retry_config is not None

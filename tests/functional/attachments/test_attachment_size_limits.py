@@ -86,3 +86,40 @@ async def test_a_document_between_the_limits_is_still_accepted(
         )
 
     assert metadata.size == len(_BETWEEN_THE_LIMITS)
+
+
+async def test_a_generated_attachment_is_not_held_to_the_media_limit(
+    registry: AttachmentRegistry, db_engine: AsyncEngine
+) -> None:
+    """A tool's output is the result the user asked for, not input awaiting a model.
+
+    Applying the media bound here would discard a generated video to protect a
+    later injection that may never happen — the user loses the work over a limit
+    describing what a model will accept. `max_file_size` still applies.
+    """
+    async with DatabaseContext(db_engine) as db_context:
+        metadata = await registry.store_and_register_tool_attachment(
+            file_content=_BETWEEN_THE_LIMITS,
+            filename="generated.mp4",
+            content_type="video/mp4",
+            tool_name="generate_video",
+            db_context=db_context,
+        )
+
+    assert metadata.size == len(_BETWEEN_THE_LIMITS)
+
+
+async def test_a_generated_attachment_still_obeys_the_file_limit(
+    registry: AttachmentRegistry, db_engine: AsyncEngine
+) -> None:
+    async with DatabaseContext(db_engine) as db_context:
+        with pytest.raises(
+            ValueError, match=f"maximum allowed size of {_MAX_FILE_SIZE}"
+        ):
+            await registry.store_and_register_tool_attachment(
+                file_content=b"\0" * (_MAX_FILE_SIZE + 1),
+                filename="huge.mp4",
+                content_type="video/mp4",
+                tool_name="generate_video",
+                db_context=db_context,
+            )

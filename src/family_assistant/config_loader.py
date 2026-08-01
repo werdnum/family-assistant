@@ -1004,29 +1004,61 @@ def _shipped_base_for_operator_override(
     in the merged definition -- and after this merge it always is, for any profile
     that ships its own chain (`default_assistant` does). Provenance is only
     knowable here, where the two layers are still separate.
+
+    An explicit `retry_config: null` is not the operator declaring a chain; it is
+    asking for no chain, so it drops the shipped one too.
     """
     operator_processing = operator.get("processing_config") or {}
     shipped_processing = shipped.get("processing_config") or {}
     operator_declares_model = any(
         operator_processing.get(key) is not None for key in ("provider", "llm_model")
     )
+    operator_declares_chain = operator_processing.get("retry_config") is not None
+    operator_clears_chain = (
+        "retry_config" in operator_processing and not operator_declares_chain
+    )
     if (
-        not operator_declares_model
-        or "retry_config" in operator_processing
+        operator_declares_chain
         or "retry_config" not in shipped_processing
+        or not (operator_declares_model or operator_clears_chain)
     ):
         return shipped
 
     without_chain = copy.deepcopy(shipped)
     without_chain["processing_config"].pop("retry_config", None)
     logger.info(
-        "Profile '%s': operator selected %s/%s without a retry_config, so the "
-        "shipped retry chain is dropped rather than overriding that choice.",
+        "Profile '%s': operator asked for no retry chain (model=%s/%s, "
+        "retry_config explicitly null: %s), so the shipped retry chain is "
+        "dropped rather than overriding that choice.",
         shipped.get("id"),
         operator_processing.get("provider"),
         operator_processing.get("llm_model"),
+        operator_clears_chain,
     )
     return without_chain
+
+
+# ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+def _drop_explicitly_nulled_retry_config(merged: dict[str, Any]) -> dict[str, Any]:
+    """Turn an operator's `retry_config: null` into an absent key.
+
+    `resolve_service_profile` reads the merged definition, where it can only ask
+    whether the key is present -- a null counts as a declaration there, which
+    suppresses the rule that drops a chain inherited from
+    `default_profile_settings` when a model is declared. So an operator writing a
+    model alongside `retry_config: null` kept the inherited chain and had their
+    model ignored, which is the same silent override the rule exists to prevent.
+
+    Removing the key is what "no chain of my own" looks like to that rule. It
+    does not reach the inherited chain on its own: `retry_config: null` with no
+    model still inherits, because inheriting is what an absent key means.
+    """
+    processing = merged.get("processing_config")
+    if not isinstance(processing, dict):
+        return merged
+    if "retry_config" in processing and processing["retry_config"] is None:
+        processing.pop("retry_config")
+    return merged
 
 
 def _merge_service_profiles_by_id(
@@ -1096,15 +1128,19 @@ def _merge_service_profiles_by_id(
                     # Override: deep-merge operator's partial definition on
                     # top of the default so unmentioned fields are preserved.
                     result.append(
-                        deep_merge_dicts(
-                            _shipped_base_for_operator_override(
-                                defaults_by_id[pid], operator_by_id[pid]
-                            ),
-                            operator_by_id[pid],
+                        _drop_explicitly_nulled_retry_config(
+                            deep_merge_dicts(
+                                _shipped_base_for_operator_override(
+                                    defaults_by_id[pid], operator_by_id[pid]
+                                ),
+                                operator_by_id[pid],
+                            )
                         )
                     )
                 else:
-                    result.append(operator_by_id[pid])
+                    result.append(
+                        _drop_explicitly_nulled_retry_config(operator_by_id[pid])
+                    )
             else:
                 result.append(prof_def)
 
