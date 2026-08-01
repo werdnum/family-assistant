@@ -275,14 +275,23 @@ supervision requirements based on input trust level:
    investigation. Example: "Why isn't my daily brief firing?"
 5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) at
    `reasoning_effort: high`, with a higher iteration limit (100) for deep multi-step reasoning. Used
-   via `/complex` or delegation from the default assistant, which runs Gemini with 50 iterations.
-   Delegating here is also how a text-shaped task reaches a stronger model at all: the default
-   assistant has to stay on Gemini because it receives user-supplied video, audio and PDFs, which
-   the OpenAI adapter cannot yet represent. **Not to be confused with `spawn_worker`**, which
-   launches isolated coding agents (Claude Code / Gemini CLI) in sandboxed containers with NO access
-   to Family Assistant tools or data. Use `complex_tasks` when the task needs FA context (notes,
-   calendar, documents, Home Assistant, etc.); use `spawn_worker` for standalone coding or computing
-   tasks.
+   via `/complex` or delegation from the default assistant, which runs GPT-5.6-terra at medium
+   effort with 50 iterations. **Not to be confused with `spawn_worker`**, which launches isolated
+   coding agents (Claude Code / Gemini CLI) in sandboxed containers with NO access to Family
+   Assistant tools or data. Use `complex_tasks` when the task needs FA context (notes, calendar,
+   documents, Home Assistant, etc.); use `spawn_worker` for standalone coding or computing tasks.
+6. **Media Analyst Profile [A]**: describes and transcribes audio, video, images and PDFs on Gemini,
+   which is the only configured provider whose adapter represents audio and video at all. Delegated
+   to with `attachment_ids` when a profile's own model cannot read an attachment. It reads untrusted
+   media, so it holds neither [B] nor [C], and denying each takes more than an empty tool policy:
+   context providers inject the user's notes, calendar and known users into every profile's system
+   prompt by default, so they are turned off via `excluded_context_providers`; and
+   `global_tools_policy` rules are injected at the `profile` layer, which outranks the `defaults`
+   layer a profile's own `tools_policy` occupies, so a profile cannot deny them at any priority. The
+   three that reach it are confined to the turn — two read back oversized tool results and one
+   appends a row to the local error log — so no exfiltration chain exists even against a fully
+   injected model. Deliberately has no `retry_config`: falling back to a provider that cannot read
+   the media would return a confident description of nothing.
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.

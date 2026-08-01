@@ -24,6 +24,8 @@ from pydantic import ValidationError
 
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
+    PROFILE_OVERRIDABLE_PROCESSING_KEYS,
+    PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS,
     USER_IDENTITIES_FILE_ENV_VAR,
     apply_calendar_env_vars,
     apply_env_var_overrides,
@@ -2506,3 +2508,29 @@ class TestEnvVarMappingsComplete:
         mapped_env_vars = {m.env_var for m in ENV_VAR_MAPPINGS}
         for secret in secret_env_vars:
             assert secret in mapped_env_vars, f"Secret {secret} not mapped"
+
+
+def test_every_processing_config_field_is_accounted_for() -> None:
+    """A ProcessingConfig field in neither set is silently dropped from profiles.
+
+    `resolve_service_profile` copies profile overrides across by an explicit key
+    list. A field missing from it parses and validates on the profile, then never
+    reaches the resolved config — so the profile runs with the inherited value
+    while the YAML says otherwise. For a field that gates behaviour, that fails
+    open silently, which is exactly what this project's no-silent-failures rule
+    exists to prevent.
+    """
+    unaccounted = (
+        set(ProcessingConfig.model_fields)
+        - set(PROFILE_OVERRIDABLE_PROCESSING_KEYS)
+        - PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS
+    )
+
+    assert not unaccounted, (
+        f"ProcessingConfig field(s) {sorted(unaccounted)} are neither profile-"
+        "overridable nor specially handled, so setting them on a profile in "
+        "defaults.yaml or config.yaml would be silently ignored. Add them to "
+        "PROFILE_OVERRIDABLE_PROCESSING_KEYS, or to "
+        "PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS if a dedicated code path "
+        "already applies them."
+    )

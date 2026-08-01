@@ -95,6 +95,20 @@ class CameraConfig(BaseModel):
     cameras_config: dict[str, ReolinkCameraItemConfig] = Field(default_factory=dict)
 
 
+# The `name` of every context provider the assistant can attach to a profile.
+# Duplicated here rather than imported so config validation does not depend on
+# the provider module; `test_context_provider_names_match_config` keeps the two
+# in step, since a name drifting out of this set would silently turn an
+# exclusion into a no-op.
+CONTEXT_PROVIDER_NAMES: frozenset[str] = frozenset({
+    "notes",
+    "calendar",
+    "known_users",
+    "weather",
+    "home_assistant",
+})
+
+
 class ProcessingConfig(BaseModel):
     """Configuration for message processing behavior.
 
@@ -131,6 +145,26 @@ class ProcessingConfig(BaseModel):
     home_assistant_context_template: str | None = None
     home_assistant_verify_ssl: bool = True
     include_system_docs: list[str] | None = None
+    # Context providers inject the user's own data -- notes, calendar, known
+    # users, weather, Home Assistant state -- into the system prompt. A profile
+    # that exists to look at one attachment and answer in text has no use for
+    # any of it, and injecting it hands private data to a prompt built around
+    # untrusted content. Listing a provider name here drops it for this profile.
+    excluded_context_providers: list[str] = Field(default_factory=list)
+
+    @field_validator("excluded_context_providers")
+    @classmethod
+    def validate_excluded_context_providers(cls, v: list[str]) -> list[str]:
+        unknown = sorted(set(v) - CONTEXT_PROVIDER_NAMES)
+        if unknown:
+            msg = (
+                f"Unknown context provider(s) in excluded_context_providers: "
+                f"{', '.join(unknown)}. Valid names: "
+                f"{', '.join(sorted(CONTEXT_PROVIDER_NAMES))}."
+            )
+            raise ValueError(msg)
+        return v
+
     max_iterations: int = 5
     context_pruning_min_turns: int = 3
     calendar_config: CalendarConfig | None = None  # Per-profile calendar config

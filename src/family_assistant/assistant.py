@@ -1170,6 +1170,14 @@ class Assistant:
                     )
             # --- End Home Assistant Context Provider ---
 
+            excluded_providers = set(profile_proc_conf.excluded_context_providers)
+            if excluded_providers:
+                context_providers = [
+                    provider
+                    for provider in context_providers
+                    if provider.name not in excluded_providers
+                ]
+
             service_config = ProcessingServiceConfig(
                 prompts=profile_proc_conf.prompts,
                 timezone=ZoneInfo(profile_proc_conf.timezone),

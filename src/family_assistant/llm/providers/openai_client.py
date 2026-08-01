@@ -379,7 +379,10 @@ class OpenAIClient(BaseLLMClient):
 
         ``provider_metadata`` is our own bookkeeping -- Gemini thought
         signatures, OpenAI Responses output, Anthropic thinking blocks -- and is
-        not part of the Chat Completions message schema.
+        not part of the Chat Completions message schema. ``attachment_id`` on an
+        image part is ours too: it exists so the Responses path can name an
+        attachment the model cannot read, and Chat Completions has neither that
+        handoff nor that field.
 
         Real OpenAI tolerates the unknown field and answers normally, so this is
         not a live bug there. It is stripped because an OpenAI-*compatible*
@@ -396,6 +399,11 @@ class OpenAIClient(BaseLLMClient):
         """
         message_dict = message_to_json_dict(message)
         message_dict.pop("provider_metadata", None)
+        content = message_dict.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    part.pop("attachment_id", None)
         return message_dict
 
     def _content_part_to_responses_input(self, part: ContentPart) -> dict[str, object]:

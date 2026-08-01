@@ -1532,6 +1532,13 @@ The rules apply regardless of the profile's own `tools_policy`, which otherwise 
 defaults wholesale rather than merging with them. Use it for tools that must be available in all
 contexts. Operator policy still overrides global rules.
 
+**A profile cannot opt out.** Global rules are injected at the `profile` policy layer, which
+outranks the `defaults` layer a profile's own `tools_policy` occupies, so a deny rule in a profile
+does not override a global allow at any priority — layer beats priority. A profile intended to hold
+no privileges (see `media_analyst`) therefore still reaches every globally-allowed tool. Keep this
+section to tools that are safe in a fully untrusted context, and reach for operator policy if you
+need to withdraw one.
+
 The shipped default uses it for two things:
 
 - `report_technical_problem`, so the assistant can always report bugs — these surface through the
@@ -1553,6 +1560,40 @@ global_tools_policy:
           - "jq_query"
       decision: "allow"
       priority: 50
+```
+
+______________________________________________________________________
+
+### excluded_context_providers
+
+Per-profile `processing_config` list naming context providers to drop for that profile.
+
+| Property  | Value                                                           |
+| --------- | --------------------------------------------------------------- |
+| Required  | No                                                              |
+| Default   | `[]` (every applicable provider is attached)                    |
+| Sensitive | No                                                              |
+| Values    | `notes`, `calendar`, `known_users`, `weather`, `home_assistant` |
+
+Context providers inject the user's own data into the system prompt, and they are attached to every
+profile by default (`weather` and `home_assistant` only when configured). An unrecognised name is a
+startup error rather than a no-op, since a silently-ignored entry would leave a profile holding data
+the config says it doesn't.
+
+Use it to keep private data out of a profile that has no need for it. The shipped `media_analyst`
+profile excludes all five: it exists to transcribe attacker-controlled media, so pairing the user's
+notes with that input is precisely the combination the Rule of Two is meant to prevent.
+
+```yaml
+service_profiles:
+  - id: "media_analyst"
+    processing_config:
+      excluded_context_providers:
+        - "notes"
+        - "calendar"
+        - "known_users"
+        - "weather"
+        - "home_assistant"
 ```
 
 ______________________________________________________________________

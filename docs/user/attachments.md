@@ -41,6 +41,17 @@ in a chat stays with that conversation; to make its content permanently searchab
 web interface's **Upload Document** page instead. See
 [documents-and-search.md](documents-and-search.md).
 
+**Transcribe or describe audio and video:**
+
+- "What does this voice note say?"
+- "Summarise what's discussed in this recording."
+- "What happens in this video?"
+
+Not every model the assistant runs on can listen to audio or watch video. When one can't, it hands
+the file to a model that can and works from what comes back, so asking is the same either way — it
+just means an extra step before you get an answer. If part of a recording is inaudible, you'll be
+told that rather than given a guess at it.
+
 **Ask about an attachment itself:**
 
 - "Tell me about this attachment."

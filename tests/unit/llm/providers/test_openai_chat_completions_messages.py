@@ -10,7 +10,12 @@ the request, and the payload is useless to the recipient either way.
 import pytest
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import AssistantMessage, LLMMessage, UserMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    ImageUrlContentPart,
+    LLMMessage,
+    UserMessage,
+)
 from family_assistant.llm.providers.openai_client import OpenAIClient
 
 ANTHROPIC_METADATA: dict[str, object] = {
@@ -77,3 +82,29 @@ def test_messages_without_metadata_are_unchanged(client: OpenAIClient) -> None:
 
     assert serialized["role"] == "user"
     assert serialized["content"] == "What is 2+2?"
+
+
+def test_attachment_id_is_stripped_from_image_parts(client: OpenAIClient) -> None:
+    """`attachment_id` is ours, and Chat Completions has no field for it.
+
+    It exists so the Responses path can name an attachment the model cannot
+    read. Chat Completions offers no such handoff, and a strictly-validating
+    compatible endpoint rejects the whole multimodal request over the unknown
+    key -- taking the image down with it.
+    """
+    message: LLMMessage = UserMessage(
+        content=[
+            ImageUrlContentPart(
+                type="image_url",
+                image_url={"url": "data:image/png;base64,aGVsbG8="},
+                attachment_id="att-1234",
+            )
+        ]
+    )
+
+    serialized = client._to_chat_completions_message(message)
+
+    content = serialized["content"]
+    assert isinstance(content, list)
+    assert "attachment_id" not in content[0]
+    assert content[0]["image_url"] == {"url": "data:image/png;base64,aGVsbG8="}

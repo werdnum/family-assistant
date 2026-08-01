@@ -694,6 +694,51 @@ def load_user_documentation(filenames: list[str]) -> str:
     return "\n".join(combined_content)
 
 
+# ProcessingConfig keys a profile may override by simple replacement. A field
+# absent from this set and not handled explicitly below is silently dropped from
+# a profile's processing_config -- it parses, validates, and then does nothing,
+# which for a field that gates behaviour means failing open.
+# `test_every_processing_config_field_is_accounted_for` fails when a new field is
+# added to neither this set nor PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS.
+PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
+    "provider",
+    "llm_model",
+    "timezone",
+    "max_history_messages",
+    "history_max_age_hours",
+    "web_max_history_messages",
+    "web_history_max_age_hours",
+    "max_iterations",
+    "context_pruning_min_turns",
+    "delegation_security_level",
+    "allowed_delegation_sources",
+    "retry_config",
+    "camera_config",
+    "default_note_visibility_labels",
+    "required_note_visibility_labels",
+    "allowed_note_visibility_labels",
+    "allow_wake_llm",
+    "enable_computer_use",
+    "computer_use_excluded_functions",
+    "excluded_context_providers",
+    "poll_interval_seconds",
+    "max_async_seconds",
+)
+
+# Keys deliberately left out of the set above because they are merged or applied
+# by dedicated code paths rather than replaced wholesale.
+PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
+    "prompts",  # deep-merged, not replaced
+    "include_system_docs",  # loaded into prompts.system_prompt_docs
+    "calendar_config",  # merged from the top-level calendar config
+    "home_assistant_api_url",  # set from env var mappings
+    "home_assistant_token",
+    "home_assistant_context_template",
+    "home_assistant_verify_ssl",
+    "greeting_wav_path",
+})
+
+
 def resolve_service_profile(
     profile_def: dict[str, Any],
     default_settings: dict[str, Any],
@@ -744,30 +789,7 @@ def resolve_service_profile(
         # Replace scalar values only if explicitly set (not None from Pydantic defaults)
         # This ensures profiles inherit values from default_profile_settings when they
         # don't explicitly override them.
-        scalar_keys = [
-            "provider",
-            "llm_model",
-            "timezone",
-            "max_history_messages",
-            "history_max_age_hours",
-            "web_max_history_messages",
-            "web_history_max_age_hours",
-            "max_iterations",
-            "context_pruning_min_turns",
-            "delegation_security_level",
-            "allowed_delegation_sources",
-            "retry_config",
-            "camera_config",
-            "default_note_visibility_labels",
-            "required_note_visibility_labels",
-            "allowed_note_visibility_labels",
-            "allow_wake_llm",
-            "enable_computer_use",
-            "computer_use_excluded_functions",
-            "poll_interval_seconds",
-            "max_async_seconds",
-        ]
-        for key in scalar_keys:
+        for key in PROFILE_OVERRIDABLE_PROCESSING_KEYS:
             if (
                 key in profile_def["processing_config"]
                 and profile_def["processing_config"][key] is not None
