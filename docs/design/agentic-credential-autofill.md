@@ -327,10 +327,12 @@ pushes nor Keychute's generic request caps are calibrated to a site's account-lo
 FA persists the attempt outcome per jar: after a fill that submitted but failed authentication
 (probe stale, login wall returned — as distinct from infrastructure errors or a pending approval),
 automatic broker entry for that jar is disabled and the user is told the site needs attention. The
-latch clears only when a human refreshes the jar through the login flow or the Keychute secret
-rotates to a new `secret_version_id` (the grant read returns it, so FA can record exactly which
-version failed). One automatic attempt per staleness episode, never a retry loop against a live
-account.
+latch clears only on an explicit human action: refreshing the jar through the login flow, or telling
+the assistant to retry — which permits exactly one fresh attempt and re-latches on failure. Rotation
+recovery rides the same path ("I've updated the password, try again"); FA deliberately does not try
+to detect rotation on its own, since it learns `secret_version_id` only from a grant read and no
+grant is requested while latched (the recorded failed version is audit context, not a clearing
+mechanism). One automatic attempt per staleness episode, never a retry loop against a live account.
 
 Policy tests enumerate the allowed/denied surface, as PR #833 planned; the difference is that the
 security-load-bearing denials (secret visibility, transfer, exfiltration) are browser-server
@@ -395,8 +397,8 @@ Prerequisites (already on the roadmap, unchanged): cookie jars end-to-end with h
    credential binding; `login_to_site` + `request_credential_fill` + `finalize_login`/`abort_login`
    tools on the `RemoteBrowserBackend`; `browser_login_broker` profile in `defaults.yaml` with
    policy tests; stale-jar → broker flow from `load_saved_session` passing the exact `jar_id`, with
-   the per-jar auth-failure latch (no automatic retry until human refresh or secret rotation); user
-   docs (`docs/user/`) and prompt guidance.
+   the per-jar auth-failure latch (no automatic retry until a human refreshes the jar or explicitly
+   asks for one); user docs (`docs/user/`) and prompt guidance.
 4. **Later, if demand:** TOTP-in-Keychute (`autofill-totp`); a Keychute credential-discovery
    endpoint; MFA continuation via handoff mid-login-session; first-time agentic jar creation from an
    operator-authored, baseline-validated probe in the site config.
