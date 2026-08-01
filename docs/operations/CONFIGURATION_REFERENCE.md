@@ -619,6 +619,61 @@ Default LLM model identifier.
 
 ______________________________________________________________________
 
+### llm_parameters (reasoning and thinking)
+
+`llm_parameters` in `config.yaml` maps a model name or prefix to keyword arguments passed to that
+provider for every matching model. It is shared by all profiles, including both halves of a
+`retry_config`.
+
+```yaml
+llm_parameters:
+  "gpt-5.6-sol":
+    use_responses_api: true
+  "claude-sonnet-4-6":
+    thinking:
+      type: enabled
+      budget_tokens: 4096
+```
+
+#### Reasoning propagation, by provider
+
+Reasoning state has to be replayed on each turn of a tool loop or the model restarts its reasoning
+from scratch on every step. How that works differs:
+
+- **Google (Gemini)** — thought signatures are captured and replayed automatically. No
+  configuration.
+- **OpenAI** — only the Responses API returns the encrypted reasoning items that can be replayed;
+  Chat Completions has no equivalent. Set `use_responses_api: true` to select it. This is opt-in per
+  model rather than inferred from the model name, so adding a new reasoning model means adding an
+  entry here — it will otherwise run on Chat Completions with no reasoning propagation. Direct
+  OpenAI only; OpenRouter and other `base_url` backends implement Chat Completions and the flag is
+  ignored for them.
+- **Anthropic** — extended thinking is off by default. Once enabled, thinking blocks are captured
+  and replayed automatically.
+
+#### Anthropic thinking
+
+The configuration shape differs by model generation and the two are **not** interchangeable — a
+single `"claude-"` prefix entry cannot serve both:
+
+| Model generation           | Shape                                                                  |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `claude-sonnet-4-6`, `4-5` | `thinking: {type: enabled, budget_tokens: N}`                          |
+| `claude-fable-5`           | `thinking: {type: adaptive}` plus `output_config: {effort: low\|high}` |
+
+Applying the `enabled` shape to a model that wants `adaptive` is rejected by the API at request time
+with a message naming the alternative.
+
+`budget_tokens` must be less than `max_tokens` (default 8192). A budget that cannot fit is rejected
+up front with both values named, rather than failing mid-conversation. Raise `max_tokens` in the
+same `llm_parameters` entry if you want a larger budget.
+
+Enabling thinking is worthwhile mainly for long tool loops — the profiles running Claude
+(`automation_creation`, `engineer`) are the candidates. Note that thinking is incompatible with a
+non-default `temperature`.
+
+______________________________________________________________________
+
 ### EMBEDDING_MODEL
 
 Embedding model for vector search.

@@ -4,21 +4,29 @@ Investigation of how reasoning state (extended thinking, encrypted reasoning ite
 summaries) is captured, persisted and replayed for the `openai` and `anthropic` providers, using the
 Google provider's thought-signature handling as the reference implementation.
 
+**Status: implemented.** F1–F5 are fixed; the findings below are kept as the record of what was
+wrong and why each fix is shaped the way it is. See [What was built](#what-was-built) for the
+resulting behaviour.
+
 ## Summary
+
+State after the fixes:
 
 | Provider                               | Reasoning captured             | Persisted | Replayed to model             | Surfaced to user |
 | -------------------------------------- | ------------------------------ | --------- | ----------------------------- | ---------------- |
-| Google (Gemini)                        | thought signatures + summaries | yes       | yes                           | no               |
-| OpenAI — Responses API (`gpt-5.6-sol`) | encrypted reasoning items      | yes       | yes                           | no               |
-| OpenAI — Chat Completions (all others) | none                           | n/a       | n/a (API has no such concept) | n/a              |
-| Anthropic                              | **none**                       | no        | **no**                        | no               |
+| Google (Gemini)                        | thought signatures + summaries | yes       | yes                           | history UI       |
+| OpenAI — Responses API (opt-in)        | encrypted reasoning items      | yes       | yes                           | no               |
+| OpenAI — Chat Completions              | none                           | n/a       | n/a (API has no such concept) | n/a              |
+| Anthropic (thinking enabled)           | thinking blocks + signatures   | yes       | yes                           | no               |
+| Anthropic (thinking off — the default) | none                           | n/a       | n/a                           | n/a              |
 
-The short version: OpenAI's Responses path is complete and correct. Anthropic has no reasoning
-support of any kind — not a regression, it was never built. Switching thinking on today would not
-error, but it would silently lose interleaved thinking across the tool loop, which is verified
-against the live API in [Empirical verification](#empirical-verification) below. Thought summaries
-that *are* captured (Google) are stored but never displayed, because the frontend reads a key the
-backend does not write.
+Originally: OpenAI's Responses path was complete and correct but reachable only through a hardcoded
+model prefix; Anthropic had no reasoning support of any kind — not a regression, it was never built.
+Switching thinking on would not have errored, but would have silently lost interleaved thinking
+across the tool loop, which is verified against the live API in
+[Empirical verification](#empirical-verification) below. Thought summaries that *were* captured
+(Google) were stored but never displayed, because the frontend read a key the backend does not
+write.
 
 ## How the reference implementation works (Google)
 
@@ -175,19 +183,74 @@ Conclusions drawn from this:
 Probe scripts are throwaway and live in the session scratchpad, not the repo; the table above is the
 durable record.
 
-## Recommended work
+## What was built
 
-Ordered by value, each independently shippable.
+### Anthropic thinking (F1)
 
-1. **Anthropic thinking support (F1).** Capture `thinking` / `redacted_thinking` blocks (including
-   `signature`) into `provider_metadata`, replay them ahead of `tool_use` blocks in the assistant
-   turn, and handle `thinking_delta` / `signature_delta` in the stream loop. Signatures must survive
-   the DB round trip byte-exact. Add a typed `thinking` config knob that resolves the per-generation
-   shape (`enabled` + `budget_tokens` vs `adaptive` + `output_config.effort`) rather than leaving it
-   to raw `llm_parameters` passthrough, and make `max_tokens` account for the budget. Note this is a
-   capability gain, not a bug fix — nothing is failing today.
-2. **Prefix-drop `encrypted_content: null` reasoning items (F3).** One-line guard plus a unit test.
-3. **Replace the `gpt-5.6-sol` prefix check with opt-in config (F2).**
-4. **Fix the summary key mismatch and add a `thinking` stream event (F5, F6)** if surfacing
-   reasoning to users is wanted; otherwise delete the dead frontend branch.
-5. **Preserve reasoning metadata on empty turns (F4)**, or document why it is deliberately dropped.
+`thinking` and `redacted_thinking` blocks are captured into `provider_metadata` as
+`{"provider": "anthropic", "thinking_blocks": [...]}` and replayed at the head of the assistant
+turn, which is where the API requires them. Three details are load-bearing:
+
+- **Blocks are opaque.** They are stored and replayed as whole dicts, never re-derived from their
+  parts, because the `signature` is verified and any reconstruction risks changing a byte.
+- **Streaming captures from the assembled final message**, not from the deltas. `thinking_delta`
+  carries text but no signature; only `get_final_message()` has the complete block.
+- **The under-pytest shim had to learn thinking too.** Every Anthropic streaming test goes through
+  `_maybe_parse_vcr_stream`, which substitutes a non-streaming call because VCR cannot replay SSE.
+  Left alone it would have dropped thinking, so the tests would have run without reasoning state and
+  proved nothing about the round trip. This was caught only because the first recorded cassette came
+  back with no thinking in it.
+
+Thinking deltas now surface as a `thinking` stream event (F6) so reasoning can never be concatenated
+into the assistant's reply. Plumbing that event to the web and iOS transports is deliberately *not*
+done — the processing loop ignores unrecognised event types, so nothing changes for clients until
+someone builds the UI for it.
+
+Configuration stayed as `llm_parameters` passthrough rather than becoming a bespoke typed knob. The
+two shapes are Anthropic's own, they are already validated by the API with a message that names the
+alternative, and a local abstraction over them would have to be revised every time a model
+generation changes. What *is* validated locally is `budget_tokens` against `max_tokens`, because
+that one fails deep in a conversation rather than at the first request.
+
+### OpenAI (F2, F3)
+
+`use_responses_api` in `llm_parameters` selects the Responses API; the `gpt-5.6-sol` name prefix is
+gone, and `defaults.yaml` carries the opt-in for that model. Control keys are filtered inside
+`_get_model_specific_params`, the single accessor all five request-building paths share, so they
+cannot leak into a request from a call site someone forgot to update.
+
+Reasoning items with no `encrypted_content` are dropped when `store=false`, which unblocks
+conversations whose history predates the `include: ["reasoning.encrypted_content"]` request.
+
+### F4, F5
+
+The empty-turn metadata drop is deliberate and now says so in the code: there is no
+`AssistantMessage` to hang metadata on, and replaying an unfinished turn's reasoning would carry a
+dead end forward. The history UI renders `thought_summaries` instead of the `thinking` key nothing
+ever wrote.
+
+### Coverage
+
+- `tests/integration/llm/test_streaming.py::test_anthropic_streaming_thinking_round_trip` — recorded
+  against the live API. The cassette's second request shows the thinking block and its 380-character
+  signature replayed ahead of `tool_use`, answered 200. That 200 *is* the assertion that the round
+  trip preserved the signature byte-for-byte, since a mangled one is rejected.
+- `tests/unit/llm/providers/test_anthropic_thinking.py` — block extraction, replay ordering,
+  cross-provider metadata isolation, budget validation.
+- `tests/unit/storage/test_thinking_block_persistence.py` — signature survives the database round
+  trip, and a message read back from storage still converts into a valid turn.
+- `tests/unit/llm/providers/test_openai_responses_input.py` — opt-in gating, control-key leakage,
+  and the three `encrypted_content` cases.
+- `frontend/src/pages/History/components/__tests__/MessageDisplay.test.jsx` — summaries render, and
+  the panel stays hidden when there are none.
+
+## Not done
+
+- **Streaming reasoning to the UI.** The `thinking` event exists but stops at the processing loop.
+  Surfacing it needs SSE plumbing plus web and iOS client work.
+- **OpenAI reasoning summaries.** Would need `reasoning: {summary: "auto"}` and
+  `response.reasoning_summary_text.delta` handling. Only Google populates `thought_summaries` today,
+  so only Google's show in the history UI.
+- **Anthropic thinking is still off by default.** Everything works when it is switched on; whether
+  to switch it on for `automation_creation` and `engineer` is an operator call with a real token
+  cost, not something to default silently.
