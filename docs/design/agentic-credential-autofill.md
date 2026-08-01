@@ -194,6 +194,12 @@ fail-closed, all in browser-server:
   password-bearing form (or the classification is otherwise ambiguous), the fill **fails closed — no
   guess, no submit**, session discarded to the human path. On a single-page login this happens
   before the grant is consumed.
+- On a username-first page there is no password field to anchor the classification, so the first
+  step gets its own deterministic check before the grant is read or anything is filled: the
+  identifier target must present as a login form (an `autocomplete=username` signal or equivalent
+  login-form heuristics — not merely any text input), and a page where that classification is
+  ambiguous fails closed. Otherwise a prompt-injected ref hint could steer the username — private
+  data, if less than the password — into a newsletter, search, or account-recovery form.
 - The fill call handles the whole credential entry deterministically, including the common two-step
   form (fill username, submit/continue, wait, fill password, submit) — the way password managers do.
   The model does not get the page back between steps. Honest consequence for the failure contract:
@@ -236,8 +242,11 @@ Success criterion: the **mandatory jar probe** proves logged-in (authenticated-o
 is strictly stronger than PR #833's in-place evidence checks — it validates that the *persisted,
 filtered* state suffices for a future session, which is the thing that will actually be used. On
 probe success the jar is refreshed (refresh cannot widen scope — the existing rule); the login
-session is closed unconditionally. On any failure — submit didn't navigate, challenge appeared,
-probe stale/uncertain — the login session is discarded and **no jar is written**; the user is told
+session is closed unconditionally. Because the probe is the success criterion, the absence of a
+post-submit document navigation is a *settling* condition, not a failure: an SPA login that
+authenticates through `fetch`/XHR and only updates in-page state is finalized the same way — wait
+for the page to settle, export, probe. On any failure — challenge appeared, probe
+stale/uncertain/error — the login session is discarded and **no jar is written**; the user is told
 the site needs a human login (the existing flow).
 
 **V1 is refresh-only, and that is what makes the probe requirement satisfiable.** Every save needs a
