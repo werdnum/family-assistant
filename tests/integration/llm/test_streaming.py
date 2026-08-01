@@ -351,7 +351,12 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
         "provider": "openai",
         "model": "gpt-5.6-sol",
         "api_key": os.getenv("OPENAI_API_KEY", "test-openai-key"),
-        "model_parameters": {"gpt-5.6-sol": {"reasoning_effort": "low"}},
+        "model_parameters": {
+            "gpt-5.6-sol": {
+                "reasoning_effort": "low",
+                "use_responses_api": True,
+            }
+        },
     })
     messages = [create_user_message("What is 42 times 17? Use the calculate tool.")]
 
@@ -372,6 +377,86 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
     provider_metadata = done_event.metadata.get("provider_metadata")
     assert isinstance(provider_metadata, dict)
     assert "openai_response_output" in provider_metadata
+
+    continuation_messages = [
+        *messages,
+        create_assistant_message(
+            content=None,
+            tool_calls=tool_calls,
+            provider_metadata=provider_metadata,
+        ),
+        create_tool_message(
+            tool_call_id=tool_calls[0].id,
+            content="714",
+            name=tool_calls[0].function.name,
+        ),
+    ]
+    continuation_done_event = None
+    async for event in client.generate_response_stream(
+        continuation_messages, tools=sample_tools, tool_choice="auto"
+    ):
+        if event.type == "done":
+            continuation_done_event = event
+
+    assert continuation_done_event is not None
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
+@pytest.mark.vcr(before_record_response=sanitize_response)
+async def test_anthropic_streaming_thinking_round_trip(
+    sample_tools: list[ToolDefinition],
+) -> None:
+    """Thinking blocks survive a tool-use continuation and are replayed verbatim.
+
+    The signature on a thinking block is verified by the API, so a continuation
+    that replays a mangled block is rejected. Getting a 200 back on the second
+    call is what proves the round trip preserved them byte-for-byte.
+    """
+    if os.getenv("CI") and not os.getenv("ANTHROPIC_API_KEY"):
+        pytest.skip("Skipping Anthropic test in CI without API key")
+
+    client = LLMClientFactory.create_client({
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "api_key": os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key"),
+        "model_parameters": {
+            "claude-sonnet-4-6": {
+                "thinking": {"type": "enabled", "budget_tokens": 1024},
+            }
+        },
+    })
+    messages = [create_user_message("What is 42 times 17? Use the calculate tool.")]
+
+    tool_calls = []
+    thinking_chunks = []
+    content_chunks = []
+    done_event = None
+    async for event in client.generate_response_stream(
+        messages, tools=sample_tools, tool_choice="auto"
+    ):
+        if event.type == "tool_call" and event.tool_call:
+            tool_calls.append(event.tool_call)
+        elif event.type == "thinking" and event.content:
+            thinking_chunks.append(event.content)
+        elif event.type == "content" and event.content:
+            content_chunks.append(event.content)
+        elif event.type == "done":
+            done_event = event
+
+    assert tool_calls, "expected the model to call a tool"
+    assert thinking_chunks, "expected thinking deltas to stream as thinking events"
+    # Reasoning must never be folded into the assistant's reply.
+    assert not any(chunk in "".join(content_chunks) for chunk in thinking_chunks)
+
+    assert done_event is not None
+    assert done_event.metadata is not None
+    provider_metadata = done_event.metadata.get("provider_metadata")
+    assert isinstance(provider_metadata, dict)
+    assert provider_metadata["provider"] == "anthropic"
+    thinking_blocks = provider_metadata["thinking_blocks"]
+    assert thinking_blocks, "expected thinking blocks captured for replay"
+    assert all("signature" in block for block in thinking_blocks)
 
     continuation_messages = [
         *messages,

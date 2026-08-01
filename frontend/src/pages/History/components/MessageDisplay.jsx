@@ -305,10 +305,15 @@ const MessageDisplay = ({ message }) => {
                       </div>
                     )}
 
-                    {message.reasoning_info.thinking && (
+                    {message.reasoning_info.thought_summaries?.length > 0 && (
                       <div className={styles.detailField}>
                         <strong>Thinking Summary:</strong>
-                        <pre className={styles.thinkingPre}>{message.reasoning_info.thinking}</pre>
+                        <pre className={styles.thinkingPre}>
+                          {message.reasoning_info.thought_summaries
+                            .map((entry) => entry?.summary ?? '')
+                            .filter(Boolean)
+                            .join('\n\n')}
+                        </pre>
                       </div>
                     )}
                   </>

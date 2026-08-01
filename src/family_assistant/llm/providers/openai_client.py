@@ -69,6 +69,11 @@ class _StreamingToolAccumulator(TypedDict):
     function: _StreamingToolFunction
 
 
+# `llm_parameters` entries that configure this client rather than the request.
+# They are stripped before any params reach the OpenAI API.
+_CONTROL_PARAMS = frozenset({"use_responses_api"})
+
+
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
 
@@ -173,9 +178,9 @@ class OpenAIClient(BaseLLMClient):
 
         return UserMessage(content=content_parts)
 
-    def _get_model_specific_params(self, model: str) -> dict[str, object]:
-        """Get parameters for a specific model based on pattern matching."""
-        params = {}
+    def _resolve_model_parameters(self, model: str) -> dict[str, object]:
+        """Merge every ``llm_parameters`` pattern that matches ``model``."""
+        params: dict[str, object] = {}
         for pattern, pattern_params in self.model_parameters.items():
             if pattern in model:
                 params.update(pattern_params)
@@ -184,9 +189,36 @@ class OpenAIClient(BaseLLMClient):
                 )
         return params
 
+    def _get_model_specific_params(self, model: str) -> dict[str, object]:
+        """Model parameters destined for the API, minus local control keys.
+
+        Control keys steer this client rather than the request, so they are
+        filtered here -- at the single accessor every request-building path
+        already goes through -- instead of being popped at each call site,
+        where one missed spot would send an unknown field to the API.
+        """
+        return {
+            key: value
+            for key, value in self._resolve_model_parameters(model).items()
+            if key not in _CONTROL_PARAMS
+        }
+
     def _uses_responses_api(self) -> bool:
-        """Return whether this direct OpenAI model requires the Responses API."""
-        return self._is_direct_openai and self.model.startswith("gpt-5.6-sol")
+        """Return whether this model should be driven through the Responses API.
+
+        Opt-in via a ``use_responses_api`` entry in ``llm_parameters`` rather
+        than inferred from the model name. Reasoning state only survives a tool
+        loop on this path (Chat Completions has no equivalent), so which API a
+        model uses is a deliberate operator choice, not something to guess from
+        a name prefix that a new model silently fails to match.
+
+        Restricted to direct OpenAI: the Responses API is not part of the
+        OpenAI-compatible surface that OpenRouter and other ``base_url``
+        backends implement.
+        """
+        if not self._is_direct_openai:
+            return False
+        return bool(self._resolve_model_parameters(self.model).get("use_responses_api"))
 
     def _build_responses_params(
         self,
@@ -202,9 +234,10 @@ class OpenAIClient(BaseLLMClient):
             **self._get_model_specific_params(self.model),
         }
         reasoning_effort = model_params.pop("reasoning_effort", None)
+        store = bool(model_params.pop("store", False))
         params: dict[str, object] = {
             "model": self.model,
-            "input": self._messages_to_responses_input(messages),
+            "input": self._messages_to_responses_input(messages, store=store),
             "include": ["reasoning.encrypted_content"],
             "stream": stream,
         }
@@ -212,7 +245,7 @@ class OpenAIClient(BaseLLMClient):
         if reasoning_effort is not None:
             params["reasoning"] = {"effort": reasoning_effort}
 
-        params["store"] = model_params.pop("store", False)
+        params["store"] = store
         max_tokens = model_params.pop("max_tokens", None)
         if max_tokens is not None:
             model_params["max_output_tokens"] = max_tokens
@@ -233,9 +266,29 @@ class OpenAIClient(BaseLLMClient):
 
         return params
 
+    @staticmethod
+    def _is_replayable_reasoning_item(item: dict[str, object], *, store: bool) -> bool:
+        """Whether a stored ``reasoning`` output item can be sent back as input.
+
+        With ``store=false`` the server keeps no copy of the item, so the only
+        way it can be resolved is by the ``encrypted_content`` returned when
+        ``include: ["reasoning.encrypted_content"]`` was requested. Items
+        recorded before that include was added carry a null there and would be
+        rejected as unresolvable, taking the whole request down with them.
+        Dropping them costs continuity of reasoning on old turns, which is
+        already lost, and keeps the conversation usable.
+        """
+        if item.get("type") != "reasoning":
+            return True
+        if store:
+            return True
+        return bool(item.get("encrypted_content"))
+
     def _messages_to_responses_input(
         self,
         messages: Sequence[LLMMessage],
+        *,
+        store: bool = False,
     ) -> list[dict[str, object]]:
         """Convert application messages to stateless Responses API input items."""
         input_items: list[dict[str, object]] = []
@@ -270,6 +323,14 @@ class OpenAIClient(BaseLLMClient):
                             raise TypeError(
                                 "OpenAI Responses output metadata must contain objects"
                             )
+                        if not self._is_replayable_reasoning_item(
+                            output_item, store=store
+                        ):
+                            logger.debug(
+                                "Dropping reasoning item %s with no encrypted_content",
+                                output_item.get("id"),
+                            )
+                            continue
                         input_items.append({
                             key: value
                             for key, value in output_item.items()

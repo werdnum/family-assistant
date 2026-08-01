@@ -807,7 +807,26 @@ class LLMOutput:
 class LLMStreamEvent:
     """Event emitted during streaming LLM responses."""
 
-    type: Literal["content", "tool_call", "tool_result", "user_input", "error", "done"]
+    type: Literal[
+        "content",
+        "tool_call",
+        "tool_result",
+        "user_input",
+        "error",
+        "done",
+        "thinking",
+    ]
+    """Kind of event.
+
+    ``thinking`` carries a provider's reasoning text as it streams. It is
+    deliberately distinct from ``content`` so that reasoning is never
+    concatenated into the assistant's reply; consumers that do not recognise it
+    ignore it, which is the current behaviour of the processing loop and the
+    web/iOS transports. Reasoning state needed to *replay* a turn does not
+    travel on these events -- it rides on the terminal ``done`` event's
+    ``provider_metadata``, which is what gets persisted.
+    """
+
     content: str | None = None  # For content chunks
     tool_call: ToolCallItem | None = None  # For tool calls
     tool_call_id: str | None = None  # For correlating tool results

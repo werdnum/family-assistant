@@ -45,10 +45,32 @@ llm_parameters:
       effort: medium
       # Other top-level parameters for this model could still go here
       # temperature: 0.8
-  # Example for another model type
-  # "anthropic/claude-3-":
-  #   temperature: 0.75
-  #   top_k: 50
+  # GPT-5.6-sol must run on the Responses API: it is the only OpenAI surface
+  # that returns encrypted reasoning items, which have to be replayed for
+  # reasoning to survive a multi-step tool loop. `use_responses_api` steers this
+  # client and is stripped before the request is built, so it never reaches the
+  # API. Direct OpenAI only -- OpenRouter and other base_url backends implement
+  # Chat Completions, not Responses.
+  "gpt-5.6-sol":
+    use_responses_api: true
+    # Example for another model type
+    # "anthropic/claude-3-":
+    #   temperature: 0.75
+    #   top_k: 50
+    # Extended thinking on Claude. The shape differs by model generation and is
+    # NOT interchangeable -- claude-sonnet-4-6 takes `enabled` + `budget_tokens`,
+    # while claude-fable-5 rejects that and wants `adaptive` + output_config
+    # effort. budget_tokens must be less than max_tokens (default 8192).
+    # Thinking blocks are captured and replayed automatically once enabled.
+    # "claude-sonnet-4-6":
+    #   thinking:
+    #     type: enabled
+    #     budget_tokens: 4096
+    # "claude-fable-5":
+    #   thinking:
+    #     type: adaptive
+    #   output_config:
+    #     effort: high
 # Gemini Live Voice API Configuration
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
@@ -1904,3 +1926,4 @@ browser_handoff_config:
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See
 # docs/operations/CONFIGURATION_REFERENCE.md.
+
