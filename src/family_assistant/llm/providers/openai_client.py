@@ -473,10 +473,21 @@ class OpenAIClient(BaseLLMClient):
 
     @staticmethod
     def _data_uri_mime_type(url: str) -> str | None:
-        """Return a base64 data URI's MIME type, or None for a plain URL."""
-        if not url.startswith("data:"):
+        """Return a base64 data URI's MIME type, or None for a plain URL.
+
+        Only the header is sliced. Attachments run to 100 MB, so ~133 MB encoded
+        once inlined; slicing past the comma first, or splitting on it, would copy
+        the whole payload twice over to read a few leading bytes. `find` scans
+        without allocating, and a URI with no comma is not a data URI at all
+        rather than one whose MIME type is its entire body.
+        """
+        prefix = "data:"
+        if not url.startswith(prefix):
             return None
-        header = url[len("data:") :].split(",", 1)[0]
+        comma = url.find(",", len(prefix))
+        if comma == -1:
+            return None
+        header = url[len(prefix) : comma]
         return header.split(";", 1)[0].strip().lower() or None
 
     def _media_part_to_responses_input(

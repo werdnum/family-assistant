@@ -39,6 +39,41 @@ event_system:
 # Parameters defined here will be passed as keyword arguments to the LLM provider
 # for matching models.
 llm_parameters:
+  # Examples. Each is a top-level entry in this mapping keyed by a model
+  # substring, so uncomment one at THIS indentation. Nested one level deeper it
+  # becomes a request parameter of the model above it, and the unknown mapping
+  # is then sent to the SDK on every call to that model. They live above the
+  # first real entry because a formatter re-indents trailing comments to match
+  # the key they follow.
+  #
+  # Example for another model type
+  # "anthropic/claude-3-":
+  #   temperature: 0.75
+  #   top_k: 50
+  # Extended thinking on Claude. The shape differs by model generation and is
+  # NOT interchangeable -- claude-sonnet-4-6 takes `enabled` + `budget_tokens`,
+  # while claude-fable-5 rejects that and wants `adaptive` + output_config
+  # effort. budget_tokens must be less than max_tokens (default 8192).
+  # Thinking blocks are captured and replayed automatically once enabled.
+  # "claude-sonnet-4-6":
+  #   thinking:
+  #     type: enabled
+  #     budget_tokens: 4096
+  # "claude-fable-5":
+  #   thinking:
+  #     type: adaptive
+  #   output_config:
+  #     effort: high
+  # Direct OpenAI models use the Responses API by default. It is the only
+  # OpenAI surface that returns encrypted reasoning items, which have to be
+  # replayed for reasoning to survive a multi-step tool loop; Chat Completions
+  # has no equivalent, so anything left on it loses reasoning between steps.
+  # Uncomment to pin a specific model back to Chat Completions.
+  # `use_responses_api` steers the client and is stripped before the request is
+  # built, so it never reaches the API. Direct OpenAI only -- OpenRouter and
+  # other base_url backends implement Chat Completions, not Responses.
+  # "some-openai-model":
+  #   use_responses_api: false
   # Example for Gemini models via OpenRouter
   "openrouter/google/gemini-":
     reasoning: # Nest OpenRouter-specific reasoning params here
@@ -90,39 +125,6 @@ llm_parameters:
   # still lags -- effort is the lever here, not the model.
   "gpt-5.6-terra":
     reasoning_effort: "medium"
-    # Every example below is a top-level entry in this mapping, keyed by a model
-    # substring -- keep them at this indentation when uncommenting. Nesting one
-    # under the model above turns it into a request parameter for that model, and
-    # the unknown nested mapping then goes to the SDK on every call.
-    #
-    # Example for another model type
-    # "anthropic/claude-3-":
-    #   temperature: 0.75
-    #   top_k: 50
-    # Extended thinking on Claude. The shape differs by model generation and is
-    # NOT interchangeable -- claude-sonnet-4-6 takes `enabled` + `budget_tokens`,
-    # while claude-fable-5 rejects that and wants `adaptive` + output_config
-    # effort. budget_tokens must be less than max_tokens (default 8192).
-    # Thinking blocks are captured and replayed automatically once enabled.
-    # "claude-sonnet-4-6":
-    #   thinking:
-    #     type: enabled
-    #     budget_tokens: 4096
-    # "claude-fable-5":
-    #   thinking:
-    #     type: adaptive
-    #   output_config:
-    #     effort: high
-    # Direct OpenAI models use the Responses API by default. It is the only
-    # OpenAI surface that returns encrypted reasoning items, which have to be
-    # replayed for reasoning to survive a multi-step tool loop; Chat Completions
-    # has no equivalent, so anything left on it loses reasoning between steps.
-    # Uncomment to pin a specific model back to Chat Completions.
-    # `use_responses_api` steers the client and is stripped before the request is
-    # built, so it never reaches the API. Direct OpenAI only -- OpenRouter and
-    # other base_url backends implement Chat Completions, not Responses.
-    # "some-openai-model":
-    #   use_responses_api: false
 # Gemini Live Voice API Configuration
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:

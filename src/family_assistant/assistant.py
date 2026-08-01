@@ -215,25 +215,22 @@ def _build_profile_policy_engine(
         )
         raise ValueError(msg)
 
-    synthetic_rules: list[PolicyRule] = [
-        PolicyRule(
-            match=ToolMatcher(
-                names=["delegate_to_service"],
-                argument_equals={"target_service_id": profile_id},
-            ),
-            decision=ToolPolicyDecision.ALLOW,
-            priority=50,
-            description=f"Allow self-delegation for profile '{profile_id}'",
-        ),
-    ]
-    if global_tools_policy is not None:
-        synthetic_rules.extend(global_tools_policy.rules)
+    synthetic_rules: list[PolicyRule] = []
 
-    # Withheld global tools are denied in the SAME layer the global rules are
-    # injected into, at a higher priority. That is what makes the deny effective:
-    # within a layer priority decides, so this beats the shipped global allows at
-    # priority 50. The equivalent rule in a profile's own `tools_policy` does not
-    # work, because that lands in the lower-ranked `defaults` layer.
+    # Withheld global tools are denied FIRST, in the same layer the global rules
+    # are injected into. Both position and priority are load-bearing.
+    #
+    # Priority alone is not enough: MAX_POLICY_RULE_PRIORITY is also the highest
+    # a configured global rule may declare, so a global allow at 99 ties with
+    # this deny. Ties resolve on declaration order within a layer, so the deny
+    # has to be declared before the rules it overrides -- appended after them, a
+    # priority-99 global allow wins and the profile silently keeps a tool it
+    # asked to give up.
+    #
+    # The layer matters too: the equivalent rule in a profile's own
+    # `tools_policy` cannot work at any priority, because that policy lands in
+    # the lower-ranked `defaults` layer. Operator policy still outranks this,
+    # which is intended -- the operator's word stays final.
     if excluded_global_tools:
         synthetic_rules.append(
             PolicyRule(
@@ -245,6 +242,20 @@ def _build_profile_policy_engine(
                 ),
             )
         )
+
+    synthetic_rules.append(
+        PolicyRule(
+            match=ToolMatcher(
+                names=["delegate_to_service"],
+                argument_equals={"target_service_id": profile_id},
+            ),
+            decision=ToolPolicyDecision.ALLOW,
+            priority=50,
+            description=f"Allow self-delegation for profile '{profile_id}'",
+        )
+    )
+    if global_tools_policy is not None:
+        synthetic_rules.extend(global_tools_policy.rules)
 
     synthetic_policy = ToolPolicyConfig(rules=synthetic_rules)
 
