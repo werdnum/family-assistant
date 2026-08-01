@@ -309,6 +309,31 @@ class OpenAIClient(BaseLLMClient):
             return True
         return bool(item.get("encrypted_content"))
 
+    @staticmethod
+    def _to_chat_completions_message(message: LLMMessage) -> dict[str, object | None]:
+        """Serialize a message for Chat Completions, dropping internal fields.
+
+        ``provider_metadata`` is our own bookkeeping -- Gemini thought
+        signatures, OpenAI Responses output, Anthropic thinking blocks -- and is
+        not part of the Chat Completions message schema.
+
+        Real OpenAI tolerates the unknown field and answers normally, so this is
+        not a live bug there. It is stripped because an OpenAI-*compatible*
+        endpoint that validates its input strictly (OpenRouter and the various
+        proxy servers this client can be pointed at via ``base_url``) will
+        reject the request outright, and because the payload is another vendor's
+        private state that the recipient cannot use for anything -- it can only
+        bloat the request.
+
+        Not a confidentiality boundary, despite Anthropic thinking blocks
+        carrying readable reasoning text rather than an opaque blob: the
+        conversation that reasoning was derived from is already being sent to
+        whichever provider handles the turn.
+        """
+        message_dict = message_to_json_dict(message)
+        message_dict.pop("provider_metadata", None)
+        return message_dict
+
     def _content_part_to_responses_input(self, part: ContentPart) -> dict[str, object]:
         """Convert one user content part to a Responses input part.
 
@@ -603,7 +628,7 @@ class OpenAIClient(BaseLLMClient):
 
             # Convert typed messages to dicts for API call
             api_message_dicts = [
-                message_to_json_dict(msg) for msg in processed_messages
+                self._to_chat_completions_message(msg) for msg in processed_messages
             ]
 
             # Build parameters with defaults, then model-specific overrides
@@ -721,7 +746,9 @@ class OpenAIClient(BaseLLMClient):
         self._validate_user_input(messages)
 
         processed_messages = self._process_tool_messages(list(messages))
-        api_message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+        api_message_dicts = [
+            self._to_chat_completions_message(msg) for msg in processed_messages
+        ]
         base_params = {
             "model": self.model,
             "messages": api_message_dicts,
@@ -801,7 +828,9 @@ class OpenAIClient(BaseLLMClient):
         processed_messages = self._process_tool_messages(
             list(messages_with_instruction)
         )
-        api_message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+        api_message_dicts = [
+            self._to_chat_completions_message(msg) for msg in processed_messages
+        ]
         base_params = {
             "model": self.model,
             "messages": api_message_dicts,
@@ -967,7 +996,7 @@ class OpenAIClient(BaseLLMClient):
 
             # Convert typed messages to dicts for SDK boundary
             api_message_dicts = [
-                message_to_json_dict(msg) for msg in processed_messages
+                self._to_chat_completions_message(msg) for msg in processed_messages
             ]
 
             # Build parameters with defaults, then model-specific overrides

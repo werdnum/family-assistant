@@ -407,6 +407,7 @@ async def test_gpt_5_6_sol_streaming_with_reasoning_and_tools(
 @pytest.mark.vcr(before_record_response=sanitize_response)
 async def test_anthropic_streaming_thinking_round_trip(
     sample_tools: list[ToolDefinition],
+    llm_record_mode: str,
 ) -> None:
     """Thinking blocks survive a tool-use continuation and are replayed verbatim.
 
@@ -414,8 +415,12 @@ async def test_anthropic_streaming_thinking_round_trip(
     that replays a mangled block is rejected. Getting a 200 back on the second
     call is what proves the round trip preserved them byte-for-byte.
     """
-    if os.getenv("CI") and not os.getenv("ANTHROPIC_API_KEY"):
-        pytest.skip("Skipping Anthropic test in CI without API key")
+    # Gated on the record mode rather than on CI, because the committed cassette
+    # replays without a credential. Skipping whenever CI lacks an Anthropic key
+    # would mean this assertion -- the whole reason the cassette exists -- never
+    # actually runs in CI.
+    if llm_record_mode != "replay" and not os.getenv("ANTHROPIC_API_KEY"):
+        pytest.skip("Recording this test requires ANTHROPIC_API_KEY")
 
     client = LLMClientFactory.create_client({
         "provider": "anthropic",
