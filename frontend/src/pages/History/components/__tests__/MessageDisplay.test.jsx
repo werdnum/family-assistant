@@ -5,9 +5,7 @@ import MessageDisplay from '../MessageDisplay';
 
 /**
  * The backend records reasoning summaries under `reasoning_info.thought_summaries`
- * as a list of `{ summary }` entries. A previous version of this component read a
- * flat `reasoning_info.thinking` string that nothing ever wrote, so the panel was
- * dead code and summaries never appeared.
+ * as a list of `{ summary }` entries.
  */
 
 const baseMessage = {
