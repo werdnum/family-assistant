@@ -697,7 +697,7 @@ class TestGeminiImageBackend:
 
         assert isinstance(result, bytes)
         call_kwargs = gemini_backend.client.aio.models.generate_content.call_args.kwargs
-        assert call_kwargs["model"] == "gemini-3-pro-image-preview"
+        assert call_kwargs["model"] == "gemini-3-pro-image"
         contents = call_kwargs["contents"]
         assert contents[0] == "combine these images"
         assert contents[1].inline_data.data == b"first image content"
@@ -833,7 +833,7 @@ class TestBackendSelection:
 
             await generate_image_tool(context, prompt="test")
             mock_cls.assert_called_once_with(
-                "test-gemini-key", model="gemini-3-pro-image-preview"
+                "test-gemini-key", model="gemini-3-pro-image"
             )
 
     @pytest.mark.asyncio
@@ -900,7 +900,7 @@ class TestBackendSelection:
 
             await generate_image_tool(context, prompt="test")
             mock_cls.assert_called_once_with(
-                "test-key", model="gemini-3-pro-image-preview"
+                "test-key", model="gemini-3-pro-image"
             )
 
     @pytest.mark.asyncio

@@ -362,7 +362,7 @@ class MockImageBackend:
 class GeminiImageBackend:
     """Gemini API backend for production image generation."""
 
-    DEFAULT_MODEL = "gemini-3-pro-image-preview"
+    DEFAULT_MODEL = "gemini-3-pro-image"
 
     def __init__(
         self,

@@ -301,8 +301,8 @@ automations with thorough testing and validation.
 
 **Configuration**:
 
-- **Model**: `gemini-3.1-pro-preview` (Google provider)
-- **Max Iterations**: 25 (to support complex validation workflows)
+- **Model**: `claude-sonnet-5` (Anthropic provider)
+- **Max Iterations**: 100 (to support complex validation workflows)
 - **Delegation**: `unrestricted` (can delegate to other profiles if needed)
 - **Documentation**: Automatically loads `scripting.md` for comprehensive Starlark reference
 

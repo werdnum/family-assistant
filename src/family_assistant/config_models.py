@@ -1214,7 +1214,7 @@ class GeminiImageConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-3-pro-image-preview"
+    model: str = "gemini-3-pro-image"
 
 
 class VeoVideoConfig(BaseModel):
@@ -1318,7 +1318,7 @@ class AppConfig(BaseSettings):
     )
 
     # Model configuration
-    model: str = "gemini/gemini-3.1-pro-preview"
+    model: str = "gemini/gemini-3.6-flash"
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dimensions: int = 1536
     # Optional explicit embedding provider selection. When None, the provider is

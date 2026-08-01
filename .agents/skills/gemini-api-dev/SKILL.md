@@ -19,12 +19,35 @@ The Gemini API provides access to Google's most advanced AI models. Key capabili
 
 ## Current Gemini Models
 
-- `gemini-3.1-pro-preview`: 1M tokens, complex reasoning, coding, research
-- `gemini-3-flash-preview`: 1M tokens, fast, balanced performance, multimodal
-- `gemini-3-pro-image-preview`: 65k / 32k tokens, image generation and editing
+Text and multimodal:
 
-> [!IMPORTANT] Models like `gemini-2.5-*`, `gemini-2.0-*`, `gemini-1.5-*` are legacy and deprecated.
-> Use the new models above. Your knowledge is outdated.
+- `gemini-3.6-flash` (stable): balances speed with intelligence for agentic and multimodal tasks
+- `gemini-3.5-flash` (stable): most intelligent, for frontier performance
+- `gemini-3.5-flash-lite` (stable): fastest and most cost-effective
+- `gemini-3.1-pro-preview` (preview): complex reasoning, coding, research
+
+Live, image, and video:
+
+- `gemini-3.1-flash-live-preview` (preview): Live API voice sessions
+- `gemini-3-pro-image` (stable): Nano Banana Pro, highest-quality image generation and editing
+- `gemini-3.1-flash-image` / `gemini-3.1-flash-lite-image` (stable): Nano Banana 2 and 2 Lite
+- `gemini-omni-flash-preview` (preview): fast conversational video via the Interactions API. The
+  models page lists this as `gemini-omni-flash` and the Interactions page omits it entirely; the
+  `-preview` id is the one with a verified working recording, so keep it until a real call proves
+  otherwise.
+- `veo-3.1-generate-preview` (preview): cinematic, higher-quality video
+
+Embeddings: `gemini-embedding-2` (stable, current), `gemini-embedding-001` (stable, superseded).
+
+Deep research: `deep-research-preview`, `deep-research-max-preview`.
+
+> [!IMPORTANT] Models like `gemini-2.5-*`, `gemini-2.0-*`, `gemini-1.5-*` are legacy and deprecated,
+> as are `gemini-3-pro-preview` and `gemini-3.1-flash-lite-preview`. Note that several models
+> dropped a `-preview` suffix on reaching stable (`gemini-3-pro-image`, `gemini-omni-flash`) — do
+> not carry the old suffixed id forward. Use the models above; your knowledge is outdated.
+
+> [!NOTE] This list is a snapshot and drifts. Verify against
+> https://ai.google.dev/gemini-api/docs/models.md.txt before relying on it.
 
 ## SDKs
 
