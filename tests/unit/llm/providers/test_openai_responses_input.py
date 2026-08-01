@@ -433,3 +433,64 @@ def test_text_and_image_parts_still_convert() -> None:
         {"type": "input_text", "text": "What is in this image?"},
         {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
     ]
+
+
+def _sole_user_content_part(url: str) -> dict[str, object]:
+    """Convert a single media part through a direct-OpenAI client."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra")
+    items = client._messages_to_responses_input([
+        UserMessage(
+            content=[ImageUrlContentPart(type="image_url", image_url={"url": url})]
+        )
+    ])
+    content = items[0]["content"]
+    assert isinstance(content, list)
+    assert len(content) == 1
+    return content[0]
+
+
+def test_image_data_uri_becomes_an_input_image() -> None:
+    url = "data:image/png;base64,aGVsbG8="
+
+    assert _sole_user_content_part(url) == {"type": "input_image", "image_url": url}
+
+
+def test_pdf_data_uri_becomes_an_input_file() -> None:
+    """A PDF has a real Responses representation, so it must use it."""
+    url = "data:application/pdf;base64,aGVsbG8="
+
+    assert _sole_user_content_part(url) == {
+        "type": "input_file",
+        "filename": "attachment.pdf",
+        "file_data": url,
+    }
+
+
+@pytest.mark.parametrize(
+    "mime_type",
+    [
+        pytest.param("audio/ogg", id="telegram-voice-note"),
+        pytest.param("video/mp4", id="video"),
+    ],
+)
+def test_unreadable_media_becomes_a_text_note_naming_the_type(mime_type: str) -> None:
+    """Audio and video have no Responses representation.
+
+    Forcing them into `input_image` -- which is what happens if the MIME type is
+    not inspected -- sends the API a malformed image. The turn has to stay
+    intelligible instead, so the model can ask or delegate.
+    """
+    part = _sole_user_content_part(f"data:{mime_type};base64,aGVsbG8=")
+
+    assert part["type"] == "input_text"
+    text = part["text"]
+    assert isinstance(text, str)
+    assert mime_type in text
+    assert "base64" not in text
+
+
+def test_plain_url_without_a_data_uri_is_still_an_image() -> None:
+    """Only images are fetchable by URL, so an untyped URL means an image."""
+    url = "https://example.com/photo.png"
+
+    assert _sole_user_content_part(url) == {"type": "input_image", "image_url": url}

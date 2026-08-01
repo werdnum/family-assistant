@@ -77,6 +77,16 @@ _CONTROL_PARAMS = frozenset({"use_responses_api"})
 # implements Chat Completions but not necessarily Responses.
 _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
+# What the Responses API will actually accept as a non-text user input part.
+# Images become `input_image`; PDFs become `input_file`, which the API parses for
+# both text and page images on a vision-capable model. Everything else -- audio
+# and video in practice -- has no representation at all: the Responses API takes
+# text and images only, and audio input is confined to Chat Completions with a
+# dedicated audio model. Those become a text note rather than being forced into
+# an `input_image`, which is what the API would reject or misread.
+_RESPONSES_IMAGE_MIME_PREFIX = "image/"
+_RESPONSES_FILE_MIME_TYPES: dict[str, str] = {"application/pdf": "attachment.pdf"}
+
 
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
@@ -402,7 +412,7 @@ class OpenAIClient(BaseLLMClient):
         if isinstance(part, TextContentPart):
             return {"type": "input_text", "text": part.text}
         if isinstance(part, ImageUrlContentPart):
-            return {"type": "input_image", "image_url": part.image_url["url"]}
+            return self._media_part_to_responses_input(part.image_url["url"])
         raise InvalidRequestError(
             f"Cannot send content part of type '{part.type}' to the OpenAI "
             "Responses API; it should have been resolved before reaching the "
@@ -410,6 +420,54 @@ class OpenAIClient(BaseLLMClient):
             provider="openai",
             model=self.model,
         )
+
+    @staticmethod
+    def _data_uri_mime_type(url: str) -> str | None:
+        """Return a base64 data URI's MIME type, or None for a plain URL."""
+        if not url.startswith("data:"):
+            return None
+        header = url[len("data:") :].split(",", 1)[0]
+        return header.split(";", 1)[0].strip().lower() or None
+
+    def _media_part_to_responses_input(self, url: str) -> dict[str, object]:
+        """Render one media part as whatever the Responses API accepts for it.
+
+        The application carries every attachment -- images, PDFs, audio and
+        video alike -- as an ``image_url`` part, because that is the shape Gemini
+        accepts for all four. The type therefore has to be recovered from the
+        data URI here rather than trusted from the part, or a voice note is sent
+        as an `input_image` and the API rejects or misreads it.
+
+        Audio and video have no Responses representation, so they become a text
+        note naming the type. That keeps the turn intelligible: the model is told
+        a file arrived and that it cannot read it, which is something it can act
+        on by asking or delegating, rather than being handed a malformed image or
+        having the attachment silently disappear.
+        """
+        mime_type = self._data_uri_mime_type(url)
+
+        # A plain URL carries no type to inspect. Only images are fetchable by
+        # the API, and every attachment this application builds is a data URI,
+        # so anything else here came from a caller that meant an image.
+        if mime_type is None or mime_type.startswith(_RESPONSES_IMAGE_MIME_PREFIX):
+            return {"type": "input_image", "image_url": url}
+
+        filename = _RESPONSES_FILE_MIME_TYPES.get(mime_type)
+        if filename is not None:
+            # `filename` is how the API infers the file type, so it has to carry
+            # a matching extension; the original name does not reach this layer.
+            return {"type": "input_file", "filename": filename, "file_data": url}
+
+        return {
+            "type": "input_text",
+            "text": (
+                f"[Attachment of type {mime_type} was provided but cannot be read "
+                f"by this model, which accepts images and PDFs only. Its contents "
+                f"are unavailable for this turn: ask the user to describe it, or "
+                f"delegate to a profile whose model supports {mime_type} if you "
+                f"need them.]"
+            ),
+        }
 
     def _messages_to_responses_input(
         self,
