@@ -422,13 +422,21 @@ async def test_anthropic_streaming_thinking_round_trip(
     if llm_record_mode != "replay" and not os.getenv("ANTHROPIC_API_KEY"):
         pytest.skip("Recording this test requires ANTHROPIC_API_KEY")
 
+    # Pinned to the shipped model and the shipped thinking shape. Both matter:
+    # `claude-sonnet-5` is what automation_creation and engineer run, and it
+    # rejects the `enabled` + `budget_tokens` form this test used to pass with a
+    # 400. Verifying replay against a model/shape combination no profile uses
+    # would leave the mechanism those two profiles depend on unexercised, which
+    # is the one thing this test exists to prevent.
     client = LLMClientFactory.create_client({
         "provider": "anthropic",
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "api_key": os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key"),
         "model_parameters": {
-            "claude-sonnet-4-6": {
-                "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "claude-sonnet-5": {
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "high"},
+                "max_tokens": 16000,
             }
         },
     })
