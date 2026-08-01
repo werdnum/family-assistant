@@ -42,9 +42,10 @@ Embeddings: `gemini-embedding-2` (stable, current), `gemini-embedding-001` (stab
 Deep research: `deep-research-preview`, `deep-research-max-preview`.
 
 > [!IMPORTANT] Models like `gemini-2.5-*`, `gemini-2.0-*`, `gemini-1.5-*` are legacy and deprecated,
-> as are `gemini-3-pro-preview` and `gemini-3.1-flash-lite-preview`. Note that several models
-> dropped a `-preview` suffix on reaching stable (`gemini-3-pro-image`, `gemini-omni-flash`) — do
-> not carry the old suffixed id forward. Use the models above; your knowledge is outdated.
+> as are `gemini-3-pro-preview` and `gemini-3.1-flash-lite-preview`. Use the models above; your
+> knowledge is outdated. Note that `gemini-3-pro-image` dropped a `-preview` suffix on reaching
+> stable — do not carry `gemini-3-pro-image-preview` forward. This does **not** apply to
+> `gemini-omni-flash-preview`, which keeps its suffix for the reason given above.
 
 > [!NOTE] This list is a snapshot and drifts. Verify against
 > https://ai.google.dev/gemini-api/docs/models.md.txt before relying on it.
@@ -84,7 +85,7 @@ from google import genai
 
 client = genai.Client()
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="gemini-3.6-flash",
     contents="Explain quantum computing"
 )
 print(response.text)
@@ -97,7 +98,7 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({});
 const response = await ai.models.generateContent({
-  model: "gemini-3-flash-preview",
+  model: "gemini-3.6-flash",
   contents: "Explain quantum computing"
 });
 console.log(response.text);
@@ -122,7 +123,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	resp, err := client.Models.GenerateContent(ctx, "gemini-3-flash-preview", genai.Text("Explain quantum computing"), nil)
+	resp, err := client.Models.GenerateContent(ctx, "gemini-3.6-flash", genai.Text("Explain quantum computing"), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -142,7 +143,7 @@ public class GenerateTextFromTextInput {
     Client client = new Client();
     GenerateContentResponse response =
         client.models.generateContent(
-            "gemini-3-flash-preview",
+            "gemini-3.6-flash",
             "Explain quantum computing",
             null);
 
