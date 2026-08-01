@@ -335,6 +335,68 @@ def test_responses_api_not_used_for_openai_compatible_backends() -> None:
     assert client._uses_responses_api() is False
 
 
+def test_environment_base_url_also_counts_as_a_compatible_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`OPENAI_BASE_URL` redirects the SDK without passing through our kwargs.
+
+    Trusting the constructor argument would leave `_is_direct_openai` true and
+    send every model to an endpoint's `/responses` route, which a
+    Chat-Completions-only backend does not implement.
+    """
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+
+    assert client._uses_responses_api() is False
+
+
+def test_direct_openai_is_still_detected_without_a_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The common case must not be misclassified by the stricter check."""
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+
+    assert client._uses_responses_api() is True
+
+
+@pytest.mark.parametrize(
+    "message,expected_type",
+    [
+        pytest.param("Rate limit reached for gpt-5.6-sol", "rate_limit", id="rate"),
+        pytest.param("The model does not exist (404)", "model_not_found", id="404"),
+        pytest.param("Something unfamiliar happened", "unknown", id="unclassifiable"),
+    ],
+)
+async def test_responses_stream_failures_carry_typed_metadata(
+    message: str, expected_type: str
+) -> None:
+    """A failed Responses turn must classify like a Chat Completions one.
+
+    Without this metadata `_map_stream_error_to_exception` can only raise a bare
+    RuntimeError, collapsing a rate limit and a bad request into one shape.
+    """
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+
+    events = [
+        event
+        async for event in client._emit_events_from_responses_dicts(
+            [{"type": "response.failed", "response": {"error": {"message": message}}}],
+            originating_response_stored=False,
+        )
+    ]
+
+    assert len(events) == 1
+    assert events[0].type == "error"
+    assert events[0].error == message
+    assert events[0].metadata is not None
+    assert events[0].metadata.get("error_type") == expected_type
+    assert events[0].metadata.get("provider") == "openai"
+    assert events[0].metadata.get("model") == "gpt-5.6-sol"
+
+
 def test_unconvertible_content_part_raises_instead_of_being_dropped() -> None:
     """Silently filtering a part would strip content the user supplied."""
     client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")

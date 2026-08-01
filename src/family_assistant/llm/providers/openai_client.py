@@ -73,6 +73,10 @@ class _StreamingToolAccumulator(TypedDict):
 # They are stripped before any params reach the OpenAI API.
 _CONTROL_PARAMS = frozenset({"use_responses_api"})
 
+# OpenAI proper. Anything else is an OpenAI-*compatible* endpoint, which
+# implements Chat Completions but not necessarily Responses.
+_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+
 
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
@@ -95,7 +99,14 @@ class OpenAIClient(BaseLLMClient):
         """
         base_url = kwargs.pop("base_url", None)
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        self._is_direct_openai = base_url is None
+        # Read the URL the SDK actually resolved, not the argument we passed.
+        # `OPENAI_BASE_URL` in the environment redirects the client without ever
+        # reaching this constructor, so trusting the argument would classify a
+        # compatible endpoint as direct OpenAI and send it to /responses, which
+        # it may not implement.
+        self._is_direct_openai = (
+            str(self.client.base_url).rstrip("/") == _OPENAI_API_BASE_URL
+        )
         self.model = model
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
@@ -308,6 +319,49 @@ class OpenAIClient(BaseLLMClient):
         if originating_response_stored:
             return True
         return bool(item.get("encrypted_content"))
+
+    @staticmethod
+    def _classify_stream_error_type(error_message: str) -> str:
+        """Best-effort error classification from a provider message string."""
+        lowered = error_message.lower()
+        if "401" in error_message or "authentication" in lowered:
+            return "authentication"
+        if "429" in error_message or "rate limit" in lowered:
+            return "rate_limit"
+        if "404" in error_message or "model not found" in lowered:
+            return "model_not_found"
+        if "context length" in lowered or "maximum" in lowered:
+            return "context_length"
+        if "invalid" in lowered or "400" in error_message:
+            return "invalid_request"
+        if "connection" in lowered or "network" in lowered:
+            return "connection"
+        if "timeout" in lowered:
+            return "timeout"
+        return "unknown"
+
+    def _stream_error_event(
+        self, error_message: str, *, error_id: str, error_type: str | None = None
+    ) -> LLMStreamEvent:
+        """Build a stream error event carrying the metadata consumers rely on.
+
+        Without `error_type`/`provider`/`model`, `_map_stream_error_to_exception`
+        can only produce a bare ``RuntimeError``, losing the distinction between
+        a rate limit and a bad request. The Chat Completions path has always
+        attached this; the Responses path did not, which stopped mattering only
+        while Responses served a single model.
+        """
+        return LLMStreamEvent(
+            type="error",
+            error=error_message,
+            metadata={
+                "error_id": error_id,
+                "error_type": error_type
+                or self._classify_stream_error_type(error_message),
+                "provider": "openai",
+                "model": self.model,
+            },
+        )
 
     @staticmethod
     def _to_chat_completions_message(message: LLMMessage) -> dict[str, object | None]:
@@ -1267,13 +1321,13 @@ class OpenAIClient(BaseLLMClient):
             elif event.type in {"response.failed", "response.incomplete"}:
                 error = getattr(event.response, "error", None)
                 message = getattr(error, "message", None)
-                yield LLMStreamEvent(
-                    type="error",
-                    error=message or f"OpenAI Responses request {event.type}",
+                yield self._stream_error_event(
+                    message or f"OpenAI Responses request {event.type}",
+                    error_id=event.type,
                 )
                 return
             elif event.type == "error":
-                yield LLMStreamEvent(type="error", error=event.message)
+                yield self._stream_error_event(event.message, error_id="response.error")
                 return
 
         metadata: StreamEventMetadata = {}
@@ -1351,22 +1405,18 @@ class OpenAIClient(BaseLLMClient):
                 response = event.get("response")
                 error = response.get("error") if isinstance(response, dict) else None
                 message = error.get("message") if isinstance(error, dict) else None
-                yield LLMStreamEvent(
-                    type="error",
-                    error=(
-                        message
-                        if isinstance(message, str)
-                        else f"OpenAI Responses request {event_type}"
-                    ),
+                yield self._stream_error_event(
+                    message
+                    if isinstance(message, str)
+                    else f"OpenAI Responses request {event_type}",
+                    error_id=str(event_type),
                 )
                 return
             elif event_type == "error":
                 message = event.get("message")
-                yield LLMStreamEvent(
-                    type="error",
-                    error=message
-                    if isinstance(message, str)
-                    else "OpenAI stream error",
+                yield self._stream_error_event(
+                    message if isinstance(message, str) else "OpenAI stream error",
+                    error_id="response.error",
                 )
                 return
         yield LLMStreamEvent(type="done", metadata=metadata)
