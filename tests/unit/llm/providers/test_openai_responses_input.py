@@ -2,8 +2,11 @@
 
 import json
 
+import pytest
+
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import AssistantMessage, LLMMessage
+from family_assistant.llm.base import InvalidRequestError
+from family_assistant.llm.messages import AssistantMessage, LLMMessage, UserMessage
 from family_assistant.llm.providers.openai_client import OpenAIClient
 
 
@@ -191,6 +194,51 @@ def test_current_store_setting_does_not_rescue_unstored_history() -> None:
     input_items = params["input"]
     assert isinstance(input_items, list)
     assert [item["type"] for item in input_items] == ["function_call"]
+
+
+def test_responses_store_requires_a_boolean() -> None:
+    """String values must not silently enable server-side response storage."""
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-sol",
+        model_parameters={"gpt-5.6-sol": {"store": "false"}},
+    )
+
+    with pytest.raises(InvalidRequestError, match="store configuration"):
+        client._build_responses_params([], None, None, stream=False)
+
+
+async def test_nonstreaming_store_error_keeps_invalid_request_type() -> None:
+    """Request error mapping preserves the local configuration exception."""
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-sol",
+        model_parameters={"gpt-5.6-sol": {"use_responses_api": True, "store": "false"}},
+    )
+
+    with pytest.raises(InvalidRequestError, match="store configuration"):
+        await client.generate_response([UserMessage(content="Hello")])
+
+
+async def test_streaming_store_error_is_typed_invalid_request() -> None:
+    """Streaming exposes the same configuration failure as invalid_request."""
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-sol",
+        model_parameters={"gpt-5.6-sol": {"use_responses_api": True, "store": "false"}},
+    )
+
+    events = [
+        event
+        async for event in client.generate_response_stream([
+            UserMessage(content="Hello")
+        ])
+    ]
+
+    assert len(events) == 1
+    assert events[0].type == "error"
+    assert events[0].metadata is not None
+    assert events[0].metadata.get("error_type") == "invalid_request"
 
 
 def test_responses_api_requires_explicit_opt_in() -> None:

@@ -192,11 +192,18 @@ class AnthropicClient(BaseLLMClient):
             raise TypeError(
                 "Anthropic provider metadata thinking_blocks must be a list"
             )
-        return [
-            block
-            for block in blocks
-            if isinstance(block, dict) and block.get("type") in _THINKING_BLOCK_TYPES
-        ]
+        validated_blocks: list[JsonObject] = []
+        for index, block in enumerate(blocks):
+            if (
+                not isinstance(block, dict)
+                or block.get("type") not in _THINKING_BLOCK_TYPES
+            ):
+                raise TypeError(
+                    "Anthropic provider metadata thinking_blocks entries must be "
+                    f"thinking or redacted_thinking objects; invalid entry at index {index}"
+                )
+            validated_blocks.append(cast("JsonObject", block))
+        return validated_blocks
 
     def _process_tool_messages(
         self,

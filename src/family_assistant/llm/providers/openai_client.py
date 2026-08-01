@@ -234,7 +234,13 @@ class OpenAIClient(BaseLLMClient):
             **self._get_model_specific_params(self.model),
         }
         reasoning_effort = model_params.pop("reasoning_effort", None)
-        store = bool(model_params.pop("store", False))
+        store = model_params.pop("store", False)
+        if not isinstance(store, bool):
+            raise InvalidRequestError(
+                "Invalid OpenAI Responses store configuration: expected a boolean",
+                provider="openai",
+                model=self.model,
+            )
         params: dict[str, object] = {
             "model": self.model,
             "input": self._messages_to_responses_input(messages),
@@ -466,6 +472,8 @@ class OpenAIClient(BaseLLMClient):
 
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map a raw OpenAI exception to the typed provider error hierarchy."""
+        if isinstance(e, LLMProviderError):
+            return e
         error_message = str(e)
 
         if "401" in error_message or "authentication" in error_message.lower():
@@ -1113,7 +1121,9 @@ class OpenAIClient(BaseLLMClient):
 
             # Categorize the error type for metadata
             error_type = "unknown"
-            if "401" in error_message or "authentication" in error_message.lower():
+            if isinstance(e, InvalidRequestError):
+                error_type = "invalid_request"
+            elif "401" in error_message or "authentication" in error_message.lower():
                 error_type = "authentication"
             elif "429" in error_message or "rate limit" in error_message.lower():
                 error_type = "rate_limit"

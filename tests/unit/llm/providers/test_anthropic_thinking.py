@@ -159,6 +159,26 @@ def test_malformed_anthropic_metadata_is_rejected(
         AnthropicClient._thinking_blocks_from_metadata(provider_metadata)
 
 
+@pytest.mark.parametrize(
+    "invalid_block",
+    [
+        pytest.param("not-an-object", id="scalar"),
+        pytest.param({"type": "text", "text": "not thinking"}, id="invalid-type"),
+    ],
+)
+def test_malformed_anthropic_thinking_block_is_rejected(
+    invalid_block: object,
+) -> None:
+    """A corrupt block cannot be partially filtered out of a signed turn."""
+    provider_metadata = {
+        "provider": "anthropic",
+        "thinking_blocks": [THINKING_BLOCK, invalid_block],
+    }
+
+    with pytest.raises(TypeError, match="invalid entry at index 1"):
+        AnthropicClient._thinking_blocks_from_metadata(provider_metadata)
+
+
 def test_tool_results_still_convert_alongside_thinking(
     client: AnthropicClient,
 ) -> None:

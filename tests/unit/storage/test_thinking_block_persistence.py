@@ -13,15 +13,12 @@ from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
-from family_assistant.storage.base import metadata
 from family_assistant.storage.context import DatabaseContext, get_db_context
-
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 # A signature shaped like the real thing: long, base64-ish, and meaningless if
 # a single character shifts.
@@ -35,15 +32,6 @@ PROVIDER_METADATA: dict[str, object] = {
     "provider": "anthropic",
     "thinking_blocks": [THINKING_BLOCK],
 }
-
-
-@pytest_asyncio.fixture
-async def db_engine() -> AsyncGenerator[AsyncEngine]:
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
-    yield engine
-    await engine.dispose()
 
 
 @pytest_asyncio.fixture
