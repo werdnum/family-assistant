@@ -275,13 +275,14 @@ supervision requirements based on input trust level:
    investigation. Example: "Why isn't my daily brief firing?"
 5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) at
    `reasoning_effort: high`, with a higher iteration limit (100) for deep multi-step reasoning. Used
-   via `/complex` or delegation from the default assistant. It is a tier above the default assistant
-   on all three axes — model, effort and iteration ceiling — rather than merely a different model;
-   the default runs `gpt-5.6-terra` at `medium` effort with 50 iterations. **Not to be confused with
-   `spawn_worker`**, which launches isolated coding agents (Claude Code / Gemini CLI) in sandboxed
-   containers with NO access to Family Assistant tools or data. Use `complex_tasks` when the task
-   needs FA context (notes, calendar, documents, Home Assistant, etc.); use `spawn_worker` for
-   standalone coding or computing tasks.
+   via `/complex` or delegation from the default assistant, which runs Gemini with 50 iterations.
+   Delegating here is also how a text-shaped task reaches a stronger model at all: the default
+   assistant has to stay on Gemini because it receives user-supplied video, audio and PDFs, which
+   the OpenAI adapter cannot yet represent. **Not to be confused with `spawn_worker`**, which
+   launches isolated coding agents (Claude Code / Gemini CLI) in sandboxed containers with NO access
+   to Family Assistant tools or data. Use `complex_tasks` when the task needs FA context (notes,
+   calendar, documents, Home Assistant, etc.); use `spawn_worker` for standalone coding or computing
+   tasks.
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.

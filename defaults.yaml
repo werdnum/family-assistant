@@ -629,24 +629,20 @@ default_profile_settings:
 service_profiles:
   - id: "default_assistant"
     description: "Main assistant using default settings, without browser tools. Suitable for general tasks, note-taking, calendar management, and information retrieval from stored documents."
-    # Inherits the default non-browser tool access from
-    # 'default_profile_settings', overriding the model and iteration ceiling.
+    # This profile inherits the default non-browser tool access and model from
+    # 'default_profile_settings', overriding only max_iterations so the main
+    # assistant has more headroom before hitting the tool-call limit.
     #
-    # Terra rather than the inherited gemini-3.6-flash: the capability gap to
-    # complex_tasks' gpt-5.6-sol is wide for agentic tool calling, and Terra
-    # sits squarely between the two at well under half Sol's cost. The override
-    # is scoped to this profile on purpose -- the shared default still serves
-    # telephone (latency-critical) and data_visualization (charts), where
-    # Gemini is the better fit. Gemini stays as the fallback, which also keeps
-    # the two providers split across primary and fallback.
+    # The inherited primary stays on Gemini rather than moving to a stronger
+    # OpenAI tier, because this profile is the one that receives user media.
+    # Telegram (handler.py) and web chat (chat_api.py) attach images, video,
+    # audio and PDFs as image_url content parts, and the OpenAI adapter turns
+    # every non-text part into `input_image` without inspecting the MIME type,
+    # so a voice note or video would reach the API as a malformed image. Gemini
+    # accepts all four natively. Raising this tier means teaching the OpenAI
+    # adapter the per-MIME input representations first -- and OpenAI has no
+    # video input at all, so parity is not reachable for that case.
     processing_config:
-      retry_config:
-        primary:
-          provider: "openai"
-          model: "gpt-5.6-terra"
-        fallback:
-          provider: "google"
-          model: "gemini-3.6-flash"
       max_iterations: 50
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
