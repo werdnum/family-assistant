@@ -69,6 +69,15 @@ class _StreamingToolAccumulator(TypedDict):
     function: _StreamingToolFunction
 
 
+# `llm_parameters` entries that configure this client rather than the request.
+# They are stripped before any params reach the OpenAI API.
+_CONTROL_PARAMS = frozenset({"use_responses_api"})
+
+# OpenAI proper. Anything else is an OpenAI-*compatible* endpoint, which
+# implements Chat Completions but not necessarily Responses.
+_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+
+
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
 
@@ -90,7 +99,14 @@ class OpenAIClient(BaseLLMClient):
         """
         base_url = kwargs.pop("base_url", None)
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        self._is_direct_openai = base_url is None
+        # Read the URL the SDK actually resolved, not the argument we passed.
+        # `OPENAI_BASE_URL` in the environment redirects the client without ever
+        # reaching this constructor, so trusting the argument would classify a
+        # compatible endpoint as direct OpenAI and send it to /responses, which
+        # it may not implement.
+        self._is_direct_openai = (
+            str(self.client.base_url).rstrip("/") == _OPENAI_API_BASE_URL
+        )
         self.model = model
         self.model_parameters = model_parameters or {}
         self.default_kwargs = kwargs
@@ -173,9 +189,9 @@ class OpenAIClient(BaseLLMClient):
 
         return UserMessage(content=content_parts)
 
-    def _get_model_specific_params(self, model: str) -> dict[str, object]:
-        """Get parameters for a specific model based on pattern matching."""
-        params = {}
+    def _resolve_model_parameters(self, model: str) -> dict[str, object]:
+        """Merge every ``llm_parameters`` pattern that matches ``model``."""
+        params: dict[str, object] = {}
         for pattern, pattern_params in self.model_parameters.items():
             if pattern in model:
                 params.update(pattern_params)
@@ -184,9 +200,54 @@ class OpenAIClient(BaseLLMClient):
                 )
         return params
 
+    def _get_model_specific_params(self, model: str) -> dict[str, object]:
+        """Model parameters destined for the API, minus local control keys.
+
+        Control keys steer this client rather than the request, so they are
+        filtered here -- at the single accessor every request-building path
+        already goes through -- instead of being popped at each call site,
+        where one missed spot would send an unknown field to the API.
+        """
+        return {
+            key: value
+            for key, value in self._resolve_model_parameters(model).items()
+            if key not in _CONTROL_PARAMS
+        }
+
     def _uses_responses_api(self) -> bool:
-        """Return whether this direct OpenAI model requires the Responses API."""
-        return self._is_direct_openai and self.model.startswith("gpt-5.6-sol")
+        """Return whether this model should be driven through the Responses API.
+
+        Defaults to **on** for direct OpenAI. Responses is the current API and
+        the only one that returns the encrypted reasoning items needed for
+        reasoning to survive a tool loop; Chat Completions has no equivalent, so
+        anything left on it silently loses reasoning between steps. Every model
+        this repo configures accepts the request shape built here, including the
+        ``include: ["reasoning.encrypted_content"]`` that non-reasoning models
+        simply answer without reasoning items.
+
+        Set ``use_responses_api: false`` in ``llm_parameters`` to pin a specific
+        model back to Chat Completions. Defaulting on rather than enumerating
+        models means a newly configured model gets reasoning propagation without
+        anyone remembering to enrol it -- the failure mode of the previous
+        opt-in, and of the model-name prefix before that.
+
+        Restricted to direct OpenAI: the Responses API is not part of the
+        OpenAI-compatible surface that OpenRouter and other ``base_url``
+        backends implement.
+        """
+        if not self._is_direct_openai:
+            return False
+        configured = self._resolve_model_parameters(self.model).get(
+            "use_responses_api", True
+        )
+        if not isinstance(configured, bool):
+            raise InvalidRequestError(
+                "Invalid use_responses_api configuration for model "
+                f"'{self.model}': expected a boolean, got {configured!r}",
+                provider="openai",
+                model=self.model,
+            )
+        return configured
 
     def _build_responses_params(
         self,
@@ -202,6 +263,13 @@ class OpenAIClient(BaseLLMClient):
             **self._get_model_specific_params(self.model),
         }
         reasoning_effort = model_params.pop("reasoning_effort", None)
+        store = model_params.pop("store", False)
+        if not isinstance(store, bool):
+            raise InvalidRequestError(
+                "Invalid OpenAI Responses store configuration: expected a boolean",
+                provider="openai",
+                model=self.model,
+            )
         params: dict[str, object] = {
             "model": self.model,
             "input": self._messages_to_responses_input(messages),
@@ -212,7 +280,7 @@ class OpenAIClient(BaseLLMClient):
         if reasoning_effort is not None:
             params["reasoning"] = {"effort": reasoning_effort}
 
-        params["store"] = model_params.pop("store", False)
+        params["store"] = store
         max_tokens = model_params.pop("max_tokens", None)
         if max_tokens is not None:
             model_params["max_output_tokens"] = max_tokens
@@ -233,6 +301,116 @@ class OpenAIClient(BaseLLMClient):
 
         return params
 
+    @staticmethod
+    def _is_replayable_reasoning_item(
+        item: dict[str, object], *, originating_response_stored: bool
+    ) -> bool:
+        """Whether a stored ``reasoning`` output item can be sent back as input.
+
+        The server can resolve an item by ID only when its originating response
+        was stored. The current request's ``store`` setting says nothing about
+        historical items. Otherwise the encrypted content returned by
+        ``include: ["reasoning.encrypted_content"]`` is required. Older metadata
+        has no storage marker, so null encrypted content is conservatively
+        dropped rather than replayed as an unresolvable item.
+        """
+        if item.get("type") != "reasoning":
+            return True
+        if originating_response_stored:
+            return True
+        return bool(item.get("encrypted_content"))
+
+    @staticmethod
+    def _classify_stream_error_type(error_message: str) -> str:
+        """Best-effort error classification from a provider message string."""
+        lowered = error_message.lower()
+        if "401" in error_message or "authentication" in lowered:
+            return "authentication"
+        if "429" in error_message or "rate limit" in lowered:
+            return "rate_limit"
+        if "404" in error_message or "model not found" in lowered:
+            return "model_not_found"
+        if "context length" in lowered or "maximum" in lowered:
+            return "context_length"
+        if "invalid" in lowered or "400" in error_message:
+            return "invalid_request"
+        if "connection" in lowered or "network" in lowered:
+            return "connection"
+        if "timeout" in lowered:
+            return "timeout"
+        return "unknown"
+
+    def _stream_error_event(
+        self, error_message: str, *, error_id: str, error_type: str | None = None
+    ) -> LLMStreamEvent:
+        """Build a stream error event carrying the metadata consumers rely on.
+
+        Without `error_type`/`provider`/`model`, `_map_stream_error_to_exception`
+        can only produce a bare ``RuntimeError``, losing the distinction between
+        a rate limit and a bad request. The Chat Completions path has always
+        attached this; the Responses path did not, which stopped mattering only
+        while Responses served a single model.
+        """
+        return LLMStreamEvent(
+            type="error",
+            error=error_message,
+            metadata={
+                "error_id": error_id,
+                "error_type": error_type
+                or self._classify_stream_error_type(error_message),
+                "provider": "openai",
+                "model": self.model,
+            },
+        )
+
+    @staticmethod
+    def _to_chat_completions_message(message: LLMMessage) -> dict[str, object | None]:
+        """Serialize a message for Chat Completions, dropping internal fields.
+
+        ``provider_metadata`` is our own bookkeeping -- Gemini thought
+        signatures, OpenAI Responses output, Anthropic thinking blocks -- and is
+        not part of the Chat Completions message schema.
+
+        Real OpenAI tolerates the unknown field and answers normally, so this is
+        not a live bug there. It is stripped because an OpenAI-*compatible*
+        endpoint that validates its input strictly (OpenRouter and the various
+        proxy servers this client can be pointed at via ``base_url``) will
+        reject the request outright, and because the payload is another vendor's
+        private state that the recipient cannot use for anything -- it can only
+        bloat the request.
+
+        Not a confidentiality boundary, despite Anthropic thinking blocks
+        carrying readable reasoning text rather than an opaque blob: the
+        conversation that reasoning was derived from is already being sent to
+        whichever provider handles the turn.
+        """
+        message_dict = message_to_json_dict(message)
+        message_dict.pop("provider_metadata", None)
+        return message_dict
+
+    def _content_part_to_responses_input(self, part: ContentPart) -> dict[str, object]:
+        """Convert one user content part to a Responses input part.
+
+        Unconvertible parts raise rather than being filtered out. Only
+        ``attachment`` and ``file_placeholder`` parts can land here, and both
+        are supposed to have been resolved upstream -- attachments are converted
+        before reaching a provider, and file placeholders exist only for mock
+        clients. Silently dropping one would strip content the user supplied and
+        surface later as an unrelated "empty input" style failure, which is the
+        exact shape of bug the no-silent-failures rule exists to prevent.
+        """
+        if isinstance(part, TextContentPart):
+            return {"type": "input_text", "text": part.text}
+        if isinstance(part, ImageUrlContentPart):
+            return {"type": "input_image", "image_url": part.image_url["url"]}
+        raise InvalidRequestError(
+            f"Cannot send content part of type '{part.type}' to the OpenAI "
+            "Responses API; it should have been resolved before reaching the "
+            "provider",
+            provider="openai",
+            model=self.model,
+        )
+
     def _messages_to_responses_input(
         self,
         messages: Sequence[LLMMessage],
@@ -246,16 +424,8 @@ class OpenAIClient(BaseLLMClient):
                     content = message.content
                 else:
                     content = [
-                        (
-                            {"type": "input_text", "text": part.text}
-                            if isinstance(part, TextContentPart)
-                            else {
-                                "type": "input_image",
-                                "image_url": part.image_url["url"],
-                            }
-                        )
+                        self._content_part_to_responses_input(part)
                         for part in message.content
-                        if isinstance(part, (TextContentPart, ImageUrlContentPart))
                     ]
                 input_items.append({"role": "user", "content": content})
             elif message.role == "system":
@@ -265,11 +435,23 @@ class OpenAIClient(BaseLLMClient):
                 if isinstance(provider_metadata, dict) and isinstance(
                     provider_metadata.get("openai_response_output"), list
                 ):
+                    originating_response_stored = (
+                        provider_metadata.get("openai_response_stored") is True
+                    )
                     for output_item in provider_metadata["openai_response_output"]:
                         if not isinstance(output_item, dict):
                             raise TypeError(
                                 "OpenAI Responses output metadata must contain objects"
                             )
+                        if not self._is_replayable_reasoning_item(
+                            output_item,
+                            originating_response_stored=originating_response_stored,
+                        ):
+                            logger.debug(
+                                "Dropping reasoning item %s with no encrypted_content",
+                                output_item.get("id"),
+                            )
+                            continue
                         input_items.append({
                             key: value
                             for key, value in output_item.items()
@@ -277,9 +459,13 @@ class OpenAIClient(BaseLLMClient):
                         })
                 else:
                     if message.content:
+                        # No synthesized `id`. A fabricated one matches nothing
+                        # server-side, and because it differs on every request
+                        # it changes the input prefix each time, defeating
+                        # OpenAI's automatic prompt caching for the whole
+                        # conversation after this point.
                         input_items.append({
                             "type": "message",
-                            "id": f"msg_{uuid.uuid4().hex}",
                             "role": "assistant",
                             "content": [
                                 {
@@ -402,6 +588,8 @@ class OpenAIClient(BaseLLMClient):
 
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map a raw OpenAI exception to the typed provider error hierarchy."""
+        if isinstance(e, LLMProviderError):
+            return e
         error_message = str(e)
 
         if "401" in error_message or "authentication" in error_message.lower():
@@ -460,11 +648,10 @@ class OpenAIClient(BaseLLMClient):
             processed_messages = self._process_tool_messages(list(messages))
 
             if self._uses_responses_api():
-                response = await cast("Any", self.client.responses.create)(
-                    **self._build_responses_params(
-                        processed_messages, tools, tool_choice, stream=False
-                    )
+                params = self._build_responses_params(
+                    processed_messages, tools, tool_choice, stream=False
                 )
+                response = await cast("Any", self.client.responses.create)(**params)
                 llm_output = LLMOutput(
                     content=response.output_text or None,
                     tool_calls=self._responses_tool_calls(response),
@@ -472,7 +659,8 @@ class OpenAIClient(BaseLLMClient):
                     provider_metadata={
                         "openai_response_output": [
                             item.model_dump(mode="json") for item in response.output
-                        ]
+                        ],
+                        "openai_response_stored": params["store"] is True,
                     },
                 )
 
@@ -494,7 +682,7 @@ class OpenAIClient(BaseLLMClient):
 
             # Convert typed messages to dicts for API call
             api_message_dicts = [
-                message_to_json_dict(msg) for msg in processed_messages
+                self._to_chat_completions_message(msg) for msg in processed_messages
             ]
 
             # Build parameters with defaults, then model-specific overrides
@@ -612,7 +800,9 @@ class OpenAIClient(BaseLLMClient):
         self._validate_user_input(messages)
 
         processed_messages = self._process_tool_messages(list(messages))
-        api_message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+        api_message_dicts = [
+            self._to_chat_completions_message(msg) for msg in processed_messages
+        ]
         base_params = {
             "model": self.model,
             "messages": api_message_dicts,
@@ -692,7 +882,9 @@ class OpenAIClient(BaseLLMClient):
         processed_messages = self._process_tool_messages(
             list(messages_with_instruction)
         )
-        api_message_dicts = [message_to_json_dict(msg) for msg in processed_messages]
+        api_message_dicts = [
+            self._to_chat_completions_message(msg) for msg in processed_messages
+        ]
         base_params = {
             "model": self.model,
             "messages": api_message_dicts,
@@ -858,7 +1050,7 @@ class OpenAIClient(BaseLLMClient):
 
             # Convert typed messages to dicts for SDK boundary
             api_message_dicts = [
-                message_to_json_dict(msg) for msg in processed_messages
+                self._to_chat_completions_message(msg) for msg in processed_messages
             ]
 
             # Build parameters with defaults, then model-specific overrides
@@ -1049,7 +1241,9 @@ class OpenAIClient(BaseLLMClient):
 
             # Categorize the error type for metadata
             error_type = "unknown"
-            if "401" in error_message or "authentication" in error_message.lower():
+            if isinstance(e, InvalidRequestError):
+                error_type = "invalid_request"
+            elif "401" in error_message or "authentication" in error_message.lower():
                 error_type = "authentication"
             elif "429" in error_message or "rate limit" in error_message.lower():
                 error_type = "rate_limit"
@@ -1089,13 +1283,16 @@ class OpenAIClient(BaseLLMClient):
         tool_choice: str | None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """Stream a Responses API request as the application's common events."""
-        stream = await cast("Any", self.client.responses.create)(
-            **self._build_responses_params(messages, tools, tool_choice, stream=True)
-        )
+        params = self._build_responses_params(messages, tools, tool_choice, stream=True)
+        stream = await cast("Any", self.client.responses.create)(**params)
+        originating_response_stored = params["store"] is True
         response: Any | None = None
         vcr_events = await self._maybe_parse_vcr_stream(stream)
         if vcr_events is not None:
-            async for event in self._emit_events_from_responses_dicts(vcr_events):
+            async for event in self._emit_events_from_responses_dicts(
+                vcr_events,
+                originating_response_stored=originating_response_stored,
+            ):
                 yield event
             return
 
@@ -1124,13 +1321,13 @@ class OpenAIClient(BaseLLMClient):
             elif event.type in {"response.failed", "response.incomplete"}:
                 error = getattr(event.response, "error", None)
                 message = getattr(error, "message", None)
-                yield LLMStreamEvent(
-                    type="error",
-                    error=message or f"OpenAI Responses request {event.type}",
+                yield self._stream_error_event(
+                    message or f"OpenAI Responses request {event.type}",
+                    error_id=event.type,
                 )
                 return
             elif event.type == "error":
-                yield LLMStreamEvent(type="error", error=event.message)
+                yield self._stream_error_event(event.message, error_id="response.error")
                 return
 
         metadata: StreamEventMetadata = {}
@@ -1141,13 +1338,16 @@ class OpenAIClient(BaseLLMClient):
             metadata["provider_metadata"] = {
                 "openai_response_output": [
                     item.model_dump(mode="json") for item in response.output
-                ]
+                ],
+                "openai_response_stored": originating_response_stored,
             }
         yield LLMStreamEvent(type="done", metadata=metadata)
 
     async def _emit_events_from_responses_dicts(
         self,
         event_dicts: list[dict[str, object]],
+        *,
+        originating_response_stored: bool,
     ) -> AsyncIterator[LLMStreamEvent]:
         """Emit common stream events from VCR-replayed Responses API frames."""
         metadata: StreamEventMetadata = {}
@@ -1198,28 +1398,25 @@ class OpenAIClient(BaseLLMClient):
                     output = response.get("output")
                     if isinstance(output, list):
                         metadata["provider_metadata"] = {
-                            "openai_response_output": output
+                            "openai_response_output": output,
+                            "openai_response_stored": originating_response_stored,
                         }
             elif event_type in {"response.failed", "response.incomplete"}:
                 response = event.get("response")
                 error = response.get("error") if isinstance(response, dict) else None
                 message = error.get("message") if isinstance(error, dict) else None
-                yield LLMStreamEvent(
-                    type="error",
-                    error=(
-                        message
-                        if isinstance(message, str)
-                        else f"OpenAI Responses request {event_type}"
-                    ),
+                yield self._stream_error_event(
+                    message
+                    if isinstance(message, str)
+                    else f"OpenAI Responses request {event_type}",
+                    error_id=str(event_type),
                 )
                 return
             elif event_type == "error":
                 message = event.get("message")
-                yield LLMStreamEvent(
-                    type="error",
-                    error=message
-                    if isinstance(message, str)
-                    else "OpenAI stream error",
+                yield self._stream_error_event(
+                    message if isinstance(message, str) else "OpenAI stream error",
+                    error_id="response.error",
                 )
                 return
         yield LLMStreamEvent(type="done", metadata=metadata)

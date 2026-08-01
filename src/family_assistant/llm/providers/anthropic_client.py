@@ -102,6 +102,26 @@ class _StreamingToolAccumulator(TypedDict):
     arguments: str
 
 
+# Thinking blocks carry a `signature` the API verifies on replay, so they are
+# stored and replayed as opaque dicts rather than being re-derived from their
+# parts. `redacted_thinking` blocks carry an opaque `data` payload instead.
+_THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
+
+
+class AnthropicProviderMetadata(TypedDict):
+    """Assistant-turn metadata persisted for the Anthropic provider.
+
+    ``thinking_blocks`` holds the turn's `thinking` / `redacted_thinking` blocks
+    exactly as the API returned them. They must be replayed byte-for-byte: the
+    API rejects a request whose thinking block has an altered `signature` with
+    ``400 Invalid 'signature' in 'thinking' block``. Their *position* within the
+    turn is not checked, so only content fidelity has to be preserved.
+    """
+
+    provider: Literal["anthropic"]
+    thinking_blocks: list[JsonObject]
+
+
 class AnthropicClient(BaseLLMClient):
     """Direct Anthropic API implementation."""
 
@@ -124,6 +144,66 @@ class AnthropicClient(BaseLLMClient):
     def _supports_multimodal_tools(self) -> bool:
         """Anthropic supports images and PDFs in tool results natively."""
         return True
+
+    @staticmethod
+    def _extract_thinking_blocks(content: Sequence[object]) -> list[JsonObject]:
+        """Pull thinking blocks off a response's content as plain JSON dicts."""
+        blocks: list[JsonObject] = []
+        for block in content:
+            block_type = (
+                block.get("type")
+                if isinstance(block, dict)
+                else getattr(block, "type", None)
+            )
+            if block_type not in _THINKING_BLOCK_TYPES:
+                continue
+            model_dump = getattr(block, "model_dump", None)
+            if callable(model_dump):
+                blocks.append(cast("JsonObject", model_dump(mode="json")))
+            elif isinstance(block, dict):
+                blocks.append(cast("JsonObject", dict(block)))
+        return blocks
+
+    @staticmethod
+    def _thinking_metadata(
+        thinking_blocks: list[JsonObject],
+    ) -> AnthropicProviderMetadata | None:
+        """Wrap thinking blocks as provider metadata, or None when there are none."""
+        if not thinking_blocks:
+            return None
+        return AnthropicProviderMetadata(
+            provider="anthropic", thinking_blocks=thinking_blocks
+        )
+
+    @staticmethod
+    def _thinking_blocks_from_metadata(provider_metadata: object) -> list[JsonObject]:
+        """Recover thinking blocks from a stored assistant message.
+
+        Metadata from other providers (Gemini thought signatures, OpenAI Responses
+        output) is ignored rather than rejected, so a conversation that switches
+        provider mid-thread degrades to a plain replay instead of erroring.
+        """
+        if not isinstance(provider_metadata, dict):
+            return []
+        if provider_metadata.get("provider") != "anthropic":
+            return []
+        blocks = provider_metadata.get("thinking_blocks")
+        if not isinstance(blocks, list):
+            raise TypeError(
+                "Anthropic provider metadata thinking_blocks must be a list"
+            )
+        validated_blocks: list[JsonObject] = []
+        for index, block in enumerate(blocks):
+            if (
+                not isinstance(block, dict)
+                or block.get("type") not in _THINKING_BLOCK_TYPES
+            ):
+                raise TypeError(
+                    "Anthropic provider metadata thinking_blocks entries must be "
+                    f"thinking or redacted_thinking objects; invalid entry at index {index}"
+                )
+            validated_blocks.append(cast("JsonObject", block))
+        return validated_blocks
 
     def _process_tool_messages(
         self,
@@ -500,7 +580,16 @@ class AnthropicClient(BaseLLMClient):
                 api_messages.append({"role": "user", "content": content})
 
             elif isinstance(msg, AssistantMessage):
-                content_blocks: list[TextBlockParam | ToolUseBlockParam] = []
+                # Thinking leads the turn, mirroring the order the API itself
+                # emits. Position is *not* enforced -- the API accepts thinking
+                # after text or tool_use, and accepts the interleaved shape that
+                # _merge_consecutive_roles can produce when two assistant turns
+                # merge -- so no ordering machinery is warranted. What is
+                # enforced is the signature, so blocks are replayed as opaque
+                # dicts, byte-identical to what came back.
+                content_blocks: list[
+                    TextBlockParam | ToolUseBlockParam | JsonObject
+                ] = list(self._thinking_blocks_from_metadata(msg.provider_metadata))
                 if msg.content:
                     content_blocks.append(TextBlockParam(type="text", text=msg.content))
                 if msg.tool_calls:
@@ -710,6 +799,78 @@ class AnthropicClient(BaseLLMClient):
 
         return merged
 
+    def _build_request_params(
+        self,
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
+        api_messages: list[dict[str, Any]],
+        system_blocks: str | list[TextBlockParam] | None,
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | None,
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+    ) -> dict[str, Any]:
+        """Assemble the kwargs for a messages.create / messages.stream call.
+
+        Shared by the streaming and non-streaming paths so that thinking
+        configuration is validated identically on both.
+        """
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": api_messages,
+            "max_tokens": 8192,
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model),
+        }
+
+        self._validate_thinking_params(params)
+
+        if system_blocks:
+            params["system"] = system_blocks
+
+        if tools:
+            params["tools"] = self._convert_tools_to_anthropic_format(tools)
+            anthropic_tool_choice = self._convert_tool_choice_to_anthropic(tool_choice)
+            if anthropic_tool_choice:
+                params["tool_choice"] = anthropic_tool_choice
+
+        return params
+
+    def _validate_thinking_params(
+        self,
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+        params: dict[str, Any],
+    ) -> None:
+        """Fail fast on a thinking budget that cannot fit in ``max_tokens``.
+
+        The API requires ``budget_tokens < max_tokens``. Catching it here turns
+        a mid-conversation 400 into a startup-shaped configuration error naming
+        both values.
+
+        The two thinking shapes are not interchangeable across model
+        generations -- ``{"type": "enabled", "budget_tokens": N}`` versus
+        ``{"type": "adaptive"}`` with ``output_config.effort`` -- and only the
+        former carries a budget, so only the former is checked here. An
+        unsupported shape is left to the API, which names the model and the
+        expected alternative better than a local guess could.
+        """
+        thinking = params.get("thinking")
+        if not isinstance(thinking, dict) or thinking.get("type") != "enabled":
+            return
+
+        budget = thinking.get("budget_tokens")
+        max_tokens = params.get("max_tokens")
+        if not isinstance(budget, int) or not isinstance(max_tokens, int):
+            return
+
+        if budget >= max_tokens:
+            raise InvalidRequestError(
+                f"Thinking budget_tokens ({budget}) must be less than max_tokens "
+                f"({max_tokens}). Raise max_tokens for model '{self.model}' in "
+                f"llm_parameters, or lower the thinking budget.",
+                provider="anthropic",
+                model=self.model,
+            )
+
     async def generate_response(
         self,
         messages: Sequence[LLMMessage],
@@ -739,25 +900,9 @@ class AnthropicClient(BaseLLMClient):
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
-                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
-                params: dict[str, Any] = {
-                    "model": self.model,
-                    "messages": api_messages,
-                    "max_tokens": 8192,
-                    **self.default_kwargs,
-                    **self._get_model_specific_params(self.model),
-                }
-
-                if system_blocks:
-                    params["system"] = system_blocks
-
-                if tools:
-                    params["tools"] = self._convert_tools_to_anthropic_format(tools)
-                    anthropic_tool_choice = self._convert_tool_choice_to_anthropic(
-                        tool_choice
-                    )
-                    if anthropic_tool_choice:
-                        params["tool_choice"] = anthropic_tool_choice
+                params = self._build_request_params(
+                    api_messages, system_blocks, tools, tool_choice
+                )
 
                 response = await self.client.messages.create(**params)
 
@@ -780,6 +925,8 @@ class AnthropicClient(BaseLLMClient):
                             )
                         )
 
+                thinking_blocks = self._extract_thinking_blocks(response.content)
+
                 # Extract usage information
                 reasoning_info: MessageReasoningInfo | None = None
                 if response.usage:
@@ -792,6 +939,7 @@ class AnthropicClient(BaseLLMClient):
                     content=content_text or None,
                     tool_calls=tool_calls if tool_calls else None,
                     reasoning_info=reasoning_info,
+                    provider_metadata=self._thinking_metadata(thinking_blocks),
                 )
 
                 duration_ms = (time.monotonic() - start_time) * 1000
@@ -839,6 +987,8 @@ class AnthropicClient(BaseLLMClient):
 
     def _raise_mapped_error(self, e: Exception) -> NoReturn:
         """Map Anthropic SDK exceptions to our exception hierarchy."""
+        if isinstance(e, LLMProviderError):
+            raise e
         if isinstance(e, anthropic.AuthenticationError):
             raise AuthenticationError(
                 str(e), provider="anthropic", model=self.model
@@ -1005,25 +1155,9 @@ class AnthropicClient(BaseLLMClient):
                     self._convert_messages_to_anthropic_format(processed_messages)
                 )
 
-                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.stream(**params) requires heterogeneous values
-                params: dict[str, Any] = {
-                    "model": self.model,
-                    "messages": api_messages,
-                    "max_tokens": 8192,
-                    **self.default_kwargs,
-                    **self._get_model_specific_params(self.model),
-                }
-
-                if system_blocks:
-                    params["system"] = system_blocks
-
-                if tools:
-                    params["tools"] = self._convert_tools_to_anthropic_format(tools)
-                    anthropic_tool_choice = self._convert_tool_choice_to_anthropic(
-                        tool_choice
-                    )
-                    if anthropic_tool_choice:
-                        params["tool_choice"] = anthropic_tool_choice
+                params = self._build_request_params(
+                    api_messages, system_blocks, tools, tool_choice
+                )
 
                 # Check for VCR replay mode
                 vcr_events = await self._maybe_parse_vcr_stream(params)
@@ -1053,6 +1187,15 @@ class AnthropicClient(BaseLLMClient):
                                     yield LLMStreamEvent(  # noqa: ASYNC119
                                         type="content", content=delta.text
                                     )
+                                elif delta.type == "thinking_delta":
+                                    # Surfaced as its own event type so it can
+                                    # never be mistaken for response content.
+                                    # The authoritative copy used for replay is
+                                    # taken from the final message below, which
+                                    # carries the signature these deltas lack.
+                                    yield LLMStreamEvent(  # noqa: ASYNC119
+                                        type="thinking", content=delta.thinking
+                                    )
                                 elif (
                                     delta.type == "input_json_delta"
                                     and current_tool is not None
@@ -1080,6 +1223,15 @@ class AnthropicClient(BaseLLMClient):
                         final_message = await stream.get_final_message()
 
                 metadata: StreamEventMetadata = {}
+                if final_message:
+                    # Taken from the assembled final message rather than the
+                    # deltas: only this copy carries the `signature` the API
+                    # verifies when the block is replayed.
+                    thinking_metadata = self._thinking_metadata(
+                        self._extract_thinking_blocks(final_message.content)
+                    )
+                    if thinking_metadata:
+                        metadata["provider_metadata"] = thinking_metadata
                 if final_message and final_message.usage:
                     stream_reasoning_info = self._reasoning_info_from_usage(
                         final_message.usage
@@ -1137,7 +1289,9 @@ class AnthropicClient(BaseLLMClient):
 
                 error_message = str(e)
                 error_type = "unknown"
-                if isinstance(e, anthropic.AuthenticationError):
+                if isinstance(e, InvalidRequestError):
+                    error_type = "invalid_request"
+                elif isinstance(e, anthropic.AuthenticationError):
                     error_type = "authentication"
                 elif isinstance(e, anthropic.RateLimitError):
                     error_type = "rate_limit"
@@ -1193,6 +1347,11 @@ class AnthropicClient(BaseLLMClient):
         for block in response.content:
             if block.type == "text":
                 events.append(LLMStreamEvent(type="content", content=block.text))
+            elif block.type == "thinking":
+                # One event per block rather than per delta -- a non-streaming
+                # response has no deltas to replay. Emitting it at all is what
+                # keeps this path's event sequence comparable to the real one.
+                events.append(LLMStreamEvent(type="thinking", content=block.thinking))
             elif block.type == "tool_use":
                 tool_call = ToolCallItem(
                     id=block.id,
@@ -1213,6 +1372,15 @@ class AnthropicClient(BaseLLMClient):
         metadata: StreamEventMetadata = {}
         if response.usage:
             metadata["reasoning_info"] = self._reasoning_info_from_usage(response.usage)
+        # Thinking blocks must reach the done event here exactly as they do on
+        # the live streaming path. Without this, every test exercising Anthropic
+        # streaming would silently run without reasoning state and prove nothing
+        # about the round trip.
+        thinking_metadata = self._thinking_metadata(
+            self._extract_thinking_blocks(response.content)
+        )
+        if thinking_metadata:
+            metadata["provider_metadata"] = thinking_metadata
 
         events.append(LLMStreamEvent(type="done", metadata=metadata))
         return events

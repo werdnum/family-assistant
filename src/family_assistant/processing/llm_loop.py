@@ -543,6 +543,13 @@ class LLMStreamingLoop:
             # If the LLM returned nothing (e.g. after exhausted empty-response
             # retries), skip creating an AssistantMessage and yield done with
             # no message so callers see an empty turn.
+            #
+            # Any provider reasoning state from this iteration is deliberately
+            # discarded here. An AssistantMessage requires content or tool calls,
+            # so there is no row to hang it on, and a reasoning-only turn is one
+            # the model did not finish -- replaying its reasoning into the next
+            # attempt would carry the dead end forward rather than help. The
+            # retry starts from the last complete turn instead.
             has_content = isinstance(final_content, str) and final_content.strip()
             if not has_content and not effective_tool_calls:
                 yield (
