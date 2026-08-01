@@ -31,13 +31,19 @@ from family_assistant.context_providers import (
     NotesContextProvider,
     WeatherContextProvider,
 )
-from family_assistant.llm.messages import ImageUrlContentPart, UserMessage
+from family_assistant.llm.messages import (
+    ImageUrlContentPart,
+    TextContentPart,
+    UserMessage,
+)
+from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.tools import (
     LOCAL_TOOL_DESCRIPTORS,
     PolicyEngine,
     ToolPolicyDecision,
 )
+from family_assistant.tools.types import ToolAttachment
 
 _HANDOFF_PROFILE_ID = "media_analyst"
 # The profile users send attachments to from Telegram and web chat.
@@ -341,3 +347,71 @@ def test_an_exclusion_matching_a_confirm_rule_is_accepted(tmp_path: Path) -> Non
 
     profile = next(p for p in config.service_profiles if p.id == _HANDOFF_PROFILE_ID)
     assert profile.excluded_global_tools == ["spawn_worker"]
+
+
+def _injected(mime_type: str, *, attachment_id: str | None = "att-7") -> UserMessage:
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra")
+    attachment = ToolAttachment(
+        mime_type=mime_type,
+        content=b"\0" * 2048,
+        description="From a tool",
+        attachment_id=attachment_id,
+    )
+    return client.create_attachment_injection(attachment)
+
+
+@pytest.mark.parametrize("mime_type", ["audio/ogg", "video/mp4", "application/pdf"])
+def test_an_injected_media_attachment_is_described_in_text_too(mime_type: str) -> None:
+    """The description has to survive a provider that drops the media part.
+
+    `RetryingLLMClient.create_attachment_injection` delegates to the primary and
+    hands the resulting message list to the fallback unchanged, so a
+    cross-provider fallback renders a part built for the other provider. The text
+    part is the only thing every adapter carries.
+    """
+    message = _injected(mime_type)
+
+    text = next(
+        part.text
+        for part in message.content
+        if isinstance(part, TextContentPart)  # pyright: ignore[reportUnnecessaryIsInstance]
+    )
+    assert mime_type in text
+    assert "att-7" in text
+
+
+def test_the_anthropic_fallback_still_learns_what_arrived() -> None:
+    """End to end over the two adapters, since that is where this broke.
+
+    Anthropic skips any data URI that is not an image, so before the text part
+    carried the description the fallback saw only "a file arrived" -- less than
+    the descriptive text this path produced before the branch changed it.
+    """
+    message = _injected("audio/ogg")
+
+    blocks = AnthropicClient(
+        api_key="test-key", model="claude-fable-5"
+    )._convert_user_content(message)
+
+    assert isinstance(blocks, list)
+    rendered = " ".join(block["text"] for block in blocks if block["type"] == "text")
+    assert "audio/ogg" in rendered
+    assert "att-7" in rendered
+    # The audio itself is gone -- that is the provider's limit, not a bug here.
+    assert not any(block.get("type") == "image" for block in blocks)
+
+
+def test_an_injected_image_keeps_the_plain_prelude() -> None:
+    """Images are carried by every adapter, so they need no textual stand-in.
+
+    Describing them anyway would change the request body for the one type that
+    was never at risk, invalidating recordings for no gain.
+    """
+    message = _injected("image/png")
+
+    text = next(
+        part.text
+        for part in message.content
+        if isinstance(part, TextContentPart)  # pyright: ignore[reportUnnecessaryIsInstance]
+    )
+    assert text == "[System: File from previous tool response]"

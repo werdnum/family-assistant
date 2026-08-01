@@ -102,6 +102,22 @@ def _is_media_mime_type(mime_type: str) -> bool:
     )
 
 
+def _describe_unrepresentable_attachment(attachment: "ToolAttachment") -> str:
+    """Text standing in for a media part a provider may not carry.
+
+    Names the type, the size and the id, so a model that never receives the bytes
+    can still say what arrived and hand the id to `delegate_to_service`. Phrased
+    as a description rather than "you cannot read this": the same message goes to
+    the provider that *can* read it, and telling that model the file is
+    unreadable would be false.
+    """
+    size_mb = len(attachment.content or b"") / (1024 * 1024)
+    described = f"{attachment.mime_type}, {size_mb:.1f}MB"
+    if attachment.attachment_id:
+        described += f", attachment_id={attachment.attachment_id}"
+    return f"[System: File from previous tool response: {described}]"
+
+
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
 
@@ -184,6 +200,21 @@ class OpenAIClient(BaseLLMClient):
         ):
             b64_data = attachment.get_content_as_base64()
             if b64_data:
+                # A type no other provider can represent needs its description in
+                # the *text* part as well. `RetryingLLMClient` builds this message
+                # from the primary's adapter and hands the same message list to
+                # the fallback, and Anthropic drops any data URI that is not an
+                # image -- so on a cross-provider fallback the media part vanishes
+                # and only this prelude survives. Before this branch these types
+                # produced descriptive text, so leaving the prelude bare would
+                # have made the fallback strictly less informed than it was.
+                # Images are exempt: every configured adapter renders them, so
+                # their part is never the thing that disappears.
+                if not attachment.mime_type.startswith(_RESPONSES_IMAGE_MIME_PREFIX):
+                    content_parts[0] = TextContentPart(
+                        type="text",
+                        text=_describe_unrepresentable_attachment(attachment),
+                    )
                 content_parts.append(
                     ImageUrlContentPart(
                         type="image_url",
