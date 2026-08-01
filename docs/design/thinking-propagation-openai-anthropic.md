@@ -174,7 +174,9 @@ Conclusions drawn from this:
    trials; stripping produced none in 3/3. Consistent across trials, but it is a behavioural
    observation at n=3, not a guarantee.
 3. **Signatures are verified when present.** Truncating and re-padding a `signature` returns
-   `400 Invalid 'signature' in 'thinking' block`. Replay must be byte-exact.
+   `400 Invalid 'signature' in 'thinking' block`. Replay must be byte-exact. *Position*, by
+   contrast, is not checked: a follow-up probe accepted thinking placed after `text`, after
+   `tool_use`, and split across a turn by an intervening `text` block. Only fidelity matters.
 4. **`claude-fable-5` uses a different thinking API.** `thinking.type.enabled` is rejected for that
    model in favour of `thinking.type.adaptive` + `output_config.effort`. Its adaptive mode also
    emitted no thinking on the first turn and thinking on the continuation regardless of replay, so
@@ -189,7 +191,10 @@ durable record.
 
 `thinking` and `redacted_thinking` blocks are captured into `provider_metadata` as
 `{"provider": "anthropic", "thinking_blocks": [...]}` and replayed at the head of the assistant
-turn, which is where the API requires them. Three details are load-bearing:
+turn, mirroring the order the API itself emits. Position turns out *not* to be enforced — probing
+showed the API accepts thinking after `text` or `tool_use`, and accepts the interleaved shape
+`_merge_consecutive_roles` produces when two assistant turns merge — so no ordering machinery is
+warranted. Content fidelity is the real constraint. Three details are load-bearing:
 
 - **Blocks are opaque.** They are stored and replayed as whole dicts, never re-derived from their
   parts, because the `signature` is verified and any reconstruction risks changing a byte.

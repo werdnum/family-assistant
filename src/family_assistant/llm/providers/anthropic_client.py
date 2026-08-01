@@ -114,7 +114,8 @@ class AnthropicProviderMetadata(TypedDict):
     ``thinking_blocks`` holds the turn's `thinking` / `redacted_thinking` blocks
     exactly as the API returned them. They must be replayed byte-for-byte: the
     API rejects a request whose thinking block has an altered `signature` with
-    ``400 Invalid 'signature' in 'thinking' block``.
+    ``400 Invalid 'signature' in 'thinking' block``. Their *position* within the
+    turn is not checked, so only content fidelity has to be preserved.
     """
 
     provider: Literal["anthropic"]
@@ -565,10 +566,13 @@ class AnthropicClient(BaseLLMClient):
                 api_messages.append({"role": "user", "content": content})
 
             elif isinstance(msg, AssistantMessage):
-                # Thinking blocks must lead the assistant turn, in the order the
-                # API emitted them, and must be byte-identical to what was
-                # returned -- the signature is verified. They are replayed as
-                # opaque dicts for that reason.
+                # Thinking leads the turn, mirroring the order the API itself
+                # emits. Position is *not* enforced -- the API accepts thinking
+                # after text or tool_use, and accepts the interleaved shape that
+                # _merge_consecutive_roles can produce when two assistant turns
+                # merge -- so no ordering machinery is warranted. What is
+                # enforced is the signature, so blocks are replayed as opaque
+                # dicts, byte-identical to what came back.
                 content_blocks: list[
                     TextBlockParam | ToolUseBlockParam | JsonObject
                 ] = list(self._thinking_blocks_from_metadata(msg.provider_metadata))

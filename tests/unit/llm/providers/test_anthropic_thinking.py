@@ -63,7 +63,12 @@ def test_extract_thinking_blocks_keeps_only_thinking_types() -> None:
 def test_thinking_blocks_replayed_verbatim_and_first(
     client: AnthropicClient,
 ) -> None:
-    """Thinking must lead the assistant turn, byte-identical to what came back."""
+    """Thinking is replayed byte-identically, leading the turn as the API emits it.
+
+    Position is a convention, not an API requirement -- the API accepts thinking
+    anywhere in the turn. The byte-identical part is the requirement: the
+    signature is verified.
+    """
     messages: list[LLMMessage] = [
         UserMessage(content="What is 42 times 17?"),
         AssistantMessage(
