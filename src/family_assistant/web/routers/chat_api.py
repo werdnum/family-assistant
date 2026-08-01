@@ -440,6 +440,17 @@ async def _process_user_attachments(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="Failed to process attachment",
                     ) from e
+            else:
+                # Dropping it here is why a misclassified attachment looked like a
+                # model that ignored the file: the upload succeeded and the turn
+                # ran without it. Not an error, because the iOS client's type
+                # enum can still produce 'file' for a type it has no case for.
+                logger.warning(
+                    "Ignoring attachment of unhandled type %r (%s); it will not "
+                    "reach the model.",
+                    attachment_type,
+                    attachment.get("name", "unnamed"),
+                )
 
     return trigger_content_parts, trigger_attachments
 

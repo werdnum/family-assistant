@@ -91,6 +91,27 @@ describe('FileAttachmentAdapter', () => {
       expect(result.status.type).toBe('running');
     });
 
+    // The backend processes image, video, audio and document and ignores
+    // anything else, so a media file left as 'file' is uploaded and then dropped
+    // from the turn: the model answers without it and nothing reports an error.
+    test('classifies audio and video as their backend types', async () => {
+      for (const [mimeType, expected] of [
+        ['audio/mpeg', 'audio'],
+        ['audio/ogg', 'audio'],
+        ['audio/wav', 'audio'],
+        ['audio/webm', 'audio'],
+        ['video/mp4', 'video'],
+        ['video/webm', 'video'],
+        ['video/ogg', 'video'],
+      ]) {
+        const file = createMockFile(`clip.${expected}`, mimeType, 1024);
+
+        const result = await adapter.add({ file });
+
+        expect(result.type).toBe(expected);
+      }
+    });
+
     test('successfully adds valid text file', async () => {
       const file = createMockFile('document.txt', 'text/plain', 1024);
 

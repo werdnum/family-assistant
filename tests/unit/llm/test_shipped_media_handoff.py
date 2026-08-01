@@ -286,3 +286,58 @@ def test_a_glob_exclusion_matching_no_grant_is_still_rejected(tmp_path: Path) ->
 
     with pytest.raises(ValidationError, match="withholds nothing"):
         load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+
+def test_an_exclusion_matching_only_a_global_deny_is_rejected(tmp_path: Path) -> None:
+    """A denied name is not a granted one.
+
+    Counting the names a `deny` rule matches as granted would let an exclusion
+    that withholds nothing validate — the profile reads as having given up a tool
+    the global policy never handed it, while whatever the policy does grant stays
+    active. That is exactly the no-op this validator exists to reject.
+    """
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "global_tools_policy:\n"
+        "  rules:\n"
+        "    - match:\n"
+        "        names:\n"
+        '          - "report_technical_problem"\n'
+        '      decision: "allow"\n'
+        "      priority: 50\n"
+        "    - match:\n"
+        "        names:\n"
+        '          - "spawn_worker"\n'
+        '      decision: "deny"\n'
+        "      priority: 50\n"
+        "service_profiles:\n"
+        '  - id: "media_analyst"\n'
+        "    excluded_global_tools:\n"
+        '      - "spawn_worker"\n'
+    )
+
+    with pytest.raises(ValidationError, match="withholds nothing"):
+        load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+
+def test_an_exclusion_matching_a_confirm_rule_is_accepted(tmp_path: Path) -> None:
+    """A tool reachable behind a confirmation is still reachable."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "global_tools_policy:\n"
+        "  rules:\n"
+        "    - match:\n"
+        "        names:\n"
+        '          - "spawn_worker"\n'
+        '      decision: "confirm"\n'
+        "      priority: 50\n"
+        "service_profiles:\n"
+        '  - id: "media_analyst"\n'
+        "    excluded_global_tools:\n"
+        '      - "spawn_worker"\n'
+    )
+
+    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+    profile = next(p for p in config.service_profiles if p.id == _HANDOFF_PROFILE_ID)
+    assert profile.excluded_global_tools == ["spawn_worker"]

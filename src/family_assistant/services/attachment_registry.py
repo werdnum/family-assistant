@@ -108,8 +108,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
 
-# MIME classes that only reach a model as media, never as extracted text, so
+# MIME classes with no use except being handed to a model, so
 # `max_multimodal_size` is the binding limit on them rather than `max_file_size`.
+#
+# PDFs are deliberately absent even though the Responses API is now sent their
+# bytes: a PDF too large for a model is still useful to `read_text_attachment`,
+# which extracts its text without a model seeing the file at all. Bounding them
+# here would refuse an upload that has a working use.
 MULTIMODAL_MIME_PREFIXES = ("image/", "audio/", "video/")
 # NOTE: In production, allowed_mime_types is configured in config.yaml under
 # attachments.allowed_mime_types. This default is only used when config is not provided
@@ -330,6 +335,9 @@ class AttachmentRegistry:
         with an oversized image, recording or video but send it to a model, and the
         provider rejects it there. Enforcing the bound at registration turns that
         into an explicit size error at upload rather than a failed turn later.
+
+        A document keeps ``max_file_size``: its text can be extracted without a
+        model, so a size only a model objects to is not a reason to refuse it.
         """
         if content_type and content_type.startswith(MULTIMODAL_MIME_PREFIXES):
             return self.media_size_limit

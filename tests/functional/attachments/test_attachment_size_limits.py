@@ -74,8 +74,10 @@ async def test_a_document_between_the_limits_is_still_accepted(
 ) -> None:
     """The tighter bound applies to media only.
 
-    A PDF's text is extracted rather than handed to the model as bytes, so
-    `max_file_size` remains the limit for it.
+    Not because a PDF never reaches a model as bytes -- on the Responses API it
+    now does -- but because it has a use that needs no model at all:
+    `read_text_attachment` extracts its text. A size only a model objects to is
+    not a reason to refuse the upload, so `max_file_size` remains its limit.
     """
     async with DatabaseContext(db_engine) as db_context:
         metadata = await registry.register_user_attachment(

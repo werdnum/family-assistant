@@ -100,10 +100,17 @@ export class FileAttachmentAdapter {
       // Validate the file
       validateFile(file);
 
-      // Determine attachment type based on file MIME type
+      // Determine attachment type based on file MIME type. The backend processes
+      // image, video, audio and document and ignores anything else, so a type
+      // left as 'file' is uploaded and then dropped from the turn -- the model
+      // answers without ever seeing it.
       let attachmentType = 'file';
       if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
         attachmentType = 'image';
+      } else if (file.type.startsWith('audio/')) {
+        attachmentType = 'audio';
+      } else if (file.type.startsWith('video/')) {
+        attachmentType = 'video';
       } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
         attachmentType = 'document';
       }

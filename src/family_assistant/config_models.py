@@ -37,7 +37,8 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .security.taint import TaintPolicyConfig
 from .tools.policy import (
-    ToolPolicyConfig,  # noqa: TC001 - Pydantic resolves this model at runtime
+    ToolPolicyConfig,
+    ToolPolicyDecision,
 )
 
 
@@ -1479,10 +1480,14 @@ class AppConfig(BaseSettings):
         that is a security control that reads as configured and does nothing, so
         it fails at startup instead.
 
-        Only enforced against name-based global rules. A rule matching by tag or
-        MCP server could still grant the named tool, and this cannot tell, so a
-        policy containing one of those is left alone rather than risking a false
-        rejection.
+        Only enforced against name-based global rules that can actually confer
+        access. A rule matching by tag or MCP server could still grant the named
+        tool, and this cannot tell, so a policy containing one of those is left
+        alone rather than risking a false rejection. A `deny` rule is the reverse
+        error: counting the names it denies as granted would let an exclusion
+        matching only that deny validate while withholding nothing, which is the
+        no-op this exists to reject. `confirm` counts as granted, since a tool
+        reachable behind a confirmation is still reachable.
 
         Names are glob patterns on both sides, because `ToolMatcher.matches`
         resolves them with `fnmatchcase`. Comparing them as literals would reject
@@ -1498,13 +1503,16 @@ class AppConfig(BaseSettings):
             granted: set[str] = set()
             has_unanalysable_rule = False
         else:
-            granted = {
-                name
+            granting_rules = [
+                rule
                 for rule in self.global_tools_policy.rules
-                for name in (rule.match.names or ())
+                if rule.decision is not ToolPolicyDecision.DENY
+            ]
+            granted = {
+                name for rule in granting_rules for name in (rule.match.names or ())
             }
             has_unanalysable_rule = any(
-                rule.match.names is None for rule in self.global_tools_policy.rules
+                rule.match.names is None for rule in granting_rules
             )
         if has_unanalysable_rule:
             return self
