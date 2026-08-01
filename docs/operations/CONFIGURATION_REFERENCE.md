@@ -1526,6 +1526,26 @@ Operator merge note for tool policy:
 - `default_profile_settings.tools_policy.default_decision` still overrides the shipped default when
   explicitly set.
 
+### llm_parameters
+
+Per-model keyword arguments, passed through to whichever provider SDK serves that model. Keys are
+matched as **substrings** of the model name, so `"gpt-5.6-"` covers every variant in that line while
+`"gpt-5.6-terra"` targets one. Every matching entry is merged, and the result is applied **over**
+the provider client's own defaults — so this is the supported way to override a hard-coded default
+such as the Anthropic client's `max_tokens`.
+
+Settings currently shipped in `defaults.yaml`:
+
+| Key               | Setting                                           | Why                                                                                                                                                                |
+| ----------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `claude-sonnet-5` | `thinking: {type: disabled}`, `max_tokens: 16000` | Sonnet 5 would otherwise run adaptive thinking, and the Anthropic adapter cannot yet replay thinking blocks across tool turns. See the comment in `defaults.yaml`. |
+| `gpt-5.6-sol`     | `reasoning_effort: high`                          | `complex_tasks` is reached by delegation, so it can afford to think longer.                                                                                        |
+| `gpt-5.6-terra`   | `reasoning_effort: medium`                        | `default_assistant` answers interactive chat, where time-to-first-token is felt directly.                                                                          |
+
+`reasoning_effort` accepts `none`, `low`, `medium`, `high`, `xhigh` or `max` on GPT-5.6 models and
+defaults to `medium` when unset. Raising it trades latency and tokens for capability; it is the
+first dial to turn when a profile's agentic performance falls short, ahead of changing the model.
+
 ### mcp_config.json
 
 MCP server definitions with environment variable expansion using `$VAR` or `${VAR}` syntax:
