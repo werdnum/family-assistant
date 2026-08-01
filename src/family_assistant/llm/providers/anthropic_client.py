@@ -431,6 +431,9 @@ class AnthropicClient(BaseLLMClient):
                     **self.default_kwargs,
                     **self._get_model_specific_params(self.model),
                 }
+                # This path always forces the output tool, so thinking can never
+                # be valid here regardless of how the model is configured.
+                self._strip_thinking_for_forced_tool_choice(params)
                 if system_blocks:
                     params["system"] = system_blocks
 
@@ -832,8 +835,42 @@ class AnthropicClient(BaseLLMClient):
             anthropic_tool_choice = self._convert_tool_choice_to_anthropic(tool_choice)
             if anthropic_tool_choice:
                 params["tool_choice"] = anthropic_tool_choice
+                if self._forces_a_tool(anthropic_tool_choice):
+                    self._strip_thinking_for_forced_tool_choice(params)
 
         return params
+
+    @staticmethod
+    def _strip_thinking_for_forced_tool_choice(
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+        params: dict[str, Any],
+    ) -> None:
+        """Drop thinking parameters from a request that forces a tool choice.
+
+        Anthropic rejects thinking combined with a forced ``tool`` or ``any``
+        choice. ``llm_parameters`` is keyed by model rather than by call path, so
+        a model configured for thinking carries it into every request -- including
+        structured output and ``generate_json``, which force a specific tool and
+        therefore cannot use the reasoning anyway.
+
+        Removed rather than set to a disabled value on purpose: an explicit
+        ``thinking: {"type": "disabled"}`` is itself a 400 on some generations
+        (claude-fable-5), so the only portable way to turn it off is to say
+        nothing. Mutates in place, and is a no-op for a model without thinking
+        configured.
+        """
+        for key in ("thinking", "output_config"):
+            if params.pop(key, None) is not None:
+                logger.debug(
+                    "Dropped '%s' from a forced-tool-choice request; Anthropic "
+                    "rejects thinking with a forced tool choice.",
+                    key,
+                )
+
+    @staticmethod
+    def _forces_a_tool(tool_choice: "ToolChoiceParam | None") -> bool:
+        """Whether this choice compels the model to call a tool."""
+        return tool_choice is not None and tool_choice.get("type") in {"any", "tool"}
 
     def _validate_thinking_params(
         self,

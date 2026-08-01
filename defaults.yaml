@@ -94,16 +94,17 @@ llm_parameters:
   # make it a choice: `medium` is the cost-saving step down (roughly Sonnet 4.6
   # at high), `xhigh` the step up for the hardest agentic work.
   #
-  # Two known costs. Thinking shares the max_tokens budget with the response,
-  # which is why the client's hard-coded 8192 is raised here; 16000 is the
-  # ceiling because two of the three call sites are non-streaming and the SDK
-  # refuses non-streaming requests it estimates will exceed its HTTP timeout.
-  # And llm_parameters is keyed by model, not by call path, so structured-output
-  # calls -- which force tool_choice and cannot use the reasoning -- also pay
-  # for thinking. Accepted rather than worked around: per-path control would
-  # need to know which generations accept an explicit `disabled` (Fable 5 400s
-  # on it), which is the model-specific abstraction this config deliberately
-  # avoids.
+  # Thinking shares the max_tokens budget with the response, which is why the
+  # client's hard-coded 8192 is raised here; 16000 is the ceiling because two of
+  # the three call sites are non-streaming and the SDK refuses non-streaming
+  # requests it estimates will exceed its HTTP timeout.
+  #
+  # llm_parameters is keyed by model rather than by call path, so this reaches
+  # requests that force a tool choice -- structured output and generate_json --
+  # which the API rejects outright when thinking is set, not merely charges for.
+  # The client drops thinking from those requests rather than sending an explicit
+  # disabled value, which is itself a 400 on some generations; see
+  # _strip_thinking_for_forced_tool_choice. Nothing to configure here.
   "claude-sonnet-5":
     thinking:
       type: "adaptive"
