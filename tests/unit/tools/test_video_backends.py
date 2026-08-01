@@ -70,16 +70,16 @@ def test_auto_select_defaults_to_gemini_omni() -> None:
     config = AppConfig(gemini_api_key="key")
     backend = _create_video_backend(_ctx_with_config(config), model_override=None)
     assert isinstance(backend, GeminiOmniVideoBackend)
-    assert backend.model == "gemini-omni-flash"
+    assert backend.model == "gemini-omni-flash-preview"
 
 
 def test_auto_select_infers_omni_from_model() -> None:
     config = AppConfig(gemini_api_key="key")
     backend = _create_video_backend(
-        _ctx_with_config(config), model_override="gemini-omni-flash"
+        _ctx_with_config(config), model_override="gemini-omni-flash-preview"
     )
     assert isinstance(backend, GeminiOmniVideoBackend)
-    assert backend.model == "gemini-omni-flash"
+    assert backend.model == "gemini-omni-flash-preview"
 
 
 def test_auto_select_infers_veo_from_model() -> None:
@@ -106,7 +106,7 @@ def test_omni_model_override_remains_authoritative_for_veo_only_features() -> No
     config = AppConfig(gemini_api_key="key")
     backend = _create_video_backend(
         _ctx_with_config(config),
-        model_override="gemini-omni-flash",
+        model_override="gemini-omni-flash-preview",
         requires_veo_features=True,
     )
     assert isinstance(backend, GeminiOmniVideoBackend)
@@ -337,9 +337,6 @@ def omni_async_client() -> Generator[MagicMock]:
         return_value=_omni_interaction(output_video=_video_output(b"omni-video"))
     )
     async_client.interactions.get = AsyncMock()
-    async_client.files.get = AsyncMock(
-        return_value=SimpleNamespace(state=SimpleNamespace(name="ACTIVE"))
-    )
     async_client.files.download = AsyncMock(return_value=b"uri-video")
 
     with (
@@ -361,10 +358,10 @@ async def test_omni_returns_video_bytes(omni_async_client: MagicMock) -> None:
 
     assert result.content == b"omni-video"
     assert result.mime_type == "video/mp4"
-    assert result.model == "gemini-omni-flash"
+    assert result.model == "gemini-omni-flash-preview"
 
     _, kwargs = omni_async_client.interactions.create.call_args
-    assert kwargs["model"] == "gemini-omni-flash"
+    assert kwargs["model"] == "gemini-omni-flash-preview"
     assert kwargs["input"] == "a dancing robot"
     assert kwargs["response_format"] == {
         "type": "video",
@@ -443,7 +440,6 @@ async def test_omni_downloads_uri_when_no_inline_data(
     result = await backend.generate_video(VideoGenerationRequest(prompt="big video"))
 
     assert result.content == b"uri-video"
-    omni_async_client.files.get.assert_called_once_with(name="files/video")
     omni_async_client.files.download.assert_called_once_with(file="https://files/video")
 
 

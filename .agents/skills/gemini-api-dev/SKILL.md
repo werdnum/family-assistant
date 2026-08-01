@@ -19,34 +19,12 @@ The Gemini API provides access to Google's most advanced AI models. Key capabili
 
 ## Current Gemini Models
 
-Text and multimodal:
+Read [references/current-models.json](references/current-models.json) before selecting or changing a
+model. It is generated from Google's public model catalog and each linked model-detail page so the
+documented API model code wins over a page slug. This distinction matters for Gemini Omni Flash: the
+page slug omits `-preview`, while the API model code retains it.
 
-- `gemini-3.6-flash` (stable): balances speed with intelligence for agentic and multimodal tasks
-- `gemini-3.5-flash` (stable): most intelligent, for frontier performance
-- `gemini-3.5-flash-lite` (stable): fastest and most cost-effective
-- `gemini-3.1-pro-preview` (preview): complex reasoning, coding, research
-
-Live, image, and video:
-
-- `gemini-3.1-flash-live-preview` (preview): Live API voice sessions
-- `gemini-3-pro-image` (stable): Nano Banana Pro, highest-quality image generation and editing
-- `gemini-3.1-flash-image` / `gemini-3.1-flash-lite-image` (stable): Nano Banana 2 and 2 Lite
-- `gemini-omni-flash` (preview): fast conversational video via the Interactions API. Note the
-  Interactions API docs page omits this model entirely — the models page is the source for it.
-- `veo-3.1-generate-preview` (preview): cinematic, higher-quality video
-
-Embeddings: `gemini-embedding-2` (stable, current), `gemini-embedding-001` (stable, superseded).
-
-Deep research: `deep-research-preview`, `deep-research-max-preview`.
-
-> [!IMPORTANT] Models like `gemini-2.5-*`, `gemini-2.0-*`, `gemini-1.5-*` are legacy and deprecated,
-> as are `gemini-3-pro-preview` and `gemini-3.1-flash-lite-preview`. Use the models above; your
-> knowledge is outdated. Several ids dropped a `-preview` suffix and the old form should not be
-> carried forward: `gemini-3-pro-image` (not `gemini-3-pro-image-preview`) and `gemini-omni-flash`
-> (not `gemini-omni-flash-preview`).
-
-> [!NOTE] This list is a snapshot and drifts. Verify against
-> https://ai.google.dev/gemini-api/docs/models.md.txt before relying on it.
+Refresh all provider snapshots with `python scripts/refresh-provider-model-skills.py`.
 
 ## SDKs
 

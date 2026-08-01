@@ -304,7 +304,7 @@ class GeminiOmniVideoBackend:
     Interactions ``input`` content blocks and reads the resulting outputs.
     """
 
-    DEFAULT_MODEL = "gemini-omni-flash"
+    DEFAULT_MODEL = "gemini-omni-flash-preview"
     _POLL_INTERVAL_SECONDS = 5
     _TIMEOUT_SECONDS = 600
 
@@ -427,23 +427,5 @@ class GeminiOmniVideoBackend:
             uri = getattr(output_video, "uri", None)
             if uri:
                 self.logger.info("Downloading Omni Flash video from URI...")
-                file_name = f"files/{uri.rstrip('/').rsplit('/', maxsplit=1)[-1]}"
-                start_time = time.time()
-                while True:
-                    file_info = await client.files.get(name=file_name)
-                    state = getattr(file_info, "state", None)
-                    state_name = getattr(state, "name", state)
-                    if state_name == "ACTIVE":
-                        break
-                    if state_name == "FAILED":
-                        raise VideoGenerationError(
-                            "Omni Flash generated video file processing failed."
-                        )
-                    if time.time() - start_time > self._TIMEOUT_SECONDS:
-                        raise VideoGenerationError(
-                            "Omni Flash generated video file processing timed out "
-                            f"after {self._TIMEOUT_SECONDS} seconds."
-                        )
-                    await asyncio.sleep(self._POLL_INTERVAL_SECONDS)
                 return await client.files.download(file=cast("Any", uri))
         raise VideoGenerationError("No video content found in Omni Flash response.")

@@ -1,0 +1,31 @@
+{
+  "provider": "Anthropic",
+  "source": "https://platform.claude.com/docs/en/about-claude/models/overview.md",
+  "generated_by": "scripts/refresh-provider-model-skills.py",
+  "models": [
+    {
+      "id": "claude-fable-5",
+      "name": "Claude Fable 5",
+      "description": "Next-generation intelligence for long-running agents",
+      "source": "https://platform.claude.com/docs/en/about-claude/models/overview.md"
+    },
+    {
+      "id": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "description": "For complex agentic coding and enterprise work",
+      "source": "https://platform.claude.com/docs/en/about-claude/models/overview.md"
+    },
+    {
+      "id": "claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "description": "The best combination of speed and intelligence",
+      "source": "https://platform.claude.com/docs/en/about-claude/models/overview.md"
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "name": "Claude Haiku 4.5",
+      "description": "The fastest model with near-frontier intelligence",
+      "source": "https://platform.claude.com/docs/en/about-claude/models/overview.md"
+    }
+  ]
+}

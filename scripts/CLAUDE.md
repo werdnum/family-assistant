@@ -38,6 +38,13 @@ Useful environment variables:
 - `PYTEST_ADAPTIVE_MEM_THRESHOLD`: cgroup memory ratio that stops new shards, defaults to `0.80`
 - `PYTEST_ADAPTIVE_LOAD`: GNU Parallel `--load` value, defaults to `100%`
 
+### `refresh-provider-model-skills.py`
+
+Regenerates the current-model references for the Gemini, OpenAI, and Anthropic API development
+skills from each provider's official public Markdown documentation. Pass `--check` to report drift
+without writing files. The scheduled `refresh-provider-model-skills.yml` workflow opens a PR when
+the generated snapshots change.
+
 ## Adding New Scripts
 
 Development and deployment scripts go in `scripts/`; container build/run tooling goes in

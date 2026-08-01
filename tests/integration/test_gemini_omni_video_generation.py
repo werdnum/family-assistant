@@ -1,6 +1,6 @@
 """Integration test for GeminiOmniVideoBackend using VCR record/replay.
 
-Exercises Gemini Omni Flash (``gemini-omni-flash``) video generation
+Exercises Gemini Omni Flash (``gemini-omni-flash-preview``) video generation
 end-to-end against the real Interactions API. Unlike the Gemini chat/image/
 embedding paths (which use the SDK's DebugConfig replay), the Interactions
 client is a separate httpx transport, so this test records/replays at the HTTP
@@ -19,6 +19,7 @@ LLM_RECORD_MODE=record GEMINI_API_KEY=xxx pytest tests/integration/test_gemini_o
 
 import os
 from collections.abc import Iterator
+from typing import TypedDict
 
 import pytest
 import vcr
@@ -36,6 +37,22 @@ _RECORD_MODE_MAP = {
     "auto": RecordMode.ONCE,
     "record": RecordMode.ALL,
 }
+
+_SENSITIVE_HEADERS = {"authorization", "x-goog-api-key", "x-api-key", "api-key"}
+
+
+class _VCRResponse(TypedDict, total=False):
+    headers: dict[str, list[str]]
+
+
+def _sanitize_response(response: _VCRResponse) -> _VCRResponse:
+    """Remove credentials that Google may reflect in redirect response headers."""
+    headers = response.get("headers")
+    if isinstance(headers, dict):
+        for name in list(headers):
+            if name.lower() in _SENSITIVE_HEADERS:
+                del headers[name]
+    return response
 
 
 @pytest.fixture
@@ -57,6 +74,7 @@ def omni_cassette(llm_record_mode: str) -> Iterator[None]:
         match_on=["method", "scheme", "host", "port", "path", "query"],
         filter_headers=["authorization", "x-goog-api-key", "x-api-key", "api-key"],
         filter_query_parameters=["key", "api_key"],
+        before_record_response=_sanitize_response,
     )
     with my_vcr.use_cassette(CASSETTE):
         yield
@@ -82,7 +100,7 @@ async def test_omni_flash_video_generation() -> None:
         )
     )
 
-    assert result.model == "gemini-omni-flash"
+    assert result.model == "gemini-omni-flash-preview"
     assert result.mime_type == "video/mp4"
     assert result.content, "backend returned no video bytes"
     # ISO base media (MP4) files carry an 'ftyp' box near the start.
