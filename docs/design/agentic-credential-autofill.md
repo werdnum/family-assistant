@@ -182,19 +182,26 @@ fail-closed, all in browser-server:
 - Current page origin must be within the login session's declared origins **at fill time** — not
   just at grant time.
 - The password is filled only into an element that resolves to `input[type=password]`; the username
-  only into a text/email input (heuristics like `autocomplete=username` preferred, model ref hints
-  validated, never trusted). PR #833 accepted a free `password_ref`; a prompt-injected login page
-  could point it at a field the page echoes. Element-type validation closes that.
+  only into a text, email, or telephone-style input (`type=tel` is how phone-number-identifier sites
+  commonly render it; heuristics like `autocomplete=username` preferred, model ref hints validated,
+  never trusted). PR #833 accepted a free `password_ref`; a prompt-injected login page could point
+  it at a field the page echoes. Element-type validation closes that.
 - The target must validate as a **login** form, not merely contain a password field. Registration,
   password-reset, and password-change forms also carry `input[type=password]`, and a deterministic
   submit into one of those mutates account state instead of signing in. So:
   `autocomplete=new-password` and confirm-password fields are rejected outright,
   `autocomplete=current-password` is preferred, and when a page presents more than one
-  password-bearing form (or the classification is otherwise ambiguous), the fill **fails closed
-  before consuming the grant** — no guess, no submit, session discarded to the human path.
+  password-bearing form (or the classification is otherwise ambiguous), the fill **fails closed — no
+  guess, no submit**, session discarded to the human path. On a single-page login this happens
+  before the grant is consumed.
 - The fill call handles the whole credential entry deterministically, including the common two-step
   form (fill username, submit/continue, wait, fill password, submit) — the way password managers do.
-  The model does not get the page back between steps.
+  The model does not get the page back between steps. Honest consequence for the failure contract:
+  both fields come from one single-use release, so a two-step flow consumes the grant before the
+  password page is even visible. Validation failures discovered on that second page still fail
+  closed **without a submit**, but the approved attempt is burnt — the retry is a fresh access
+  request (audited, throttled, re-notified), which is the correct cost, not a defect to engineer
+  around.
 - **The fill is terminal for model access — and the lock engages exactly when filling begins.** From
   the moment browser-server holds a grant and starts the fill, until the session closes, it rejects
   every model-driven command except finalize and abort: no snapshot, screenshot, `exec`, `extract`,
@@ -313,6 +320,18 @@ automatic when `load_saved_session` finds the jar stale/invalidated and config b
 it, or via the task profile calling `login_to_site` for such a jar; a site with no existing jar is
 not broker territory and is routed to the human first-time login flow.
 
+**A failed authentication latches the jar to "needs human".** If the stored credential is stale —
+the password was changed on the site — every automatic entry path would otherwise submit the same
+bad password again on each stale-jar load and each scheduled repair run, and neither notify-only
+pushes nor Keychute's generic request caps are calibrated to a site's account-lockout threshold. So
+FA persists the attempt outcome per jar: after a fill that submitted but failed authentication
+(probe stale, login wall returned — as distinct from infrastructure errors or a pending approval),
+automatic broker entry for that jar is disabled and the user is told the site needs attention. The
+latch clears only when a human refreshes the jar through the login flow or the Keychute secret
+rotates to a new `secret_version_id` (the grant read returns it, so FA can record exactly which
+version failed). One automatic attempt per staleness episode, never a retry loop against a live
+account.
+
 Policy tests enumerate the allowed/denied surface, as PR #833 planned; the difference is that the
 security-load-bearing denials (secret visibility, transfer, exfiltration) are browser-server
 mechanism and Keychute policy, so an FA profile misconfiguration degrades UX, not containment.
@@ -334,8 +353,10 @@ mechanism and Keychute policy, so an FA profile misconfiguration degrades UX, no
 6. **Human in the loop, calibrated.** First release per site: Keychute approval page (server-parsed
    grant shown authoritatively). Steady state: standing grant with notify-only pushes. Load into a
    task session: FA confirmation. MFA: the human, on the real page.
-7. **Failure fails closed.** No fresh probe → no jar → context discarded. Lost connection mid-flow →
-   grant idempotent-replay or expiry; nothing durable was created.
+7. **Failure fails closed, and stays closed.** No fresh probe → no jar → context discarded. Lost
+   connection mid-flow → grant idempotent-replay or expiry; nothing durable was created. A failed
+   authentication latches the jar to needs-human, so a stale stored password gets one automatic
+   attempt, not a lockout-inducing retry loop.
 8. **Prompt-injected login page** can waste the attempt (mis-click, fail login) but cannot: read the
    secret (never model-visible), redirect the fill off-origin (fill-time origin check +
    confinement), capture it into an echoing field (element validation), widen the jar (refresh
@@ -373,7 +394,8 @@ Prerequisites (already on the roadmap, unchanged): cookie jars end-to-end with h
 3. **family-assistant: broker profile + wiring.** `credential_autofill.sites` config with per-jar
    credential binding; `login_to_site` + `request_credential_fill` + `finalize_login`/`abort_login`
    tools on the `RemoteBrowserBackend`; `browser_login_broker` profile in `defaults.yaml` with
-   policy tests; stale-jar → broker flow from `load_saved_session` passing the exact `jar_id`; user
+   policy tests; stale-jar → broker flow from `load_saved_session` passing the exact `jar_id`, with
+   the per-jar auth-failure latch (no automatic retry until human refresh or secret rotation); user
    docs (`docs/user/`) and prompt guidance.
 4. **Later, if demand:** TOTP-in-Keychute (`autofill-totp`); a Keychute credential-discovery
    endpoint; MFA continuation via handoff mid-login-session; first-time agentic jar creation from an
