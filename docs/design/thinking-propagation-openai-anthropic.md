@@ -15,8 +15,8 @@ State after the fixes:
 | Provider                               | Reasoning captured             | Persisted | Replayed to model             | Surfaced to user |
 | -------------------------------------- | ------------------------------ | --------- | ----------------------------- | ---------------- |
 | Google (Gemini)                        | thought signatures + summaries | yes       | yes                           | history UI       |
-| OpenAI — Responses API (opt-in)        | encrypted reasoning items      | yes       | yes                           | no               |
-| OpenAI — Chat Completions              | none                           | n/a       | n/a (API has no such concept) | n/a              |
+| OpenAI — Responses API (default)       | encrypted reasoning items      | yes       | yes                           | no               |
+| OpenAI — Chat Completions (opt-out)    | none                           | n/a       | n/a (API has no such concept) | n/a              |
 | Anthropic (thinking enabled)           | thinking blocks + signatures   | yes       | yes                           | no               |
 | Anthropic (thinking off — the default) | none                           | n/a       | n/a                           | n/a              |
 
@@ -220,10 +220,34 @@ that one fails deep in a conversation rather than at the first request.
 
 ### OpenAI (F2, F3)
 
-`use_responses_api` in `llm_parameters` selects the Responses API; the `gpt-5.6-sol` name prefix is
-gone, and `defaults.yaml` carries the opt-in for that model. Control keys are filtered inside
-`_get_model_specific_params`, the single accessor all five request-building paths share, so they
-cannot leak into a request from a call site someone forgot to update.
+The `gpt-5.6-sol` name prefix is gone. Direct OpenAI now uses the Responses API **by default**, with
+`use_responses_api: false` in `llm_parameters` as the per-model escape hatch. Control keys are
+filtered inside `_get_model_specific_params`, the single accessor all five request-building paths
+share, so they cannot leak into a request from a call site someone forgot to update.
+
+This landed in two steps, and the intermediate one was wrong. Opt-in fixed the name sniffing but
+kept the same failure mode one level up: `gpt-5.5` — the retry fallback for two profiles — was never
+enrolled, so it silently stayed on Chat Completions and lost reasoning entirely. Probing confirmed
+`gpt-5.5` does emit encrypted reasoning items, so that was a real loss rather than a theoretical
+one. Any design where a model has to be listed somewhere is a design where a model can be forgotten;
+defaulting on and requiring an opt-*out* inverts that.
+
+Probing also established the default is safe: `gpt-5.6-sol`, `gpt-5.5`, `gpt-4.1` and `gpt-4o-mini`
+all accept the exact request this client builds, including the
+`include: ["reasoning.encrypted_content"]` that non-reasoning models simply answer without reasoning
+items.
+
+Two things that surfaced only because every OpenAI call now takes this path:
+
+- **The synthesized assistant-history item carried a random `msg_<uuid>` id.** It matched nothing
+  server-side and changed the input prefix on every request, defeating OpenAI's automatic prompt
+  caching for the rest of the conversation. Nothing failed loudly — it showed up as five cassettes
+  that recorded fine and then would not replay. The id is gone; the API accepts history items
+  without one, and a unit test pins the body as byte-stable across identical calls.
+- **Message conversion silently dropped content parts it could not express.** Filtering out an
+  `attachment` or `file_placeholder` part was survivable while this path served one model; as the
+  default it is the "silent failure at one layer, confusing error at another" case the repo's rules
+  call out. Unconvertible parts now raise.
 
 Each response records whether it was stored. Reasoning items with no `encrypted_content` are kept
 only when their originating response is known to have been stored, which unblocks conversations
@@ -247,8 +271,9 @@ ever wrote.
   cross-provider metadata isolation, budget validation.
 - `tests/unit/storage/test_thinking_block_persistence.py` — signature survives the database round
   trip, and a message read back from storage still converts into a valid turn.
-- `tests/unit/llm/providers/test_openai_responses_input.py` — opt-in gating, control-key leakage,
-  and the three `encrypted_content` cases.
+- `tests/unit/llm/providers/test_openai_responses_input.py` — API-selection defaults and opt-out,
+  control-key leakage, request-body stability, strict content-part conversion, and the three
+  `encrypted_content` cases.
 - `frontend/src/pages/History/components/__tests__/MessageDisplay.test.jsx` — summaries render, and
   the panel stays hidden when there are none.
 

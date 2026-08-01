@@ -206,11 +206,19 @@ class OpenAIClient(BaseLLMClient):
     def _uses_responses_api(self) -> bool:
         """Return whether this model should be driven through the Responses API.
 
-        Opt-in via a ``use_responses_api`` entry in ``llm_parameters`` rather
-        than inferred from the model name. Reasoning state only survives a tool
-        loop on this path (Chat Completions has no equivalent), so which API a
-        model uses is a deliberate operator choice, not something to guess from
-        a name prefix that a new model silently fails to match.
+        Defaults to **on** for direct OpenAI. Responses is the current API and
+        the only one that returns the encrypted reasoning items needed for
+        reasoning to survive a tool loop; Chat Completions has no equivalent, so
+        anything left on it silently loses reasoning between steps. Every model
+        this repo configures accepts the request shape built here, including the
+        ``include: ["reasoning.encrypted_content"]`` that non-reasoning models
+        simply answer without reasoning items.
+
+        Set ``use_responses_api: false`` in ``llm_parameters`` to pin a specific
+        model back to Chat Completions. Defaulting on rather than enumerating
+        models means a newly configured model gets reasoning propagation without
+        anyone remembering to enrol it -- the failure mode of the previous
+        opt-in, and of the model-name prefix before that.
 
         Restricted to direct OpenAI: the Responses API is not part of the
         OpenAI-compatible surface that OpenRouter and other ``base_url``
@@ -218,7 +226,17 @@ class OpenAIClient(BaseLLMClient):
         """
         if not self._is_direct_openai:
             return False
-        return bool(self._resolve_model_parameters(self.model).get("use_responses_api"))
+        configured = self._resolve_model_parameters(self.model).get(
+            "use_responses_api", True
+        )
+        if not isinstance(configured, bool):
+            raise InvalidRequestError(
+                "Invalid use_responses_api configuration for model "
+                f"'{self.model}': expected a boolean, got {configured!r}",
+                provider="openai",
+                model=self.model,
+            )
+        return configured
 
     def _build_responses_params(
         self,
@@ -291,6 +309,29 @@ class OpenAIClient(BaseLLMClient):
             return True
         return bool(item.get("encrypted_content"))
 
+    def _content_part_to_responses_input(self, part: ContentPart) -> dict[str, object]:
+        """Convert one user content part to a Responses input part.
+
+        Unconvertible parts raise rather than being filtered out. Only
+        ``attachment`` and ``file_placeholder`` parts can land here, and both
+        are supposed to have been resolved upstream -- attachments are converted
+        before reaching a provider, and file placeholders exist only for mock
+        clients. Silently dropping one would strip content the user supplied and
+        surface later as an unrelated "empty input" style failure, which is the
+        exact shape of bug the no-silent-failures rule exists to prevent.
+        """
+        if isinstance(part, TextContentPart):
+            return {"type": "input_text", "text": part.text}
+        if isinstance(part, ImageUrlContentPart):
+            return {"type": "input_image", "image_url": part.image_url["url"]}
+        raise InvalidRequestError(
+            f"Cannot send content part of type '{part.type}' to the OpenAI "
+            "Responses API; it should have been resolved before reaching the "
+            "provider",
+            provider="openai",
+            model=self.model,
+        )
+
     def _messages_to_responses_input(
         self,
         messages: Sequence[LLMMessage],
@@ -304,16 +345,8 @@ class OpenAIClient(BaseLLMClient):
                     content = message.content
                 else:
                     content = [
-                        (
-                            {"type": "input_text", "text": part.text}
-                            if isinstance(part, TextContentPart)
-                            else {
-                                "type": "input_image",
-                                "image_url": part.image_url["url"],
-                            }
-                        )
+                        self._content_part_to_responses_input(part)
                         for part in message.content
-                        if isinstance(part, (TextContentPart, ImageUrlContentPart))
                     ]
                 input_items.append({"role": "user", "content": content})
             elif message.role == "system":
@@ -347,9 +380,13 @@ class OpenAIClient(BaseLLMClient):
                         })
                 else:
                     if message.content:
+                        # No synthesized `id`. A fabricated one matches nothing
+                        # server-side, and because it differs on every request
+                        # it changes the input prefix each time, defeating
+                        # OpenAI's automatic prompt caching for the whole
+                        # conversation after this point.
                         input_items.append({
                             "type": "message",
-                            "id": f"msg_{uuid.uuid4().hex}",
                             "role": "assistant",
                             "content": [
                                 {

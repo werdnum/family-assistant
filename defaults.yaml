@@ -63,14 +63,16 @@ llm_parameters:
   #     type: adaptive
   #   output_config:
   #     effort: high
-  # GPT-5.6-sol must run on the Responses API: it is the only OpenAI surface
-  # that returns encrypted reasoning items, which have to be replayed for
-  # reasoning to survive a multi-step tool loop. `use_responses_api` steers this
-  # client and is stripped before the request is built, so it never reaches the
-  # API. Direct OpenAI only -- OpenRouter and other base_url backends implement
-  # Chat Completions, not Responses.
-  "gpt-5.6-sol":
-    use_responses_api: true
+  # Direct OpenAI models use the Responses API by default. It is the only
+  # OpenAI surface that returns encrypted reasoning items, which have to be
+  # replayed for reasoning to survive a multi-step tool loop; Chat Completions
+  # has no equivalent, so anything left on it loses reasoning between steps.
+  # Uncomment to pin a specific model back to Chat Completions.
+  # `use_responses_api` steers the client and is stripped before the request is
+  # built, so it never reaches the API. Direct OpenAI only -- OpenRouter and
+  # other base_url backends implement Chat Completions, not Responses.
+  # "some-openai-model":
+  #   use_responses_api: false
 # Gemini Live Voice API Configuration
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
@@ -1926,3 +1928,4 @@ browser_handoff_config:
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See
 # docs/operations/CONFIGURATION_REFERENCE.md.
+

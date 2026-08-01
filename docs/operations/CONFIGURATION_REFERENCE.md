@@ -627,12 +627,12 @@ provider for every matching model. It is shared by all profiles, including both 
 
 ```yaml
 llm_parameters:
-  "gpt-5.6-sol":
-    use_responses_api: true
   "claude-sonnet-4-6":
     thinking:
       type: enabled
       budget_tokens: 4096
+  "some-openai-model":
+    use_responses_api: false # opt a model back out; the default is on
 ```
 
 #### Reasoning propagation, by provider
@@ -642,12 +642,18 @@ from scratch on every step. How that works differs:
 
 - **Google (Gemini)** — thought signatures are captured and replayed automatically. No
   configuration.
-- **OpenAI** — only the Responses API returns the encrypted reasoning items that can be replayed;
-  Chat Completions has no equivalent. Set `use_responses_api: true` to select it. This is opt-in per
-  model rather than inferred from the model name, so adding a new reasoning model means adding an
-  entry here — it will otherwise run on Chat Completions with no reasoning propagation. Direct
-  OpenAI only; OpenRouter and other `base_url` backends implement Chat Completions and the flag is
-  ignored for them.
+
+- **OpenAI** — direct OpenAI models use the **Responses API by default**. Only Responses returns the
+  encrypted reasoning items that can be replayed; Chat Completions has no equivalent, so anything
+  left on it loses reasoning between tool-loop steps. Defaulting on means a newly configured model
+  gets reasoning propagation without anyone remembering to enrol it. Set `use_responses_api: false`
+  to pin a specific model back to Chat Completions. Direct OpenAI only; OpenRouter and other
+  `base_url` backends implement Chat Completions, and the flag is ignored for them.
+
+  Switching a model between the two APIs is observable beyond reasoning: parallel tool-calling
+  behaviour can differ for the same prompt, and structured output (`generate_structured` /
+  `generate_json`) always uses Chat Completions regardless of this setting.
+
 - **Anthropic** — extended thinking is off by default. Once enabled, thinking blocks are captured
   and replayed automatically.
 

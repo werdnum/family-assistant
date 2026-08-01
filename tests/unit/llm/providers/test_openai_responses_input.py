@@ -6,7 +6,14 @@ import pytest
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.base import InvalidRequestError
-from family_assistant.llm.messages import AssistantMessage, LLMMessage, UserMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    AttachmentContentPart,
+    ImageUrlContentPart,
+    LLMMessage,
+    TextContentPart,
+    UserMessage,
+)
 from family_assistant.llm.providers.openai_client import OpenAIClient
 
 
@@ -54,6 +61,26 @@ def test_synthesized_responses_assistant_message_omits_status() -> None:
     ])
 
     assert "status" not in input_items[0]
+
+
+def test_synthesized_assistant_message_is_byte_stable_across_requests() -> None:
+    """A fabricated per-request id would silently defeat prompt caching.
+
+    The input prefix has to be identical between turns for OpenAI to reuse a
+    cached prefix. Nothing fails loudly when it is not -- the bill just goes up
+    and every cassette stops matching -- so it is pinned here.
+    """
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    messages: list[LLMMessage] = [
+        UserMessage(content="What is the weather?"),
+        AssistantMessage(content="It is sunny."),
+    ]
+
+    first = client._messages_to_responses_input(messages)
+    second = client._messages_to_responses_input(messages)
+
+    assert first == second
+    assert "id" not in first[1]
 
 
 def test_responses_serializes_structured_tool_call_arguments() -> None:
@@ -241,22 +268,43 @@ async def test_streaming_store_error_is_typed_invalid_request() -> None:
     assert events[0].metadata.get("error_type") == "invalid_request"
 
 
-def test_responses_api_requires_explicit_opt_in() -> None:
-    """A reasoning-capable model name alone must not switch APIs."""
-    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-5.6-sol", "gpt-5.5", "gpt-4.1", "some-future-openai-model"],
+)
+def test_responses_api_is_the_default_for_direct_openai(model: str) -> None:
+    """Every direct OpenAI model gets Responses without being enrolled.
+
+    A model that has to be listed somewhere is a model someone can forget,
+    which is how the previous name-prefix and opt-in designs both lost
+    reasoning propagation silently.
+    """
+    client = OpenAIClient(api_key="test-key", model=model)
+
+    assert client._uses_responses_api() is True
+
+
+def test_responses_api_can_be_pinned_off_per_model() -> None:
+    """The escape hatch back to Chat Completions still works."""
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-sol",
+        model_parameters={"gpt-5.6-sol": {"use_responses_api": False}},
+    )
 
     assert client._uses_responses_api() is False
 
 
-def test_responses_api_opt_in_via_model_parameters() -> None:
-    """`use_responses_api` in llm_parameters is what selects the Responses API."""
+def test_non_boolean_use_responses_api_is_rejected() -> None:
+    """YAML `use_responses_api: "false"` must not read as true."""
     client = OpenAIClient(
         api_key="test-key",
         model="gpt-5.6-sol",
-        model_parameters={"gpt-5.6-sol": {"use_responses_api": True}},
+        model_parameters={"gpt-5.6-sol": {"use_responses_api": "false"}},
     )
 
-    assert client._uses_responses_api() is True
+    with pytest.raises(InvalidRequestError, match="expected a boolean"):
+        client._uses_responses_api()
 
 
 def test_control_params_never_reach_the_api() -> None:
@@ -285,3 +333,41 @@ def test_responses_api_not_used_for_openai_compatible_backends() -> None:
     )
 
     assert client._uses_responses_api() is False
+
+
+def test_unconvertible_content_part_raises_instead_of_being_dropped() -> None:
+    """Silently filtering a part would strip content the user supplied."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    messages: list[LLMMessage] = [
+        UserMessage(
+            content=[
+                TextContentPart(type="text", text="Look at this"),
+                AttachmentContentPart(type="attachment", attachment_id="att_1"),
+            ]
+        )
+    ]
+
+    with pytest.raises(InvalidRequestError, match="attachment"):
+        client._messages_to_responses_input(messages)
+
+
+def test_text_and_image_parts_still_convert() -> None:
+    """The convertible part types are unaffected by the strictness."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    messages: list[LLMMessage] = [
+        UserMessage(
+            content=[
+                TextContentPart(type="text", text="What is in this image?"),
+                ImageUrlContentPart(
+                    type="image_url", image_url={"url": "data:image/png;base64,AAAA"}
+                ),
+            ]
+        )
+    ]
+
+    input_items = client._messages_to_responses_input(messages)
+
+    assert input_items[0]["content"] == [
+        {"type": "input_text", "text": "What is in this image?"},
+        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+    ]
