@@ -38,7 +38,7 @@ from family_assistant.config_loader import (
     resolve_service_profile,
     set_nested_value,
 )
-from family_assistant.config_models import AppConfig, ProcessingConfig
+from family_assistant.config_models import AppConfig, ProcessingConfig, ServiceProfile
 from family_assistant.config_sources import (
     DeepMergedYamlSource,
     deep_merge_dicts,
@@ -2555,4 +2555,40 @@ def test_shipped_telephone_profile_keeps_its_greeting() -> None:
     assert profile.processing_config is not None
     assert profile.processing_config.greeting_wav_path == (
         "resources/greeting_external.wav"
+    )
+
+
+def test_every_service_profile_field_is_accounted_for() -> None:
+    """A top-level ServiceProfile field also needs explicit copying.
+
+    `resolve_service_profile` handles top-level keys one `if` at a time, the same
+    trap as the processing_config key list: a field nothing copies is accepted by
+    validation and then dropped. `excluded_global_tools` withholds tools that
+    `global_tools_policy` grants to every profile, so dropping that one would
+    silently restore access a profile deliberately gave up.
+    """
+    handled = {
+        # Copied or merged by name in resolve_service_profile.
+        "processing_config",
+        "tools_config",
+        "tools_policy",
+        "taint_policy",
+        "chat_id_to_name_map",
+        "slash_commands",
+        "visibility_grants",
+        "excluded_global_tools",
+        "remote_a2a",
+        # Set from the profile definition directly rather than merged.
+        "id",
+        "description",
+        # Injected by the operator-policy layer, never from a profile block.
+        "operator_tools_policy",
+    }
+
+    unaccounted = set(ServiceProfile.model_fields) - handled
+
+    assert not unaccounted, (
+        f"ServiceProfile field(s) {sorted(unaccounted)} are not copied by "
+        "resolve_service_profile, so setting them on a profile would be "
+        "silently ignored. Add explicit handling and list them here."
     )

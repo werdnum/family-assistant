@@ -127,11 +127,16 @@ def test_the_handoff_profile_can_reach_no_tool_that_acts() -> None:
     an empty profile policy is not the same thing as no tools, and the profile
     cannot deny these at any priority.
 
-    The survivors are all confined to the turn: two read back oversized tool
-    results, and one appends a row to the local error log. Nothing here can
-    communicate externally. Pinning the exact set is the point — a genuinely
-    state-changing tool added to the global policy has to fail this test rather
-    than quietly reach a profile built to hold no privileges.
+    `excluded_global_tools` is what makes the deny effective, by denying in that
+    same layer at a higher priority. All three globally granted tools are
+    withheld: `read_text_attachment` and `jq_query` resolve any attachment id the
+    acting user owns rather than only this turn's artifacts, so injected media
+    naming an id could read private content [B]; `report_technical_problem`
+    persists model-supplied text [C].
+
+    Asserting the empty set rather than a list of tolerated names is the point —
+    a tool added to the global policy has to fail this test rather than quietly
+    reach a profile built to hold no privileges.
     """
     config = _load_defaults()
     profile = next(p for p in config.service_profiles if p.id == _HANDOFF_PROFILE_ID)
@@ -140,6 +145,7 @@ def test_the_handoff_profile_can_reach_no_tool_that_acts() -> None:
         profile_tools_policy=profile.tools_policy,
         operator_tools_policy=None,
         global_tools_policy=config.global_tools_policy,
+        excluded_global_tools=profile.excluded_global_tools,
     )
 
     reachable = {
@@ -148,11 +154,7 @@ def test_the_handoff_profile_can_reach_no_tool_that_acts() -> None:
         if engine.evaluate(descriptor).decision != ToolPolicyDecision.DENY
     }
 
-    assert reachable == {
-        "read_text_attachment",
-        "jq_query",
-        "report_technical_problem",
-    }
+    assert reachable == set()
 
 
 def test_the_handoff_profile_gets_none_of_the_user_s_context() -> None:

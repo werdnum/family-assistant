@@ -1532,12 +1532,27 @@ The rules apply regardless of the profile's own `tools_policy`, which otherwise 
 defaults wholesale rather than merging with them. Use it for tools that must be available in all
 contexts. Operator policy still overrides global rules.
 
-**A profile cannot opt out.** Global rules are injected at the `profile` policy layer, which
-outranks the `defaults` layer a profile's own `tools_policy` occupies, so a deny rule in a profile
-does not override a global allow at any priority — layer beats priority. A profile intended to hold
-no privileges (see `media_analyst`) therefore still reaches every globally-allowed tool. Keep this
-section to tools that are safe in a fully untrusted context, and reach for operator policy if you
-need to withdraw one.
+**A profile's own `tools_policy` cannot opt out.** Global rules are injected at the `profile` policy
+layer, which outranks the `defaults` layer a profile's own `tools_policy` occupies, so a deny rule
+written there does not override a global allow at any priority — layer beats priority.
+
+Use `excluded_global_tools` on the profile to withhold one. It denies in the same layer as the
+global rules at the maximum priority, which is what makes it effective. The shipped `media_analyst`
+profile withholds all three, because none is safe in a fully untrusted context:
+`read_text_attachment` and `jq_query` resolve any attachment the acting user owns rather than only
+the current turn's artifacts, and `report_technical_problem` persists model-supplied text.
+
+```yaml
+service_profiles:
+  - id: "media_analyst"
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
+```
+
+Keep this section to broadly safe tools, and treat anything that reads user-owned data by id, or
+writes, as needing an exclusion in every profile that processes untrusted input.
 
 The shipped default uses it for two things:
 

@@ -214,6 +214,7 @@ from family_assistant.tools.on_demand import (
 )
 from family_assistant.tools.policy import (
     DEFAULT_POLICY_PRIORITY_OFFSET,
+    MAX_POLICY_RULE_PRIORITY,
     OPERATOR_POLICY_PRIORITY_OFFSET,
     PROFILE_POLICY_PRIORITY_OFFSET,
     PolicyEngine,
@@ -312,6 +313,7 @@ __all__ = [
     "LOCAL_TOOL_DESCRIPTORS",
     "LOCAL_TOOL_METADATA_BY_NAME",
     "LOCAL_TOOL_REGISTRATIONS",
+    "MAX_POLICY_RULE_PRIORITY",
     "MEDIA_DOWNLOAD_TOOLS_DEFINITION",
     "MOCK_IMAGE_TOOLS_DEFINITION",
     # MQTT tools

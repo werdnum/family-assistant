@@ -1338,16 +1338,17 @@ service_profiles:
     # audio is exactly the pairing the Rule of Two exists to prevent.
     #
     # On [C]: an empty tool policy is not literally no tools either.
-    # global_tools_policy rules are injected at the `profile` policy layer,
-    # which outranks the `defaults` layer a profile's own tools_policy lands in,
-    # so a profile cannot deny them at any priority. Three tools reach here:
-    # read_text_attachment and jq_query read back oversized results from this
-    # same turn, and report_technical_problem appends a row to the local error
-    # log. None can communicate outside the turn, and with the context providers
-    # above excluded there is no sensitive data here to carry out -- so no
-    # exfiltration chain exists even against a fully injected model.
-    # test_the_handoff_profile_can_reach_no_tool_that_acts pins that set, so a
-    # genuinely state-changing tool added to the global policy fails the build.
+    # global_tools_policy grants three tools to every profile, and a profile's
+    # own tools_policy cannot refuse them -- global rules are injected at the
+    # `profile` policy layer, which outranks the `defaults` layer a profile's own
+    # policy occupies, so layer beats priority. excluded_global_tools is how a
+    # profile withholds them; it denies in the same layer at a higher priority.
+    #
+    # All three have to go. read_text_attachment and jq_query are not confined to
+    # this turn: both resolve any attachment id the acting user owns, so injected
+    # media naming an id could read private content [B]. report_technical_problem
+    # is tagged STATE_CHANGING and writes model-supplied text to error_logs [C].
+    # Left in place, a profile advertised as [A]-only would hold all three.
     processing_config:
       provider: "google"
       llm_model: "gemini-3.6-flash"
@@ -1377,6 +1378,10 @@ service_profiles:
     tools_policy:
       default_decision: "deny"
       rules: []
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
     slash_commands: []
   - id: "artist"
     description: "Creative assistant specialized in generating and manipulating images and videos using advanced AI models."

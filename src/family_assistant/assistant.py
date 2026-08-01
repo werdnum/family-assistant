@@ -125,9 +125,7 @@ from family_assistant.tools import (
     LOCAL_TOOL_METADATA_BY_NAME as local_tool_metadata_by_name,
 )
 from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
-)
-from family_assistant.tools import (
+    MAX_POLICY_RULE_PRIORITY,
     CompositeToolsProvider,
     LocalToolsProvider,
     MCPServerConfig,
@@ -143,6 +141,9 @@ from family_assistant.tools import (
     _scan_user_docs,
     build_local_tool_registrations,
 )
+from family_assistant.tools import (
+    TOOLS_DEFINITION as local_tools_definition,
+)
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
@@ -155,6 +156,7 @@ from .telegram.service import TelegramService
 
 if TYPE_CHECKING:
     import socket
+    from collections.abc import Sequence
 
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -193,6 +195,7 @@ def _build_profile_policy_engine(
     profile_tools_policy: ToolPolicyConfig | None,
     operator_tools_policy: ToolPolicyConfig | None,
     global_tools_policy: ToolPolicyConfig | None = None,
+    excluded_global_tools: Sequence[str] | None = None,
 ) -> PolicyEngine:
     """Build a policy engine for a profile from explicit policy config.
 
@@ -225,6 +228,23 @@ def _build_profile_policy_engine(
     ]
     if global_tools_policy is not None:
         synthetic_rules.extend(global_tools_policy.rules)
+
+    # Withheld global tools are denied in the SAME layer the global rules are
+    # injected into, at a higher priority. That is what makes the deny effective:
+    # within a layer priority decides, so this beats the shipped global allows at
+    # priority 50. The equivalent rule in a profile's own `tools_policy` does not
+    # work, because that lands in the lower-ranked `defaults` layer.
+    if excluded_global_tools:
+        synthetic_rules.append(
+            PolicyRule(
+                match=ToolMatcher(names=list(excluded_global_tools)),
+                decision=ToolPolicyDecision.DENY,
+                priority=MAX_POLICY_RULE_PRIORITY,
+                description=(
+                    f"Profile '{profile_id}' withholds these globally granted tools."
+                ),
+            )
+        )
 
     synthetic_policy = ToolPolicyConfig(rules=synthetic_rules)
 
@@ -1033,6 +1053,7 @@ class Assistant:
                 profile_tools_policy,
                 profile_operator_tools_policy,
                 self.config.global_tools_policy,
+                profile_conf.excluded_global_tools,
             )
             # Get confirmation timeout from config, default to 3600 seconds (1 hour)
             confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds

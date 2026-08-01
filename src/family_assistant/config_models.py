@@ -299,6 +299,13 @@ class ServiceProfile(BaseModel):
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
+    # Tool names to withhold from this profile even though `global_tools_policy`
+    # grants them to every profile. A profile's own `tools_policy` cannot deny a
+    # global grant -- global rules are injected at the `profile` policy layer,
+    # which outranks the `defaults` layer a profile's own policy occupies, so
+    # layer beats priority. This is the only way for a profile that must hold no
+    # privileges to actually hold none.
+    excluded_global_tools: list[str] = Field(default_factory=list)
     remote_a2a: RemoteA2AConfig | None = None
 
 

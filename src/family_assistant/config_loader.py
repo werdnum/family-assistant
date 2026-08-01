@@ -873,6 +873,14 @@ def resolve_service_profile(
     ):
         resolved["visibility_grants"] = profile_def["visibility_grants"]
 
+    # Handle excluded_global_tools (replace if present). This withholds tools
+    # that global_tools_policy grants to every profile, so dropping it here would
+    # silently restore access a profile deliberately gave up.
+    if "excluded_global_tools" in profile_def and isinstance(
+        profile_def["excluded_global_tools"], list
+    ):
+        resolved["excluded_global_tools"] = profile_def["excluded_global_tools"]
+
     # Handle remote_a2a (replace if present)
     if "remote_a2a" in profile_def:
         resolved["remote_a2a"] = profile_def["remote_a2a"]

@@ -16,6 +16,11 @@ from family_assistant.tools.metadata import (
 if TYPE_CHECKING:
     from family_assistant.tools.metadata import ToolDescriptor
 
+# Highest priority a rule may declare. Rules compete on priority within a policy
+# layer, so this is the value to use when a rule must beat every other rule in
+# its layer -- e.g. withholding a globally granted tool from one profile.
+MAX_POLICY_RULE_PRIORITY = 99
+
 DEFAULT_POLICY_PRIORITY_OFFSET = 0
 PROFILE_POLICY_PRIORITY_OFFSET = 100
 OPERATOR_POLICY_PRIORITY_OFFSET = 1000
@@ -108,7 +113,7 @@ class PolicyRule(BaseModel):
 
     match: ToolMatcher
     decision: ToolPolicyDecision
-    priority: int = Field(default=0, ge=0, le=99)
+    priority: int = Field(default=0, ge=0, le=MAX_POLICY_RULE_PRIORITY)
     description: str = ""
 
 
