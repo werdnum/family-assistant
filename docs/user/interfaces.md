@@ -78,6 +78,11 @@ The menu is grouped into **Information**, **Operations**, and **Settings**:
 
   ![History Page](../../screenshots/desktop/history.png)
 
+  Each message has a **Message Details** panel you can expand to see which mode answered, how many
+  tokens the turn used, and — for models that report it — a **Thinking Summary** of the reasoning
+  behind the reply. Not every model publishes a summary, so the panel only appears when one was
+  recorded.
+
 - **Tasks** — background and scheduled work, with the option to retry a failed task.
 
   ![Tasks Page](../../screenshots/desktop/tasks.png)

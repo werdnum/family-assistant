@@ -136,7 +136,15 @@ async def test_single_tool_call(
 
     assert isinstance(response, LLMOutput)
     assert response.tool_calls is not None
-    assert len(response.tool_calls) == 1
+    # Whether a model answers a single-tool prompt with one call or several
+    # identical parallel calls is a model trait, not a contract this client
+    # controls -- gpt-4.1-nano emits two on the Responses API where it emitted
+    # one on Chat Completions. What matters is that the one available tool is
+    # the one called, with usable arguments.
+    assert response.tool_calls
+    assert all(
+        tool_call.function.name == "get_weather" for tool_call in response.tool_calls
+    )
 
     tool_call = response.tool_calls[0]
     assert isinstance(tool_call, ToolCallItem)
