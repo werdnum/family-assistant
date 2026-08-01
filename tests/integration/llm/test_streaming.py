@@ -449,19 +449,40 @@ async def test_anthropic_streaming_thinking_round_trip(
     # 400. Verifying replay against a model/shape combination no profile uses
     # would leave the mechanism those two profiles depend on unexercised, which
     # is the one thing this test exists to prevent.
+    #
+    # `display` is the one field set here that the profiles do not set. Sonnet 5
+    # defaults it to `omitted`, which still returns thinking blocks carrying the
+    # signature -- so capture and replay, the mechanism under test, behave
+    # identically either way -- but their text is empty, and a turn with no
+    # thinking text cannot show that reasoning stays out of the reply. The
+    # profiles leave the default because nothing renders reasoning text: the
+    # `thinking` stream events are ignored by the processing loop and by the web
+    # and iOS transports, so paying for summaries would buy nothing.
     client = LLMClientFactory.create_client({
         "provider": "anthropic",
         "model": "claude-sonnet-5",
         "api_key": os.getenv("ANTHROPIC_API_KEY", "test-anthropic-key"),
         "model_parameters": {
             "claude-sonnet-5": {
-                "thinking": {"type": "adaptive"},
+                "thinking": {"type": "adaptive", "display": "summarized"},
                 "output_config": {"effort": "high"},
                 "max_tokens": 16000,
             }
         },
     })
-    messages = [create_user_message("What is 42 times 17? Use the calculate tool.")]
+    # Adaptive thinking decides per turn whether to think at all, and skips it on
+    # a single multiplication -- which recorded a turn with no thinking block to
+    # replay. Multi-step arithmetic earns the thinking this test needs on the
+    # large majority of runs, but the decision is still the model's: a re-record
+    # that lands on a no-thinking turn fails here rather than committing a
+    # cassette with nothing to replay, and should just be run again.
+    messages = [
+        create_user_message(
+            "A tank holds 4200 litres. It drains at 17 litres per minute for 42 "
+            "minutes, then is refilled at 23 litres per minute for 31 minutes. "
+            "Work out the final volume, using the calculate tool for the arithmetic."
+        )
+    ]
 
     tool_calls = []
     thinking_chunks = []
