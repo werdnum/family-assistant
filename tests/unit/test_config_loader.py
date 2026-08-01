@@ -2534,3 +2534,25 @@ def test_every_processing_config_field_is_accounted_for() -> None:
         "PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS if a dedicated code path "
         "already applies them."
     )
+
+
+def test_shipped_telephone_profile_keeps_its_greeting() -> None:
+    """A profile-level greeting must survive resolution.
+
+    `telephone_external` is the one shipped profile that sets
+    `greeting_wav_path`, and it reached `None` for as long as the field was
+    missing from the overridable key list — external callers got no greeting,
+    with nothing anywhere reporting that the configured path had been dropped.
+    This is the concrete case the completeness test above generalises.
+    """
+    config = load_config(
+        config_file_path="nonexistent-so-only-defaults.yaml",
+        load_dotenv_file=False,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "telephone_external")
+
+    assert profile.processing_config is not None
+    assert profile.processing_config.greeting_wav_path == (
+        "resources/greeting_external.wav"
+    )

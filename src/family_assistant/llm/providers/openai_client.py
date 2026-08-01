@@ -87,6 +87,20 @@ _OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 _RESPONSES_IMAGE_MIME_PREFIX = "image/"
 _RESPONSES_FILE_MIME_TYPES: dict[str, str] = {"application/pdf": "attachment.pdf"}
 
+# Types worth inlining as bytes on the Responses API: the two it reads directly,
+# plus the two a multimodal profile can be handed. Anything else -- an archive, a
+# spreadsheet -- gets a description instead, because base64-encoding it into the
+# request only to substitute a note would cost the whole payload for nothing.
+_HANDOFF_MEDIA_MIME_PREFIXES = ("image/", "audio/", "video/")
+
+
+def _is_media_mime_type(mime_type: str) -> bool:
+    """Whether this type is readable by the Responses API or by the handoff."""
+    return (
+        mime_type.startswith(_HANDOFF_MEDIA_MIME_PREFIXES)
+        or mime_type in _RESPONSES_FILE_MIME_TYPES
+    )
+
 
 class OpenAIClient(BaseLLMClient):
     """Direct OpenAI API implementation."""
@@ -154,6 +168,32 @@ class OpenAIClient(BaseLLMClient):
                 type="text", text="[System: File from previous tool response]"
             )
         ]
+
+        # On the Responses API every binary type is handled by the same
+        # MIME-aware conversion the chat path uses: images become `input_image`,
+        # PDFs `input_file`, and audio/video a note naming the attachment so the
+        # model can hand it to a profile that reads it. Carrying the
+        # attachment_id is what makes that note actionable -- this path is how
+        # web chat sends PDFs, audio and video (`chat_api.py` routes every
+        # non-image upload through `attachment_content`), so without it a web
+        # user's PDF became placeholder text on a model that can read PDFs.
+        if (
+            attachment.content
+            and self._uses_responses_api()
+            and _is_media_mime_type(attachment.mime_type)
+        ):
+            b64_data = attachment.get_content_as_base64()
+            if b64_data:
+                content_parts.append(
+                    ImageUrlContentPart(
+                        type="image_url",
+                        image_url={
+                            "url": f"data:{attachment.mime_type};base64,{b64_data}"
+                        },
+                        attachment_id=attachment.attachment_id,
+                    )
+                )
+                return UserMessage(content=content_parts)
 
         if attachment.content and attachment.mime_type.startswith("image/"):
             # Use image_url format for images

@@ -278,12 +278,21 @@ class TestOpenAIClient:
         assert decoded == b"fake jpeg data"
 
     def test_create_attachment_injection_pdf_with_content(self) -> None:
-        """Test OpenAI attachment injection for PDF content"""
+        """The Responses API reads PDFs, so the bytes are kept rather than described.
+
+        Web chat routes every non-image upload through this path, so describing a
+        PDF as `[PDF Document: ...]` here discarded a document the model could
+        have read. The description is still correct on a Chat Completions
+        endpoint, which has no file input -- covered separately.
+        """
         client = OpenAIClient(api_key="test", model="gpt-4")
 
         fake_data = b"x" * 2048  # 2KB
         attachment = ToolAttachment(
-            mime_type="application/pdf", content=fake_data, description="Test document"
+            mime_type="application/pdf",
+            content=fake_data,
+            attachment_id="att-pdf",
+            description="Test document",
         )
 
         result = client.create_attachment_injection(attachment)
@@ -296,13 +305,10 @@ class TestOpenAIClient:
         assert result.content[0].type == "text"
         assert "File from previous tool response" in result.content[0].text
 
-        # Second part should be text description for PDF (fallback approach)
-        text_part = result.content[1]
-        assert text_part.type == "text"
-        assert "PDF Document" in text_part.text
-        assert "Test document" in text_part.text
-        assert "0.0MB" in text_part.text
-        assert "Content cannot be displayed" in text_part.text
+        file_part = result.content[1]
+        assert file_part.type == "image_url"
+        assert file_part.image_url["url"].startswith("data:application/pdf;base64,")
+        assert file_part.attachment_id == "att-pdf"
 
     def test_create_attachment_injection_non_pdf_binary_content(self) -> None:
         """Test OpenAI attachment injection for non-PDF binary content"""

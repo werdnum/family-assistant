@@ -723,19 +723,21 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "excluded_context_providers",
     "poll_interval_seconds",
     "max_async_seconds",
-)
-
-# Keys deliberately left out of the set above because they are merged or applied
-# by dedicated code paths rather than replaced wholesale.
-PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
-    "prompts",  # deep-merged, not replaced
-    "include_system_docs",  # loaded into prompts.system_prompt_docs
-    "calendar_config",  # merged from the top-level calendar config
-    "home_assistant_api_url",  # set from env var mappings
+    "calendar_config",
+    "home_assistant_api_url",
     "home_assistant_token",
     "home_assistant_context_template",
     "home_assistant_verify_ssl",
     "greeting_wav_path",
+)
+
+# Keys deliberately left out of the set above because a dedicated code path
+# below applies them. Keep this set honest: an entry here asserts that handling
+# exists, so exempting a field that nothing actually copies makes the
+# completeness test pass while the field stays silently discarded.
+PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
+    "prompts",  # deep-merged with the inherited prompts, not replaced
+    "include_system_docs",  # loaded into prompts.system_prompt_docs
 })
 
 

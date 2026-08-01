@@ -7,6 +7,9 @@ rename or a provider change on the profile turns the instruction into advice the
 model cannot follow. These tests are that connection.
 """
 
+import inspect
+from typing import cast
+
 from family_assistant.assistant import (
     _build_profile_policy_engine,  # noqa: PLC2701 - the only helper that applies global_tools_policy injection, which is the whole point of the assertion
 )
@@ -18,6 +21,7 @@ from family_assistant.config_models import (
 )
 from family_assistant.context_providers import (
     CalendarContextProvider,
+    ContextProvider,
     HomeAssistantContextProvider,
     KnownUsersContextProvider,
     NotesContextProvider,
@@ -171,15 +175,19 @@ def test_context_provider_names_match_config() -> None:
     A provider renamed on one side only would turn an exclusion into a silent
     no-op, which is the failure mode the exclusion exists to prevent.
     """
+    provider_classes: tuple[type[ContextProvider], ...] = (
+        NotesContextProvider,
+        CalendarContextProvider,
+        KnownUsersContextProvider,
+        WeatherContextProvider,
+        HomeAssistantContextProvider,
+    )
+    # `name` is a read-only property returning a literal on every provider, so
+    # the value is available without building one -- these have constructors
+    # wanting database handles, timezones and HTTP clients.
     live_names = {
-        provider_cls.name.fget(None)  # type: ignore[attr-defined]
-        for provider_cls in (
-            NotesContextProvider,
-            CalendarContextProvider,
-            KnownUsersContextProvider,
-            WeatherContextProvider,
-            HomeAssistantContextProvider,
-        )
+        cast("str", inspect.getattr_static(provider_cls, "name").fget(provider_cls))
+        for provider_cls in provider_classes
     }
 
     assert live_names == CONTEXT_PROVIDER_NAMES

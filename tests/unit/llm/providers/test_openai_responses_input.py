@@ -15,6 +15,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.providers.openai_client import OpenAIClient
+from family_assistant.tools.types import ToolAttachment
 
 
 def test_responses_continuation_omits_response_status() -> None:
@@ -529,3 +530,66 @@ def test_unreadable_media_without_an_id_asks_the_user_instead() -> None:
     assert isinstance(text, str)
     assert "delegate_to_service" not in text
     assert "None" not in text
+
+
+def _injected_responses_parts(
+    mime_type: str, *, base_url: str | None = None
+) -> list[dict[str, object]]:
+    """Run an attachment through injection and the Responses conversion."""
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-terra", base_url=base_url)
+    attachment = ToolAttachment(
+        content=b"hello",
+        mime_type=mime_type,
+        attachment_id="att-9",
+        description="a file",
+    )
+    message = client.create_attachment_injection(attachment)
+    items = client._messages_to_responses_input([message])
+    content = items[0]["content"]
+    assert isinstance(content, list)
+    # The first part is the "[System: File from previous tool response]" preamble.
+    return content[1:]
+
+
+def test_injected_pdf_reaches_the_responses_api_as_a_file() -> None:
+    """Web chat sends PDFs down the injection path, not as image_url parts.
+
+    `chat_api.py` routes every non-image upload through `attachment_content`, so
+    this path — not the chat content-part path — is what a web user's PDF takes.
+    It used to be replaced with `[PDF Document: ...]` placeholder text on a model
+    that reads PDFs natively, losing the document silently.
+    """
+    parts = _injected_responses_parts("application/pdf")
+
+    assert [part["type"] for part in parts] == ["input_file"]
+
+
+def test_injected_audio_carries_the_handoff_id() -> None:
+    """Audio has no Responses representation, so it must name itself instead.
+
+    Without the attachment id reaching this path the note would tell the model
+    to delegate a file it cannot identify.
+    """
+    parts = _injected_responses_parts("audio/ogg")
+
+    assert [part["type"] for part in parts] == ["input_text"]
+    text = parts[0]["text"]
+    assert isinstance(text, str)
+    assert "att-9" in text
+    assert "media_analyst" in text
+
+
+def test_injected_pdf_on_a_compatible_endpoint_stays_text() -> None:
+    """Chat Completions has no `input_file`, so the text degradation stands there.
+
+    A `base_url` backend implements Chat Completions only. Sending it a PDF data
+    URI as an image part would be a malformed request rather than a graceful one.
+    """
+    parts = _injected_responses_parts(
+        "application/pdf", base_url="https://openrouter.ai/api/v1"
+    )
+
+    assert [part["type"] for part in parts] == ["input_text"]
+    text = parts[0]["text"]
+    assert isinstance(text, str)
+    assert "PDF Document" in text
