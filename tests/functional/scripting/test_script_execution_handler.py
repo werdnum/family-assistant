@@ -17,7 +17,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.task_worker import TaskWorker, handle_script_execution
@@ -47,34 +47,34 @@ async def test_script_execution_creates_note(
     logger.info(f"\n--- Running Script Execution Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with script action
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name=f"Temperature Logger {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={
-                "entity_id": "sensor.test_temperature",
-            },
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={
-                "script_code": """
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name=f"Temperature Logger {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={
+            "entity_id": "sensor.test_temperature",
+        },
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={
+            "script_code": """
 temp = float(event["new_state"]["state"])
 add_or_update_note(
     title="Temperature Log",
     content="Temperature: " + str(temp) + "°C"
 )
 """
-            },
-            enabled=True,
-        )
+        },
+        enabled=True,
+    )
 
     # Step 2: Create minimal infrastructure
     # Event processor with database access
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -135,12 +135,10 @@ add_or_update_note(
     await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 4: Verify user-visible outcome - note was created
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        note = await db_ctx.notes.get_by_title(
-            "Temperature Log", visibility_grants=None
-        )
-        assert note is not None
-        assert "Temperature: 22.5°C" in note.content
+    db_ctx = Database(engine=db_engine)
+    note = await db_ctx.notes.get_by_title("Temperature Log", visibility_grants=None)
+    assert note is not None
+    assert "Temperature: 22.5°C" in note.content
 
     logger.info("Script executed successfully and created note")
 
@@ -169,61 +167,59 @@ async def test_script_execution_by_stored_name(
 
     # Step 1: Save a script via save_script_tool (declares 'event' in schema so
     # validation accepts the runtime global) and create automation referencing it by name
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        tool_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conv",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            tools_provider=save_tools_provider,
-            credential_resolvers=None,
-            api_backend=None,
-        )
-        save_result = await save_script_tool(
-            tool_context,
-            name=f"log_temp_{test_run_id}",
-            description="Log temperature to a note",
-            code=(
-                'temp = float(event["new_state"]["state"])\n'
-                "add_or_update_note(\n"
-                '    title="Stored Temp Log",\n'
-                '    content="Stored: " + str(temp) + "°C"\n'
-                ")\n"
-            ),
-            parameters_schema={
-                "type": "object",
-                "properties": {"event": {"type": "object"}},
-            },
-        )
-        assert isinstance(save_result.data, dict)
-        assert "error" not in save_result.data, (
-            f"save_script failed: {save_result.data}"
-        )
+    db_ctx = Database(engine=db_engine)
+    tool_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tools_provider=save_tools_provider,
+        credential_resolvers=None,
+        api_backend=None,
+    )
+    save_result = await save_script_tool(
+        tool_context,
+        name=f"log_temp_{test_run_id}",
+        description="Log temperature to a note",
+        code=(
+            'temp = float(event["new_state"]["state"])\n'
+            "add_or_update_note(\n"
+            '    title="Stored Temp Log",\n'
+            '    content="Stored: " + str(temp) + "°C"\n'
+            ")\n"
+        ),
+        parameters_schema={
+            "type": "object",
+            "properties": {"event": {"type": "object"}},
+        },
+    )
+    assert isinstance(save_result.data, dict)
+    assert "error" not in save_result.data, f"save_script failed: {save_result.data}"
 
-        await db_ctx.events.create_event_listener(
-            name=f"Stored Temperature Logger {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={"entity_id": "sensor.test_temperature"},
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={"script_name": f"log_temp_{test_run_id}"},
-            enabled=True,
-        )
+    await db_ctx.events.create_event_listener(
+        name=f"Stored Temperature Logger {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={"entity_id": "sensor.test_temperature"},
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={"script_name": f"log_temp_{test_run_id}"},
+        enabled=True,
+    )
 
     # Step 2: Minimal infrastructure
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
     processor._running = True
@@ -279,12 +275,10 @@ async def test_script_execution_by_stored_name(
     await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 4: Verify the stored script was resolved and executed
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        note = await db_ctx.notes.get_by_title(
-            "Stored Temp Log", visibility_grants=None
-        )
-        assert note is not None
-        assert "Stored: 24.5°C" in note.content
+    db_ctx = Database(engine=db_engine)
+    note = await db_ctx.notes.get_by_title("Stored Temp Log", visibility_grants=None)
+    assert note is not None
+    assert "Stored: 24.5°C" in note.content
 
     logger.info(f"--- Stored Script Execution Test ({test_run_id}) Passed ---")
 
@@ -299,25 +293,25 @@ async def test_script_with_syntax_error_creates_no_note(
     logger.info(f"\n--- Running Script Syntax Error Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with invalid script
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name=f"Bad Script {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={
-                "entity_id": "sensor.bad_script",
-            },
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={"script_code": "this is not valid syntax!"},
-            enabled=True,
-        )
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name=f"Bad Script {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={
+            "entity_id": "sensor.bad_script",
+        },
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={"script_code": "this is not valid syntax!"},
+        enabled=True,
+    )
 
     # Step 2: Create infrastructure
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -378,9 +372,9 @@ async def test_script_with_syntax_error_creates_no_note(
         await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 4: Verify no notes were created
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        notes = await db_ctx.notes.get_all(visibility_grants=None)
-        assert len(notes) == 0, "No notes should be created when script has errors"
+    db_ctx = Database(engine=db_engine)
+    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    assert len(notes) == 0, "No notes should be created when script has errors"
 
     logger.info("Confirmed no notes created for script with syntax error")
 
@@ -398,18 +392,18 @@ async def test_script_creates_multiple_notes(
     logger.info(f"\n--- Running Script Multi-Note Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with script that creates multiple notes
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name=f"Multi Note Logger {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={
-                "entity_id": "sensor.multi_test",
-            },
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={
-                "script_code": """
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name=f"Multi Note Logger {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={
+            "entity_id": "sensor.multi_test",
+        },
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={
+            "script_code": """
 # Create first note
 add_or_update_note(
     title="Event Log",
@@ -423,15 +417,15 @@ add_or_update_note(
     content="Entity: " + entity + ", New State: " + event["new_state"]["state"]
 )
 """
-            },
-            enabled=True,
-        )
+        },
+        enabled=True,
+    )
 
     # Step 2: Create infrastructure
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -489,18 +483,18 @@ add_or_update_note(
     await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 4: Verify both notes were created
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        all_notes = await db_ctx.notes.get_all(visibility_grants=None)
-        note_titles = {n.title for n in all_notes}
+    db_ctx = Database(engine=db_engine)
+    all_notes = await db_ctx.notes.get_all(visibility_grants=None)
+    note_titles = {n.title for n in all_notes}
 
-        assert "Event Log" in note_titles
-        assert "Event Details" in note_titles
+    assert "Event Log" in note_titles
+    assert "Event Details" in note_titles
 
-        # Verify Event Details content
-        details_notes = [n for n in all_notes if n.title == "Event Details"]
-        assert len(details_notes) == 1
-        assert "Entity: sensor.multi_test" in details_notes[0].content
-        assert "New State: active" in details_notes[0].content
+    # Verify Event Details content
+    details_notes = [n for n in all_notes if n.title == "Event Details"]
+    assert len(details_notes) == 1
+    assert "Entity: sensor.multi_test" in details_notes[0].content
+    assert "New State: active" in details_notes[0].content
 
     logger.info("Script successfully created multiple notes")
 
@@ -522,27 +516,27 @@ async def test_script_can_retrieve_notes(
     logger.info(f"\n--- Running Script Note Retrieval Test ({test_run_id}) ---")
 
     # Step 1: Pre-create a note that the script will try to retrieve
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.notes.add_or_update(
-            title="Test Note Alpha",
-            content="This is a test note for retrieval",
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.notes.add_or_update(
+        title="Test Note Alpha",
+        content="This is a test note for retrieval",
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
     # Step 2: Create event listener with script that reads notes
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name=f"Note Reader {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={
-                "entity_id": "sensor.note_reader_test",
-            },
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={
-                "script_code": """
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name=f"Note Reader {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={
+            "entity_id": "sensor.note_reader_test",
+        },
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={
+            "script_code": """
 # Retrieve notes via list_notes tool
 notes_list = json_decode(list_notes())
 
@@ -561,15 +555,15 @@ add_or_update_note(
     content="Found via list: " + str(found) + ", Exists: " + str(detail["exists"]) + ", Content: " + str(detail["content"])
 )
 """
-            },
-            enabled=True,
-        )
+        },
+        enabled=True,
+    )
 
     # Step 3: Create infrastructure with all note tools
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -628,14 +622,14 @@ add_or_update_note(
     await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Step 5: Verify the script successfully retrieved and processed notes
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        result_note = await db_ctx.notes.get_by_title(
-            "Retrieval Results", visibility_grants=None
-        )
-        assert result_note is not None, "Script should have created a result note"
-        assert "Found via list: True" in result_note.content
-        assert "Exists: True" in result_note.content
-        assert "This is a test note for retrieval" in result_note.content
+    db_ctx = Database(engine=db_engine)
+    result_note = await db_ctx.notes.get_by_title(
+        "Retrieval Results", visibility_grants=None
+    )
+    assert result_note is not None, "Script should have created a result note"
+    assert "Found via list: True" in result_note.content
+    assert "Exists: True" in result_note.content
+    assert "This is a test note for retrieval" in result_note.content
 
     logger.info("Script successfully retrieved notes via tools")
     logger.info(f"--- Script Note Retrieval Test ({test_run_id}) Passed ---")

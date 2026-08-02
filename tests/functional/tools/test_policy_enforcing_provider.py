@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     LocalToolsProvider,
@@ -61,7 +61,7 @@ def _exec_context(
         conversation_id="conversation",
         user_name="User",
         turn_id=None,
-        db_context=MagicMock(spec=DatabaseContext),
+        db_context=MagicMock(spec=Database),
         processing_service=cast("ProcessingService", processing_service),
         request_confirmation_callback=cast(
             "RequestConfirmationCallback | None", confirmation_callback

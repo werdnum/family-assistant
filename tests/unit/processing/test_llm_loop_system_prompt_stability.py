@@ -21,7 +21,7 @@ from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolResult
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
@@ -142,15 +142,15 @@ async def test_system_prompt_is_byte_stable_across_tool_iterations(
     llm_client = _SnapshottingMockLLMClient(tool_call_rounds=2)
     service = _make_service(llm_client, max_iterations=5)
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="cache-stability",
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="cache-stability",
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert result.status.value == "success"
     assert len(llm_client.system_prompts) == 3
@@ -164,15 +164,15 @@ async def test_system_prompt_carries_no_iteration_counter(
     llm_client = _SnapshottingMockLLMClient(tool_call_rounds=1)
     service = _make_service(llm_client, max_iterations=5)
 
-    async with get_db_context(db_engine) as db_context:
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="cache-no-counter",
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="cache-no-counter",
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert llm_client.system_prompts
     for prompt in llm_client.system_prompts:
@@ -187,15 +187,15 @@ async def test_final_iteration_instruction_is_appended_not_prepended(
     llm_client = _SnapshottingMockLLMClient(tool_call_rounds=0)
     service = _make_service(llm_client, max_iterations=1)
 
-    async with get_db_context(db_engine) as db_context:
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="cache-final-iteration",
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="cache-final-iteration",
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert llm_client.system_prompts
     assert "final processing iteration" not in llm_client.system_prompts[0].lower()
@@ -227,15 +227,15 @@ async def test_system_prompt_keeps_its_cache_breakpoint_through_the_loop(
 
     llm_client.generate_response = _capture  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="cache-breakpoint-survives",
-            trigger_content_parts=[{"type": "text", "text": "Hello"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="cache-breakpoint-survives",
+        trigger_content_parts=[{"type": "text", "text": "Hello"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert captured
     for system_message in captured:
@@ -293,17 +293,17 @@ async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
 
     service.llm_loop.attachment_processor.select_for_response = _capture_query  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="cache-attachment-query",
-            trigger_content_parts=[
-                {"type": "text", "text": "Show me the pictures of the cat"}
-            ],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="cache-attachment-query",
+        trigger_content_parts=[
+            {"type": "text", "text": "Show me the pictures of the cat"}
+        ],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert queries, "attachment selection never ran"
     for query in queries:
@@ -343,15 +343,15 @@ async def test_context_pruning_keeps_the_user_turn_not_the_scaffolding(
     service = _make_service(llm_client, max_iterations=1)
     service.llm_loop.config.context_pruning_min_turns = 1
 
-    async with get_db_context(db_engine) as db_context:
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="cache-pruning",
-            trigger_content_parts=[{"type": "text", "text": "Remember the milk"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-        )
+    db_context = Database(db_engine)
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="cache-pruning",
+        trigger_content_parts=[{"type": "text", "text": "Remember the milk"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     # The retry is the only recorded call: the first attempt raised.
     assert llm_client.retry_messages, "pruning retry never happened"

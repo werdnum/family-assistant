@@ -13,7 +13,7 @@ from family_assistant.storage.base import (
     create_engine_with_sqlite_optimizations,
     metadata,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from tests.conftest import check_db_engine_invariants
 
 # Use an in-memory SQLite database for unit tests
@@ -24,25 +24,26 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
     engine = create_engine_with_sqlite_optimizations(TEST_DATABASE_URL, instrument=True)
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
 
     yield engine
 
-    check_db_engine_invariants(engine, "test_message_history_live_updates db_engine")
+    await check_db_engine_invariants(
+        engine, "test_message_history_live_updates db_engine"
+    )
     await engine.dispose()
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    """Provides an *entered* DatabaseContext instance for interacting with the test database."""
-    context_instance = get_db_context(engine=db_engine, base_delay=0.01)
-    async with context_instance as entered_context:
-        yield entered_context
+@pytest.fixture
+def db_context(db_engine: AsyncEngine) -> Database:
+    """Provides an *entered* Database instance for interacting with the test database."""
+    return Database(engine=db_engine, base_delay=0.01)
 
 
 @pytest.mark.asyncio
-async def test_get_messages_after_basic_query(db_context: DatabaseContext) -> None:
+async def test_get_messages_after_basic_query(db_context: Database) -> None:
     """Test basic functionality of get_messages_after."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
@@ -108,7 +109,7 @@ async def test_get_messages_after_basic_query(db_context: DatabaseContext) -> No
 
 @pytest.mark.asyncio
 async def test_get_messages_after_filter_by_interface_type(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Test filtering by interface_type in get_messages_after."""
     conversation_id = str(uuid.uuid4())
@@ -164,7 +165,7 @@ async def test_get_messages_after_filter_by_interface_type(
 
 @pytest.mark.asyncio
 async def test_get_messages_after_ordering_by_timestamp(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Test that messages are ordered by timestamp ascending (oldest first)."""
     interface_type = "web"
@@ -220,7 +221,7 @@ async def test_get_messages_after_ordering_by_timestamp(
 
 
 @pytest.mark.asyncio
-async def test_get_messages_after_limit_parameter(db_context: DatabaseContext) -> None:
+async def test_get_messages_after_limit_parameter(db_context: Database) -> None:
     """Test that the limit parameter restricts the number of results."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
@@ -252,7 +253,7 @@ async def test_get_messages_after_limit_parameter(db_context: DatabaseContext) -
 
 
 @pytest.mark.asyncio
-async def test_get_messages_after_empty_results(db_context: DatabaseContext) -> None:
+async def test_get_messages_after_empty_results(db_context: Database) -> None:
     """Test that empty list is returned when no messages exist after timestamp."""
     interface_type = "web"
     conversation_id = str(uuid.uuid4())
@@ -280,7 +281,7 @@ async def test_get_messages_after_empty_results(db_context: DatabaseContext) -> 
 
 @pytest.mark.asyncio
 async def test_get_messages_after_different_conversations(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Test that messages from different conversations are not mixed."""
     interface_type = "web"

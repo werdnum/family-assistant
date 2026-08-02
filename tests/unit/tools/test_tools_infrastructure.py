@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -60,7 +60,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_dict": tool_returns_dict},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-1",
             user_name="test-user",
@@ -117,7 +117,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_list": tool_returns_list},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-2",
             user_name="test-user",
@@ -182,7 +182,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_complex": tool_returns_complex},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-3",
             user_name="test-user",
@@ -245,7 +245,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_none": tool_returns_none},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-4",
             user_name="test-user",
@@ -292,7 +292,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_string": tool_returns_string},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-5",
             user_name="test-user",
@@ -337,7 +337,7 @@ class TestLocalToolsProvider:
             implementations={"tool_returns_number": tool_returns_number},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-6",
             user_name="test-user",
@@ -396,7 +396,7 @@ class TestLocalToolsProvider:
             implementations={"tool_with_attachment": tool_with_attachment},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-attachment",
             user_name="test-user",
@@ -459,7 +459,7 @@ class TestLocalToolsProvider:
             implementations={"tool_needs_exec_context": tool_needs_exec_context},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-inject",
             user_name="test-user",
@@ -489,10 +489,10 @@ class TestLocalToolsProvider:
     @pytest.mark.asyncio
     async def test_execute_tool_injects_db_context(self) -> None:
         """Test that db_context is properly injected into tool functions."""
-        received_db: list[DatabaseContext | None] = [None]
+        received_db: list[Database | None] = [None]
 
         async def tool_needs_db_context(
-            db_context: DatabaseContext,
+            db_context: Database,
             query: str,
         ) -> str:
             received_db[0] = db_context
@@ -518,7 +518,7 @@ class TestLocalToolsProvider:
             implementations={"tool_needs_db_context": tool_needs_db_context},
         )
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         context = ToolExecutionContext(
             conversation_id="test-conv-db",
             user_name="test-user",
@@ -550,19 +550,19 @@ class TestLocalToolsProvider:
         """Test that db_context is injected even when the annotation is a string.
 
         This simulates the case where a tool module uses `from __future__ import annotations`
-        and imports DatabaseContext under TYPE_CHECKING, so get_type_hints() cannot
+        and imports Database under TYPE_CHECKING, so get_type_hints() cannot
         resolve the annotation and falls back to the raw string.
         """
         received_db: list[Any] = [None]
 
         async def tool_with_string_annotation(
-            db_context: DatabaseContext,
+            db_context: Database,
             query: str,
         ) -> str:
             received_db[0] = db_context
             return f"Got query: {query}"
 
-        # Simulate a module where DatabaseContext is NOT in the namespace
+        # Simulate a module where Database is NOT in the namespace
         # (as if imported only under TYPE_CHECKING)
         fake_module = types.ModuleType("fake_tool_module")
         fake_module.__dict__["__name__"] = "fake_tool_module"
@@ -593,7 +593,7 @@ class TestLocalToolsProvider:
                 },
             )
 
-            mock_db_context = MagicMock(spec=DatabaseContext)
+            mock_db_context = MagicMock(spec=Database)
             context = ToolExecutionContext(
                 conversation_id="test-conv-str-db",
                 user_name="test-user",
@@ -708,7 +708,7 @@ class TestPolicyConfirmationFlow:
             captured["context"] = context
             return ConfirmationOutcome(kind="approved")
 
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         exec_context = ToolExecutionContext(
             conversation_id="conv-1",
             user_name="test-user",
@@ -774,7 +774,7 @@ class TestPolicyEnforcingToolsProvider:
         *,
         request_confirmation_callback: Any = None,  # noqa: ANN401 - test helper
     ) -> ToolExecutionContext:
-        mock_db_context = MagicMock(spec=DatabaseContext)
+        mock_db_context = MagicMock(spec=Database)
         return ToolExecutionContext(
             conversation_id="policy-conv",
             user_name="test-user",

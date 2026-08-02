@@ -15,9 +15,9 @@ from sqlalchemy import text  # Add this import
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator  # For mocking embeddings
-from family_assistant.storage.context import (
-    DatabaseContext,
-)  # Add get_db_context
+from family_assistant.storage.database import (
+    Database,
+)  # Add Database
 
 # Import the functions and classes we want to test
 from family_assistant.storage.vector import (
@@ -161,128 +161,126 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
     doc_id = None  # To store the document ID
 
     # --- Act & Assert: Add Document and Embedding ---
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info("Adding document...")
-        doc_id = await add_document(db, doc=test_doc)
-        assert isinstance(doc_id, int), "add_document should return an integer ID"
-        logger.info(f"Document added with ID: {doc_id}")
+    db = Database(engine=pg_vector_db_engine)
+    logger.info("Adding document...")
+    doc_id = await add_document(db, doc=test_doc)
+    assert isinstance(doc_id, int), "add_document should return an integer ID"
+    logger.info(f"Document added with ID: {doc_id}")
 
-        logger.info("Adding embedding...")
-        await add_embedding(
-            db,
-            document_id=doc_id,
-            chunk_index=0,  # Using 0 for simplicity
-            embedding_type=test_embedding_type,
-            embedding=test_embedding_vector,
-            embedding_model=TEST_EMBEDDING_MODEL,
-            content=test_content,
-        )
-        logger.info("Embedding added.")
+    logger.info("Adding embedding...")
+    await add_embedding(
+        db,
+        document_id=doc_id,
+        chunk_index=0,  # Using 0 for simplicity
+        embedding_type=test_embedding_type,
+        embedding=test_embedding_vector,
+        embedding_model=TEST_EMBEDDING_MODEL,
+        content=test_content,
+    )
+    logger.info("Embedding added.")
 
     # --- Act & Assert: Query Vectors using new function ---
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info("Querying vectors with exact match using query_vector_store...")
+    db = Database(engine=pg_vector_db_engine)
+    logger.info("Querying vectors with exact match using query_vector_store...")
 
-        # Create the query object
-        search_query = VectorSearchQuery(
-            search_type="semantic",  # We are only testing semantic match here
-            semantic_query="dummy query text",  # Text isn't used directly, embedding is
-            embedding_model=TEST_EMBEDDING_MODEL,
-            limit=5,
-            # No filters needed for this basic test
-        )
+    # Create the query object
+    search_query = VectorSearchQuery(
+        search_type="semantic",  # We are only testing semantic match here
+        semantic_query="dummy query text",  # Text isn't used directly, embedding is
+        embedding_model=TEST_EMBEDDING_MODEL,
+        limit=5,
+        # No filters needed for this basic test
+    )
 
-        query_results = await query_vector_store(
-            db_context=db,
-            query=search_query,
-            query_embedding=test_embedding_vector,  # Pass the embedding separately
-        )
+    query_results = await query_vector_store(
+        db_context=db,
+        query=search_query,
+        query_embedding=test_embedding_vector,  # Pass the embedding separately
+    )
 
-        assert query_results is not None, "query_vector_store returned None"
-        assert len(query_results) > 0, (
-            "No results returned from vector store query"
-        )  # Updated assertion message
-        logger.info(f"Query returned {len(query_results)} result(s).")
+    assert query_results is not None, "query_vector_store returned None"
+    assert len(query_results) > 0, (
+        "No results returned from vector store query"
+    )  # Updated assertion message
+    logger.info(f"Query returned {len(query_results)} result(s).")
 
-        # Find the result corresponding to our document
-        # query_vector_store returns list of dicts
-        found_result = None
-        for result_dict in query_results:  # Renamed loop variable
-            if result_dict.get("document_id") == doc_id:
-                found_result = result_dict  # Assign the dict directly
-                break
+    # Find the result corresponding to our document
+    # query_vector_store returns list of dicts
+    found_result = None
+    for result_dict in query_results:  # Renamed loop variable
+        if result_dict.get("document_id") == doc_id:
+            found_result = result_dict  # Assign the dict directly
+            break
 
-        assert found_result is not None, (
-            f"Added document (ID: {doc_id}) not found in query results"
-        )
-        logger.info(f"Found matching result: {found_result}")
+    assert found_result is not None, (
+        f"Added document (ID: {doc_id}) not found in query results"
+    )
+    logger.info(f"Found matching result: {found_result}")
 
-        # Check distance (should be very close to 0 for exact match)
-        assert "distance" in found_result, "Result missing 'distance' field"
-        # Handle potential None distance if query somehow failed internally but returned row
-        distance = found_result.get("distance")
-        assert distance is not None, "Distance is None in the result"
-        assert distance == pytest.approx(0.0, abs=1e-6), (
-            f"Distance should be near zero for exact match, but was {distance}"
-        )
+    # Check distance (should be very close to 0 for exact match)
+    assert "distance" in found_result, "Result missing 'distance' field"
+    # Handle potential None distance if query somehow failed internally but returned row
+    distance = found_result.get("distance")
+    assert distance is not None, "Distance is None in the result"
+    assert distance == pytest.approx(0.0, abs=1e-6), (
+        f"Distance should be near zero for exact match, but was {distance}"
+    )
 
-        # Check other fields in the result (which is now a dict)
-        assert found_result.get("embedding_type") == test_embedding_type
-        assert found_result.get("embedding_source_content") == test_content
-        assert found_result.get("title") == test_title
-        # Verify other fields returned by the new query function if needed
-        assert found_result.get("source_id") == test_source_id
-        assert found_result.get("chunk_index") == 0  # Based on test setup
+    # Check other fields in the result (which is now a dict)
+    assert found_result.get("embedding_type") == test_embedding_type
+    assert found_result.get("embedding_source_content") == test_content
+    assert found_result.get("title") == test_title
+    # Verify other fields returned by the new query function if needed
+    assert found_result.get("source_id") == test_source_id
+    assert found_result.get("chunk_index") == 0  # Based on test setup
 
     # --- Act & Assert: Retrieve Document by Source ID ---
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info(f"Retrieving document by source ID: {test_source_id}...")
-        # Note: get_document_by_source_id returns the ORM model
-        retrieved_doc: DocumentRecord | None = await get_document_by_source_id(
-            db, test_source_id
-        )
+    db = Database(engine=pg_vector_db_engine)
+    logger.info(f"Retrieving document by source ID: {test_source_id}...")
+    # Note: get_document_by_source_id returns the ORM model
+    retrieved_doc: DocumentRecord | None = await get_document_by_source_id(
+        db, test_source_id
+    )
 
-        assert retrieved_doc is not None, (
-            f"Document not retrieved by source ID '{test_source_id}'"
-        )
-        logger.info(f"Retrieved document: {retrieved_doc}")
+    assert retrieved_doc is not None, (
+        f"Document not retrieved by source ID '{test_source_id}'"
+    )
+    logger.info(f"Retrieved document: {retrieved_doc}")
 
-        # Verify retrieved document matches original data
-        assert retrieved_doc.id == doc_id
-        assert retrieved_doc.source_id == test_source_id
-        assert retrieved_doc.source_type == test_source_type
-        assert retrieved_doc.title == test_title
-        # Compare timezone-aware datetimes carefully
-        assert retrieved_doc.created_at is not None
-        assert retrieved_doc.created_at.isoformat() == test_created_at.isoformat()
-        assert retrieved_doc.doc_metadata == test_metadata
+    # Verify retrieved document matches original data
+    assert retrieved_doc.id == doc_id
+    assert retrieved_doc.source_id == test_source_id
+    assert retrieved_doc.source_type == test_source_type
+    assert retrieved_doc.title == test_title
+    # Compare timezone-aware datetimes carefully
+    assert retrieved_doc.created_at is not None
+    assert retrieved_doc.created_at.isoformat() == test_created_at.isoformat()
+    assert retrieved_doc.doc_metadata == test_metadata
 
     # --- Act & Assert: Delete Document ---
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info(f"Deleting document with ID: {doc_id}...")
-        deleted = await delete_document(db, doc_id)
-        assert deleted is True, (
-            f"delete_document did not return True for existing ID {doc_id}"
-        )
-        logger.info("Document deleted.")
+    db = Database(engine=pg_vector_db_engine)
+    logger.info(f"Deleting document with ID: {doc_id}...")
+    deleted = await delete_document(db, doc_id)
+    assert deleted is True, (
+        f"delete_document did not return True for existing ID {doc_id}"
+    )
+    logger.info("Document deleted.")
 
     # --- Assert: Verify Deletion ---
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info(f"Verifying document deletion by source ID: {test_source_id}...")
-        retrieved_doc_after_delete = await get_document_by_source_id(db, test_source_id)
-        assert retrieved_doc_after_delete is None, (
-            "Document was found after it should have been deleted"
-        )
+    db = Database(engine=pg_vector_db_engine)
+    logger.info(f"Verifying document deletion by source ID: {test_source_id}...")
+    retrieved_doc_after_delete = await get_document_by_source_id(db, test_source_id)
+    assert retrieved_doc_after_delete is None, (
+        "Document was found after it should have been deleted"
+    )
 
-        # Optional: Verify embeddings are also gone (due to CASCADE)
-        # This requires querying the document_embeddings table directly
-        stmt = "SELECT COUNT(*) FROM document_embeddings WHERE document_id = :doc_id"
-        result = await db.execute_with_retry(text(stmt), {"doc_id": doc_id})
-        count = result.scalar_one()
-        assert count == 0, (
-            f"Embeddings for document ID {doc_id} were found after deletion"
-        )
-        logger.info("Verified document and embeddings are deleted.")
+    # Optional: Verify embeddings are also gone (due to CASCADE)
+    # This requires querying the document_embeddings table directly
+    stmt = "SELECT COUNT(*) FROM document_embeddings WHERE document_id = :doc_id"
+    result = await db.execute(text(stmt), {"doc_id": doc_id})
+    count = result.scalar_one()
+    assert count == 0, f"Embeddings for document ID {doc_id} were found after deletion"
+    logger.info("Verified document and embeddings are deleted.")
 
     logger.info("--- Vector Storage Basic Flow Test Passed ---")
 
@@ -330,22 +328,22 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
 
     # --- Arrange: Add Document and Embedding to DB ---
     doc_id = None
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info("Adding test document for tool test...")
-        doc_id = await add_document(db, doc=test_doc)
-        logger.info(f"Document added with ID: {doc_id}")
+    db = Database(engine=pg_vector_db_engine)
+    logger.info("Adding test document for tool test...")
+    doc_id = await add_document(db, doc=test_doc)
+    logger.info(f"Document added with ID: {doc_id}")
 
-        logger.info("Adding test embedding for tool test...")
-        await add_embedding(
-            db,
-            document_id=doc_id,
-            chunk_index=0,
-            embedding_type="content_chunk",  # Match default search or specify if needed
-            embedding=mock_doc_embedding,
-            embedding_model=mock_embedding_model,  # Use the mock model name
-            content=test_content,
-        )
-        logger.info("Embedding added.")
+    logger.info("Adding test embedding for tool test...")
+    await add_embedding(
+        db,
+        document_id=doc_id,
+        chunk_index=0,
+        embedding_type="content_chunk",  # Match default search or specify if needed
+        embedding=mock_doc_embedding,
+        embedding_model=mock_embedding_model,  # Use the mock model name
+        content=test_content,
+    )
+    logger.info("Embedding added.")
 
     # --- Arrange: Tool Execution Environment ---
     # Mock Embedding Generator: Maps the query text to the predefined embedding
@@ -367,69 +365,65 @@ async def test_search_documents_tool(pg_vector_db_engine: AsyncEngine) -> None:
         embedding_generator=mock_generator,  # Inject the mock
     )
 
-    # Tool Execution Context (needs a DatabaseContext)
+    # Tool Execution Context (needs a Database)
     # Create a new context for the execution phase
-    async with DatabaseContext(engine=pg_vector_db_engine) as exec_db_context:
-        tool_context = ToolExecutionContext(
-            interface_type="test",  # Dummy interface
-            conversation_id="vector_test_123",  # Dummy conversation ID
-            user_name="VectorStorageTestUser",  # Added
-            turn_id=str(uuid.uuid4()),  # ADDED turn_id
-            db_context=exec_db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            chat_interface=None,  # Add chat_interface (None for this tool context)
-            embedding_generator=mock_generator,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    exec_db_context = Database(engine=pg_vector_db_engine)
+    tool_context = ToolExecutionContext(
+        interface_type="test",  # Dummy interface
+        conversation_id="vector_test_123",  # Dummy conversation ID
+        user_name="VectorStorageTestUser",  # Added
+        turn_id=str(uuid.uuid4()),  # ADDED turn_id
+        db_context=exec_db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        chat_interface=None,  # Add chat_interface (None for this tool context)
+        embedding_generator=mock_generator,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # --- Act: Execute the tool via the provider ---
-        logger.info(f"Executing search_documents tool with query: '{test_query}'")
-        tool_result = await local_provider.execute_tool(
-            name="search_documents",
-            arguments={"query": test_query},  # Pass arguments as dict
-            context=tool_context,
-        )
+    # --- Act: Execute the tool via the provider ---
+    logger.info(f"Executing search_documents tool with query: '{test_query}'")
+    tool_result = await local_provider.execute_tool(
+        name="search_documents",
+        arguments={"query": test_query},  # Pass arguments as dict
+        context=tool_context,
+    )
 
-        logger.info(f"Tool execution result: {tool_result}")
+    logger.info(f"Tool execution result: {tool_result}")
 
-        # --- Assert ---
-        assert tool_result is not None, "Tool execution returned None"
-        assert isinstance(tool_result, str), "Tool result should be a string"
-        assert "Error:" not in tool_result, (
-            f"Tool execution reported an error: {tool_result}"
-        )
-        assert "Found relevant documents:" in tool_result, (
-            "Tool result preamble missing"
-        )
-        assert test_title in tool_result, "Document title not found in tool result"
-        assert test_source_type in tool_result, (
-            "Document source type not found in tool result"
-        )
-        # Check for part of the snippet (tool truncates)
-        assert test_content[:50] in tool_result, (
-            "Document snippet not found in tool result"
-        )
+    # --- Assert ---
+    assert tool_result is not None, "Tool execution returned None"
+    assert isinstance(tool_result, str), "Tool result should be a string"
+    assert "Error:" not in tool_result, (
+        f"Tool execution reported an error: {tool_result}"
+    )
+    assert "Found relevant documents:" in tool_result, "Tool result preamble missing"
+    assert test_title in tool_result, "Document title not found in tool result"
+    assert test_source_type in tool_result, (
+        "Document source type not found in tool result"
+    )
+    # Check for part of the snippet (tool truncates)
+    assert test_content[:50] in tool_result, "Document snippet not found in tool result"
 
     # --- Cleanup: Verify document deletion (optional, relies on fixture) ---
     # Add verification if fixture doesn't guarantee cleanup or if explicit check is desired
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        logger.info(f"Verifying test document (ID: {doc_id}) is deleted after test...")
-        # Use direct query as get_document_by_source_id might be cached or slow
-        stmt = text("SELECT COUNT(*) FROM documents WHERE id = :doc_id")
-        result = await db.execute_with_retry(stmt, {"doc_id": doc_id})
-        result.scalar_one()
-        # NOTE: This assertion depends on the fixture cleaning up *after* the test runs.
-        # If the fixture cleans *before*, this check is invalid.
-        # Assuming cleanup happens after.
-        # If cleanup happens before, we can't reliably check here.
-        # For now, assume fixture handles cleanup.
+    db = Database(engine=pg_vector_db_engine)
+    logger.info(f"Verifying test document (ID: {doc_id}) is deleted after test...")
+    # Use direct query as get_document_by_source_id might be cached or slow
+    stmt = text("SELECT COUNT(*) FROM documents WHERE id = :doc_id")
+    result = await db.execute(stmt, {"doc_id": doc_id})
+    result.scalar_one()
+    # NOTE: This assertion depends on the fixture cleaning up *after* the test runs.
+    # If the fixture cleans *before*, this check is invalid.
+    # Assuming cleanup happens after.
+    # If cleanup happens before, we can't reliably check here.
+    # For now, assume fixture handles cleanup.
 
     logger.info("--- Search Documents Tool Test Passed ---")
 
@@ -493,99 +487,97 @@ async def test_get_full_document_content_with_raw_content(
 
     try:
         # Add document
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            doc_id = await add_document(db, TestFullDoc())
-            logger.info(f"Created test document with ID: {doc_id}")
+        db = Database(engine=pg_vector_db_engine)
+        doc_id = await add_document(db, TestFullDoc())
+        logger.info(f"Created test document with ID: {doc_id}")
 
-            # Add raw content (should be stored, may or may not be embedded)
+        # Add raw content (should be stored, may or may not be embedded)
+        await add_embedding(
+            db_context=db,
+            document_id=doc_id,
+            chunk_index=0,
+            embedding_type="raw_file_text",
+            embedding=None,  # Will be embedded or not based on size
+            embedding_model="test",  # Will be overridden if too long
+            content=full_text,
+        )
+
+        # Also add some chunks for fallback testing
+        chunk_size = 500
+        for i in range(0, len(full_text), chunk_size - 100):  # With overlap
+            chunk_text = full_text[i : i + chunk_size]
             await add_embedding(
                 db_context=db,
                 document_id=doc_id,
-                chunk_index=0,
-                embedding_type="raw_file_text",
-                embedding=None,  # Will be embedded or not based on size
-                embedding_model="test",  # Will be overridden if too long
-                content=full_text,
+                chunk_index=i // (chunk_size - 100),
+                embedding_type="content_chunk",
+                embedding=[0.1] * TEST_EMBEDDING_DIMENSION,
+                embedding_model=TEST_EMBEDDING_MODEL,
+                content=chunk_text,
             )
-
-            # Also add some chunks for fallback testing
-            chunk_size = 500
-            for i in range(0, len(full_text), chunk_size - 100):  # With overlap
-                chunk_text = full_text[i : i + chunk_size]
-                await add_embedding(
-                    db_context=db,
-                    document_id=doc_id,
-                    chunk_index=i // (chunk_size - 100),
-                    embedding_type="content_chunk",
-                    embedding=[0.1] * TEST_EMBEDDING_DIMENSION,
-                    embedding_model=TEST_EMBEDDING_MODEL,
-                    content=chunk_text,
-                )
 
         # Create execution context
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conv",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db = Database(engine=pg_vector_db_engine)
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conv",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Test retrieval of full content
-            result = await get_full_document_content_tool(
-                exec_context=exec_context,
-                document_id=doc_id,
-            )
+        # Test retrieval of full content
+        result = await get_full_document_content_tool(
+            exec_context=exec_context,
+            document_id=doc_id,
+        )
 
-            # Should get the raw content, not reconstructed chunks
-            assert result == full_text, "Should return exact raw content"
-            logger.info("Successfully retrieved raw content")
+        # Should get the raw content, not reconstructed chunks
+        assert result == full_text, "Should return exact raw content"
+        logger.info("Successfully retrieved raw content")
 
-            # Now test fallback by removing raw content
-            await db.execute_with_retry(
-                text(
-                    "DELETE FROM document_embeddings "
-                    "WHERE document_id = :doc_id AND embedding_type = 'raw_file_text'"
-                ),
-                {"doc_id": doc_id},
-            )
+        # Now test fallback by removing raw content
+        await db.execute(
+            text(
+                "DELETE FROM document_embeddings "
+                "WHERE document_id = :doc_id AND embedding_type = 'raw_file_text'"
+            ),
+            {"doc_id": doc_id},
+        )
 
-            # Try again - should fall back to chunks
-            result2 = await get_full_document_content_tool(
-                exec_context=exec_context,
-                document_id=doc_id,
-            )
+        # Try again - should fall back to chunks
+        result2 = await get_full_document_content_tool(
+            exec_context=exec_context,
+            document_id=doc_id,
+        )
 
-            # Result should contain the text but may have duplicates due to overlap
-            # Handle both string and ToolResult return types
-            result2_text = (
-                result2.get_text() if isinstance(result2, ToolResult) else result2
-            )
+        # Result should contain the text but may have duplicates due to overlap
+        # Handle both string and ToolResult return types
+        result2_text = (
+            result2.get_text() if isinstance(result2, ToolResult) else result2
+        )
 
-            assert len(result2_text) > len(full_text), (
-                "Reconstructed text should be longer due to overlap"
-            )
-            assert full_text[:100] in result2_text, (
-                "Beginning of text should be present"
-            )
-            logger.info("Successfully fell back to chunk reconstruction")
+        assert len(result2_text) > len(full_text), (
+            "Reconstructed text should be longer due to overlap"
+        )
+        assert full_text[:100] in result2_text, "Beginning of text should be present"
+        logger.info("Successfully fell back to chunk reconstruction")
 
     finally:
         # Cleanup
         if doc_id:
-            async with DatabaseContext(engine=pg_vector_db_engine) as db:
-                await delete_document(db, doc_id)
-                logger.info(f"Cleaned up test document {doc_id}")
+            db = Database(engine=pg_vector_db_engine)
+            await delete_document(db, doc_id)
+            logger.info(f"Cleaned up test document {doc_id}")
 
     logger.info("--- Get Full Document Content Test Passed ---")
 
@@ -604,21 +596,21 @@ async def test_concurrent_add_document_same_source_id(db_engine: AsyncEngine) ->
     source_id = f"message_turn:{uuid.uuid4()}"
 
     async def upsert(title: str) -> int:
-        async with DatabaseContext(engine=db_engine) as db:
-            return await add_document(
-                db,
-                MockDocumentImpl(
-                    source_type="message_history",
-                    source_id=source_id,
-                    title=title,
-                    created_at=datetime.now(UTC),
-                ),
-            )
+        db = Database(engine=db_engine)
+        return await add_document(
+            db,
+            MockDocumentImpl(
+                source_type="message_history",
+                source_id=source_id,
+                title=title,
+                created_at=datetime.now(UTC),
+            ),
+        )
 
     doc_ids = await asyncio.gather(upsert("first writer"), upsert("second writer"))
 
     assert doc_ids[0] == doc_ids[1], "Both upserts must resolve to the same document"
-    async with DatabaseContext(engine=db_engine) as db:
-        record = await get_document_by_source_id(db, source_id)
-        assert record is not None
-        assert record.id == doc_ids[0]
+    db = Database(engine=db_engine)
+    record = await get_document_by_source_id(db, source_id)
+    assert record is not None
+    assert record.id == doc_ids[0]

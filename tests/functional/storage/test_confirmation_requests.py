@@ -1,9 +1,7 @@
 """Functional tests for durable tool confirmations."""
 
-from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
-from types import TracebackType
-from typing import Literal, cast
+from typing import Literal
 
 import pytest
 from sqlalchemy import insert, update
@@ -18,12 +16,15 @@ from family_assistant.services.confirmation_service import (
     ConfirmationService,
 )
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import (
+    Database,
+    DatabaseTransaction,
+    spawn_detached,
+)
 from family_assistant.storage.repositories.confirmation_requests import (
     ConfirmationRequestRow,
     ConfirmationRequestsRepository,
 )
-from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.tools.types import ToolArgumentsView
 
 RaceMode = Literal[
@@ -35,19 +36,11 @@ RaceMode = Literal[
 
 
 def _service(db_engine: AsyncEngine) -> ConfirmationService:
-    return ConfirmationService(
-        db_context_factory=lambda: DatabaseContext(engine=db_engine)
-    )
+    return ConfirmationService(db=Database(engine=db_engine))
 
 
 def _racing_service(db_engine: AsyncEngine, race_mode: RaceMode) -> ConfirmationService:
-    def db_context_factory() -> AbstractAsyncContextManager[DatabaseContext]:
-        return cast(
-            "AbstractAsyncContextManager[DatabaseContext]",
-            _RacingDatabaseContext(db_engine, race_mode),
-        )
-
-    return ConfirmationService(db_context_factory=db_context_factory)
+    return ConfirmationService(db=_RacingDatabase(db_engine, race_mode))
 
 
 class _RacingConfirmationRequestsRepository:
@@ -100,13 +93,17 @@ class _RacingConfirmationRequestsRepository:
         now: datetime,
     ) -> ConfirmationRequestRow | None:
         if self._race_mode == "reject_before_approve":
-            async with DatabaseContext(engine=self._db_engine) as racing_db:
-                await racing_db.confirmation_requests.reject_pending(
+            # A different actor entirely, so it must not inherit the approval's
+            # transaction -- that is what spawn_detached is for.
+            racing_db = Database(engine=self._db_engine)
+            await spawn_detached(
+                racing_db.confirmation_requests.reject_pending(
                     request_id=request_id,
                     resolving_user_id="racing-user",
                     resolving_interface="telegram",
                     now=now,
                 )
+            )
         if self._race_mode == "expire_before_approve":
             await self._expire_request(request_id=request_id, now=now)
         return await self._inner.approve_pending(
@@ -127,21 +124,21 @@ class _RacingConfirmationRequestsRepository:
     ) -> ConfirmationRequestRow | None:
         if self._race_mode == "approve_before_reject":
             execution_task_id = f"confirmation_tool_execution:{request_id}"
-            async with DatabaseContext(engine=self._db_engine) as racing_db:
-                approved = await racing_db.confirmation_requests.approve_pending(
-                    request_id=request_id,
-                    resolving_user_id="racing-user",
-                    resolving_interface="web",
-                    execution_task_id=execution_task_id,
-                    now=now,
+            racing_db = Database(engine=self._db_engine)
+            approved = await racing_db.confirmation_requests.approve_pending(
+                request_id=request_id,
+                resolving_user_id="racing-user",
+                resolving_interface="web",
+                execution_task_id=execution_task_id,
+                now=now,
+            )
+            if approved is not None:
+                await racing_db.tasks.enqueue(
+                    task_id=execution_task_id,
+                    task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+                    payload={"confirmation_request_id": request_id},
+                    original_task_id=execution_task_id,
                 )
-                if approved is not None:
-                    await racing_db.tasks.enqueue(
-                        task_id=execution_task_id,
-                        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-                        payload={"confirmation_request_id": request_id},
-                        original_task_id=execution_task_id,
-                    )
         if self._race_mode == "expire_before_reject":
             await self._expire_request(request_id=request_id, now=now)
         return await self._inner.reject_pending(
@@ -155,8 +152,10 @@ class _RacingConfirmationRequestsRepository:
         return await self._inner.mark_expired(now=now)
 
     async def _expire_request(self, *, request_id: str, now: datetime) -> None:
-        async with DatabaseContext(engine=self._db_engine) as racing_db:
-            await racing_db.execute_with_retry(
+        # Expiry arrives from outside the approval, so it runs detached.
+        racing_db = Database(engine=self._db_engine)
+        await spawn_detached(
+            racing_db.execute(
                 update(confirmation_requests_table)
                 .where(confirmation_requests_table.c.id == request_id)
                 .values(
@@ -164,44 +163,42 @@ class _RacingConfirmationRequestsRepository:
                     updated_at=now,
                 )
             )
-
-
-class _RacingDatabaseContext:
-    def __init__(self, db_engine: AsyncEngine, race_mode: RaceMode) -> None:
-        self._db_engine = db_engine
-        self._inner_context = DatabaseContext(engine=db_engine)
-        self._race_mode: RaceMode = race_mode
-        self._db: DatabaseContext | None = None
-        self._confirmation_requests: _RacingConfirmationRequestsRepository | None = None
-
-    async def __aenter__(self) -> "_RacingDatabaseContext":
-        self._db = await self._inner_context.__aenter__()
-        self._confirmation_requests = _RacingConfirmationRequestsRepository(
-            self._db.confirmation_requests,
-            self._db_engine,
-            self._race_mode,
         )
-        return self
 
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
+
+class _RacingTransaction(DatabaseTransaction):
+    """A transaction whose confirmation-request writes race a concurrent resolver."""
+
+    def __init__(
+        self, database: Database, db_engine: AsyncEngine, race_mode: RaceMode
     ) -> None:
-        await self._inner_context.__aexit__(exc_type, exc_val, exc_tb)
+        super().__init__(database)
+        self._racing = _RacingConfirmationRequestsRepository(
+            super().confirmation_requests, db_engine, race_mode
+        )
 
     @property
-    def confirmation_requests(self) -> _RacingConfirmationRequestsRepository:
-        if self._confirmation_requests is None:
-            raise RuntimeError("Racing context has not been entered")
-        return self._confirmation_requests
+    def confirmation_requests(self) -> _RacingConfirmationRequestsRepository:  # type: ignore[override] # deliberately narrows to the racing double
+        return self._racing
+
+
+class _RacingDatabase(Database):
+    """A handle whose transactions race a concurrent resolver."""
+
+    def __init__(self, db_engine: AsyncEngine, race_mode: RaceMode) -> None:
+        super().__init__(engine=db_engine)
+        self._db_engine = db_engine
+        self._race_mode: RaceMode = race_mode
+        self._racing = _RacingConfirmationRequestsRepository(
+            super().confirmation_requests, db_engine, race_mode
+        )
+
+    def transaction(self) -> _RacingTransaction:
+        return _RacingTransaction(self, self._db_engine, self._race_mode)
 
     @property
-    def tasks(self) -> TasksRepository:
-        if self._db is None:
-            raise RuntimeError("Racing context has not been entered")
-        return self._db.tasks
+    def confirmation_requests(self) -> _RacingConfirmationRequestsRepository:  # type: ignore[override] # deliberately narrows to the racing double
+        return self._racing
 
 
 async def _create_request(
@@ -239,8 +236,8 @@ async def test_create_request_is_visible_from_separate_context(
         expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        fetched = await db.confirmation_requests.get(created["id"])
+    db = Database(engine=db_engine)
+    fetched = await db.confirmation_requests.get(created["id"])
 
     assert fetched is not None
     assert fetched["status"] == "pending"
@@ -254,22 +251,22 @@ async def test_invalid_confirmation_status_is_rejected_by_database(
 ) -> None:
     now = datetime.now(UTC)
     with pytest.raises(IntegrityError):
-        async with DatabaseContext(engine=db_engine) as db:
-            await db.execute_with_retry(
-                insert(confirmation_requests_table).values(
-                    id="confirm_invalid_status",
-                    target_user_id="user-1",
-                    status="invalid",
-                    tool_name="calendar.create_event",
-                    tool_args_json={"title": "Flight"},
-                    tool_call_id=None,
-                    source_message_internal_id=None,
-                    confirmation_prompt="Create calendar event: Flight",
-                    expires_at=now + timedelta(hours=1),
-                    created_at=now,
-                    updated_at=now,
-                )
+        db = Database(engine=db_engine)
+        await db.execute(
+            insert(confirmation_requests_table).values(
+                id="confirm_invalid_status",
+                target_user_id="user-1",
+                status="invalid",
+                tool_name="calendar.create_event",
+                tool_args_json={"title": "Flight"},
+                tool_call_id=None,
+                source_message_internal_id=None,
+                confirmation_prompt="Create calendar event: Flight",
+                expires_at=now + timedelta(hours=1),
+                created_at=now,
+                updated_at=now,
             )
+        )
 
 
 @pytest.mark.asyncio
@@ -291,11 +288,11 @@ async def test_approval_enqueues_execution_task_atomically(
     assert approved["resolved_via_interface"] == "web"
     assert approved["execution_task_id"] == expected_task_id
 
-    async with DatabaseContext(engine=db_engine) as db:
-        tasks = await db.tasks.get_all(
-            status="pending",
-            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-        )
+    db = Database(engine=db_engine)
+    tasks = await db.tasks.get_all(
+        status="pending",
+        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+    )
 
     assert len(tasks) == 1
     assert tasks[0]["task_id"] == expected_task_id
@@ -321,10 +318,10 @@ async def test_decision_only_approval_does_not_enqueue_execution_task(
     assert approved["resolved_via_interface"] == "web"
     assert approved["execution_task_id"] is None
 
-    async with DatabaseContext(engine=db_engine) as db:
-        tasks = await db.tasks.get_all(
-            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-        )
+    db = Database(engine=db_engine)
+    tasks = await db.tasks.get_all(
+        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+    )
 
     assert tasks == []
 
@@ -355,10 +352,10 @@ async def test_durable_decision_only_approval_does_not_enqueue_execution_task(
     assert approved["decision_only"] is True
     assert approved["execution_task_id"] is None
 
-    async with DatabaseContext(engine=db_engine) as db:
-        tasks = await db.tasks.get_all(
-            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-        )
+    db = Database(engine=db_engine)
+    tasks = await db.tasks.get_all(
+        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+    )
 
     assert tasks == []
 
@@ -385,10 +382,10 @@ async def test_durable_decision_only_flag_suppresses_enqueue(
 
     assert approved["status"] == "approved"
     assert approved["execution_task_id"] is None
-    async with DatabaseContext(engine=db_engine) as db:
-        tasks = await db.tasks.get_all(
-            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-        )
+    db = Database(engine=db_engine)
+    tasks = await db.tasks.get_all(
+        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+    )
     assert tasks == []
 
 
@@ -412,8 +409,8 @@ async def test_replayed_approval_does_not_enqueue_second_task(
 
     assert second["id"] == first["id"]
     assert second["status"] == "approved"
-    async with DatabaseContext(engine=db_engine) as db:
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert [task["task_id"] for task in tasks] == [
         f"confirmation_tool_execution:{request_id}"
@@ -432,9 +429,9 @@ async def test_wrong_user_cannot_approve_request(db_engine: AsyncEngine) -> None
             approving_interface="web",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert request is not None
     assert request["status"] == "pending"
@@ -462,12 +459,13 @@ async def test_reject_blocks_later_approval(db_engine: AsyncEngine) -> None:
             approving_interface="web",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert tasks == []
 
 
+@pytest.mark.postgres  # a second concurrent writer; SQLite serializes transaction scopes
 @pytest.mark.asyncio
 async def test_concurrent_rejection_during_approval_raises(
     db_engine: AsyncEngine,
@@ -482,9 +480,9 @@ async def test_concurrent_rejection_during_approval_raises(
             approving_interface="web",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert request is not None
     assert request["status"] == "rejected"
@@ -505,9 +503,9 @@ async def test_concurrent_approval_during_rejection_raises(
             rejecting_interface="telegram",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert request is not None
     assert request["status"] == "approved"
@@ -516,6 +514,7 @@ async def test_concurrent_approval_during_rejection_raises(
     ]
 
 
+@pytest.mark.postgres  # a second concurrent writer; SQLite serializes transaction scopes
 @pytest.mark.asyncio
 async def test_expiry_during_approval_raises_expired_error(
     db_engine: AsyncEngine,
@@ -530,9 +529,9 @@ async def test_expiry_during_approval_raises_expired_error(
             approving_interface="web",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert request is not None
     assert request["status"] == "pending"
@@ -553,9 +552,9 @@ async def test_expiry_during_rejection_raises_expired_error(
             rejecting_interface="telegram",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert request is not None
     assert request["status"] == "pending"
@@ -598,9 +597,9 @@ async def test_mark_expired_expires_only_pending_requests(
     expired_count = await service.mark_expired(now=datetime.now(UTC))
 
     assert expired_count == 1
-    async with DatabaseContext(engine=db_engine) as db:
-        expired = await db.confirmation_requests.get(expired_id)
-        pending = await db.confirmation_requests.get(pending_id)
+    db = Database(engine=db_engine)
+    expired = await db.confirmation_requests.get(expired_id)
+    pending = await db.confirmation_requests.get(pending_id)
 
     assert expired is not None
     assert expired["status"] == "expired"
@@ -621,8 +620,8 @@ async def test_mark_expired_rejects_naive_now(db_engine: AsyncEngine) -> None:
             now=datetime(2026, 4, 19, 12, 0, 0),
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
 
     assert request is not None
     assert request["status"] == "pending"
@@ -645,9 +644,9 @@ async def test_approval_of_expired_request_does_not_enqueue_task(
             approving_interface="web",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
-        tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
+    tasks = await db.tasks.get_all(task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE)
 
     assert request is not None
     assert request["status"] == "pending"
@@ -660,12 +659,12 @@ async def test_enqueue_failure_rolls_back_approval(db_engine: AsyncEngine) -> No
     request_id = await _create_request(db_engine)
     execution_task_id = f"confirmation_tool_execution:{request_id}"
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.tasks.enqueue(
-            task_id=execution_task_id,
-            task_type="preexisting_task",
-            payload={"reason": "force duplicate task id"},
-        )
+    db = Database(engine=db_engine)
+    await db.tasks.enqueue(
+        task_id=execution_task_id,
+        task_type="preexisting_task",
+        payload={"reason": "force duplicate task id"},
+    )
 
     with pytest.raises(RuntimeError, match="already exists"):
         await service.approve_and_enqueue_execution(
@@ -674,9 +673,9 @@ async def test_enqueue_failure_rolls_back_approval(db_engine: AsyncEngine) -> No
             approving_interface="web",
         )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        request = await db.confirmation_requests.get(request_id)
-        tasks = await db.tasks.get_all()
+    db = Database(engine=db_engine)
+    request = await db.confirmation_requests.get(request_id)
+    tasks = await db.tasks.get_all()
 
     assert request is not None
     assert request["status"] == "pending"

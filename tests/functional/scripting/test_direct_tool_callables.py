@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.monty_engine import MontyEngine
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
@@ -188,31 +188,31 @@ async def test_direct_tool_callable(db_engine: AsyncEngine) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    # Create engine
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test script that calls tools directly
-        script = """
+    # Test script that calls tools directly
+    script = """
 # Call echo tool directly
 result1 = echo(message="Hello, World!")
 
@@ -227,15 +227,15 @@ results = [result1, result2, result3]
 results  # Return the results
 """
 
-        # Execute the script
-        result = await engine.evaluate_async(script, execution_context=context)
+    # Execute the script
+    result = await engine.evaluate_async(script, execution_context=context)
 
-        # Verify results
-        assert result == [
-            "Echo: Hello, World!",
-            "Result: 8",
-            "Good day, Alice!",
-        ]
+    # Verify results
+    assert result == [
+        "Echo: Hello, World!",
+        "Result: 8",
+        "Good day, Alice!",
+    ]
 
 
 @pytest.mark.asyncio
@@ -245,31 +245,31 @@ async def test_tool_prefix_fallback(db_engine: AsyncEngine) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    # Create engine
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test script that calls tools with tool_ prefix
-        script = """
+    # Test script that calls tools with tool_ prefix
+    script = """
 # Call tools using tool_ prefix
 result1 = tool_echo(message="Testing prefix")
 result2 = tool_add_numbers(a=10, b=20)
@@ -282,16 +282,16 @@ results = [result1, result2, result3, result4]
 results  # Return the results
 """
 
-        # Execute the script
-        result = await engine.evaluate_async(script, execution_context=context)
+    # Execute the script
+    result = await engine.evaluate_async(script, execution_context=context)
 
-        # Verify results
-        assert result == [
-            "Echo: Testing prefix",
-            "Result: 30",
-            "Echo: Direct call",
-            "Hello, Bob!",
-        ]
+    # Verify results
+    assert result == [
+        "Echo: Testing prefix",
+        "Result: 30",
+        "Echo: Direct call",
+        "Hello, Bob!",
+    ]
 
 
 @pytest.mark.asyncio
@@ -301,34 +301,34 @@ async def test_direct_callable_with_security(db_engine: AsyncEngine) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine with only echo allowed
-        config = ScriptConfig(allowed_tools={"echo"})
-        engine = MontyEngine(
-            tools_provider=tools_provider,
-            config=config,
-            default_timezone=ZoneInfo("Australia/Sydney"),
-        )
+    # Create engine with only echo allowed
+    config = ScriptConfig(allowed_tools={"echo"})
+    engine = MontyEngine(
+        tools_provider=tools_provider,
+        config=config,
+        default_timezone=ZoneInfo("Australia/Sydney"),
+    )
 
-        # Test script that tries to call allowed and disallowed tools
-        script = """
+    # Test script that tries to call allowed and disallowed tools
+    script = """
 # This should work - echo is allowed
 result1 = echo(message="Allowed tool")
 
@@ -340,26 +340,26 @@ available = tools_list()
 available  # Return the available tools
 """
 
-        # Execute the script
-        result = await engine.evaluate_async(script, execution_context=context)
+    # Execute the script
+    result = await engine.evaluate_async(script, execution_context=context)
 
-        # Verify only echo was available
-        assert result == [
-            {
-                "name": "echo",
-                "description": "Echo back the input message",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "message": {
-                            "type": "string",
-                            "description": "Message to echo",
-                        }
-                    },
-                    "required": ["message"],
+    # Verify only echo was available
+    assert result == [
+        {
+            "name": "echo",
+            "description": "Echo back the input message",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Message to echo",
+                    }
                 },
-            }
-        ]
+                "required": ["message"],
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -387,31 +387,31 @@ async def test_direct_callable_validates_parameters(db_engine: AsyncEngine) -> N
     tools_provider = ValidatingMockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    # Create engine
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test script that checks parameter validation
-        script = """
+    # Test script that checks parameter validation
+    script = """
 # Call echo with proper parameters
 result1 = echo(message="Test message")
 
@@ -422,11 +422,11 @@ results = [result1, result2]
 results  # Return the results
 """
 
-        # Execute the script
-        result = await engine.evaluate_async(script, execution_context=context)
+    # Execute the script
+    result = await engine.evaluate_async(script, execution_context=context)
 
-        # Verify successful calls
-        assert result == ["Echo: Test message", "Result: 3"]
+    # Verify successful calls
+    assert result == ["Echo: Test message", "Result: 3"]
 
 
 @pytest.mark.asyncio
@@ -436,31 +436,31 @@ async def test_tools_api_still_works(db_engine: AsyncEngine) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    # Create engine
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test script that uses both old and new APIs
-        script = """
+    # Test script that uses both old and new APIs
+    script = """
 # Use old tools API
 old_result = tools_execute("echo", message="Old API")
 
@@ -482,14 +482,14 @@ results = {
 results  # Return the results
 """
 
-        # Execute the script
-        result = await engine.evaluate_async(script, execution_context=context)
+    # Execute the script
+    result = await engine.evaluate_async(script, execution_context=context)
 
-        # Verify both APIs work
-        assert result["old"] == "Echo: Old API"
-        assert result["new"] == "Echo: New API"
-        assert result["has_info"] is True
-        assert result["tool_count"] == 3
+    # Verify both APIs work
+    assert result["old"] == "Echo: Old API"
+    assert result["new"] == "Echo: New API"
+    assert result["has_info"] is True
+    assert result["tool_count"] == 3
 
 
 @pytest.mark.asyncio
@@ -499,34 +499,34 @@ async def test_no_tools_when_denied(db_engine: AsyncEngine) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine with all tools denied
-        config = ScriptConfig(deny_all_tools=True)
-        engine = MontyEngine(
-            tools_provider=tools_provider,
-            config=config,
-            default_timezone=ZoneInfo("Australia/Sydney"),
-        )
+    # Create engine with all tools denied
+    config = ScriptConfig(deny_all_tools=True)
+    engine = MontyEngine(
+        tools_provider=tools_provider,
+        config=config,
+        default_timezone=ZoneInfo("Australia/Sydney"),
+    )
 
-        # Test script that checks if tools exist
-        script = """
+    # Test script that checks if tools exist
+    script = """
 # Try to use tool functions to check if they exist
 echo_exists = False
 add_numbers_exists = False
@@ -545,13 +545,13 @@ results = {
 results  # Return the results
 """
 
-        # Execute the script
-        result = await engine.evaluate_async(script, execution_context=context)
+    # Execute the script
+    result = await engine.evaluate_async(script, execution_context=context)
 
-        # Verify no tools are available
-        assert result["echo_exists"] is False
-        assert result["add_numbers_exists"] is False
-        assert result["tools_count"] == 0
+    # Verify no tools are available
+    assert result["echo_exists"] is False
+    assert result["add_numbers_exists"] is False
+    assert result["tools_count"] == 0
 
 
 class _InScriptProbeToolsProvider:
@@ -612,28 +612,28 @@ async def test_engine_marks_context_in_script(db_engine: AsyncEngine) -> None:
     """
     tools_provider = _InScriptProbeToolsProvider()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-        assert context.in_script is False
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+    assert context.in_script is False
 
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("UTC")
-        )
-        await engine.evaluate_async("probe()", execution_context=context)
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("UTC")
+    )
+    await engine.evaluate_async("probe()", execution_context=context)
 
     assert tools_provider.in_script_seen is True

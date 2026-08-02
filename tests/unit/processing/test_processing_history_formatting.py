@@ -37,7 +37,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import message_history_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 from tests.factories.messages import (
     create_assistant_message,
@@ -173,44 +173,42 @@ async def test_handle_chat_interaction_persists_system_trigger(
         app_config=AppConfig(),
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id="system-trigger-conversation",
-            trigger_content_parts=[
-                {
-                    "type": "text",
-                    "text": "System: Delegated profile task completed.",
-                }
-            ],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-            trigger_role="system",
-            trigger_attachments=[
-                {
-                    "type": "attachment_reference",
-                    "attachment_id": "delegated-attachment-1",
-                    "filename": "delegated-output.txt",
-                }
-            ],
-        )
+    db_context = Database(engine=db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="system-trigger-conversation",
+        trigger_content_parts=[
+            {
+                "type": "text",
+                "text": "System: Delegated profile task completed.",
+            }
+        ],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+        trigger_role="system",
+        trigger_attachments=[
+            {
+                "type": "attachment_reference",
+                "attachment_id": "delegated-attachment-1",
+                "filename": "delegated-output.txt",
+            }
+        ],
+    )
 
-        rows = await db_context.fetch_all(
-            message_history_table
-            .select()
-            .where(
-                message_history_table.c.conversation_id == "system-trigger-conversation"
-            )
-            .order_by(message_history_table.c.internal_id)
-        )
-        future_history = await db_context.message_history.get_recent(
-            interface_type="web",
-            conversation_id="system-trigger-conversation",
-            limit=10,
-            processing_profile_id="system_trigger_profile",
-            current_time=service.clock.now(),
-        )
+    rows = await db_context.fetch_all(
+        message_history_table
+        .select()
+        .where(message_history_table.c.conversation_id == "system-trigger-conversation")
+        .order_by(message_history_table.c.internal_id)
+    )
+    future_history = await db_context.message_history.get_recent(
+        interface_type="web",
+        conversation_id="system-trigger-conversation",
+        limit=10,
+        processing_profile_id="system_trigger_profile",
+        current_time=service.clock.now(),
+    )
 
     assert result.text_reply == "Relayed delegated result."
     assert len(rows) == 2

@@ -25,10 +25,10 @@ move between tools and people.
 If a file is rejected, converting it to a nearby format (an image to PNG, a spreadsheet to CSV sent
 through Telegram) is usually the quickest way through.
 
-Size limits apply: typically 20 MB for anything a model looks at or listens to —
-images, audio and video — and 100 MB for other files. A recording over the limit is
-refused with its size rather than accepted and then failed on, so trimming a long
-recording, or sending a lower-quality version of a video, gets it through.
+Size limits apply: typically 20 MB for anything a model looks at or listens to — images, audio and
+video — and 100 MB for other files. A recording over the limit is refused with its size rather than
+accepted and then failed on, so trimming a long recording, or sending a lower-quality version of a
+video, gets it through.
 
 ## What you can do with them
 

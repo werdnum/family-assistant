@@ -22,7 +22,7 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import (
     TaskWorker,
@@ -74,28 +74,28 @@ async def test_script_wake_llm_with_attachments(
 
         # Create mock image attachment
         test_image_content = b"mock_image_data_for_wake_llm_test"
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            image_attachment = await attachment_registry.register_user_attachment(
-                db_context=db_ctx,
-                content=test_image_content,
-                mime_type="image/png",
-                filename="security_snapshot.png",
-                conversation_id="security_system",
-                user_id="security_camera",
-                description="Security camera snapshot",
-            )
+        db_ctx = Database(engine=db_engine)
+        image_attachment = await attachment_registry.register_user_attachment(
+            db_context=db_ctx,
+            content=test_image_content,
+            mime_type="image/png",
+            filename="security_snapshot.png",
+            conversation_id="security_system",
+            user_id="security_camera",
+            description="Security camera snapshot",
+        )
 
         # Step 2: Create event listener with script that calls wake_llm with attachments
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            await db_ctx.events.create_event_listener(
-                name=f"Security Alert {test_run_id}",
-                source_id=EventSourceType.home_assistant,
-                match_conditions={"entity_id": "binary_sensor.motion_detected"},
-                conversation_id="security_system",
-                interface_type="telegram",
-                action_type=EventActionType.script,
-                action_config={
-                    "script_code": f'''
+        db_ctx = Database(engine=db_engine)
+        await db_ctx.events.create_event_listener(
+            name=f"Security Alert {test_run_id}",
+            source_id=EventSourceType.home_assistant,
+            match_conditions={"entity_id": "binary_sensor.motion_detected"},
+            conversation_id="security_system",
+            interface_type="telegram",
+            action_type=EventActionType.script,
+            action_config={
+                "script_code": f'''
 # Security motion detection script with image attachment
 motion_detected = event["new_state"]["state"] == "on"
 
@@ -110,9 +110,9 @@ if motion_detected:
         "action_required": "Review security footage"
     }})
 '''
-                },
-                enabled=True,
-            )
+            },
+            enabled=True,
+        )
 
         # Step 3: Set up LLM mock (task worker will be created later)
 
@@ -190,7 +190,7 @@ if motion_detected:
         processor = EventProcessor(
             sources={},
             sample_interval_hours=1.0,
-            get_db_context_func=lambda: get_db_context(engine=db_engine),
+            get_db_context_func=lambda: Database(engine=db_engine),
             timezone=ZoneInfo("Australia/Sydney"),
         )
 
@@ -302,16 +302,16 @@ async def test_script_tool_result_attachment_to_wake_llm(
             )
 
         # Create event listener with script that gets camera snapshot and wakes LLM
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            await db_ctx.events.create_event_listener(
-                name=f"Camera Check {test_run_id}",
-                source_id=EventSourceType.home_assistant,
-                match_conditions={"entity_id": "binary_sensor.motion"},
-                conversation_id="camera_system",
-                interface_type="telegram",
-                action_type=EventActionType.script,
-                action_config={
-                    "script_code": """
+        db_ctx = Database(engine=db_engine)
+        await db_ctx.events.create_event_listener(
+            name=f"Camera Check {test_run_id}",
+            source_id=EventSourceType.home_assistant,
+            match_conditions={"entity_id": "binary_sensor.motion"},
+            conversation_id="camera_system",
+            interface_type="telegram",
+            action_type=EventActionType.script,
+            action_config={
+                "script_code": """
 # Get camera snapshot - returns dict with text + attachments
 snapshot_result = get_camera_snapshot()
 
@@ -338,9 +338,9 @@ wake_llm({
     "attachment_id": attachment_id
 })
 """
-                },
-                enabled=True,
-            )
+            },
+            enabled=True,
+        )
 
         # Set up LLM mock to verify it receives the attachment
         received_attachment_id = None
@@ -427,7 +427,7 @@ wake_llm({
         processor = EventProcessor(
             sources={},
             sample_interval_hours=1.0,
-            get_db_context_func=lambda: get_db_context(engine=db_engine),
+            get_db_context_func=lambda: Database(engine=db_engine),
             timezone=ZoneInfo("Australia/Sydney"),
         )
 
@@ -483,10 +483,10 @@ wake_llm({
         assert len(received_attachment_id) == 36, "Should be a valid UUID"
 
         # Verify the attachment ID is actually registered and has correct content
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            attachment_metadata = await attachment_registry.get_attachment(
-                db_ctx, received_attachment_id, acting_user_id=None
-            )
+        db_ctx = Database(engine=db_engine)
+        attachment_metadata = await attachment_registry.get_attachment(
+            db_ctx, received_attachment_id, acting_user_id=None
+        )
         assert attachment_metadata is not None, (
             f"Attachment {received_attachment_id} should exist in registry"
         )

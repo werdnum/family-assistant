@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import (
     DuplicateNoteError,
     NoteModel,
@@ -32,7 +32,7 @@ class NoteRequest(NoteModel):
 
 @notes_api_router.get("/")
 async def list_notes(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> list[NoteModel]:
     """Return all notes."""
     notes = await db_context.notes.get_all(visibility_grants=None)
@@ -41,7 +41,7 @@ async def list_notes(
 
 @notes_api_router.get("/{title}")
 async def get_note(
-    title: str, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    title: str, db_context: Annotated[Database, Depends(get_db)]
 ) -> NoteModel:
     """Return a note by title."""
     note = await db_context.notes.get_by_title(title, visibility_grants=None)
@@ -52,7 +52,7 @@ async def get_note(
 
 @notes_api_router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_or_update_note(
-    note: NoteRequest, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    note: NoteRequest, db_context: Annotated[Database, Depends(get_db)]
 ) -> dict[str, str]:
     """Create or update a note."""
     # If original_title is provided, this is an edit operation with potential rename
@@ -104,7 +104,7 @@ async def create_or_update_note(
 
 @notes_api_router.delete("/{title}")
 async def delete_note(
-    title: str, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    title: str, db_context: Annotated[Database, Depends(get_db)]
 ) -> dict[str, str]:
     """Delete a note by title."""
     deleted = await db_context.notes.delete(title)

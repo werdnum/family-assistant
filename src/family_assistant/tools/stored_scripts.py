@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.storage.types import ActionConfig
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -63,7 +63,7 @@ def _validate_parameters_schema_shape(
 
 
 async def validate_script_action_config(
-    db_context: DatabaseContext,
+    db_context: Database,
     # ast-grep-ignore: no-dict-any - action_config comes from LLM tool args as plain dict
     action_config: ActionConfig | dict[str, Any],
 ) -> str | None:

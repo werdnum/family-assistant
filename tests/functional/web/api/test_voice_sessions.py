@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.llm.messages import UserMessage
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from tests.helpers import wait_for_condition
 
 
@@ -70,10 +70,10 @@ async def test_voice_session_persists_as_listable_conversation(
     # Every transcript row (user AND assistant) is persisted with explicit
     # runtime taint metadata rather than version=None.
     assert web_only_assistant.database_engine is not None
-    async with get_db_context(web_only_assistant.database_engine) as db_context:
-        rows = await db_context.message_history.get_recent_with_metadata(
-            interface_type="web", conversation_id=conversation_id
-        )
+    db_context = Database(web_only_assistant.database_engine)
+    rows = await db_context.message_history.get_recent_with_metadata(
+        interface_type="web", conversation_id=conversation_id
+    )
     assert len(rows) == 3
     assert all(row["taint_metadata_version"] == "runtime_v1" for row in rows)
     assert rows[0]["taint_metadata_json"] is not None
@@ -131,15 +131,15 @@ async def test_voice_session_rejects_foreign_conversation_id(
     """Appending to another user's conversation is refused (404), so it can't be
     hijacked into a multi-owner conversation that disappears for its real owner."""
     foreign_conversation_id = "web_conv_owned_by_someone_else"
-    async with get_db_context(db_engine) as db_context:
-        await db_context.message_history.add_message(
-            UserMessage(content="not yours"),
-            interface_type="web",
-            conversation_id=foreign_conversation_id,
-            timestamp=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
-            turn_id="foreign-turn",
-            user_id="some_other_user",
-        )
+    db_context = Database(db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(content="not yours"),
+        interface_type="web",
+        conversation_id=foreign_conversation_id,
+        timestamp=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
+        turn_id="foreign-turn",
+        user_id="some_other_user",
+    )
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)

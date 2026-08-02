@@ -317,7 +317,7 @@ class GoogleGenAIClient(BaseLLMClient):
         try:
             api_client = getattr(self.client, "_api_client", None)
             if api_client and hasattr(api_client, "close"):
-                api_client.close()  # type: ignore[attr-defined]
+                api_client.close()
         except Exception as e:
             logger.debug(f"Error closing API client: {e}")
 

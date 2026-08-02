@@ -8,14 +8,14 @@ import pytest_asyncio
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.delegation_runs import DelegationRunCreate
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        yield db_ctx
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
+    db_ctx = Database(engine=db_engine)
+    yield db_ctx
 
 
 def _make_run(delegation_id: str, task_id: str) -> DelegationRunCreate:
@@ -36,7 +36,7 @@ def _make_run(delegation_id: str, task_id: str) -> DelegationRunCreate:
 
 class TestDelegationRunsAsyncRemote:
     @pytest.mark.asyncio
-    async def test_create_run_defaults(self, db_context: DatabaseContext) -> None:
+    async def test_create_run_defaults(self, db_context: Database) -> None:
         run = await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
         assert run["status"] == "queued"
         assert run["remote_task_id"] is None
@@ -44,9 +44,7 @@ class TestDelegationRunsAsyncRemote:
         assert run["poll_attempts"] == 0
 
     @pytest.mark.asyncio
-    async def test_mark_awaiting_remote_from_queued(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_mark_awaiting_remote_from_queued(self, db_context: Database) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
         # The submit-then-poll path claims queued -> awaiting_remote (with the
         # pre-generated remote id) before submitting.
@@ -64,7 +62,7 @@ class TestDelegationRunsAsyncRemote:
 
     @pytest.mark.asyncio
     async def test_mark_awaiting_remote_is_guarded_on_queued(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
         first = await db_context.delegation_runs.mark_awaiting_remote(
@@ -85,7 +83,7 @@ class TestDelegationRunsAsyncRemote:
 
     @pytest.mark.asyncio
     async def test_terminal_transition_is_conditional_on_non_terminal(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         # mark_completed/mark_failed are atomic CAS on non-terminal status, so a
         # second finalizer (a racing reaper/poll) cannot clobber the result.
@@ -118,7 +116,7 @@ class TestDelegationRunsAsyncRemote:
         assert failed["status"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_bump_poll_attempt(self, db_context: DatabaseContext) -> None:
+    async def test_bump_poll_attempt(self, db_context: Database) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
         now = datetime.now(UTC)
         assert await db_context.delegation_runs.bump_poll_attempt("d1", now) == 1
@@ -128,7 +126,7 @@ class TestDelegationRunsAsyncRemote:
         )
 
     @pytest.mark.asyncio
-    async def test_list_awaiting_remote(self, db_context: DatabaseContext) -> None:
+    async def test_list_awaiting_remote(self, db_context: Database) -> None:
         await db_context.delegation_runs.create_run(_make_run("d1", "t1"))
         await db_context.delegation_runs.create_run(_make_run("d2", "t2"))
         await db_context.delegation_runs.mark_awaiting_remote(
@@ -148,14 +146,14 @@ class TestDelegationRunsAsyncRemote:
         # The partial unique index atomically serializes resumes: at most one
         # non-terminal run may target a given subconversation, so two concurrent
         # resumes cannot both create active runs that interleave in one history.
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            await db_ctx.delegation_runs.create_run(_make_run("d1", "t1"))
+        db_ctx = Database(engine=db_engine)
+        await db_ctx.delegation_runs.create_run(_make_run("d1", "t1"))
 
         conflicting = _make_run("d2", "t2")
         conflicting["subconversation_id"] = "sub-d1"
         with pytest.raises(IntegrityError):
-            async with DatabaseContext(engine=db_engine) as db_ctx:
-                await db_ctx.delegation_runs.create_run(conflicting)
+            db_ctx = Database(engine=db_engine)
+            await db_ctx.delegation_runs.create_run(conflicting)
 
     @pytest.mark.asyncio
     async def test_active_subconversation_index_allows_run_after_terminal(
@@ -163,17 +161,17 @@ class TestDelegationRunsAsyncRemote:
     ) -> None:
         # Once the prior run is terminal it leaves the partial index, so a resume
         # reusing its subconversation is permitted.
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            await db_ctx.delegation_runs.create_run(_make_run("d1", "t1"))
-            await db_ctx.delegation_runs.mark_completed(
-                delegation_id="d1",
-                result_text="done",
-                result_attachment_ids=[],
-                completed_at=datetime.now(UTC),
-            )
+        db_ctx = Database(engine=db_engine)
+        await db_ctx.delegation_runs.create_run(_make_run("d1", "t1"))
+        await db_ctx.delegation_runs.mark_completed(
+            delegation_id="d1",
+            result_text="done",
+            result_attachment_ids=[],
+            completed_at=datetime.now(UTC),
+        )
 
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            resume = _make_run("d2", "t2")
-            resume["subconversation_id"] = "sub-d1"
-            created = await db_ctx.delegation_runs.create_run(resume)
-            assert created["subconversation_id"] == "sub-d1"
+        db_ctx = Database(engine=db_engine)
+        resume = _make_run("d2", "t2")
+        resume["subconversation_id"] = "sub-d1"
+        created = await db_ctx.delegation_runs.create_run(resume)
+        assert created["subconversation_id"] == "sub-d1"

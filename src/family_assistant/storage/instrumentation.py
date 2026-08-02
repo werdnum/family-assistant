@@ -165,7 +165,11 @@ class EngineInstrumentation:
         problems = [txn.describe() for txn in [*self.long_transactions, *still_open]]
         if self._open:
             problems.append(f"{len(self._open)} transaction(s) still open")
-        if self._checked_out != 0:
+        # Only a positive count means something is still held. A connection
+        # invalidated mid-operation (a cancelled query, a dropped server
+        # connection) is checked in without a matching checkout, so the counter
+        # is a floor rather than a balance.
+        if self._checked_out > 0:
             problems.append(
                 f"{self._checked_out} connection(s) still checked out of the pool"
             )

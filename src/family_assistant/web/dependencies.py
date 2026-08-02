@@ -1,7 +1,6 @@
 import logging
 import os
 import secrets
-from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request, WebSocket, status
@@ -12,7 +11,7 @@ from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import ToolsProvider
 from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import GoogleGeminiLiveClient, LiveAudioClient
@@ -101,15 +100,15 @@ async def get_embedding_generator_dependency(request: Request) -> EmbeddingGener
     return generator
 
 
-async def get_db(request: Request) -> AsyncGenerator[DatabaseContext]:
-    """FastAPI dependency to get a DatabaseContext."""
-    # Get engine from app.state (set by Assistant during setup)
+async def get_db(request: Request) -> Database:
+    """FastAPI dependency to get a Database handle.
+
+    The handle is a stateless object that opens its own short transactions.
+    """
     engine = request.app.state.database_engine
     if not engine:
         raise RuntimeError("Database engine not initialized in app.state")
-
-    async with get_db_context(engine) as db_context:
-        yield db_context  # noqa: ASYNC119
+    return Database(engine)
 
 
 async def get_tools_provider_dependency(request: Request) -> ToolsProvider:

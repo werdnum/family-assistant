@@ -18,7 +18,7 @@ from sqlalchemy import cast as sa_cast
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.types import Integer
 
-# storage module functions now accessed via DatabaseContext
+# storage module functions now accessed via Database
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.events.indexing_source import IndexingEventType, IndexingSource
 from family_assistant.events.processor import EventProcessor
@@ -27,7 +27,7 @@ from family_assistant.indexing.tasks import (
     check_document_completion,
     handle_embed_and_store_batch,
 )
-from family_assistant.storage import get_db_context
+from family_assistant.storage import Database
 from family_assistant.storage.events import recent_events_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import add_document
@@ -65,30 +65,30 @@ async def poll_for_document_ready_event(
     for _ in range(max_attempts):
         if not engine:
             raise RuntimeError("Database engine not initialized")
-        async with get_db_context(engine=engine) as db_ctx:
-            # Use SQLAlchemy's JSON operators for cross-database compatibility
-            stmt = select(recent_events_table.c.event_data).where(
-                and_(
-                    recent_events_table.c.source_id == "indexing",
-                    recent_events_table.c.event_data["event_type"].as_string()
-                    == IndexingEventType.DOCUMENT_READY.value,
-                    # Cast to integer for proper comparison
-                    sa_cast(
-                        recent_events_table.c.event_data["document_id"].as_string(),
-                        Integer,
-                    )
-                    == doc_id,
+        db_ctx = Database(engine=engine)
+        # Use SQLAlchemy's JSON operators for cross-database compatibility
+        stmt = select(recent_events_table.c.event_data).where(
+            and_(
+                recent_events_table.c.source_id == "indexing",
+                recent_events_table.c.event_data["event_type"].as_string()
+                == IndexingEventType.DOCUMENT_READY.value,
+                # Cast to integer for proper comparison
+                sa_cast(
+                    recent_events_table.c.event_data["document_id"].as_string(),
+                    Integer,
                 )
+                == doc_id,
             )
+        )
 
-            result = await db_ctx.fetch_all(stmt)
-            if result:
-                # Extract and return event data
-                event_data_raw = result[0]["event_data"]
-                if isinstance(event_data_raw, str):
-                    return json.loads(event_data_raw)
-                else:
-                    return event_data_raw
+        result = await db_ctx.fetch_all(stmt)
+        if result:
+            # Extract and return event data
+            event_data_raw = result[0]["event_data"]
+            if isinstance(event_data_raw, str):
+                return json.loads(event_data_raw)
+            else:
+                return event_data_raw
 
         await asyncio.sleep(poll_interval)
 
@@ -135,42 +135,42 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
     event_processor = EventProcessor(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,  # Short interval for testing
-        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        get_db_context_func=lambda: Database(engine=db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
     # Create event listener that captures events
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name="Test Document Ready Listener",
-            description="Test listener for document ready events",
-            conversation_id="test-conv",
-            interface_type="web",
-            source_id="indexing",
-            match_conditions={"event_type": IndexingEventType.DOCUMENT_READY.value},
-            action_config=cast(
-                "ActionConfig", {"prompt": "Document ready: {{ event.document_title }}"}
-            ),
-            enabled=True,
-        )
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name="Test Document Ready Listener",
+        description="Test listener for document ready events",
+        conversation_id="test-conv",
+        interface_type="web",
+        source_id="indexing",
+        match_conditions={"event_type": IndexingEventType.DOCUMENT_READY.value},
+        action_config=cast(
+            "ActionConfig", {"prompt": "Document ready: {{ event.document_title }}"}
+        ),
+        enabled=True,
+    )
 
     try:
         # Start processor and wait for it to be fully initialized
         await event_processor.start()
 
         # Create a document
-        async with get_db_context(engine=db_engine) as db_ctx:
-            test_doc = MockDocument(
-                source_type="test_upload",
-                source_id=f"test-{uuid.uuid4()}",
-                title=TEST_DOC_TITLE,
-                content=TEST_DOC_CONTENT,
-                metadata={"test": "metadata"},
-            )
-            doc_id = await add_document(
-                db_context=db_ctx,
-                doc=test_doc,
-            )
+        db_ctx = Database(engine=db_engine)
+        test_doc = MockDocument(
+            source_type="test_upload",
+            source_id=f"test-{uuid.uuid4()}",
+            title=TEST_DOC_TITLE,
+            content=TEST_DOC_CONTENT,
+            metadata={"test": "metadata"},
+        )
+        doc_id = await add_document(
+            db_context=db_ctx,
+            doc=test_doc,
+        )
 
         # Create mock components
         embedding_generator = MockEmbeddingGenerator(
@@ -182,43 +182,43 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
         # In real scenario, the pipeline would create these tasks
 
         # Create embedding tasks
-        async with get_db_context(engine=db_engine) as db_ctx:
-            # Title embedding task
+        db_ctx = Database(engine=db_engine)
+        # Title embedding task
+        await db_ctx.tasks.enqueue(
+            task_id=f"embed_title_{doc_id}",
+            task_type="embed_and_store_batch",
+            payload={
+                "document_id": doc_id,
+                "texts_to_embed": [TEST_DOC_TITLE],
+                "embedding_metadata_list": [
+                    {
+                        "embedding_type": "title",
+                        "chunk_index": 0,
+                        "original_content_metadata": {},
+                        "content_hash": None,
+                    }
+                ],
+            },
+        )
+
+        # Content chunk embedding tasks
+        for i, chunk in enumerate(TEST_DOC_CHUNKS):
             await db_ctx.tasks.enqueue(
-                task_id=f"embed_title_{doc_id}",
+                task_id=f"embed_chunk_{doc_id}_{i}",
                 task_type="embed_and_store_batch",
                 payload={
                     "document_id": doc_id,
-                    "texts_to_embed": [TEST_DOC_TITLE],
+                    "texts_to_embed": [chunk],
                     "embedding_metadata_list": [
                         {
-                            "embedding_type": "title",
-                            "chunk_index": 0,
-                            "original_content_metadata": {},
+                            "embedding_type": "content_chunk",
+                            "chunk_index": i,
+                            "original_content_metadata": {"chunk_index": i},
                             "content_hash": None,
                         }
                     ],
                 },
             )
-
-            # Content chunk embedding tasks
-            for i, chunk in enumerate(TEST_DOC_CHUNKS):
-                await db_ctx.tasks.enqueue(
-                    task_id=f"embed_chunk_{doc_id}_{i}",
-                    task_type="embed_and_store_batch",
-                    payload={
-                        "document_id": doc_id,
-                        "texts_to_embed": [chunk],
-                        "embedding_metadata_list": [
-                            {
-                                "embedding_type": "content_chunk",
-                                "chunk_index": i,
-                                "original_content_metadata": {"chunk_index": i},
-                                "content_hash": None,
-                            }
-                        ],
-                    },
-                )
 
         # Process all embedding tasks
         # Keep track of how many we've processed
@@ -227,42 +227,42 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
 
         # Process tasks one by one
         while tasks_processed < total_tasks:
-            async with get_db_context(engine=db_engine) as db_ctx:
-                task = await db_ctx.tasks.dequeue(
-                    task_types=["embed_and_store_batch"],
-                    worker_id="test-worker",
-                    current_time=datetime.now(UTC),
-                )
-                if task is None:
-                    # Give a moment for tasks to become available
-                    await asyncio.sleep(0.1)
-                    continue
+            db_ctx = Database(engine=db_engine)
+            task = await db_ctx.tasks.dequeue(
+                task_types=["embed_and_store_batch"],
+                worker_id="test-worker",
+                current_time=datetime.now(UTC),
+            )
+            if task is None:
+                # Give a moment for tasks to become available
+                await asyncio.sleep(0.1)
+                continue
 
-                task_context = ToolExecutionContext(
-                    interface_type="web",
-                    conversation_id="test-conv",
-                    user_name="test-user",
-                    turn_id=str(uuid.uuid4()),
-                    db_context=db_ctx,
-                    processing_service=None,
-                    clock=None,
-                    home_assistant_client=None,
-                    event_sources=None,
-                    attachment_registry=None,
-                    camera_backend=None,
-                    embedding_generator=embedding_generator,
-                    indexing_source=indexing_source,
-                    timezone=ZoneInfo("UTC"),
-                    credential_resolvers=None,
-                    api_backend=None,
-                )
+            task_context = ToolExecutionContext(
+                interface_type="web",
+                conversation_id="test-conv",
+                user_name="test-user",
+                turn_id=str(uuid.uuid4()),
+                db_context=db_ctx,
+                processing_service=None,
+                clock=None,
+                home_assistant_client=None,
+                event_sources=None,
+                attachment_registry=None,
+                camera_backend=None,
+                embedding_generator=embedding_generator,
+                indexing_source=indexing_source,
+                timezone=ZoneInfo("UTC"),
+                credential_resolvers=None,
+                api_backend=None,
+            )
 
-                assert task["payload"] is not None
-                await handle_embed_and_store_batch(
-                    task_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-                )
-                await db_ctx.tasks.update_status(task["task_id"], "done")
-                tasks_processed += 1
+            assert task["payload"] is not None
+            await handle_embed_and_store_batch(
+                task_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+            )
+            await db_ctx.tasks.update_status(task["task_id"], "done")
+            tasks_processed += 1
 
         # Wait for all events to be processed before polling
         await indexing_source.wait_for_pending_events()
@@ -294,81 +294,215 @@ async def test_document_ready_not_emitted_with_pending_tasks(
     indexing_source = IndexingSource()
 
     # Create a document
-    async with get_db_context(engine=db_engine) as db_ctx:
-        test_doc = MockDocument(
-            source_type="test_upload",
-            source_id=f"test-{uuid.uuid4()}",
-            title="Test Document",
-            content="Test content",
-            metadata={},
-        )
-        doc_id = await add_document(
-            db_context=db_ctx,
-            doc=test_doc,
-        )
+    db_ctx = Database(engine=db_engine)
+    test_doc = MockDocument(
+        source_type="test_upload",
+        source_id=f"test-{uuid.uuid4()}",
+        title="Test Document",
+        content="Test content",
+        metadata={},
+    )
+    doc_id = await add_document(
+        db_context=db_ctx,
+        doc=test_doc,
+    )
 
-        # Create multiple embedding tasks
-        await db_ctx.tasks.enqueue(
-            task_id=f"embed_1_{doc_id}",
-            task_type="embed_and_store_batch",
-            payload={
-                "document_id": doc_id,
-                "texts_to_embed": ["Part 1"],
-                "embedding_metadata_list": [
-                    {
-                        "embedding_type": "content_chunk",
-                        "chunk_index": 0,
-                        "original_content_metadata": {},
-                        "content_hash": None,
-                    }
-                ],
-            },
-        )
+    # Create multiple embedding tasks
+    await db_ctx.tasks.enqueue(
+        task_id=f"embed_1_{doc_id}",
+        task_type="embed_and_store_batch",
+        payload={
+            "document_id": doc_id,
+            "texts_to_embed": ["Part 1"],
+            "embedding_metadata_list": [
+                {
+                    "embedding_type": "content_chunk",
+                    "chunk_index": 0,
+                    "original_content_metadata": {},
+                    "content_hash": None,
+                }
+            ],
+        },
+    )
 
-        await db_ctx.tasks.enqueue(
-            task_id=f"embed_2_{doc_id}",
-            task_type="embed_and_store_batch",
-            payload={
-                "document_id": doc_id,
-                "texts_to_embed": ["Part 2"],
-                "embedding_metadata_list": [
-                    {
-                        "embedding_type": "content_chunk",
-                        "chunk_index": 1,
-                        "original_content_metadata": {},
-                        "content_hash": None,
-                    }
-                ],
-            },
-        )
+    await db_ctx.tasks.enqueue(
+        task_id=f"embed_2_{doc_id}",
+        task_type="embed_and_store_batch",
+        payload={
+            "document_id": doc_id,
+            "texts_to_embed": ["Part 2"],
+            "embedding_metadata_list": [
+                {
+                    "embedding_type": "content_chunk",
+                    "chunk_index": 1,
+                    "original_content_metadata": {},
+                    "content_hash": None,
+                }
+            ],
+        },
+    )
 
     # Process only the first task
     embedding_generator = MockEmbeddingGenerator(
         model_name="test-model", dimensions=128
     )
 
-    async with get_db_context(engine=db_engine) as db_ctx:
-        first_task = await db_ctx.tasks.dequeue(
+    db_ctx = Database(engine=db_engine)
+    first_task = await db_ctx.tasks.dequeue(
+        task_types=["embed_and_store_batch"],
+        worker_id="test-worker",
+        current_time=datetime.now(UTC),
+    )
+    assert first_task is not None
+
+    # Track if event was emitted
+    event_emitted = False
+    original_emit = indexing_source.emit_event
+
+    # ast-grep-ignore: no-dict-any - Mocking event handler signature
+    async def track_emit(event_data: dict[str, Any]) -> asyncio.Future[None]:
+        nonlocal event_emitted
+        if event_data.get("event_type") == IndexingEventType.DOCUMENT_READY.value:
+            event_emitted = True
+        return await original_emit(event_data)
+
+    indexing_source.emit_event = track_emit
+
+    # Process first task
+    exec_context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="test-conv",
+        user_name="test-user",
+        turn_id=str(uuid.uuid4()),
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        embedding_generator=embedding_generator,
+        indexing_source=indexing_source,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    assert first_task["payload"] is not None
+    await handle_embed_and_store_batch(
+        exec_context, cast("EmbedAndStoreBatchPayload", first_task["payload"])
+    )
+    await db_ctx.tasks.update_status(first_task["task_id"], "done")
+
+    # Event should NOT have been emitted since second task is pending
+    assert not event_emitted, "DOCUMENT_READY was emitted with pending tasks!"
+
+
+@pytest.mark.asyncio
+async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> None:
+    """Test full integration with event listeners triggering on document ready."""
+    # Clean up any leftover tasks from previous tests to ensure isolation
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.execute(
+        tasks_table.delete().where(tasks_table.c.task_type == "embed_and_store_batch")
+    )
+
+    # Create components
+    indexing_source = IndexingSource()
+
+    # Create event listener
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name="Newsletter Ready Listener",
+        description="Test listener for newsletter ready events",
+        conversation_id="test-conv",
+        interface_type="web",
+        source_id="indexing",
+        match_conditions=cast(
+            "MatchConditions",
+            {
+                "event_type": IndexingEventType.DOCUMENT_READY.value,
+                "document_title": {"$contains": "Newsletter"},  # Only match newsletters
+            },
+        ),
+        action_config=cast(
+            "ActionConfig",
+            {
+                "prompt": "The newsletter '{{ event.document_title }}' has been indexed with {{ event.metadata.total_embeddings }} embeddings. Please summarize it.",
+                "interface_type": "test",
+                "conversation_id": "test-conv",
+            },
+        ),
+        enabled=True,
+    )
+
+    # Create and process a newsletter document
+    db_ctx = Database(engine=db_engine)
+    test_doc = MockDocument(
+        source_type="email",
+        source_id="newsletter@school.edu",
+        title="School Newsletter - December 2024",
+        content="Important dates: Winter break Dec 20-Jan 3. Science fair Jan 15.",
+        metadata={"sender": "newsletter@school.edu"},
+    )
+    doc_id = await add_document(
+        db_context=db_ctx,
+        doc=test_doc,
+    )
+
+    # Simulate embedding task
+    await db_ctx.tasks.enqueue(
+        task_id=f"embed_newsletter_{doc_id}",
+        task_type="embed_and_store_batch",
+        payload={
+            "document_id": doc_id,
+            "texts_to_embed": [
+                "Important dates: Winter break Dec 20-Jan 3. Science fair Jan 15."
+            ],
+            "embedding_metadata_list": [
+                {
+                    "embedding_type": "content",
+                    "chunk_index": 0,
+                    "original_content_metadata": {},
+                    "content_hash": None,
+                }
+            ],
+        },
+    )
+
+    # Process the task which should trigger the event
+    embedding_generator = MockEmbeddingGenerator(
+        model_name="test-model", dimensions=128
+    )
+
+    # Create processor to handle events
+    event_processor = EventProcessor(
+        sources={"indexing": indexing_source},
+        sample_interval_hours=0.1,
+        get_db_context_func=lambda: Database(engine=db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+
+    # Mock processing service for wake_llm action
+    mock_processing_service = MagicMock()
+    mock_processing_service.generate_llm_response_for_chat = AsyncMock()
+
+    # Skip the wake_llm handler test for now as it's complex to mock
+    # The important part is that the event is emitted and stored
+
+    try:
+        # Start processor and wait for it to be fully initialized
+        await event_processor.start()
+
+        db_ctx = Database(engine=db_engine)
+        task = await db_ctx.tasks.dequeue(
             task_types=["embed_and_store_batch"],
             worker_id="test-worker",
             current_time=datetime.now(UTC),
         )
-        assert first_task is not None
 
-        # Track if event was emitted
-        event_emitted = False
-        original_emit = indexing_source.emit_event
+        assert task is not None
 
-        # ast-grep-ignore: no-dict-any - Mocking event handler signature
-        async def track_emit(event_data: dict[str, Any]) -> asyncio.Future[None]:
-            nonlocal event_emitted
-            if event_data.get("event_type") == IndexingEventType.DOCUMENT_READY.value:
-                event_emitted = True
-            return await original_emit(event_data)
-
-        indexing_source.emit_event = track_emit
-
-        # Process first task
         exec_context = ToolExecutionContext(
             interface_type="web",
             conversation_id="test-conv",
@@ -388,149 +522,11 @@ async def test_document_ready_not_emitted_with_pending_tasks(
             api_backend=None,
         )
 
-        assert first_task["payload"] is not None
+        # Process embedding task - should emit event
+        assert task["payload"] is not None
         await handle_embed_and_store_batch(
-            exec_context, cast("EmbedAndStoreBatchPayload", first_task["payload"])
+            exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
         )
-        await db_ctx.tasks.update_status(first_task["task_id"], "done")
-
-        # Event should NOT have been emitted since second task is pending
-        assert not event_emitted, "DOCUMENT_READY was emitted with pending tasks!"
-
-
-@pytest.mark.asyncio
-async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> None:
-    """Test full integration with event listeners triggering on document ready."""
-    # Clean up any leftover tasks from previous tests to ensure isolation
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(
-            tasks_table.delete().where(
-                tasks_table.c.task_type == "embed_and_store_batch"
-            )
-        )
-
-    # Create components
-    indexing_source = IndexingSource()
-
-    # Create event listener
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name="Newsletter Ready Listener",
-            description="Test listener for newsletter ready events",
-            conversation_id="test-conv",
-            interface_type="web",
-            source_id="indexing",
-            match_conditions=cast(
-                "MatchConditions",
-                {
-                    "event_type": IndexingEventType.DOCUMENT_READY.value,
-                    "document_title": {
-                        "$contains": "Newsletter"
-                    },  # Only match newsletters
-                },
-            ),
-            action_config=cast(
-                "ActionConfig",
-                {
-                    "prompt": "The newsletter '{{ event.document_title }}' has been indexed with {{ event.metadata.total_embeddings }} embeddings. Please summarize it.",
-                    "interface_type": "test",
-                    "conversation_id": "test-conv",
-                },
-            ),
-            enabled=True,
-        )
-
-    # Create and process a newsletter document
-    async with get_db_context(engine=db_engine) as db_ctx:
-        test_doc = MockDocument(
-            source_type="email",
-            source_id="newsletter@school.edu",
-            title="School Newsletter - December 2024",
-            content="Important dates: Winter break Dec 20-Jan 3. Science fair Jan 15.",
-            metadata={"sender": "newsletter@school.edu"},
-        )
-        doc_id = await add_document(
-            db_context=db_ctx,
-            doc=test_doc,
-        )
-
-        # Simulate embedding task
-        await db_ctx.tasks.enqueue(
-            task_id=f"embed_newsletter_{doc_id}",
-            task_type="embed_and_store_batch",
-            payload={
-                "document_id": doc_id,
-                "texts_to_embed": [
-                    "Important dates: Winter break Dec 20-Jan 3. Science fair Jan 15."
-                ],
-                "embedding_metadata_list": [
-                    {
-                        "embedding_type": "content",
-                        "chunk_index": 0,
-                        "original_content_metadata": {},
-                        "content_hash": None,
-                    }
-                ],
-            },
-        )
-
-    # Process the task which should trigger the event
-    embedding_generator = MockEmbeddingGenerator(
-        model_name="test-model", dimensions=128
-    )
-
-    # Create processor to handle events
-    event_processor = EventProcessor(
-        sources={"indexing": indexing_source},
-        sample_interval_hours=0.1,
-        get_db_context_func=lambda: get_db_context(engine=db_engine),
-        timezone=ZoneInfo("Australia/Sydney"),
-    )
-
-    # Mock processing service for wake_llm action
-    mock_processing_service = MagicMock()
-    mock_processing_service.generate_llm_response_for_chat = AsyncMock()
-
-    # Skip the wake_llm handler test for now as it's complex to mock
-    # The important part is that the event is emitted and stored
-
-    try:
-        # Start processor and wait for it to be fully initialized
-        await event_processor.start()
-
-        async with get_db_context(engine=db_engine) as db_ctx:
-            task = await db_ctx.tasks.dequeue(
-                task_types=["embed_and_store_batch"],
-                worker_id="test-worker",
-                current_time=datetime.now(UTC),
-            )
-
-            assert task is not None
-
-            exec_context = ToolExecutionContext(
-                interface_type="web",
-                conversation_id="test-conv",
-                user_name="test-user",
-                turn_id=str(uuid.uuid4()),
-                db_context=db_ctx,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                embedding_generator=embedding_generator,
-                indexing_source=indexing_source,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
-
-            # Process embedding task - should emit event
-            assert task["payload"] is not None
-            await handle_embed_and_store_batch(
-                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-            )
 
         # The handler's transaction has committed here. Only wait for event
         # persistence AFTER the commit: the event processor stores events on
@@ -560,52 +556,52 @@ async def test_document_ready_event_includes_rich_metadata(
     event_processor = EventProcessor(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,
-        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        get_db_context_func=lambda: Database(engine=db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
     # Create a document with rich metadata
-    async with get_db_context(engine=db_engine) as db_ctx:
-        test_doc = MockDocument(
-            source_type="pdf",
-            source_id=f"test-pdf-{uuid.uuid4()}",
-            title="Research Paper - AI in Healthcare",
-            content="This paper explores the applications of AI in healthcare...",
-            metadata={
-                "original_filename": "ai_healthcare_research_2024.pdf",
-                "original_url": "https://example.com/papers/ai-healthcare.pdf",
-                "author": "Dr. Jane Smith",
-                "publication_date": "2024-03-15",
-                "keywords": ["AI", "healthcare", "machine learning"],
-                "page_count": 25,
-                "department": "Computer Science",
-                "document_type": "research_paper",
-            },
-        )
-        doc_id = await add_document(
-            db_context=db_ctx,
-            doc=test_doc,
-        )
+    db_ctx = Database(engine=db_engine)
+    test_doc = MockDocument(
+        source_type="pdf",
+        source_id=f"test-pdf-{uuid.uuid4()}",
+        title="Research Paper - AI in Healthcare",
+        content="This paper explores the applications of AI in healthcare...",
+        metadata={
+            "original_filename": "ai_healthcare_research_2024.pdf",
+            "original_url": "https://example.com/papers/ai-healthcare.pdf",
+            "author": "Dr. Jane Smith",
+            "publication_date": "2024-03-15",
+            "keywords": ["AI", "healthcare", "machine learning"],
+            "page_count": 25,
+            "department": "Computer Science",
+            "document_type": "research_paper",
+        },
+    )
+    doc_id = await add_document(
+        db_context=db_ctx,
+        doc=test_doc,
+    )
 
-        # Create embedding task
-        await db_ctx.tasks.enqueue(
-            task_id=f"embed_rich_metadata_{doc_id}",
-            task_type="embed_and_store_batch",
-            payload={
-                "document_id": doc_id,
-                "texts_to_embed": [
-                    "This paper explores the applications of AI in healthcare..."
-                ],
-                "embedding_metadata_list": [
-                    {
-                        "embedding_type": "content",
-                        "chunk_index": 0,
-                        "original_content_metadata": {"page": 1},
-                        "content_hash": None,
-                    }
-                ],
-            },
-        )
+    # Create embedding task
+    await db_ctx.tasks.enqueue(
+        task_id=f"embed_rich_metadata_{doc_id}",
+        task_type="embed_and_store_batch",
+        payload={
+            "document_id": doc_id,
+            "texts_to_embed": [
+                "This paper explores the applications of AI in healthcare..."
+            ],
+            "embedding_metadata_list": [
+                {
+                    "embedding_type": "content",
+                    "chunk_index": 0,
+                    "original_content_metadata": {"page": 1},
+                    "content_hash": None,
+                }
+            ],
+        },
+    )
 
     # Process the task
     embedding_generator = MockEmbeddingGenerator(
@@ -616,40 +612,40 @@ async def test_document_ready_event_includes_rich_metadata(
         # Start event processor and wait for it to be fully initialized
         await event_processor.start()
 
-        async with get_db_context(engine=db_engine) as db_ctx:
-            task = await db_ctx.tasks.dequeue(
-                task_types=["embed_and_store_batch"],
-                worker_id="test-worker",
-                current_time=datetime.now(UTC),
-            )
+        db_ctx = Database(engine=db_engine)
+        task = await db_ctx.tasks.dequeue(
+            task_types=["embed_and_store_batch"],
+            worker_id="test-worker",
+            current_time=datetime.now(UTC),
+        )
 
-            assert task is not None
+        assert task is not None
 
-            exec_context = ToolExecutionContext(
-                interface_type="web",
-                conversation_id="test-conv",
-                user_name="test-user",
-                turn_id=str(uuid.uuid4()),
-                db_context=db_ctx,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                embedding_generator=embedding_generator,
-                indexing_source=indexing_source,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        exec_context = ToolExecutionContext(
+            interface_type="web",
+            conversation_id="test-conv",
+            user_name="test-user",
+            turn_id=str(uuid.uuid4()),
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            embedding_generator=embedding_generator,
+            indexing_source=indexing_source,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Process task - should emit event with rich metadata
-            assert task["payload"] is not None
-            await handle_embed_and_store_batch(
-                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-            )
-            await db_ctx.tasks.update_status(task["task_id"], "done")
+        # Process task - should emit event with rich metadata
+        assert task["payload"] is not None
+        await handle_embed_and_store_batch(
+            exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+        )
+        await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling
         await indexing_source.wait_for_pending_events()
@@ -699,41 +695,41 @@ async def test_document_ready_event_handles_none_metadata(
     event_processor = EventProcessor(
         sources={"indexing": indexing_source},
         sample_interval_hours=0.1,  # Short interval for testing
-        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        get_db_context_func=lambda: Database(engine=db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
     # Create a document with None metadata
-    async with get_db_context(engine=db_engine) as db_ctx:
-        test_doc = MockDocument(
-            source_type="note",
-            source_id=f"test-note-{uuid.uuid4()}",
-            title="Simple Note",
-            content="This is a simple note without metadata",
-            metadata=None,  # Explicitly None
-        )
-        doc_id = await add_document(
-            db_context=db_ctx,
-            doc=test_doc,
-        )
+    db_ctx = Database(engine=db_engine)
+    test_doc = MockDocument(
+        source_type="note",
+        source_id=f"test-note-{uuid.uuid4()}",
+        title="Simple Note",
+        content="This is a simple note without metadata",
+        metadata=None,  # Explicitly None
+    )
+    doc_id = await add_document(
+        db_context=db_ctx,
+        doc=test_doc,
+    )
 
-        # Create embedding task
-        await db_ctx.tasks.enqueue(
-            task_id=f"embed_no_metadata_{doc_id}",
-            task_type="embed_and_store_batch",
-            payload={
-                "document_id": doc_id,
-                "texts_to_embed": ["This is a simple note without metadata"],
-                "embedding_metadata_list": [
-                    {
-                        "embedding_type": "content",
-                        "chunk_index": 0,
-                        "original_content_metadata": {},
-                        "content_hash": None,
-                    }
-                ],
-            },
-        )
+    # Create embedding task
+    await db_ctx.tasks.enqueue(
+        task_id=f"embed_no_metadata_{doc_id}",
+        task_type="embed_and_store_batch",
+        payload={
+            "document_id": doc_id,
+            "texts_to_embed": ["This is a simple note without metadata"],
+            "embedding_metadata_list": [
+                {
+                    "embedding_type": "content",
+                    "chunk_index": 0,
+                    "original_content_metadata": {},
+                    "content_hash": None,
+                }
+            ],
+        },
+    )
 
     # Process the task
     embedding_generator = MockEmbeddingGenerator(
@@ -744,40 +740,40 @@ async def test_document_ready_event_handles_none_metadata(
         # Start event processor and wait for it to be fully initialized
         await event_processor.start()
 
-        async with get_db_context(engine=db_engine) as db_ctx:
-            task = await db_ctx.tasks.dequeue(
-                task_types=["embed_and_store_batch"],
-                worker_id="test-worker",
-                current_time=datetime.now(UTC),
-            )
+        db_ctx = Database(engine=db_engine)
+        task = await db_ctx.tasks.dequeue(
+            task_types=["embed_and_store_batch"],
+            worker_id="test-worker",
+            current_time=datetime.now(UTC),
+        )
 
-            assert task is not None
+        assert task is not None
 
-            exec_context = ToolExecutionContext(
-                interface_type="web",
-                conversation_id="test-conv",
-                user_name="test-user",
-                turn_id=str(uuid.uuid4()),
-                db_context=db_ctx,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                embedding_generator=embedding_generator,
-                indexing_source=indexing_source,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        exec_context = ToolExecutionContext(
+            interface_type="web",
+            conversation_id="test-conv",
+            user_name="test-user",
+            turn_id=str(uuid.uuid4()),
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            embedding_generator=embedding_generator,
+            indexing_source=indexing_source,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Process task - should emit event even with None metadata
-            assert task["payload"] is not None
-            await handle_embed_and_store_batch(
-                exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
-            )
-            await db_ctx.tasks.update_status(task["task_id"], "done")
+        # Process task - should emit event even with None metadata
+        assert task["payload"] is not None
+        await handle_embed_and_store_batch(
+            exec_context, cast("EmbedAndStoreBatchPayload", task["payload"])
+        )
+        await db_ctx.tasks.update_status(task["task_id"], "done")
 
         # Wait for all events to be processed before polling
         await indexing_source.wait_for_pending_events()
@@ -801,68 +797,64 @@ async def test_document_ready_event_handles_none_metadata(
 @pytest.mark.asyncio
 async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
     """Test that JSON extraction works correctly with both SQLite and PostgreSQL."""
-    async with get_db_context(engine=db_engine) as db_ctx:
-        # Clean up any existing test tasks
-        await db_ctx.execute_with_retry(
-            tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
+    db_ctx = Database(engine=db_engine)
+    # Clean up any existing test tasks
+    await db_ctx.execute(
+        tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
+    )
+
+    # Create test tasks with different document_ids
+    test_doc_id = 999
+    for i in range(3):
+        await db_ctx.tasks.enqueue(
+            task_id=f"test_json_{i}",
+            task_type="embed_and_store_batch",
+            payload={"document_id": test_doc_id if i < 2 else 888},
         )
 
-        # Create test tasks with different document_ids
-        test_doc_id = 999
-        for i in range(3):
-            await db_ctx.tasks.enqueue(
-                task_id=f"test_json_{i}",
-                task_type="embed_and_store_batch",
-                payload={"document_id": test_doc_id if i < 2 else 888},
-            )
+    # Import the function to test
 
-        # Import the function to test
+    # Test that it correctly counts pending tasks
+    pending_count = await check_document_completion(db_ctx, test_doc_id)
+    assert pending_count == 2, f"Expected 2 pending tasks, got {pending_count}"
 
-        # Test that it correctly counts pending tasks
-        pending_count = await check_document_completion(db_ctx, test_doc_id)
-        assert pending_count == 2, f"Expected 2 pending tasks, got {pending_count}"
+    # Test with non-existent document
+    pending_count = await check_document_completion(db_ctx, 777)
+    assert pending_count == 0, (
+        f"Expected 0 pending tasks for non-existent doc, got {pending_count}"
+    )
 
-        # Test with non-existent document
-        pending_count = await check_document_completion(db_ctx, 777)
-        assert pending_count == 0, (
-            f"Expected 0 pending tasks for non-existent doc, got {pending_count}"
-        )
-
-        # Clean up
-        await db_ctx.execute_with_retry(
-            tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
-        )
+    # Clean up
+    await db_ctx.execute(
+        tasks_table.delete().where(tasks_table.c.task_id.like("test_json_%"))
+    )
 
 
 @pytest.mark.asyncio
 async def test_json_extraction_cross_database(db_engine: AsyncEngine) -> None:
     """Test JSON extraction works with both SQLite and PostgreSQL."""
-    async with get_db_context(engine=db_engine) as db_ctx:
-        # Clean up any existing test tasks
-        await db_ctx.execute_with_retry(
-            tasks_table.delete().where(
-                tasks_table.c.task_id.like("test_json_extract_%")
-            )
-        )
+    db_ctx = Database(engine=db_engine)
+    # Clean up any existing test tasks
+    await db_ctx.execute(
+        tasks_table.delete().where(tasks_table.c.task_id.like("test_json_extract_%"))
+    )
 
-        # Create test task
-        test_doc_id = 12345
-        await db_ctx.tasks.enqueue(
-            task_id="test_json_extract_1",
-            task_type="embed_and_store_batch",
-            payload={"document_id": test_doc_id, "other_field": "test"},
-        )
+    # Create test task
+    test_doc_id = 12345
+    await db_ctx.tasks.enqueue(
+        task_id="test_json_extract_1",
+        task_type="embed_and_store_batch",
+        payload={"document_id": test_doc_id, "other_field": "test"},
+    )
 
-        # Verify our cross-database JSON extraction implementation works
+    # Verify our cross-database JSON extraction implementation works
 
-        # Test that our check_document_completion function works
+    # Test that our check_document_completion function works
 
-        pending_count = await check_document_completion(db_ctx, test_doc_id)
-        assert pending_count == 1, f"Expected 1 pending task, got {pending_count}"
+    pending_count = await check_document_completion(db_ctx, test_doc_id)
+    assert pending_count == 1, f"Expected 1 pending task, got {pending_count}"
 
-        # Clean up
-        await db_ctx.execute_with_retry(
-            tasks_table.delete().where(
-                tasks_table.c.task_id.like("test_json_extract_%")
-            )
-        )
+    # Clean up
+    await db_ctx.execute(
+        tasks_table.delete().where(tasks_table.c.task_id.like("test_json_extract_%"))
+    )

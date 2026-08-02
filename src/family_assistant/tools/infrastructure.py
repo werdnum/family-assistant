@@ -551,16 +551,16 @@ class LocalToolsProvider:
                         )
 
                 elif param_name == "db_context":
-                    # Check for DatabaseContext by name since we can't import it
+                    # Check for Database by name since we can't import it
                     if (
                         hasattr(annotation_to_check, "__name__")
-                        and annotation_to_check.__name__ == "DatabaseContext"
+                        and annotation_to_check.__name__ == "Database"
                     ):
                         needs_db_context = True
                     # Fallback for unresolved forward reference string
                     elif isinstance(param.annotation, str) and (
-                        param.annotation == "DatabaseContext"
-                        or param.annotation.endswith(".DatabaseContext")
+                        param.annotation == "Database"
+                        or param.annotation.endswith(".Database")
                     ):
                         needs_db_context = True
                         logger.debug(

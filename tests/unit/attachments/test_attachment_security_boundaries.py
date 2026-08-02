@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 
 class TestAttachmentSecurityBoundaries:
@@ -28,32 +28,32 @@ class TestAttachmentSecurityBoundaries:
             test_content = b"test content for conversation A"
             conversation_a_id = "conversation_a"
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                # Register attachment in conversation A
-                attachment_record = await attachment_registry.register_user_attachment(
-                    db_context=db_context,
-                    content=test_content,
-                    mime_type="text/plain",
-                    filename="test.txt",
-                    conversation_id=conversation_a_id,
-                    user_id="user1",
-                    description="Test attachment for conversation A",
-                )
-                attachment_id = attachment_record.attachment_id
+            db_context = Database(engine=db_engine)
+            # Register attachment in conversation A
+            attachment_record = await attachment_registry.register_user_attachment(
+                db_context=db_context,
+                content=test_content,
+                mime_type="text/plain",
+                filename="test.txt",
+                conversation_id=conversation_a_id,
+                user_id="user1",
+                description="Test attachment for conversation A",
+            )
+            attachment_id = attachment_record.attachment_id
 
-                # Verify attachment exists and is accessible regardless of context
-                # Having the ID is enough.
-                retrieved = await attachment_registry.get_attachment(
-                    db_context, attachment_id, acting_user_id=None
-                )
-                assert retrieved is not None
-                assert retrieved.conversation_id == conversation_a_id
+            # Verify attachment exists and is accessible regardless of context
+            # Having the ID is enough.
+            retrieved = await attachment_registry.get_attachment(
+                db_context, attachment_id, acting_user_id=None
+            )
+            assert retrieved is not None
+            assert retrieved.conversation_id == conversation_a_id
 
-                # Content should also be accessible
-                content = await attachment_registry.get_attachment_content(
-                    db_context, attachment_id, acting_user_id=None
-                )
-                assert content == test_content
+            # Content should also be accessible
+            content = await attachment_registry.get_attachment_content(
+                db_context, attachment_id, acting_user_id=None
+            )
+            assert content == test_content
 
     @pytest.mark.asyncio
     async def test_attachment_persistence_throughout_conversation(
@@ -69,38 +69,36 @@ class TestAttachmentSecurityBoundaries:
             conversation_id = "persistent_conversation"
             test_content = b"persistent test content"
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                # Register attachment
-                attachment_record = await attachment_registry.register_user_attachment(
-                    db_context=db_context,
-                    content=test_content,
-                    mime_type="application/pdf",
-                    filename="persistent.bin",
-                    conversation_id=conversation_id,
-                    user_id="user1",
-                    description="Persistent test attachment",
-                )
-                attachment_id = attachment_record.attachment_id
+            db_context = Database(engine=db_engine)
+            # Register attachment
+            attachment_record = await attachment_registry.register_user_attachment(
+                db_context=db_context,
+                content=test_content,
+                mime_type="application/pdf",
+                filename="persistent.bin",
+                conversation_id=conversation_id,
+                user_id="user1",
+                description="Persistent test attachment",
+            )
+            attachment_id = attachment_record.attachment_id
 
             # Simulate multiple database sessions (as would happen during conversation)
             for _i in range(3):
-                async with DatabaseContext(engine=db_engine) as db_context:
-                    # Attachment should remain accessible
-                    retrieved = await attachment_registry.get_attachment(
-                        db_context, attachment_id, acting_user_id=None
-                    )
-                    assert retrieved is not None
-                    assert retrieved.conversation_id == conversation_id
-                    assert retrieved.mime_type == "application/pdf"
-                    assert (
-                        retrieved.metadata.get("original_filename") == "persistent.bin"
-                    )
+                db_context = Database(engine=db_engine)
+                # Attachment should remain accessible
+                retrieved = await attachment_registry.get_attachment(
+                    db_context, attachment_id, acting_user_id=None
+                )
+                assert retrieved is not None
+                assert retrieved.conversation_id == conversation_id
+                assert retrieved.mime_type == "application/pdf"
+                assert retrieved.metadata.get("original_filename") == "persistent.bin"
 
-                    # Content should remain accessible
-                    content = await attachment_registry.get_attachment_content(
-                        db_context, attachment_id, acting_user_id=None
-                    )
-                    assert content == test_content
+                # Content should remain accessible
+                content = await attachment_registry.get_attachment_content(
+                    db_context, attachment_id, acting_user_id=None
+                )
+                assert content == test_content
 
     @pytest.mark.asyncio
     async def test_reference_integrity_between_services(
@@ -116,50 +114,47 @@ class TestAttachmentSecurityBoundaries:
             conversation_id = "service_conversation"
             test_content = b"content for service passing"
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                # Register attachment
-                attachment_record = await attachment_registry.register_user_attachment(
-                    db_context=db_context,
-                    content=test_content,
-                    mime_type="image/png",
-                    filename="service_test.png",
-                    conversation_id=conversation_id,
-                    user_id="user1",
-                    description="Attachment for service testing",
-                )
-                attachment_id = attachment_record.attachment_id
+            db_context = Database(engine=db_engine)
+            # Register attachment
+            attachment_record = await attachment_registry.register_user_attachment(
+                db_context=db_context,
+                content=test_content,
+                mime_type="image/png",
+                filename="service_test.png",
+                conversation_id=conversation_id,
+                user_id="user1",
+                description="Attachment for service testing",
+            )
+            attachment_id = attachment_record.attachment_id
 
-                # Simulate passing attachment ID between services
-                service_a_id = attachment_id
-                service_b_id = attachment_id
+            # Simulate passing attachment ID between services
+            service_a_id = attachment_id
+            service_b_id = attachment_id
 
-                # Both services should be able to access the same attachment
-                attachment_from_a = await attachment_registry.get_attachment(
-                    db_context, service_a_id, acting_user_id=None
-                )
-                attachment_from_b = await attachment_registry.get_attachment(
-                    db_context, service_b_id, acting_user_id=None
-                )
+            # Both services should be able to access the same attachment
+            attachment_from_a = await attachment_registry.get_attachment(
+                db_context, service_a_id, acting_user_id=None
+            )
+            attachment_from_b = await attachment_registry.get_attachment(
+                db_context, service_b_id, acting_user_id=None
+            )
 
-                assert attachment_from_a is not None
-                assert attachment_from_b is not None
-                assert (
-                    attachment_from_a.attachment_id == attachment_from_b.attachment_id
-                )
-                assert (
-                    attachment_from_a.conversation_id
-                    == attachment_from_b.conversation_id
-                )
+            assert attachment_from_a is not None
+            assert attachment_from_b is not None
+            assert attachment_from_a.attachment_id == attachment_from_b.attachment_id
+            assert (
+                attachment_from_a.conversation_id == attachment_from_b.conversation_id
+            )
 
-                # Content should be identical
-                content_a = await attachment_registry.get_attachment_content(
-                    db_context, service_a_id, acting_user_id=None
-                )
-                content_b = await attachment_registry.get_attachment_content(
-                    db_context, service_b_id, acting_user_id=None
-                )
+            # Content should be identical
+            content_a = await attachment_registry.get_attachment_content(
+                db_context, service_a_id, acting_user_id=None
+            )
+            content_b = await attachment_registry.get_attachment_content(
+                db_context, service_b_id, acting_user_id=None
+            )
 
-                assert content_a == content_b == test_content
+            assert content_a == content_b == test_content
 
     @pytest.mark.asyncio
     async def test_invalid_attachment_id_handling(self, db_engine: AsyncEngine) -> None:
@@ -170,26 +165,26 @@ class TestAttachmentSecurityBoundaries:
                 storage_path=temp_dir, db_engine=db_engine, config=None
             )
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                # Test with completely invalid UUID - registry doesn't validate format, just queries DB
-                invalid_id = "not-a-uuid"
-                result = await attachment_registry.get_attachment(
-                    db_context, invalid_id, acting_user_id=None
-                )
-                assert result is None  # Database simply won't find it
+            db_context = Database(engine=db_engine)
+            # Test with completely invalid UUID - registry doesn't validate format, just queries DB
+            invalid_id = "not-a-uuid"
+            result = await attachment_registry.get_attachment(
+                db_context, invalid_id, acting_user_id=None
+            )
+            assert result is None  # Database simply won't find it
 
-                # Test with valid UUID format but non-existent attachment
-                non_existent_id = str(uuid.uuid4())
-                result = await attachment_registry.get_attachment(
-                    db_context, non_existent_id, acting_user_id=None
-                )
-                assert result is None
+            # Test with valid UUID format but non-existent attachment
+            non_existent_id = str(uuid.uuid4())
+            result = await attachment_registry.get_attachment(
+                db_context, non_existent_id, acting_user_id=None
+            )
+            assert result is None
 
-                # Test content access for non-existent attachment
-                content = await attachment_registry.get_attachment_content(
-                    db_context, non_existent_id, acting_user_id=None
-                )
-                assert content is None
+            # Test content access for non-existent attachment
+            content = await attachment_registry.get_attachment_content(
+                db_context, non_existent_id, acting_user_id=None
+            )
+            assert content is None
 
     @pytest.mark.asyncio
     async def test_attachment_metadata_integrity(self, db_engine: AsyncEngine) -> None:
@@ -206,35 +201,35 @@ class TestAttachmentSecurityBoundaries:
             )
             original_filename = "special_chars_\u2713\u2744.txt"
 
-            async with DatabaseContext(engine=db_engine) as db_context:
-                # Register attachment with special characters
-                attachment_record = await attachment_registry.register_user_attachment(
-                    db_context=db_context,
-                    content=test_content,
-                    mime_type="text/plain",
-                    filename=original_filename,
-                    conversation_id=conversation_id,
-                    user_id="test_user",
-                    description="Test with special characters: ✓❄",
-                )
-                attachment_id = attachment_record.attachment_id
+            db_context = Database(engine=db_engine)
+            # Register attachment with special characters
+            attachment_record = await attachment_registry.register_user_attachment(
+                db_context=db_context,
+                content=test_content,
+                mime_type="text/plain",
+                filename=original_filename,
+                conversation_id=conversation_id,
+                user_id="test_user",
+                description="Test with special characters: ✓❄",
+            )
+            attachment_id = attachment_record.attachment_id
 
-                # Retrieve and verify all metadata
-                retrieved = await attachment_registry.get_attachment(
-                    db_context, attachment_id, acting_user_id=None
-                )
-                assert retrieved is not None
-                assert retrieved.attachment_id == attachment_id
-                assert retrieved.conversation_id == conversation_id
-                assert retrieved.mime_type == "text/plain"
-                assert retrieved.description == "Test with special characters: ✓❄"
-                assert retrieved.metadata.get("original_filename") == original_filename
-                assert retrieved.source_type == "user"
-                assert retrieved.source_id == "test_user"
-                assert retrieved.size == len(test_content)
+            # Retrieve and verify all metadata
+            retrieved = await attachment_registry.get_attachment(
+                db_context, attachment_id, acting_user_id=None
+            )
+            assert retrieved is not None
+            assert retrieved.attachment_id == attachment_id
+            assert retrieved.conversation_id == conversation_id
+            assert retrieved.mime_type == "text/plain"
+            assert retrieved.description == "Test with special characters: ✓❄"
+            assert retrieved.metadata.get("original_filename") == original_filename
+            assert retrieved.source_type == "user"
+            assert retrieved.source_id == "test_user"
+            assert retrieved.size == len(test_content)
 
-                # Verify content matches exactly
-                content = await attachment_registry.get_attachment_content(
-                    db_context, attachment_id, acting_user_id=None
-                )
-                assert content == test_content
+            # Verify content matches exactly
+            content = await attachment_registry.get_attachment_content(
+                db_context, attachment_id, acting_user_id=None
+            )
+            assert content == test_content

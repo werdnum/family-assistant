@@ -12,7 +12,7 @@ import logging
 from family_assistant.services.apns import APNsService
 from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.services.push_notification import PushNotificationService
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class NotificationDispatcher:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:

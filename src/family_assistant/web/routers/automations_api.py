@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.models import Automation
 from family_assistant.storage.types import (
     ListenerExecutionStatsDict,
@@ -167,7 +167,7 @@ def _format_automation_response(automation: Automation) -> AutomationResponse:
 
 @automations_api_router.get("")
 async def list_automations(
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     conversation_id: Annotated[
         str | None,
         Query(
@@ -218,7 +218,7 @@ async def list_automations(
 async def get_automation(
     automation_type: str,
     automation_id: int,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     conversation_id: Annotated[
         str | None, Query(description="Conversation ID for permission check")
     ] = None,
@@ -246,7 +246,7 @@ async def get_automation(
 @automations_api_router.post("/event")
 async def create_event_automation(
     request: CreateEventAutomationRequest,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
@@ -334,7 +334,7 @@ async def create_event_automation(
 @automations_api_router.post("/schedule")
 async def create_schedule_automation(
     request: CreateScheduleAutomationRequest,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
@@ -415,7 +415,7 @@ async def update_automation(
     automation_id: int,
     # ast-grep-ignore: no-dict-any - PATCH body is a partial update with arbitrary subset of fields
     request_body: Annotated[dict[str, Any], Body(...)],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> AutomationResponse:
@@ -612,7 +612,7 @@ async def update_automation_enabled(
     conversation_id: Annotated[
         str, Query(description="Conversation ID for permission check")
     ],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
 ) -> AutomationResponse:
     """Enable or disable an automation."""
@@ -651,7 +651,7 @@ async def update_automation_enabled(
 async def delete_automation(
     automation_type: str,
     automation_id: int,
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Delete an automation."""
     # Validate automation_type
@@ -689,7 +689,7 @@ async def get_automation_stats(
     conversation_id: Annotated[
         str, Query(description="Conversation ID for permission check")
     ],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> ListenerExecutionStatsDict | ScheduleExecutionStatsDict:
     """Get execution statistics for an automation."""
     # Validate automation_type

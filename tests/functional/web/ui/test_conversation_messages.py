@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
@@ -115,63 +115,63 @@ async def test_get_conversation_messages_excludes_delegated_subconversations(
     conv_id = f"test_conv_delegated_rows_{uuid.uuid4().hex[:8]}"
     timestamp = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
-    async with get_db_context(db_engine) as db_context:
-        await db_context.message_history.add_message(
-            UserMessage(content="Main user request"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="main-turn",
-            processing_profile_id="default_assistant",
-            user_id="test_user",
-        )
-        await db_context.message_history.add_message(
-            UserMessage(content="Delegated prompt from model"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="delegated-turn",
-            processing_profile_id="browser",
-            subconversation_id="delegated-subconversation",
-        )
-        await db_context.message_history.add_message(
-            AssistantMessage(content="Delegated profile answer"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="delegated-turn",
-            processing_profile_id="browser",
-            subconversation_id="delegated-subconversation",
-        )
-        await db_context.message_history.add_message(
-            UserMessage(content="Internal delegated result data"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="internal-turn",
-            processing_profile_id="default_assistant",
-            user_id="test_user",
-            is_internal=True,
-        )
-        await db_context.message_history.add_message(
-            SystemMessage(content="Internal delegated wake trigger"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="internal-turn",
-            processing_profile_id="default_assistant",
-            user_id="test_user",
-            is_internal=True,
-        )
-        await db_context.message_history.add_message(
-            AssistantMessage(content="Main assistant answer"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="main-turn",
-            processing_profile_id="default_assistant",
-            user_id="test_user",
-        )
+    db_context = Database(db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(content="Main user request"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="main-turn",
+        processing_profile_id="default_assistant",
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        UserMessage(content="Delegated prompt from model"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="delegated-turn",
+        processing_profile_id="browser",
+        subconversation_id="delegated-subconversation",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Delegated profile answer"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="delegated-turn",
+        processing_profile_id="browser",
+        subconversation_id="delegated-subconversation",
+    )
+    await db_context.message_history.add_message(
+        UserMessage(content="Internal delegated result data"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="internal-turn",
+        processing_profile_id="default_assistant",
+        user_id="test_user",
+        is_internal=True,
+    )
+    await db_context.message_history.add_message(
+        SystemMessage(content="Internal delegated wake trigger"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="internal-turn",
+        processing_profile_id="default_assistant",
+        user_id="test_user",
+        is_internal=True,
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Main assistant answer"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="main-turn",
+        processing_profile_id="default_assistant",
+        user_id="test_user",
+    )
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
@@ -209,22 +209,22 @@ async def test_get_conversation_messages_exposes_turn_id(
     conv_id = f"test_conv_turn_id_{uuid.uuid4().hex[:8]}"
     timestamp = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
-    async with get_db_context(db_engine) as db_context:
-        await db_context.message_history.add_message(
-            UserMessage(content="Turn-produced request"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="turn-abc",
-            user_id="test_user",
-        )
-        await db_context.message_history.add_message(
-            AssistantMessage(content="Non-turn note save"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            user_id="test_user",
-        )
+    db_context = Database(db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(content="Turn-produced request"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="turn-abc",
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Non-turn note save"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        user_id="test_user",
+    )
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)

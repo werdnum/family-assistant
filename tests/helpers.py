@@ -23,7 +23,7 @@ from sqlalchemy.sql.functions import (
     count as sql_count,
 )
 
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 
 T = TypeVar("T")
@@ -82,121 +82,111 @@ async def wait_for_tasks_to_complete(
     while datetime.now(UTC) < end_time:
         try:
             # Use the provided engine to get a context
-            async with get_db_context(engine=engine) as db:
-                # First check for tasks that have failed or have a recorded error
-                failure_condition = sa.or_(
-                    tasks_table.c.status == "failed",
-                    tasks_table.c.error.is_not(None),
+            db = Database(engine=engine)
+            # First check for tasks that have failed or have a recorded error
+            failure_condition = sa.or_(
+                tasks_table.c.status == "failed",
+                tasks_table.c.error.is_not(None),
+            )
+            failed_query = select(sql_count(tasks_table.c.id)).where(failure_condition)
+            # Filter by specific task IDs if provided
+            if task_ids:
+                failed_query = failed_query.where(tasks_table.c.task_id.in_(task_ids))
+            # Filter by task types if provided
+            if task_types:
+                failed_query = failed_query.where(
+                    tasks_table.c.task_type.in_(task_types)
                 )
-                failed_query = select(sql_count(tasks_table.c.id)).where(
-                    failure_condition
-                )
-                # Filter by specific task IDs if provided
+
+            failed_result = await db.execute(failed_query)
+            failed_count = failed_result.scalar_one_or_none()
+
+            if failed_count and failed_count > 0 and not allow_failures:
+                # Get details of failed tasks including their last error
+                failed_task_details_query = select(
+                    tasks_table.c.task_id,
+                    tasks_table.c.error,  # Corrected column name
+                ).where(failure_condition)
                 if task_ids:
-                    failed_query = failed_query.where(
+                    failed_task_details_query = failed_task_details_query.where(
                         tasks_table.c.task_id.in_(task_ids)
                     )
-                # Filter by task types if provided
                 if task_types:
-                    failed_query = failed_query.where(
+                    failed_task_details_query = failed_task_details_query.where(
                         tasks_table.c.task_type.in_(task_types)
                     )
 
-                failed_result = await db.execute_with_retry(failed_query)
-                failed_count = failed_result.scalar_one_or_none()
+                failed_tasks_rows = await db.fetch_all(failed_task_details_query)
 
-                if failed_count and failed_count > 0 and not allow_failures:
-                    # Get details of failed tasks including their last error
-                    failed_task_details_query = select(
-                        tasks_table.c.task_id,
-                        tasks_table.c.error,  # Corrected column name
-                    ).where(failure_condition)
-                    if task_ids:
-                        failed_task_details_query = failed_task_details_query.where(
-                            tasks_table.c.task_id.in_(task_ids)
-                        )
-                    if task_types:
-                        failed_task_details_query = failed_task_details_query.where(
-                            tasks_table.c.task_type.in_(task_types)
-                        )
-
-                    failed_tasks_rows = await db.execute_with_retry(
-                        failed_task_details_query
+                error_messages_list = []
+                for row in failed_tasks_rows:
+                    task_id_val = row["task_id"]
+                    task_error_val = row["error"]
+                    error_messages_list.append(
+                        f"  - ID: {task_id_val}, Error: {task_error_val if task_error_val is not None else 'N/A'}"
                     )
 
-                    error_messages_list = []
-                    for row in failed_tasks_rows:
-                        task_id_val = row[0]  # task_id
-                        # Assuming the second column is last_error.
-                        # Access by index as per established pattern in this file.
-                        task_error_val = row[1]
-                        error_messages_list.append(
-                            f"  - ID: {task_id_val}, Error: {task_error_val if task_error_val is not None else 'N/A'}"
-                        )
+                if error_messages_list:
+                    raise RuntimeError(
+                        "Task(s) failed:\n" + "\n".join(error_messages_list)
+                    )
+                else:
+                    # Fallback if details couldn't be fetched but failed_count > 0
+                    raise RuntimeError(
+                        f"{failed_count} task(s) failed, but could not retrieve specific error details."
+                    )
 
-                    if error_messages_list:
-                        raise RuntimeError(
-                            "Task(s) failed:\n" + "\n".join(error_messages_list)
-                        )
-                    else:
-                        # Fallback if details couldn't be fetched but failed_count > 0
-                        raise RuntimeError(
-                            f"{failed_count} task(s) failed, but could not retrieve specific error details."
-                        )
-
-                # Build the query to count non-terminal tasks
-                # For recurring tasks, only consider those that should have already executed
-                # For non-recurring tasks, include all of them (to catch spawned tasks)
-                current_time = datetime.now(UTC)
-                time_with_fudge = current_time + timedelta(seconds=30)
-                query = select(
-                    sql_count(tasks_table.c.id)
-                ).where(  # Pass column to count
-                    sa.and_(
-                        tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
-                        sa.or_(
-                            # Include all non-recurring tasks
-                            tasks_table.c.recurrence_rule.is_(None),
-                            # For recurring tasks, only include those scheduled to run soon
-                            sa.and_(
-                                tasks_table.c.recurrence_rule.is_not(None),
-                                sa.or_(
-                                    tasks_table.c.scheduled_at <= time_with_fudge,
-                                    tasks_table.c.scheduled_at.is_(None),
-                                ),
+            # Build the query to count non-terminal tasks
+            # For recurring tasks, only consider those that should have already executed
+            # For non-recurring tasks, include all of them (to catch spawned tasks)
+            current_time = datetime.now(UTC)
+            time_with_fudge = current_time + timedelta(seconds=30)
+            query = select(sql_count(tasks_table.c.id)).where(  # Pass column to count
+                sa.and_(
+                    tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
+                    sa.or_(
+                        # Include all non-recurring tasks
+                        tasks_table.c.recurrence_rule.is_(None),
+                        # For recurring tasks, only include those scheduled to run soon
+                        sa.and_(
+                            tasks_table.c.recurrence_rule.is_not(None),
+                            sa.or_(
+                                tasks_table.c.scheduled_at <= time_with_fudge,
+                                tasks_table.c.scheduled_at.is_(None),
                             ),
                         ),
-                    )
+                    ),
                 )
-                # Filter by specific task IDs if provided
+            )
+            # Filter by specific task IDs if provided
+            if task_ids:
+                query = query.where(tasks_table.c.task_id.in_(task_ids))
+            # Filter by task types if provided
+            if task_types:
+                query = query.where(tasks_table.c.task_type.in_(task_types))
+
+            result = await db.execute(query)
+            pending_count = result.scalar_one_or_none()
+
+            if pending_count == 0:
+                elapsed = (datetime.now(UTC) - start_time).total_seconds()
+                logger.info(f"All relevant tasks completed after {elapsed:.2f}s.")
+                return  # Success!
+            elif pending_count is None:
+                # This might happen if the table is empty or due to an issue
+                # If task_ids were specified, this means none of them are pending (or exist)
                 if task_ids:
-                    query = query.where(tasks_table.c.task_id.in_(task_ids))
-                # Filter by task types if provided
-                if task_types:
-                    query = query.where(tasks_table.c.task_type.in_(task_types))
-
-                result = await db.execute_with_retry(query)
-                pending_count = result.scalar_one_or_none()
-
-                if pending_count == 0:
-                    elapsed = (datetime.now(UTC) - start_time).total_seconds()
-                    logger.info(f"All relevant tasks completed after {elapsed:.2f}s.")
-                    return  # Success!
-                elif pending_count is None:
-                    # This might happen if the table is empty or due to an issue
-                    # If task_ids were specified, this means none of them are pending (or exist)
-                    if task_ids:
-                        logger.info(
-                            f"Task count query returned None for specific task IDs {task_ids}. Assuming completion."
-                        )
-                        return  # Assume completed if specific tasks were requested and count is None
-                    else:
-                        logger.warning(
-                            "Task count query returned None when checking all tasks. Assuming completion or empty table."
-                        )
-                        return  # Assume completion if checking all and count is None
+                    logger.info(
+                        f"Task count query returned None for specific task IDs {task_ids}. Assuming completion."
+                    )
+                    return  # Assume completed if specific tasks were requested and count is None
                 else:
-                    logger.debug(f"Waiting for {pending_count} tasks to complete...")
+                    logger.warning(
+                        "Task count query returned None when checking all tasks. Assuming completion or empty table."
+                    )
+                    return  # Assume completion if checking all and count is None
+            else:
+                logger.debug(f"Waiting for {pending_count} tasks to complete...")
 
         except Exception as e:
             logger.exception(f"Error polling task status: {e}")
@@ -211,58 +201,56 @@ async def wait_for_tasks_to_complete(
     # --- Fetch details of pending tasks before raising timeout ---
     pending_tasks_details = "Could not fetch pending task details."
     try:
-        async with get_db_context(engine=engine) as db:
-            # Define columns explicitly to avoid issues with imported table object state
-            cols_to_select = [
-                sa.column("task_id"),
-                sa.column("task_type"),
-                sa.column("status"),
-                sa.column("scheduled_at"),
-                sa.column("retry_count"),
-                sa.column("recurrence_rule"),
-            ]
-            # Show pending tasks, but for recurring tasks only show those that should have already executed
-            current_time = datetime.now(UTC)
-            time_with_fudge = current_time + timedelta(seconds=30)
-            pending_query = (
-                select(*cols_to_select)
-                .select_from(tasks_table)
-                .where(
-                    sa.and_(
-                        tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
-                        sa.or_(
-                            # Include all non-recurring tasks
-                            tasks_table.c.recurrence_rule.is_(None),
-                            # For recurring tasks, only include those scheduled to run soon
-                            sa.and_(
-                                tasks_table.c.recurrence_rule.is_not(None),
-                                sa.or_(
-                                    tasks_table.c.scheduled_at <= time_with_fudge,
-                                    tasks_table.c.scheduled_at.is_(None),
-                                ),
+        db = Database(engine=engine)
+        # Define columns explicitly to avoid issues with imported table object state
+        cols_to_select = [
+            sa.column("task_id"),
+            sa.column("task_type"),
+            sa.column("status"),
+            sa.column("scheduled_at"),
+            sa.column("retry_count"),
+            sa.column("recurrence_rule"),
+        ]
+        # Show pending tasks, but for recurring tasks only show those that should have already executed
+        current_time = datetime.now(UTC)
+        time_with_fudge = current_time + timedelta(seconds=30)
+        pending_query = (
+            select(*cols_to_select)
+            .select_from(tasks_table)
+            .where(
+                sa.and_(
+                    tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
+                    sa.or_(
+                        # Include all non-recurring tasks
+                        tasks_table.c.recurrence_rule.is_(None),
+                        # For recurring tasks, only include those scheduled to run soon
+                        sa.and_(
+                            tasks_table.c.recurrence_rule.is_not(None),
+                            sa.or_(
+                                tasks_table.c.scheduled_at <= time_with_fudge,
+                                tasks_table.c.scheduled_at.is_(None),
                             ),
                         ),
-                    )
+                    ),
                 )
             )
-            if task_ids:
-                pending_query = pending_query.where(tasks_table.c.task_id.in_(task_ids))
-            if task_types:
-                pending_query = pending_query.where(
-                    tasks_table.c.task_type.in_(task_types)
-                )
+        )
+        if task_ids:
+            pending_query = pending_query.where(tasks_table.c.task_id.in_(task_ids))
+        if task_types:
+            pending_query = pending_query.where(tasks_table.c.task_type.in_(task_types))
 
-            pending_results = await db.fetch_all(pending_query)
-            if pending_results:
-                details_list = [
-                    f"  - ID: {row['task_id']}, Type: {row['task_type']}, Status: {row['status']}, "
-                    f"Scheduled: {row['scheduled_at']}, Retries: {row['retry_count']}, "
-                    f"Recurring: {'Yes' if row.get('recurrence_rule') else 'No'}"
-                    for row in pending_results
-                ]
-                pending_tasks_details = "Pending tasks:\n" + "\n".join(details_list)
-            else:
-                pending_tasks_details = "No pending tasks found matching criteria."
+        pending_results = await db.fetch_all(pending_query)
+        if pending_results:
+            details_list = [
+                f"  - ID: {row['task_id']}, Type: {row['task_type']}, Status: {row['status']}, "
+                f"Scheduled: {row['scheduled_at']}, Retries: {row['retry_count']}, "
+                f"Recurring: {'Yes' if row.get('recurrence_rule') else 'No'}"
+                for row in pending_results
+            ]
+            pending_tasks_details = "Pending tasks:\n" + "\n".join(details_list)
+        else:
+            pending_tasks_details = "No pending tasks found matching criteria."
     except Exception as fetch_err:
         logger.exception(
             f"Failed to fetch pending task details on timeout: {fetch_err}"

@@ -16,7 +16,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -51,7 +51,7 @@ TEST_TIMEZONE_STR = "UTC"
 
 def _make_exec_context(
     *,
-    db_context: DatabaseContext,
+    db_context: Database,
     ha_client: HomeAssistantClientWrapper | None,
 ) -> ToolExecutionContext:
     """Build a minimal ToolExecutionContext for direct tool invocation."""
@@ -141,13 +141,13 @@ async def test_list_actions_tool_filters_and_summarizes(
     ]
     ha_client, catalog_mock = _make_mock_ha_client_for_catalog(return_value=catalog)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
-        result = await list_home_assistant_actions_tool(
-            exec_context=exec_context,
-            domain="light",
-            action_filter="turn_",
-        )
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+    result = await list_home_assistant_actions_tool(
+        exec_context=exec_context,
+        domain="light",
+        action_filter="turn_",
+    )
 
     catalog_mock.assert_awaited_once_with(domain="light")
     data = result.get_data()
@@ -183,12 +183,12 @@ async def test_list_actions_tool_marks_response_supporting_actions(
     ]
     ha_client, _ = _make_mock_ha_client_for_catalog(return_value=catalog)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
-        result = await list_home_assistant_actions_tool(
-            exec_context=exec_context,
-            domain="calendar",
-        )
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+    result = await list_home_assistant_actions_tool(
+        exec_context=exec_context,
+        domain="calendar",
+    )
 
     assert result.text is not None
     assert "calendar.get_events" in result.text
@@ -202,9 +202,9 @@ async def test_list_actions_tool_without_ha_client_returns_error(
     """Without an HA client the discovery tool returns the same error string
     as ``call_home_assistant_action`` so the LLM can recover identically.
     """
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=None)
-        result = await list_home_assistant_actions_tool(exec_context=exec_context)
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=None)
+    result = await list_home_assistant_actions_tool(exec_context=exec_context)
 
     assert result.text is not None
     assert "not configured" in result.text
@@ -228,14 +228,14 @@ async def test_call_action_tool_invokes_wrapper_with_service_data(
         }
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
-        result = await call_home_assistant_action_tool(
-            exec_context=exec_context,
-            domain="light",
-            action="turn_on",
-            service_data={"entity_id": "light.kitchen", "brightness_pct": 75},
-        )
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+    result = await call_home_assistant_action_tool(
+        exec_context=exec_context,
+        domain="light",
+        action="turn_on",
+        service_data={"entity_id": "light.kitchen", "brightness_pct": 75},
+    )
 
     assert isinstance(result, ToolResult)
     assert result.text is not None
@@ -269,15 +269,15 @@ async def test_call_action_tool_returns_response_when_requested(
         }
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
-        result = await call_home_assistant_action_tool(
-            exec_context=exec_context,
-            domain="calendar",
-            action="get_events",
-            service_data={"entity_id": "calendar.family"},
-            return_response=True,
-        )
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+    result = await call_home_assistant_action_tool(
+        exec_context=exec_context,
+        domain="calendar",
+        action="get_events",
+        service_data={"entity_id": "calendar.family"},
+        return_response=True,
+    )
 
     assert isinstance(result, ToolResult)
     data = result.get_data()
@@ -298,14 +298,14 @@ async def test_call_action_tool_without_ha_client_returns_error(
     db_engine: AsyncEngine,
 ) -> None:
     """If no HA client is configured, return a descriptive error."""
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=None)
-        result = await call_home_assistant_action_tool(
-            exec_context=exec_context,
-            domain="light",
-            action="turn_on",
-            service_data={"entity_id": "light.kitchen"},
-        )
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=None)
+    result = await call_home_assistant_action_tool(
+        exec_context=exec_context,
+        domain="light",
+        action="turn_on",
+        service_data={"entity_id": "light.kitchen"},
+    )
 
     assert isinstance(result, ToolResult)
     assert result.text is not None
@@ -321,14 +321,14 @@ async def test_call_action_tool_handles_api_error(
         side_effect=HomeassistantAPIError("Bad Request: unknown action"),
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
-        result = await call_home_assistant_action_tool(
-            exec_context=exec_context,
-            domain="light",
-            action="bogus_action",
-            service_data={"entity_id": "light.kitchen"},
-        )
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+    result = await call_home_assistant_action_tool(
+        exec_context=exec_context,
+        domain="light",
+        action="bogus_action",
+        service_data={"entity_id": "light.kitchen"},
+    )
 
     assert isinstance(result, ToolResult)
     assert result.text is not None
@@ -346,15 +346,15 @@ async def test_call_action_tool_propagates_unexpected_exceptions(
         side_effect=RuntimeError("boom — wrapper bug"),
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
-        with pytest.raises(RuntimeError, match="boom — wrapper bug"):
-            await call_home_assistant_action_tool(
-                exec_context=exec_context,
-                domain="light",
-                action="turn_on",
-                service_data={"entity_id": "light.kitchen"},
-            )
+    db_context = Database(engine=db_engine)
+    exec_context = _make_exec_context(db_context=db_context, ha_client=ha_client)
+    with pytest.raises(RuntimeError, match="boom — wrapper bug"):
+        await call_home_assistant_action_tool(
+            exec_context=exec_context,
+            domain="light",
+            action="turn_on",
+            service_data={"entity_id": "light.kitchen"},
+        )
 
 
 @pytest.mark.asyncio
@@ -480,18 +480,18 @@ async def test_call_home_assistant_action_via_llm_flow(
     processing_service.home_assistant_client = ha_client
 
     user_message = "Turn on the kitchen light at 75% brightness"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message}],
-            trigger_interface_message_id="msg_ha_call_action_test",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message}],
+        trigger_interface_message_id="msg_ha_call_action_test",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and "kitchen light" in final_reply.lower(), (

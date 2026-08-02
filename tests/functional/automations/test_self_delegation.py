@@ -25,7 +25,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import DelegationSecurityLevel
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -260,17 +260,17 @@ async def test_self_delegation_succeeds_without_confirmation(
         register_delegation_handler=True,
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
-            trigger_interface_message_id="msg_self",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=mock_confirmation_callback,
-        )
+    db_context = Database(engine=db_engine)
+    result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
+        trigger_interface_message_id="msg_self",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=mock_confirmation_callback,
+    )
 
     assert result.error_traceback is None, f"Error: {result.error_traceback}"
     assert result.text_reply is not None
@@ -351,17 +351,17 @@ async def test_cross_profile_delegation_still_requires_confirmation(
         register_delegation_handler=True,
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
-            trigger_interface_message_id="msg_cross",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=mock_confirmation_callback,
-        )
+    db_context = Database(engine=db_engine)
+    result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
+        trigger_interface_message_id="msg_cross",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=mock_confirmation_callback,
+    )
 
     assert result.error_traceback is None, f"Error: {result.error_traceback}"
     assert result.text_reply is not None
@@ -425,17 +425,17 @@ async def test_operator_deny_overrides_self_delegation(
     )
     primary_service.processing_services_registry = {PROFILE_ID: primary_service}
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
-            trigger_interface_message_id="msg_blocked",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=mock_confirmation_callback,
-        )
+    db_context = Database(engine=db_engine)
+    result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": "Please delegate this."}],
+        trigger_interface_message_id="msg_blocked",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=mock_confirmation_callback,
+    )
 
     assert result.error_traceback is None, f"Error: {result.error_traceback}"
     assert result.text_reply is not None

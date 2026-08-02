@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm.messages import UserMessage
 from family_assistant.services.push_notification import PushNotificationService
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.utils.clock import SystemClock
 from family_assistant.web.web_chat_interface import WebChatInterface
 
@@ -86,16 +86,16 @@ async def test_web_chat_message_saved_successfully(
     assert result is not None
 
     # Verify message is in database
-    async with DatabaseContext(engine=db_engine) as db_context:
-        recent = await db_context.message_history.get_recent(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=10,
-            max_age=timedelta(hours=1),
-        )
-        assert len(recent) == 1
-        assert recent[0].content == message_text
-        assert recent[0].role == "assistant"
+    db_context = Database(engine=db_engine)
+    recent = await db_context.message_history.get_recent(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=10,
+        max_age=timedelta(hours=1),
+    )
+    assert len(recent) == 1
+    assert recent[0].content == message_text
+    assert recent[0].role == "assistant"
 
 
 @pytest.mark.asyncio
@@ -172,15 +172,15 @@ async def test_web_chat_handles_push_notification_error_gracefully(
     assert result is not None  # Message was saved despite push failure
 
     # Verify message in database - message saved even without user_id
-    async with DatabaseContext(engine=db_engine) as db_context:
-        recent = await db_context.message_history.get_recent(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=10,
-            max_age=timedelta(hours=1),
-        )
-        assert len(recent) == 1
-        assert recent[0].content == "Message should still be saved"
+    db_context = Database(engine=db_engine)
+    recent = await db_context.message_history.get_recent(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=10,
+        max_age=timedelta(hours=1),
+    )
+    assert len(recent) == 1
+    assert recent[0].content == "Message should still be saved"
 
 
 @pytest.mark.asyncio
@@ -194,14 +194,14 @@ async def test_web_chat_sends_push_notification_with_user_message(
     clock = SystemClock()
 
     # First, save a user message to establish user_id in conversation
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.message_history.add_message(
-            message=UserMessage(content="Hello, assistant"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=clock.now(),
-            user_id=user_id,
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        message=UserMessage(content="Hello, assistant"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=clock.now(),
+        user_id=user_id,
+    )
 
     # Create service and mock send_notification
     service = PushNotificationService(
@@ -271,11 +271,11 @@ async def test_web_chat_without_push_service(
     assert result is not None
 
     # Verify message is saved
-    async with DatabaseContext(engine=db_engine) as db_context:
-        recent = await db_context.message_history.get_recent(
-            interface_type="web",
-            conversation_id="no-service",
-            limit=10,
-            max_age=timedelta(hours=1),
-        )
-        assert len(recent) == 1
+    db_context = Database(engine=db_engine)
+    recent = await db_context.message_history.get_recent(
+        interface_type="web",
+        conversation_id="no-service",
+        limit=10,
+        max_age=timedelta(hours=1),
+    )
+    assert len(recent) == 1

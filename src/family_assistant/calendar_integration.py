@@ -112,7 +112,7 @@ def parse_event(
     local_tz: ZoneInfo | None = timezone
 
     try:
-        components = vobject.readComponents(event_data)  # type: ignore[attr-defined]
+        components = vobject.readComponents(event_data)
         ical_component = next(components)
 
         if getattr(ical_component, "name", "").upper() == "VEVENT":
@@ -406,7 +406,7 @@ def _fetch_caldav_events_sync(
             target_calendar = client.calendar(url=calendar_url_item)  # type: ignore[no-untyped-call]
 
             logger.info(
-                f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"  # type: ignore[attr-defined]
+                f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
             )
 
             caldav_results = target_calendar.search(

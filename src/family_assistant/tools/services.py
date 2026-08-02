@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from family_assistant.config_models import ToolsConfig
     from family_assistant.llm.content_parts import ContentPartDict
+    from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunDict,
         DelegationRunSummary,
@@ -139,8 +140,9 @@ def _terminal_delegation_run(run: DelegationRunDict | None) -> bool:
 async def _load_delegation_run(
     exec_context: ToolExecutionContext, delegation_id: str
 ) -> DelegationRunDict | None:
-    async with exec_context.db_context.create_isolated_context() as isolated_db:
-        return await isolated_db.delegation_runs.get_by_delegation_id(delegation_id)
+    return await exec_context.db_context.delegation_runs.get_by_delegation_id(
+        delegation_id
+    )
 
 
 def _resume_already_in_progress_result(resume_delegation_id: str) -> ToolResult:
@@ -469,12 +471,11 @@ async def _mark_delegation_delivered_inline(
     the cleanup sweep's ``find_terminal_unnotified`` backstop from re-delivering
     the same result into the conversation once the run ages past its window.
     """
-    async with exec_context.db_context.create_isolated_context() as isolated_db:
-        await isolated_db.delegation_runs.mark_notified(
-            delegation_id=delegation_id,
-            result_message_internal_id=None,
-            notified_at=_now(exec_context),
-        )
+    await exec_context.db_context.delegation_runs.mark_notified(
+        delegation_id=delegation_id,
+        result_message_internal_id=None,
+        notified_at=_now(exec_context),
+    )
 
 
 async def _inline_delegation_result(
@@ -842,23 +843,18 @@ async def delegate_to_service_tool(
                 "Attachment IDs provided but AttachmentRegistry not available - ignoring attachments"
             )
         else:
-            # Validate against a committed view (an isolated context) so the
-            # background worker — which runs on its own connection and cannot see
-            # the caller's uncommitted turn — sees exactly the attachments
-            # validated here. A referenced attachment that is not yet committed
-            # is reported now rather than failing opaquely inside the worker.
-            async with exec_context.db_context.create_isolated_context() as isolated_db:
-                found = await exec_context.attachment_registry.get_attachments(
-                    isolated_db, attachment_ids, acting_user_id=exec_context.user_id
-                )
+            found = await exec_context.attachment_registry.get_attachments(
+                exec_context.db_context,
+                attachment_ids,
+                acting_user_id=exec_context.user_id,
+            )
             missing = [aid for aid in attachment_ids if aid not in found]
             if missing:
                 return ToolResult(
                     text=(
                         f"Error: Cannot delegate to '{target_service_id}': "
-                        f"attachment(s) {', '.join(missing)} are not available to "
-                        "the delegated run. They may not be saved yet — try again "
-                        "once they are committed."
+                        f"attachment(s) {', '.join(missing)} do not exist or "
+                        "belong to another user."
                     ),
                     attachments=None,
                 )
@@ -921,35 +917,38 @@ async def delegate_to_service_tool(
         subconversation_id,
         wait_seconds,
     )
-    try:
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            await isolated_db.delegation_runs.create_run({
+
+    async def _enqueue_delegated_run(txn: DatabaseTransaction) -> None:
+        await txn.delegation_runs.create_run({
+            "delegation_id": delegation_id,
+            "task_id": task_id,
+            "source_profile_id": source_service_id,
+            "target_service_id": target_service_id,
+            "interface_type": exec_context.interface_type,
+            "conversation_id": exec_context.conversation_id,
+            "user_id": exec_context.user_id,
+            "user_name": exec_context.user_name,
+            "source_turn_id": exec_context.turn_id,
+            "source_subconversation_id": exec_context.subconversation_id,
+            "subconversation_id": subconversation_id,
+            "request_text": user_request,
+            "content_parts_json": content_parts,
+            "taint_state_json": taint_state_json,
+        })
+        await txn.tasks.enqueue(
+            task_id=task_id,
+            task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
+            payload={
                 "delegation_id": delegation_id,
-                "task_id": task_id,
-                "source_profile_id": source_service_id,
-                "target_service_id": target_service_id,
                 "interface_type": exec_context.interface_type,
                 "conversation_id": exec_context.conversation_id,
-                "user_id": exec_context.user_id,
                 "user_name": exec_context.user_name,
-                "source_turn_id": exec_context.turn_id,
-                "source_subconversation_id": exec_context.subconversation_id,
-                "subconversation_id": subconversation_id,
-                "request_text": user_request,
-                "content_parts_json": content_parts,
-                "taint_state_json": taint_state_json,
-            })
-            await isolated_db.tasks.enqueue(
-                task_id=task_id,
-                task_type=DELEGATED_PROFILE_RUN_TASK_TYPE,
-                payload={
-                    "delegation_id": delegation_id,
-                    "interface_type": exec_context.interface_type,
-                    "conversation_id": exec_context.conversation_id,
-                    "user_name": exec_context.user_name,
-                },
-                max_retries_override=1,
-            )
+            },
+            max_retries_override=1,
+        )
+
+    try:
+        await exec_context.db_context.atomic(_enqueue_delegated_run)
     except IntegrityError:
         if resumed_subconversation_id is not None:
             # The unique active-subconversation index rejected this insert: a
@@ -999,11 +998,10 @@ async def delegate_to_service_tool(
         # The run is not terminal within the handoff window. Atomically claim the
         # handoff; if the run reached a terminal state in the race, the claim
         # fails and we deliver the result inline instead of stranding it.
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            handed_off = await isolated_db.delegation_runs.mark_handed_off(
-                delegation_id,
-                _now(exec_context),
-            )
+        handed_off = await exec_context.db_context.delegation_runs.mark_handed_off(
+            delegation_id,
+            _now(exec_context),
+        )
         if not handed_off:
             run = await _load_delegation_run(exec_context, delegation_id)
             inline_result = await _inline_delegation_result(
@@ -1021,11 +1019,10 @@ async def delegate_to_service_tool(
         # Best-effort handoff claim so the worker's handed-off-gated notification
         # delivers the result promptly rather than waiting for the cleanup sweep.
         try:
-            async with exec_context.db_context.create_isolated_context() as isolated_db:
-                await isolated_db.delegation_runs.mark_handed_off(
-                    delegation_id,
-                    _now(exec_context),
-                )
+            await exec_context.db_context.delegation_runs.mark_handed_off(
+                delegation_id,
+                _now(exec_context),
+            )
         except Exception:
             logger.exception(
                 "Failed to claim handoff for delegation %s after wait error; the "

@@ -122,3 +122,17 @@ exemptions:
       contains raw calls so .ast-grep/test-rules.py can verify the rule catches them.
     ticket: null
 
+
+  # ===========================================================================
+  # Raw transaction management - the storage layer implements the primitives
+  # ===========================================================================
+  - rule: no-raw-transaction-management
+    files:
+      - src/family_assistant/storage/database.py
+      - src/family_assistant/storage/__init__.py
+      - .ast-grep/tests/conformance/no-raw-transaction-management-positive.py
+    reason: |
+      database.py is where Database/DatabaseTransaction are implemented, so it is the
+      one place allowed to call engine.begin(). storage/__init__.py runs schema
+      creation before any application code exists to hold a transaction.
+    ticket: null

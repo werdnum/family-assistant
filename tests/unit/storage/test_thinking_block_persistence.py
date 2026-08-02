@@ -8,17 +8,15 @@ the client's conversion to prove the replay path still accepts it.
 """
 
 import uuid
-from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 import pytest
-import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 
 # A signature shaped like the real thing: long, base64-ish, and meaningless if
 # a single character shifts.
@@ -34,14 +32,12 @@ PROVIDER_METADATA: dict[str, object] = {
 }
 
 
-@pytest_asyncio.fixture
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    context_instance = get_db_context(engine=db_engine, base_delay=0.01)
-    async with context_instance as entered_context:
-        yield entered_context
+@pytest.fixture
+def db_context(db_engine: AsyncEngine) -> Database:
+    return Database(engine=db_engine, base_delay=0.01)
 
 
-async def _round_trip(db_context: DatabaseContext) -> AssistantMessage:
+async def _round_trip(db_context: Database) -> AssistantMessage:
     """Persist an assistant turn with thinking blocks and read it back."""
     turn_id = str(uuid.uuid4())
     await db_context.message_history.add_message(
@@ -76,7 +72,7 @@ async def _round_trip(db_context: DatabaseContext) -> AssistantMessage:
 
 @pytest.mark.asyncio
 async def test_thinking_blocks_survive_database_round_trip(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """The stored metadata must come back identical, signature included."""
     restored = await _round_trip(db_context)
@@ -89,7 +85,7 @@ async def test_thinking_blocks_survive_database_round_trip(
 
 @pytest.mark.asyncio
 async def test_round_tripped_message_replays_thinking_first(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """A message read back from storage still converts into a valid turn."""
     restored = await _round_trip(db_context)

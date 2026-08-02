@@ -19,7 +19,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolDefinition
 from family_assistant.utils.clock import Clock
 
@@ -58,7 +58,7 @@ class AttachmentProcessor:
 
     async def process_content_parts(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         conversation_id: str,
         content_parts: list[ContentPartDict],
         *,
@@ -142,7 +142,7 @@ class AttachmentProcessor:
 
     async def convert_urls_to_data_uris(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         content_parts: list[ContentPartDict],
         *,
         acting_user_id: str | None,
@@ -231,7 +231,7 @@ class AttachmentProcessor:
 
     async def convert_message_urls(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         *,
         acting_user_id: str | None,
@@ -286,7 +286,7 @@ class AttachmentProcessor:
 
     async def extract_conversation_context(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         conversation_id: str,
         max_age_hours: float,
         prompts: dict[str, str],
@@ -523,7 +523,7 @@ Call attach_to_response with your selected attachment IDs."""
 
     async def handle_large_result(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         content: str,
         tool_name: str,
         conversation_id: str,

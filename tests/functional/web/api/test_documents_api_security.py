@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from family_assistant.indexing.message_history_indexer import (
     MESSAGE_HISTORY_SOURCE_TYPE,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.vector import add_document, add_embedding
 
 if TYPE_CHECKING:
@@ -36,42 +36,42 @@ async def test_document_apis_hide_message_history_documents(
     api_test_client: httpx.AsyncClient,
 ) -> None:
     """Generic document APIs must not expose indexed message-history artifacts."""
-    async with DatabaseContext(engine=db_engine) as db:
-        public_document_id = await add_document(
-            db,
-            _TestDocument(
-                source_type="note",
-                source_id="public-note",
-                source_uri=None,
-                title="Public note",
-                created_at=datetime.now(UTC),
-                metadata={"kind": "public"},
-                file_path=None,
-                visibility_labels=[],
-            ),
-        )
-        message_history_document_id = await add_document(
-            db,
-            _TestDocument(
-                source_type=MESSAGE_HISTORY_SOURCE_TYPE,
-                source_id="message_turn:secret-turn",
-                source_uri=None,
-                title="Secret message-history turn",
-                created_at=datetime.now(UTC),
-                metadata={"conversation_id": "private-conversation"},
-                file_path=None,
-                visibility_labels=[],
-            ),
-        )
-        await add_embedding(
-            db_context=db,
-            document_id=message_history_document_id,
-            chunk_index=0,
-            embedding_type="message_turn",
-            embedding=[0.1, 0.2, 0.3],
-            embedding_model="test-model",
-            content="private conversation text",
-        )
+    db = Database(engine=db_engine)
+    public_document_id = await add_document(
+        db,
+        _TestDocument(
+            source_type="note",
+            source_id="public-note",
+            source_uri=None,
+            title="Public note",
+            created_at=datetime.now(UTC),
+            metadata={"kind": "public"},
+            file_path=None,
+            visibility_labels=[],
+        ),
+    )
+    message_history_document_id = await add_document(
+        db,
+        _TestDocument(
+            source_type=MESSAGE_HISTORY_SOURCE_TYPE,
+            source_id="message_turn:secret-turn",
+            source_uri=None,
+            title="Secret message-history turn",
+            created_at=datetime.now(UTC),
+            metadata={"conversation_id": "private-conversation"},
+            file_path=None,
+            visibility_labels=[],
+        ),
+    )
+    await add_embedding(
+        db_context=db,
+        document_id=message_history_document_id,
+        chunk_index=0,
+        embedding_type="message_turn",
+        embedding=[0.1, 0.2, 0.3],
+        embedding_model="test-model",
+        content="private conversation text",
+    )
 
     list_response = await api_test_client.get("/api/documents/")
     assert list_response.status_code == 200

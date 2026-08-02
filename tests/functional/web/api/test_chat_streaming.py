@@ -31,7 +31,7 @@ from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteModel
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
@@ -47,6 +47,7 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
+from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.functional.web.conftest import run_chat_turn_stream
 from tests.helpers import wait_for_condition
@@ -87,10 +88,10 @@ def parse_sse_events(response_text: str) -> list[SSEEvent]:
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
-    """Provides a DatabaseContext for a single test function."""
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+) -> AsyncGenerator[Database]:
+    """Provides a Database for a single test function."""
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -162,13 +163,13 @@ def test_processing_service(
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
+    def get_entered_db_context_for_provider() -> Database:
         """
-        Returns an awaitable that resolves to an entered DatabaseContext.
+        Returns an awaitable that resolves to an entered Database.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=db_engine) as new_ctx:
-            return new_ctx
+        new_ctx = Database(engine=db_engine)
+        return new_ctx
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
@@ -226,9 +227,9 @@ async def app_fixture(
 
     app.state.web_chat_interface = WebChatInterface(db_engine)
 
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)
-        await temp_db_ctx.init_vector_db()
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_db_ctx.init_vector_db()
 
     return app
 
@@ -302,10 +303,10 @@ async def test_api_chat_send_message_stream_minimal(
     # Check database state - messages should be saved
     # Need to extract conversation_id from the stream (it's generated)
     # Since we don't have it in the response, we'll check for any recent messages
-    async with get_db_context(engine=db_engine) as fresh_ctx:
-        recent_conversations = await fresh_ctx.message_history.get_all_grouped(
-            interface_type="api"
-        )
+    fresh_ctx = Database(engine=db_engine)
+    recent_conversations = await fresh_ctx.message_history.get_all_grouped(
+        interface_type="api"
+    )
 
     # Should have at least one conversation
     assert len(recent_conversations) > 0
@@ -432,14 +433,12 @@ async def test_api_chat_send_message_stream_with_tools(
     assert combined_text == llm_final_reply
 
     # Check database - note should be created
-    # Use a fresh DatabaseContext to avoid PostgreSQL snapshot isolation issues
+    # Use a fresh Database to avoid PostgreSQL snapshot isolation issues
     # where a pre-existing transaction may not see data committed by the API handler.
     # Retry briefly since PostgreSQL commits may not be immediately visible.
     async def _check_note_exists() -> NoteModel | None:
-        async with get_db_context(engine=db_engine) as fresh_ctx:
-            return await fresh_ctx.notes.get_by_title(
-                note_title, visibility_grants=None
-            )
+        fresh_ctx = Database(engine=db_engine)
+        return await fresh_ctx.notes.get_by_title(note_title, visibility_grants=None)
 
     note = await wait_for_condition(
         _check_note_exists,
@@ -742,7 +741,7 @@ class _SpyNotifier:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:
@@ -843,15 +842,106 @@ async def test_streaming_continues_and_notifies_after_client_disconnect(
     assert metadata.conversation_id == conversation_id
 
     # The assistant reply must also have been persisted despite the disconnect.
-    async with get_db_context(engine=db_engine) as fresh_ctx:
-        messages = await fresh_ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=20,
-        )
+    fresh_ctx = Database(engine=db_engine)
+    messages = await fresh_ctx.message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
     assistant_messages = [
         m
         for m in messages
         if m["role"] == "assistant" and llm_response in str(m.get("content") or "")
     ]
     assert assistant_messages, "Assistant reply should be persisted after disconnect"
+
+
+async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure during pre-producer setup must not strand the prompt.
+
+    The prompt row is what the durable idempotency branch keys on, so a retry
+    carrying the same turn_id would return already_complete and never run the
+    turn -- leaving the user looking at a prompt that can never get a reply.
+    """
+    user_prompt = "Answer me even though setup failed once"
+    llm_response = "Here is your answer."
+    conversation_id = "setup-failure-conv-1"
+
+    mock_llm_client.rules.append((
+        lambda args: any(
+            msg.role == "user" and user_prompt in str(msg.content or "")
+            for msg in args.get("messages", [])
+        ),
+        LLMOutput(
+            content=llm_response,
+            tool_calls=None,
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    preparer = app_fixture.state.processing_service.context_preparer
+    real_aggregate = preparer.aggregate_context_taint_sources
+    calls = {"n": 0}
+
+    async def fail_once() -> object:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("context taint aggregation unavailable")
+        return await real_aggregate()
+
+    monkeypatch.setattr(preparer, "aggregate_context_taint_sources", fail_once)
+
+    turn_id = str(uuid.uuid4())
+    body = {
+        "turn_id": turn_id,
+        "prompt": user_prompt,
+        "interface_type": "web",
+        "conversation_id": conversation_id,
+    }
+
+    with pytest.raises(RuntimeError, match="context taint aggregation unavailable"):
+        await test_client.post("/api/v1/chat/turns", json=body)
+
+    # The retry carries the same turn_id and must actually run the turn.
+    # The prompt must not have survived the failed setup: it is what the
+    # durable idempotency branch keys on.
+    stranded = await Database(engine=db_engine).message_history.get_user_row_by_turn_id(
+        turn_id
+    )
+    assert stranded is None
+
+    # Simulate the restart that makes this reachable. Within one process the
+    # hub's own in-memory turn record short-circuits the retry first; after a
+    # restart only the durable row is left to decide, which is the case the
+    # ordering above exists for.
+    app_fixture.state.conversation_stream_hub = ConversationStreamHub()
+
+    retry = await test_client.post("/api/v1/chat/turns", json=body)
+    assert retry.status_code == 200
+    assert retry.json()["already_complete"] is False
+
+    hub = app_fixture.state.conversation_stream_hub
+    producer_tasks = hub.get_active_producer_tasks(conversation_id)
+    if producer_tasks:
+        await asyncio.gather(*producer_tasks, return_exceptions=True)
+
+    # The retry actually ran the turn, so the prompt has its reply.
+    messages = await Database(
+        engine=db_engine
+    ).message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
+    assert any(
+        msg["role"] == "assistant" and llm_response in str(msg["content"] or "")
+        for msg in messages
+    )

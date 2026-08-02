@@ -1,7 +1,11 @@
-"""Tests for PostgreSQL text sanitization utilities."""
+"""Tests for PostgreSQL text sanitization and replay-safety classification."""
 
-from family_assistant.storage.context import (
-    _is_non_retryable_postgres_error,  # noqa: PLC2701 - testing private function behavior
+import sqlite3
+
+from sqlalchemy.exc import DBAPIError
+
+from family_assistant.storage.database import (
+    _is_retryable,  # noqa: PLC2701 - testing private function behavior
     sanitize_text_for_postgres,
 )
 
@@ -68,58 +72,68 @@ class TestSanitizeTextForPostgres:
         assert result == "Browser output:console.log('test')"
 
 
-class TestIsNonRetryablePostgresError:
-    """Tests for _is_non_retryable_postgres_error function."""
+class TestIsRetryable:
+    """Tests for _is_retryable, which decides whether atomic() replays a closure."""
 
-    def test_none_returns_false(self) -> None:
-        """None should return (False, '')."""
-        assert _is_non_retryable_postgres_error(None) == (False, "")
+    @staticmethod
+    def _dbapi_error(orig: BaseException) -> DBAPIError:
+        return DBAPIError("SELECT 1", {}, orig)
 
-    def test_generic_exception_returns_false(self) -> None:
-        """Generic exceptions should return (False, '')."""
-        exc = Exception("Some error")
-        assert _is_non_retryable_postgres_error(exc) == (False, "")
-
-    def test_detects_transaction_error_by_pgcode(self) -> None:
-        """Should detect transaction errors by SQLSTATE code (25P02)."""
+    def test_serialization_failure_is_retryable(self) -> None:
+        """40001 rolled back cleanly, so replaying the closure is safe."""
 
         class MockPostgresError(Exception):
-            pgcode = "25P02"  # in_failed_sql_transaction
+            pgcode = "40001"
 
-        exc = MockPostgresError("Transaction aborted")
-        is_non_retryable, error_type = _is_non_retryable_postgres_error(exc)
-        assert is_non_retryable is True
-        assert error_type == "transaction_aborted"
+        assert _is_retryable(self._dbapi_error(MockPostgresError("conflict"))) is True
 
-    def test_detects_encoding_error_by_pgcode(self) -> None:
-        """Should detect encoding errors by SQLSTATE code (22021)."""
+    def test_deadlock_is_retryable(self) -> None:
+        """40P01 rolled back cleanly, so replaying the closure is safe."""
 
         class MockPostgresError(Exception):
-            pgcode = "22021"  # character_not_in_repertoire
+            pgcode = "40P01"
 
-        exc = MockPostgresError("Invalid byte sequence")
-        is_non_retryable, error_type = _is_non_retryable_postgres_error(exc)
-        assert is_non_retryable is True
-        assert error_type == "encoding_error"
+        assert _is_retryable(self._dbapi_error(MockPostgresError("deadlock"))) is True
 
-    def test_retryable_pgcode_returns_false(self) -> None:
-        """SQLSTATE codes for retryable errors should return (False, '')."""
+    def test_aborted_transaction_is_not_retryable(self) -> None:
+        """25P02 means a statement already failed inside this transaction."""
 
         class MockPostgresError(Exception):
-            pgcode = "40001"  # serialization_failure - retryable
+            pgcode = "25P02"
 
-        exc = MockPostgresError("Serialization failure")
-        is_non_retryable, error_type = _is_non_retryable_postgres_error(exc)
-        assert is_non_retryable is False
-        assert error_type == ""  # noqa: PLC1901 - explicitly testing empty string return
+        assert _is_retryable(self._dbapi_error(MockPostgresError("aborted"))) is False
 
-    def test_exception_without_pgcode_returns_false(self) -> None:
-        """Exceptions without pgcode attribute should return (False, '')."""
+    def test_encoding_error_is_not_retryable(self) -> None:
+        """22021 is deterministic: the same bytes fail the same way."""
 
-        class SomeOtherError(Exception):
-            pass
+        class MockPostgresError(Exception):
+            pgcode = "22021"
 
-        exc = SomeOtherError("Some error")
-        is_non_retryable, error_type = _is_non_retryable_postgres_error(exc)
-        assert is_non_retryable is False
-        assert error_type == ""  # noqa: PLC1901 - explicitly testing empty string return
+        assert _is_retryable(self._dbapi_error(MockPostgresError("bad bytes"))) is False
+
+    def test_unrecognized_postgres_error_is_not_retryable(self) -> None:
+        """An unlisted SQLSTATE is not assumed safe to replay."""
+
+        class MockPostgresError(Exception):
+            pgcode = "08006"  # connection_failure
+
+        assert _is_retryable(self._dbapi_error(MockPostgresError("gone"))) is False
+
+    def test_dropped_connection_is_not_retryable(self) -> None:
+        """The outcome is unknown -- the commit may have reached the server.
+
+        Replaying would write the closure's rows a second time rather than
+        surfacing the uncertainty.
+        """
+        orig = OSError("connection was closed in the middle of operation")
+        assert _is_retryable(self._dbapi_error(orig)) is False
+
+    def test_sqlite_lock_contention_is_retryable(self) -> None:
+        """SQLite reports the lock before the transaction does any work."""
+        orig = sqlite3.OperationalError("database is locked")
+        assert _is_retryable(self._dbapi_error(orig)) is True
+
+    def test_other_sqlite_operational_errors_are_not_retryable(self) -> None:
+        """Only lock contention is known to have left nothing behind."""
+        orig = sqlite3.OperationalError("disk I/O error")
+        assert _is_retryable(self._dbapi_error(orig)) is False

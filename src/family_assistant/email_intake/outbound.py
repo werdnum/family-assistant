@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Protocol
 import httpx
 
 from family_assistant.email_intake.security import normalize_email_address
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.email import received_emails_table
 
 if TYPE_CHECKING:
@@ -209,12 +209,12 @@ class EmailChatInterface:
 
     async def _resolve_target(self, conversation_id: str) -> EmailConversationTarget:
         email_db_id = parse_email_conversation_id(conversation_id)
-        async with get_db_context(engine=self._database_engine) as db:
-            row = await db.fetch_one(
-                received_emails_table.select().where(
-                    received_emails_table.c.id == email_db_id
-                )
+        db = Database(engine=self._database_engine)
+        row = await db.fetch_one(
+            received_emails_table.select().where(
+                received_emails_table.c.id == email_db_id
             )
+        )
         if row is None:
             msg = f"Email conversation {conversation_id!r} does not exist"
             raise OutboundEmailDeliveryError(msg)

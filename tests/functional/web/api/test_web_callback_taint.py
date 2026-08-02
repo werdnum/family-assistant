@@ -28,7 +28,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
 )
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.task_worker import LlmCallbackPayload, handle_llm_callback
 from family_assistant.tools.types import ToolExecutionContext
@@ -57,9 +57,11 @@ class TaintedReplyService:
             id="callback_profile", allow_wake_llm=True
         )
         self.processing_services_registry: dict[str, object] = {}
+        self.call_count = 0
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
-        db_context = cast("DatabaseContext", kwargs["db_context"])
+        self.call_count += 1
+        db_context = cast("Database", kwargs["db_context"])
         tainted_state = TurnTaintState.empty().add_source(
             TaintSource(
                 source_type=TaintSourceType.TOOL_OUTPUT,
@@ -77,7 +79,9 @@ class TaintedReplyService:
             interface_type=kwargs["interface_type"],
             conversation_id=kwargs["conversation_id"],
             timestamp=SystemClock().now(),
-            turn_id="callback_turn",
+            # The real service records the turn id it is handed; the delivery
+            # checkpoint depends on that, so the fake must too.
+            turn_id=kwargs.get("turn_id") or "callback_turn",
             processing_profile_id=self.service_config.id,
             user_id=kwargs.get("user_id"),
         )
@@ -88,7 +92,7 @@ class TaintedReplyService:
 
 
 def _exec_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     processing_service: TaintedReplyService,
     chat_interface: ChatInterface,
 ) -> ToolExecutionContext:
@@ -131,26 +135,26 @@ async def test_web_callback_delivery_copy_inherits_turn_taint(
     delivery copy with the trusted-empty baseline even though the reply derives
     from tainted tool output.
     """
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
 
     processing_service = TaintedReplyService()
     chat_interface = WebChatInterface(db_engine, notifier=None, stream_hub=None)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await handle_llm_callback(
-            _exec_context(db_context, processing_service, chat_interface),
-            _payload(),
-        )
+    db_context = Database(engine=db_engine)
+    await handle_llm_callback(
+        _exec_context(db_context, processing_service, chat_interface),
+        _payload(),
+    )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        assistant_rows = await ctx.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.role == "assistant")
-            .order_by(message_history_table.c.internal_id)
-        )
+    ctx = Database(engine=db_engine)
+    assistant_rows = await ctx.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.role == "assistant")
+        .order_by(message_history_table.c.internal_id)
+    )
 
     # Two assistant rows: the turn's canonical reply and the web delivery copy.
     assert len(assistant_rows) == 2
@@ -162,3 +166,105 @@ async def test_web_callback_delivery_copy_inherits_turn_taint(
     assert delivery_row["taint_metadata_version"] == "runtime_v1"
     assert delivery_row["taint_metadata_json"] is not None
     assert delivery_row["taint_metadata_json"]["max_tier"] == "unknown_external"
+
+
+class _FailingDeliveryInterface(WebChatInterface):
+    """A web interface whose send fails once, then succeeds."""
+
+    def __init__(self, db_engine: AsyncEngine) -> None:
+        super().__init__(db_engine, notifier=None, stream_hub=None)
+        self.send_attempts = 0
+
+    async def send_message(self, *args: object, **kwargs: object) -> str | None:
+        self.send_attempts += 1
+        if self.send_attempts == 1:
+            raise RuntimeError("transient delivery failure")
+        return await super().send_message(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the interface signature
+
+
+class _NoDeliveryIdInterface(WebChatInterface):
+    """A web interface that reports its first send as undelivered."""
+
+    def __init__(self, db_engine: AsyncEngine) -> None:
+        super().__init__(db_engine, notifier=None, stream_hub=None)
+        self.send_attempts = 0
+
+    async def send_message(self, *args: object, **kwargs: object) -> str | None:
+        self.send_attempts += 1
+        if self.send_attempts == 1:
+            return None
+        return await super().send_message(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the interface signature
+
+
+@pytest.mark.asyncio
+async def test_callback_treats_a_missing_delivery_id_as_a_failed_send(
+    db_engine: AsyncEngine,
+) -> None:
+    """Returning None is how the interface reports a failed delivery.
+
+    Continuing past it would let the task complete with nothing sent and no
+    retry, silently dropping the reply the turn already generated.
+    """
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+
+    processing_service = TaintedReplyService()
+    chat_interface = _NoDeliveryIdInterface(db_engine)
+
+    with pytest.raises(RuntimeError, match="reported no delivery"):
+        await handle_llm_callback(
+            _exec_context(
+                Database(engine=db_engine), processing_service, chat_interface
+            ),
+            _payload(),
+        )
+
+    # The retry resumes at delivery rather than regenerating.
+    await handle_llm_callback(
+        _exec_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload(),
+    )
+
+    assert processing_service.call_count == 1
+    assert chat_interface.send_attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_callback_retry_resumes_at_delivery_without_rerunning_the_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    """A retry after a failed send must not run the LLM turn a second time.
+
+    The turn's messages and its tools' writes are durable as soon as they
+    happen, so regenerating would repeat every stateful tool the turn used.
+    Every attempt of a task shares a turn id, and an assistant reply with no
+    interface_message_id means "generated but never delivered" -- so the retry
+    resumes at delivery.
+    """
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+
+    processing_service = TaintedReplyService()
+    chat_interface = _FailingDeliveryInterface(db_engine)
+
+    # First attempt: generation succeeds, delivery fails.
+    with pytest.raises(RuntimeError, match="Failed to send LLM callback response"):
+        await handle_llm_callback(
+            _exec_context(
+                Database(engine=db_engine), processing_service, chat_interface
+            ),
+            _payload(),
+        )
+    assert processing_service.call_count == 1
+
+    # The retry reuses the same turn id, as the task worker gives it.
+    await handle_llm_callback(
+        _exec_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload(),
+    )
+
+    # The LLM turn ran exactly once across both attempts.
+    assert processing_service.call_count == 1
+    assert chat_interface.send_attempts == 2

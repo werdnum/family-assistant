@@ -50,9 +50,9 @@ class NotesIndexer:
         db_context = exec_context.db_context
         if not db_context:
             logger.error(
-                "DatabaseContext not found in ToolExecutionContext for handle_index_note."
+                "Database not found in ToolExecutionContext for handle_index_note."
             )
-            raise ValueError("Missing DatabaseContext dependency in context.")
+            raise ValueError("Missing Database dependency in context.")
 
         note_id = payload.get("note_id")
         if not note_id:
@@ -91,7 +91,13 @@ class NotesIndexer:
             f"Added/Updated document record for note {note_id}, vector DB doc ID: {doc_id}"
         )
 
-        # --- 4. Delete existing embeddings if re-indexing ---
+        # --- 4. Delete the superseded embeddings ---
+        # Before the pipeline, not after. The pipeline enqueues the replacement
+        # embed task, which another worker can pick up immediately; deleting
+        # afterwards would race that worker and remove the *new* rows, leaving
+        # the note permanently unsearchable on the ordinary success path. The
+        # cost of deleting first is narrower: the note is unsearchable only
+        # until a retry of this task succeeds.
         await delete_document_embeddings(db_context, doc_id)
 
         # --- 5. Get the document record for pipeline ---

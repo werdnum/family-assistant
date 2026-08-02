@@ -16,7 +16,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.content_parts import text_content
 from family_assistant.llm.messages import SystemMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import LocalToolsProvider
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
@@ -79,15 +79,15 @@ class TestProfilePreambleInSystemPrompt:
         """The system prompt should identify the active processing profile."""
         service, mock_llm = _make_service("engineer")
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-1",
-                trigger_content_parts=[text_content("hello")],
-                trigger_interface_message_id="msg-1",
-                user_name="TestUser",
-            )
+        db_context = Database(engine=db_engine)
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-1",
+            trigger_content_parts=[text_content("hello")],
+            trigger_interface_message_id="msg-1",
+            user_name="TestUser",
+        )
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         assert "[Active Processing Profile: engineer]" in system_prompt
@@ -99,15 +99,15 @@ class TestProfilePreambleInSystemPrompt:
         """The system prompt should indicate the user explicitly selected the profile."""
         service, mock_llm = _make_service("camera_analyst")
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-2",
-                trigger_content_parts=[text_content("check the front door")],
-                trigger_interface_message_id="msg-2",
-                user_name="TestUser",
-            )
+        db_context = Database(engine=db_engine)
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-2",
+            trigger_content_parts=[text_content("check the front door")],
+            trigger_interface_message_id="msg-2",
+            user_name="TestUser",
+        )
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         assert (
@@ -123,15 +123,15 @@ class TestProfilePreambleInSystemPrompt:
             description="Read-only diagnostic access to source code and database",
         )
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-3",
-                trigger_content_parts=[text_content("debug this")],
-                trigger_interface_message_id="msg-3",
-                user_name="TestUser",
-            )
+        db_context = Database(engine=db_engine)
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-3",
+            trigger_content_parts=[text_content("debug this")],
+            trigger_interface_message_id="msg-3",
+            user_name="TestUser",
+        )
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         assert (
@@ -145,15 +145,15 @@ class TestProfilePreambleInSystemPrompt:
         """When a profile has no description, the description line should be absent."""
         service, mock_llm = _make_service("minimal_profile", description="")
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-4",
-                trigger_content_parts=[text_content("test")],
-                trigger_interface_message_id="msg-4",
-                user_name="TestUser",
-            )
+        db_context = Database(engine=db_engine)
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-4",
+            trigger_content_parts=[text_content("test")],
+            trigger_interface_message_id="msg-4",
+            user_name="TestUser",
+        )
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         assert "Profile purpose:" not in system_prompt
@@ -170,15 +170,15 @@ class TestProfilePreambleInSystemPrompt:
             system_prompt="You are a helpful family assistant for {user_name}.",
         )
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-5",
-                trigger_content_parts=[text_content("hi")],
-                trigger_interface_message_id="msg-5",
-                user_name="TestUser",
-            )
+        db_context = Database(engine=db_engine)
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-5",
+            trigger_content_parts=[text_content("hi")],
+            trigger_interface_message_id="msg-5",
+            user_name="TestUser",
+        )
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         preamble_pos = system_prompt.index("[Active Processing Profile:")
@@ -192,15 +192,15 @@ class TestProfilePreambleInSystemPrompt:
         """The preamble should warn the model not to exceed its profile scope."""
         service, mock_llm = _make_service("engineer")
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-6",
-                trigger_content_parts=[text_content("investigate")],
-                trigger_interface_message_id="msg-6",
-                user_name="TestUser",
-            )
+        db_context = Database(engine=db_engine)
+        await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-6",
+            trigger_content_parts=[text_content("investigate")],
+            trigger_interface_message_id="msg-6",
+            user_name="TestUser",
+        )
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         assert "Do not attempt actions outside your profile's scope" in system_prompt
@@ -217,16 +217,16 @@ class TestProfilePreambleInStream:
             description="Read-only diagnostic access",
         )
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            async for _ in service.handle_chat_interaction_stream(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-stream-1",
-                trigger_content_parts=[text_content("hello")],
-                trigger_interface_message_id="msg-stream-1",
-                user_name="TestUser",
-            ):
-                pass
+        db_context = Database(engine=db_engine)
+        async for _ in service.handle_chat_interaction_stream(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-stream-1",
+            trigger_content_parts=[text_content("hello")],
+            trigger_interface_message_id="msg-stream-1",
+            user_name="TestUser",
+        ):
+            pass
 
         system_prompt = _get_system_prompt_from_calls(mock_llm)
         assert "[Active Processing Profile: engineer]" in system_prompt

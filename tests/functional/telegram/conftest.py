@@ -1,6 +1,5 @@
-import contextlib
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, NamedTuple
 from unittest.mock import AsyncMock
 
@@ -13,7 +12,7 @@ from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.llm import LLMInterface
 from family_assistant.processing import ProcessingService
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.telegram.handler import TelegramUpdateHandler
 from family_assistant.telegram.interface import (
     TelegramChatInterface,
@@ -46,9 +45,7 @@ class TelegramHandlerTestFixture(NamedTuple):
     tools_provider: (
         ToolsProvider  # This is assistant.default_processing_service.tools_provider
     )
-    get_db_context_func: Callable[
-        ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
-    ]
+    database: Database
     telegram_client: "TelegramTestClient"  # For verifying bot responses
 
 
@@ -202,12 +199,6 @@ async def telegram_handler_fixture(
     assert assistant_app.telegram_service.update_handler is not None
     assistant_app.telegram_service.update_handler.confirmation_manager.request_confirmation = mock_request_confirmation_method
 
-    # Function to get DB context for the specific test engine
-    def get_test_db_context_func() -> contextlib.AbstractAsyncContextManager[
-        DatabaseContext
-    ]:
-        return get_db_context(engine=db_engine)  # Explicitly pass test engine
-
     # 5. Yield Fixture Components
     # Ensure default_processing_service and its tools_provider are set
     assert assistant_app.default_processing_service is not None
@@ -225,7 +216,7 @@ async def telegram_handler_fixture(
         application=real_application,  # Real application
         processing_service=assistant_app.default_processing_service,
         tools_provider=assistant_app.default_processing_service.tools_provider,
-        get_db_context_func=get_test_db_context_func,
+        database=Database(engine=db_engine),
         telegram_client=telegram_client,  # For verifying bot responses
     )
     yield fixture_tuple

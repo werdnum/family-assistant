@@ -21,7 +21,7 @@ from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
 )
 from family_assistant.storage.base import attachment_metadata_table
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from tests.functional.web.conftest import run_chat_turn_stream
 
 
@@ -293,8 +293,8 @@ class TestUserAttachmentProcessing:
         query = select(attachment_metadata_table).where(
             attachment_metadata_table.c.attachment_id == attachment_id
         )
-        async with get_db_context(engine=db_engine) as db_context:
-            metadata_row = await db_context.fetch_one(query)
+        db_context = Database(engine=db_engine)
+        metadata_row = await db_context.fetch_one(query)
 
         assert metadata_row is not None, (
             "Attachment metadata should be stored in database"

@@ -44,6 +44,7 @@ async def test_committed_transaction_leaves_no_violations() -> None:
         instrumentation = get_instrumentation(engine)
         assert instrumentation is not None
 
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
             assert instrumentation.open_transactions == 1
@@ -64,6 +65,7 @@ async def test_transaction_exceeding_the_bound_is_reported() -> None:
         assert instrumentation is not None
         clock = FakeClock().install(instrumentation)
 
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
             clock.now = 60.0

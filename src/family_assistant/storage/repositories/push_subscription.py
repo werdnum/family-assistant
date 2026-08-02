@@ -33,11 +33,15 @@ class PushSubscriptionRepository(BaseRepository):
             user_identifier=user_identifier,
             subscription_json=subscription_json,
         )
-        result = await self._db.execute_with_retry(stmt)
-        # Use inserted_primary_key for PostgreSQL compatibility, fallback to lastrowid for SQLite
-        if hasattr(result, "inserted_primary_key") and result.inserted_primary_key:
-            return result.inserted_primary_key[0]  # type: ignore[return-value]
-        return result.lastrowid  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        # PostgreSQL reports the key it generated; SQLite reports a rowid.
+        if result.inserted_primary_key:
+            return int(result.inserted_primary_key[0])
+        if result.lastrowid is None:
+            raise RuntimeError(
+                "Insert reported no identifier for the new push subscription"
+            )
+        return result.lastrowid
 
     async def get_by_user(self, user_identifier: str) -> list[PushSubscription]:
         """Get all push subscriptions for a user.
@@ -66,8 +70,8 @@ class PushSubscriptionRepository(BaseRepository):
         stmt = push_subscriptions_table.delete().where(
             push_subscriptions_table.c.id == subscription_id
         )
-        result = await self._db.execute_with_retry(stmt)
-        return result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        return result.rowcount
 
     async def delete_by_endpoint(self, user_identifier: str, endpoint: str) -> int:
         """Delete push subscriptions by endpoint URL for a specific user.
@@ -86,5 +90,5 @@ class PushSubscriptionRepository(BaseRepository):
                 == endpoint
             )
         )
-        result = await self._db.execute_with_retry(stmt)
-        return result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        return result.rowcount

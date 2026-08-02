@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.storage.models import Automation
     from family_assistant.storage.repositories.automations import AutomationType
     from family_assistant.storage.types import ActionConfig
@@ -320,7 +320,7 @@ For script:
 
 # Helper function to fetch and validate an automation exists
 async def _get_automation_or_error(
-    db_context: DatabaseContext,
+    db_context: Database,
     automation_id: int,
     automation_type: str,
 ) -> Automation:
@@ -393,7 +393,7 @@ async def _validate_script_code_with_provider(
 
 
 async def validate_action_scripts_with_provider(
-    db_context: DatabaseContext,
+    db_context: Database,
     tools_provider: ToolsProvider | None,
     # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],

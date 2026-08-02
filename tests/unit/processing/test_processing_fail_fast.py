@@ -36,7 +36,7 @@ from family_assistant.processing.attachments import (
 )
 from family_assistant.processing.context import ContextPreparer
 from family_assistant.processing.types import ToolExecutionResult
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolResult
 from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
@@ -107,16 +107,16 @@ async def test_sync_forwards_chat_interfaces_to_process_message(
     process_message_mock = AsyncMock(return_value=([], None, None))
     service.process_message = process_message_mock  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_sync_forwarding",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-1",
-            user_name="tester",
-            chat_interfaces={"web": MagicMock()},
-        )
+    db_context = Database(db_engine)
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_sync_forwarding",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-1",
+        user_name="tester",
+        chat_interfaces={"web": MagicMock()},
+    )
 
     assert process_message_mock.await_args is not None
     captured_kwargs = process_message_mock.await_args.kwargs
@@ -143,19 +143,19 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
 
     service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        events: list[LLMStreamEvent] = []
-        async for event in service.handle_chat_interaction_stream(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_stream_forwarding",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-2",
-            user_name="tester",
-            user_id="user-123",
-            subconversation_id="sub-abc",
-        ):
-            events.append(event)
+    db_context = Database(db_engine)
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_stream_forwarding",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-2",
+        user_name="tester",
+        user_id="user-123",
+        subconversation_id="sub-abc",
+    ):
+        events.append(event)
 
     assert events
     assert captured_kwargs.get("user_id") == "user-123"
@@ -163,47 +163,6 @@ async def test_stream_forwards_user_and_subconversation_to_process_message_strea
 
 
 @pytest.mark.no_db
-@pytest.mark.asyncio
-async def test_prepare_turn_messages_uses_isolated_writes() -> None:
-    service = _make_service()
-    save_history_mock = AsyncMock(return_value=123)
-    service._save_history_message = save_history_mock  # type: ignore[method-assign]
-    service._resolve_thread_root_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
-    service._build_initial_messages_for_llm = AsyncMock(  # type: ignore[method-assign]
-        return_value=([], "")
-    )
-    service.context_preparer.aggregate_context = AsyncMock(return_value="")
-    service._render_system_prompt = MagicMock(return_value=("", None))  # type: ignore[method-assign]
-    service.attachment_processor.process_content_parts = AsyncMock(return_value=[])
-    service.attachment_processor.convert_message_urls = AsyncMock(
-        side_effect=lambda db_context, messages, acting_user_id=None: messages
-    )
-
-    (
-        thread_root_id,
-        typed_messages,
-        context_taint_sources,
-    ) = await service._prepare_turn_messages_for_llm(
-        db_context=MagicMock(),
-        interface_type="test",
-        conversation_id="conv_prepare_isolated",
-        trigger_content_parts=[{"type": "text", "text": "hello"}],
-        trigger_interface_message_id="msg-prepare-1",
-        user_name="tester",
-        turn_id="turn-prepare-1",
-        user_id="user-prepare-1",
-        replied_to_interface_id=None,
-        trigger_attachments=None,
-        subconversation_id=None,
-    )
-
-    assert thread_root_id == 123
-    assert typed_messages == []
-    assert context_taint_sources == ()
-    assert save_history_mock.await_args is not None
-    assert save_history_mock.await_args.kwargs["save_with_isolated_context"] is True
-
-
 @pytest.mark.no_db
 @pytest.mark.asyncio
 async def test_sync_and_stream_share_error_persistence_helper() -> None:
@@ -258,28 +217,28 @@ async def test_sync_persists_errors_as_error_messages(db_engine: AsyncEngine) ->
     service = _make_service()
     service.process_message = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_sync_error_message",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-3",
-            user_name="tester",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_sync_error_message",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-3",
+        user_name="tester",
+    )
 
-        assert result.has_error
+    assert result.has_error
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_sync_error_message",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
-        )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_sync_error_message",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
 @pytest.mark.asyncio
@@ -295,30 +254,30 @@ async def test_stream_persists_errors_as_error_messages(db_engine: AsyncEngine) 
 
     service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
 
-    async with get_db_context(db_engine) as db_context:
-        events: list[LLMStreamEvent] = []
-        async for event in service.handle_chat_interaction_stream(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_stream_error_message",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-4",
-            user_name="tester",
-        ):
-            events.append(event)
+    db_context = Database(db_engine)
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_stream_error_message",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-4",
+        user_name="tester",
+    ):
+        events.append(event)
 
-        assert any(event.type == "error" for event in events)
+    assert any(event.type == "error" for event in events)
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_stream_error_message",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
-        )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_stream_error_message",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
 @pytest.mark.no_db
@@ -367,15 +326,15 @@ async def test_final_iteration_tool_calls_do_not_raise_processing_error(
     )
     service = _make_service(llm_client=llm_client, max_iterations=1)
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_final_iteration_tool_calls",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-final-1",
-            user_name="tester",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_final_iteration_tool_calls",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-final-1",
+        user_name="tester",
+    )
 
     assert not result.has_error
 
@@ -398,30 +357,30 @@ async def test_sync_fails_fast_when_tool_executor_raises_unexpected_exception(
         side_effect=RuntimeError("unexpected tool executor crash")
     )
 
-    async with get_db_context(db_engine) as db_context:
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_executor_crash_sync",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-executor-crash-sync",
-            user_name="tester",
-        )
+    db_context = Database(db_engine)
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_executor_crash_sync",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-executor-crash-sync",
+        user_name="tester",
+    )
 
-        assert result.has_error
-        assert result.error_traceback is not None
-        assert "unexpected tool executor crash" in result.error_traceback
+    assert result.has_error
+    assert result.error_traceback is not None
+    assert "unexpected tool executor crash" in result.error_traceback
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_executor_crash_sync",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
-        )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_executor_crash_sync",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
 @pytest.mark.asyncio
@@ -442,30 +401,30 @@ async def test_stream_emits_error_when_tool_executor_raises_unexpected_exception
         side_effect=RuntimeError("unexpected tool executor crash")
     )
 
-    async with get_db_context(db_engine) as db_context:
-        events: list[LLMStreamEvent] = []
-        async for event in service.handle_chat_interaction_stream(
-            db_context=db_context,
-            interface_type="test",
-            conversation_id="conv_executor_crash_stream",
-            trigger_content_parts=[{"type": "text", "text": "hello"}],
-            trigger_interface_message_id="msg-executor-crash-stream",
-            user_name="tester",
-        ):
-            events.append(event)
+    db_context = Database(db_engine)
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="test",
+        conversation_id="conv_executor_crash_stream",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-executor-crash-stream",
+        user_name="tester",
+    ):
+        events.append(event)
 
-        assert any(event.type == "error" for event in events)
+    assert any(event.type == "error" for event in events)
 
-        saved_messages = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="conv_executor_crash_stream",
-            limit=10,
-            max_age=timedelta(hours=24),
-            processing_profile_id=service.service_config.id,
-            subconversation_id=None,
-            current_time=service.clock.now(),
-        )
-        assert any(isinstance(message, ErrorMessage) for message in saved_messages)
+    saved_messages = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="conv_executor_crash_stream",
+        limit=10,
+        max_age=timedelta(hours=24),
+        processing_profile_id=service.service_config.id,
+        subconversation_id=None,
+        current_time=service.clock.now(),
+    )
+    assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
 @pytest.mark.no_db

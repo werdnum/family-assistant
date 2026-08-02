@@ -23,7 +23,7 @@ from family_assistant.processing import (
     ProcessingServiceConfig,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations_map,
 )
@@ -72,17 +72,17 @@ async def test_delegate_to_service_with_attachments(
 
     # Create a test attachment
     test_content = b"Test image content for delegation"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        attachment_record = await attachment_registry.register_user_attachment(
-            db_context=db_context,
-            content=test_content,
-            mime_type="image/png",
-            filename="test_image.png",
-            conversation_id=str(TEST_CHAT_ID),
-            user_id=TEST_USER_NAME,
-            description="Test image for delegation",
-        )
-        test_attachment_id = attachment_record.attachment_id
+    db_context = Database(engine=db_engine)
+    attachment_record = await attachment_registry.register_user_attachment(
+        db_context=db_context,
+        content=test_content,
+        mime_type="image/png",
+        filename="test_image.png",
+        conversation_id=str(TEST_CHAT_ID),
+        user_id=TEST_USER_NAME,
+        description="Test image for delegation",
+    )
+    test_attachment_id = attachment_record.attachment_id
 
     # Create LLM client that expects attachment in delegated request
     def attachment_delegation_matcher(kwargs: MatcherArgs) -> bool:
@@ -196,23 +196,23 @@ async def test_delegate_to_service_with_attachments(
     # Execute delegation with attachments
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {"type": "text", "text": user_query},
-                {"type": "attachment", "attachment_id": test_attachment_id},
-            ],
-            trigger_interface_message_id="msg_attach",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=None,
-        )
+    db_context = Database(engine=db_engine)
+    result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {"type": "text", "text": user_query},
+            {"type": "attachment", "attachment_id": test_attachment_id},
+        ],
+        trigger_interface_message_id="msg_attach",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=None,
+    )
 
-        final_reply = result.text_reply
-        error = result.error_traceback
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during attachment delegation: {error}"
     assert final_reply is not None
@@ -268,17 +268,17 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
     # Create a test attachment in a different conversation
     other_conversation_id = "other_conversation_123"
     test_content = b"Test image content from other conversation"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        attachment_record = await attachment_registry.register_user_attachment(
-            db_context=db_context,
-            content=test_content,
-            mime_type="image/png",
-            filename="other_test_image.png",
-            conversation_id=other_conversation_id,  # Different conversation
-            user_id=TEST_USER_NAME,
-            description="Test image from other conversation",
-        )
-        other_attachment_id = attachment_record.attachment_id
+    db_context = Database(engine=db_engine)
+    attachment_record = await attachment_registry.register_user_attachment(
+        db_context=db_context,
+        content=test_content,
+        mime_type="image/png",
+        filename="other_test_image.png",
+        conversation_id=other_conversation_id,  # Different conversation
+        user_id=TEST_USER_NAME,
+        description="Test image from other conversation",
+    )
+    other_attachment_id = attachment_record.attachment_id
 
     def initial_user_request_matcher(kwargs: MatcherArgs) -> bool:
         messages = kwargs.get("messages", [])
@@ -402,20 +402,20 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
     # Execute delegation
     user_query = USER_QUERY_TEMPLATE.format(task_description=DELEGATED_TASK_DESCRIPTION)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[{"type": "text", "text": user_query}],
-            trigger_interface_message_id="msg_security_test",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=None,
-        )
+    db_context = Database(engine=db_engine)
+    result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[{"type": "text", "text": user_query}],
+        trigger_interface_message_id="msg_security_test",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=None,
+    )
 
-        final_reply = result.text_reply
-        error = result.error_traceback
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     # Verify delegation succeeded
     assert error is None
@@ -601,21 +601,21 @@ async def test_delegate_to_service_propagates_generated_attachments(
     # Execute delegation - primary profile delegates to specialized profile
     user_query = "Please delegate this task: " + DELEGATED_TASK_DESCRIPTION
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await primary_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[{"type": "text", "text": user_query}],
-            trigger_interface_message_id="msg_delegation_test",
-            user_name=TEST_USER_NAME,
-            chat_interface=MagicMock(spec=ChatInterface),
-            request_confirmation_callback=None,
-        )
+    db_context = Database(engine=db_engine)
+    result = await primary_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[{"type": "text", "text": user_query}],
+        trigger_interface_message_id="msg_delegation_test",
+        user_name=TEST_USER_NAME,
+        chat_interface=MagicMock(spec=ChatInterface),
+        request_confirmation_callback=None,
+    )
 
-        final_reply = result.text_reply
-        error = result.error_traceback
-        attachment_ids = result.attachment_ids
+    final_reply = result.text_reply
+    error = result.error_traceback
+    attachment_ids = result.attachment_ids
 
     assert error is None, f"Error during delegation: {error}"
     assert final_reply is not None
@@ -627,15 +627,15 @@ async def test_delegate_to_service_propagates_generated_attachments(
     )
 
     # Verify the attachment exists in the registry
-    async with DatabaseContext(engine=db_engine) as db_context:
-        for att_id in attachment_ids:
-            attachment_metadata = await attachment_registry.get_attachment(
-                db_context, att_id, acting_user_id=None
-            )
-            assert attachment_metadata is not None
-            assert (
-                attachment_metadata.mime_type == "image/png"
-            )  # mock_camera_snapshot returns PNG
-            logger.info(f"Verified propagated attachment: {att_id}")
+    db_context = Database(engine=db_engine)
+    for att_id in attachment_ids:
+        attachment_metadata = await attachment_registry.get_attachment(
+            db_context, att_id, acting_user_id=None
+        )
+        assert attachment_metadata is not None
+        assert (
+            attachment_metadata.mime_type == "image/png"
+        )  # mock_camera_snapshot returns PNG
+        logger.info(f"Verified propagated attachment: {att_id}")
 
     logger.info("Delegation attachment propagation test completed successfully")

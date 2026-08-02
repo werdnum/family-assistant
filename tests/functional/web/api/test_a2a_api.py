@@ -271,6 +271,61 @@ class TestCancelTask:
         assert data["error"]["code"] == -32002  # TASK_NOT_CANCELABLE
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
+    async def test_cancel_during_blocking_send_reports_the_canceled_task(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A blocking send that loses to a cancel must not report completion.
+
+        Its 'working' row is durable the moment it is written, so a concurrent
+        tasks/cancel can land mid-send. The guarded terminal update then
+        no-ops -- canceled wins in the database -- and the response has to say
+        so rather than handing back a completed task the row contradicts.
+        """
+        started = asyncio.Event()
+        release = asyncio.Event()
+        original_generate = api_mock_llm_client.generate_response
+
+        async def gated_generate(*args: object, **kwargs: object) -> MockLLMOutput:
+            started.set()
+            await release.wait()
+            return await original_generate(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the mock's signature
+
+        monkeypatch.setattr(api_mock_llm_client, "generate_response", gated_generate)
+
+        task_id = str(uuid.uuid4())
+        send_task = asyncio.create_task(
+            a2a_client.post(
+                "/api/a2a",
+                json=_jsonrpc(
+                    "message/send",
+                    params={"message": _a2a_message("slow", task_id=task_id)},
+                ),
+            )
+        )
+
+        # The task row is written before the LLM call, so reaching the gate
+        # means tasks/cancel has something to cancel.
+        await asyncio.wait_for(started.wait(), timeout=10)
+
+        cancel = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/cancel", params={"id": task_id})
+        )
+        assert cancel.json()["result"]["status"]["state"] == "canceled"
+
+        release.set()
+        send = await asyncio.wait_for(send_task, timeout=10)
+
+        assert send.json()["result"]["status"]["state"] == "canceled"
+
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": task_id})
+        )
+        assert get_resp.json()["result"]["status"]["state"] == "canceled"
+
     async def test_cancel_nonexistent_task(self, a2a_client: AsyncClient) -> None:
         body = _jsonrpc("tasks/cancel", params={"id": "no-such-task"})
         resp = await a2a_client.post("/api/a2a", json=body)

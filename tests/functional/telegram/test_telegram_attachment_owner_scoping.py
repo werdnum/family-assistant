@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.telegram.interface import TelegramChatInterface
 
 if TYPE_CHECKING:
@@ -26,16 +26,16 @@ OWNER = "owner_user"
 
 
 async def _register_owned(registry: AttachmentRegistry, db_engine: AsyncEngine) -> str:
-    async with DatabaseContext(db_engine) as db_context:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"fake document content",
-            filename="report.pdf",
-            content_type="application/pdf",
-            tool_name="gmail_get_attachment",
-            description="Personal report",
-            owner_user_id=OWNER,
-            db_context=db_context,
-        )
+    db_context = Database(db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"fake document content",
+        filename="report.pdf",
+        content_type="application/pdf",
+        tool_name="gmail_get_attachment",
+        description="Personal report",
+        owner_user_id=OWNER,
+        db_context=db_context,
+    )
     return attachment.attachment_id
 
 

@@ -1,0 +1,32 @@
+id: no-raw-transaction-management
+language: python
+severity: error
+message: "Open transactions through Database/DatabaseTransaction, not engine.begin()"
+note: |
+  Transaction scopes belong to family_assistant.storage.database:
+
+    await db.notes.add_or_update(...)          # own transaction, committed on return
+
+    async with db.transaction() as txn:        # explicit atomic block
+        ...
+
+    await db.atomic(body)                      # replayable atomic block
+
+  A raw engine.begin() (or engine.connect() used for a transaction) bypasses
+  the per-engine SQLite transaction lock. Because SQLite's StaticPool hands the
+  same DBAPI connection to every checkout, such a block reads another unit of
+  work's uncommitted rows and commits them when it exits -- silently turning
+  that unit's rollback into a no-op. On PostgreSQL it escapes the pool bounds
+  and the ambient-transaction guard.
+
+  See docs/design/db-commit-as-you-go.md. The storage layer itself implements
+  these primitives and is exempt; so are test fixtures that create schemas
+  before any application code runs.
+rule:
+  any:
+    - pattern: $ENGINE.begin()
+    - pattern: $ENGINE.begin_nested()
+constraints:
+  ENGINE:
+    regex: "engine|Engine"
+

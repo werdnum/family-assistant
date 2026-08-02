@@ -58,7 +58,7 @@ from family_assistant.services.oauth_integration_state import (
     evaluate_oauth_integration_state,
 )
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
 from family_assistant.tools.google_data import (
     GOOGLE_TOOL_REQUIRED_SCOPES,
@@ -229,7 +229,7 @@ class _RecordingNotifier:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: object | None = None,
     ) -> None:
@@ -351,9 +351,9 @@ class _E2EApp:
 @pytest_asyncio.fixture
 async def e2e(db_engine: AsyncEngine) -> AsyncGenerator[_E2EApp]:
     """Wire a FastAPI app with the Google OAuth + attachment routers, real storage."""
-    async with get_db_context(engine=db_engine) as temp_ctx:
-        await init_db(db_engine)
-        await temp_ctx.init_vector_db()
+    temp_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_ctx.init_vector_db()
 
     integration = _google_integration_config()
     google_server = _FakeGoogleServer()
@@ -465,8 +465,8 @@ async def _status(http: AsyncClient, e2e: _E2EApp, user_id: str) -> dict[str, ob
 async def _fetch_connection(
     db_engine: AsyncEngine, user_id: str
 ) -> OAuthConnectionModel | None:
-    async with get_db_context(engine=db_engine) as db:
-        return await db.oauth_connections.get_connection(user_id, "google")
+    db = Database(engine=db_engine)
+    return await db.oauth_connections.get_connection(user_id, "google")
 
 
 def _real_resolver(e2e: _E2EApp) -> OAuthCredentialResolver:
@@ -482,7 +482,7 @@ def _real_resolver(e2e: _E2EApp) -> OAuthCredentialResolver:
 
 
 def _exec_context(
-    db: DatabaseContext,
+    db: Database,
     *,
     user_id: str | None,
     resolver: OAuthCredentialResolver,
@@ -560,13 +560,11 @@ async def test_two_users_connect_and_read_only_own_mailbox(
             "at-bob": _gmail_mailbox("msg-bob", "Bob mailbox only"),
         }
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        alice_ctx = _exec_context(
-            db, user_id="alice", resolver=resolver, backend=backend
-        )
-        bob_ctx = _exec_context(db, user_id="bob", resolver=resolver, backend=backend)
-        alice_result = await gmail_search_tool(alice_ctx, query="anything")
-        bob_result = await gmail_search_tool(bob_ctx, query="anything")
+    db = Database(engine=db_engine)
+    alice_ctx = _exec_context(db, user_id="alice", resolver=resolver, backend=backend)
+    bob_ctx = _exec_context(db, user_id="bob", resolver=resolver, backend=backend)
+    alice_result = await gmail_search_tool(alice_ctx, query="anything")
+    bob_result = await gmail_search_tool(bob_ctx, query="anything")
 
     alice_data = alice_result.get_data()
     bob_data = bob_result.get_data()
@@ -581,8 +579,8 @@ async def test_two_users_connect_and_read_only_own_mailbox(
     assert any(token == "at-bob" for _, _, token in backend.requests)
 
     # last_used_at reflects the successful data API use.
-    async with DatabaseContext(engine=db_engine) as db:
-        alice_conn = await db.oauth_connections.get_connection("alice", "google")
+    db = Database(engine=db_engine)
+    alice_conn = await db.oauth_connections.get_connection("alice", "google")
     assert alice_conn is not None
     assert alice_conn.last_used_at is not None
 
@@ -609,20 +607,16 @@ async def test_fail_closed_unconnected_no_user_and_after_disconnect(
         routes={"at-alice": _gmail_mailbox("msg-alice", "Alice mailbox only")}
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        # carol has no connection -> actionable "connect from Settings" error.
-        carol_ctx = _exec_context(
-            db, user_id="carol", resolver=resolver, backend=backend
-        )
-        carol_result = await gmail_search_tool(carol_ctx, query="anything")
-        assert "connect from settings" in carol_result.get_text().lower()
+    db = Database(engine=db_engine)
+    # carol has no connection -> actionable "connect from Settings" error.
+    carol_ctx = _exec_context(db, user_id="carol", resolver=resolver, backend=backend)
+    carol_result = await gmail_search_tool(carol_ctx, query="anything")
+    assert "connect from settings" in carol_result.get_text().lower()
 
-        # No acting user (system/ambient) -> fail closed.
-        ambient_ctx = _exec_context(
-            db, user_id=None, resolver=resolver, backend=backend
-        )
-        ambient_result = await gmail_search_tool(ambient_ctx, query="anything")
-        assert "acting user" in ambient_result.get_text().lower()
+    # No acting user (system/ambient) -> fail closed.
+    ambient_ctx = _exec_context(db, user_id=None, resolver=resolver, backend=backend)
+    ambient_result = await gmail_search_tool(ambient_ctx, query="anything")
+    assert "acting user" in ambient_result.get_text().lower()
 
     # alice disconnects: the revoke endpoint sees her decrypted refresh token.
     e2e.set_user("alice")
@@ -631,11 +625,9 @@ async def test_fail_closed_unconnected_no_user_and_after_disconnect(
     assert REFRESH_ALICE in e2e.google_server.revoke_calls
 
     # Her next read now fails closed with the not-connected message.
-    async with DatabaseContext(engine=db_engine) as db:
-        alice_ctx = _exec_context(
-            db, user_id="alice", resolver=resolver, backend=backend
-        )
-        after = await gmail_search_tool(alice_ctx, query="anything")
+    db = Database(engine=db_engine)
+    alice_ctx = _exec_context(db, user_id="alice", resolver=resolver, backend=backend)
+    after = await gmail_search_tool(alice_ctx, query="anything")
     assert "connect from settings" in after.get_text().lower()
 
 
@@ -689,17 +681,17 @@ async def test_attachment_ownership_across_stack(
         }
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        alice_ctx = _exec_context(
-            db,
-            user_id="alice",
-            resolver=resolver,
-            backend=backend,
-            registry=e2e.registry,
-        )
-        result = await gmail_get_attachment_tool(
-            alice_ctx, message_id="msg-1", attachment_id="att-1", filename="form.pdf"
-        )
+    db = Database(engine=db_engine)
+    alice_ctx = _exec_context(
+        db,
+        user_id="alice",
+        resolver=resolver,
+        backend=backend,
+        registry=e2e.registry,
+    )
+    result = await gmail_get_attachment_tool(
+        alice_ctx, message_id="msg-1", attachment_id="att-1", filename="form.pdf"
+    )
     data = result.get_data()
     assert isinstance(data, dict)
     attachment_id = data["attachment_id"]
@@ -754,9 +746,9 @@ async def test_needs_reauth_then_reconnect(
         routes={"at-bob-2": _gmail_mailbox("msg-bob", "Bob mailbox only")}
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        bob_ctx = _exec_context(db, user_id="bob", resolver=resolver, backend=backend)
-        failed = await gmail_search_tool(bob_ctx, query="anything")
+    db = Database(engine=db_engine)
+    bob_ctx = _exec_context(db, user_id="bob", resolver=resolver, backend=backend)
+    failed = await gmail_search_tool(bob_ctx, query="anything")
     assert "re-authorized" in failed.get_text().lower()
 
     # Status endpoint reflects needs_reauth; bob was notified.
@@ -780,11 +772,9 @@ async def test_needs_reauth_then_reconnect(
 
     # A brand-new resolver (fresh cache) reads bob's mailbox via at-bob-2.
     resolver_after = _real_resolver(e2e)
-    async with DatabaseContext(engine=db_engine) as db:
-        bob_ctx = _exec_context(
-            db, user_id="bob", resolver=resolver_after, backend=backend
-        )
-        ok = await gmail_search_tool(bob_ctx, query="anything")
+    db = Database(engine=db_engine)
+    bob_ctx = _exec_context(db, user_id="bob", resolver=resolver_after, backend=backend)
+    ok = await gmail_search_tool(bob_ctx, query="anything")
     ok_data = ok.get_data()
     assert isinstance(ok_data, dict)
     assert [m["subject"] for m in ok_data["messages"]] == ["Bob mailbox only"]
@@ -811,11 +801,9 @@ async def test_gmail_read_taints_turn_unknown_external(
     backend = _FakeApiBackend(
         routes={"at-alice": _gmail_mailbox("msg-alice", "Alice mailbox only")}
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        alice_ctx = _exec_context(
-            db, user_id="alice", resolver=resolver, backend=backend
-        )
-        result = await gmail_search_tool(alice_ctx, query="anything")
+    db = Database(engine=db_engine)
+    alice_ctx = _exec_context(db, user_id="alice", resolver=resolver, backend=backend)
+    result = await gmail_search_tool(alice_ctx, query="anything")
     # The read succeeded (real chain), and the tool's own result taints the turn.
     assert isinstance(result.get_data(), dict)
 

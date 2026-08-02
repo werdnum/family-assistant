@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from sqlalchemy.sql import text  # For executing raw SQL if needed
 
-from .context import DatabaseContext  # Import context
+from .database import DatabaseExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ def _build_in_clause_for_sqlite(
 
 
 async def query_vector_store(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     query: VectorSearchQuery,
     query_embedding: list[float] | None = None,  # Pass generated embedding separately
     # ast-grep-ignore: no-dict-any - search results contain dynamic fields from joined tables
@@ -129,7 +129,7 @@ async def query_vector_store(
         )
 
     # --- Check database compatibility ---
-    is_sqlite = db_context.engine.dialect.name == "sqlite"
+    is_sqlite = db_context.dialect_name == "sqlite"
 
     # Vector search and full-text search require PostgreSQL-specific features
     if is_sqlite and query.search_type in {"semantic", "keyword", "hybrid"}:

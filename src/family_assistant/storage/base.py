@@ -25,7 +25,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import NullPool, StaticPool
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.pool.base import _ConnectionRecord
 from sqlalchemy.sql import func
 
@@ -38,6 +38,11 @@ metadata = MetaData()
 
 # Define database engine
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db")
+
+# PostgreSQL connection pool bounds. One engine serves the whole application,
+# so these bound the deployment rather than a single worker.
+POSTGRES_POOL_SIZE = 5
+POSTGRES_MAX_OVERFLOW = 10
 
 
 def create_engine_with_sqlite_optimizations(
@@ -64,14 +69,18 @@ def create_engine_with_sqlite_optimizations(
     #
     # SQLite uses StaticPool to funnel all access through a SINGLE DBAPI
     # connection. This is deliberate and load-bearing: file-based SQLite
-    # handles concurrent writers poorly -- giving each DatabaseContext its own
+    # handles concurrent writers poorly -- giving each unit of work its own
     # connection produces "database is locked" errors under contention even
     # with WAL mode and a 30s busy_timeout, and in-memory databases live
     # entirely inside one connection. Serializing through a shared connection
-    # avoids both. NullPool is used for PostgreSQL to avoid the "Future
-    # attached to a different loop" errors with asyncpg.
+    # avoids both; transaction *scopes* on that connection are serialized by
+    # the per-engine lock in storage.database.
+    #
+    # PostgreSQL pools. Under commit-as-you-go every operation acquires and
+    # releases a connection, so NullPool's connect-per-operation would mean a
+    # TCP handshake per statement. One engine serves the whole application, so
+    # these bounds bound the deployment rather than a single worker.
     is_sqlite = database_url.startswith("sqlite")
-    pool_class = StaticPool if is_sqlite else NullPool
 
     engine = create_async_engine(
         database_url,
@@ -82,18 +91,18 @@ def create_engine_with_sqlite_optimizations(
         }
         if is_sqlite
         else {},
-        pool_pre_ping=pool_class != NullPool,
-        poolclass=pool_class,
-        # The shared StaticPool connection means all SQLite contexts share one
-        # transaction. The default reset-on-return issues a ROLLBACK on that
-        # connection at every checkin, which aborts the shared transaction and
-        # silently destroys every OTHER context's uncommitted writes (e.g. a
-        # streaming turn's freshly persisted messages vanish when an unrelated
-        # read-only request returns the connection). Each DatabaseContext
-        # commits or rolls back its own work via engine.begin() on exit, so
-        # disable the per-checkin reset for SQLite to stop the cross-context
-        # clobbering.
-        pool_reset_on_return=None if is_sqlite else "rollback",
+        # Pre-ping guards against a pooled connection the server dropped;
+        # SQLite's single in-process connection cannot go stale that way.
+        pool_pre_ping=not is_sqlite,
+        pool_reset_on_return="rollback",
+        **(
+            {"poolclass": StaticPool}
+            if is_sqlite
+            else {
+                "pool_size": POSTGRES_POOL_SIZE,
+                "max_overflow": POSTGRES_MAX_OVERFLOW,
+            }
+        ),
     )
 
     # Add SQLite-specific optimizations using dialect detection

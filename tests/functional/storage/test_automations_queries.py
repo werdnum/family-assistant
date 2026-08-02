@@ -8,29 +8,29 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.events import EventsRepository
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
     """
-    Provides an entered DatabaseContext for repository tests.
+    Provides an entered Database for repository tests.
 
     Uses the standard db_engine fixture from conftest.py which automatically:
     - Creates a unique database for each test
     - Supports both SQLite and PostgreSQL via --postgres flag
     - Ensures complete test isolation
     """
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        yield db_ctx
+    db_ctx = Database(engine=db_engine)
+    yield db_ctx
 
 
 class TestAutomationsRepository:
     """Tests for AutomationsRepository (unified view with complex queries)."""
 
     @pytest.mark.asyncio
-    async def test_list_all_both_types(self, db_context: DatabaseContext) -> None:
+    async def test_list_all_both_types(self, db_context: Database) -> None:
         """Test listing automations of both types."""
         conversation_id = str(uuid.uuid4())
 
@@ -68,7 +68,7 @@ class TestAutomationsRepository:
         assert types == {"schedule", "event"}
 
     @pytest.mark.asyncio
-    async def test_list_all_filter_by_type(self, db_context: DatabaseContext) -> None:
+    async def test_list_all_filter_by_type(self, db_context: Database) -> None:
         """Test filtering automations by type."""
         conversation_id = str(uuid.uuid4())
 
@@ -115,9 +115,7 @@ class TestAutomationsRepository:
         assert automations[0].name == "Event Auto"
 
     @pytest.mark.asyncio
-    async def test_list_all_filter_by_enabled(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_list_all_filter_by_enabled(self, db_context: Database) -> None:
         """Test filtering automations by enabled status."""
         conversation_id = str(uuid.uuid4())
 
@@ -178,7 +176,7 @@ class TestAutomationsRepository:
         assert automations[0].name == "Disabled Schedule"
 
     @pytest.mark.asyncio
-    async def test_list_all_pagination(self, db_context: DatabaseContext) -> None:
+    async def test_list_all_pagination(self, db_context: Database) -> None:
         """Test pagination in list_all."""
         conversation_id = str(uuid.uuid4())
 
@@ -220,7 +218,7 @@ class TestAutomationsRepository:
         assert len(automations) == 1  # Only 1 remaining
 
     @pytest.mark.asyncio
-    async def test_get_by_id_schedule(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_id_schedule(self, db_context: Database) -> None:
         """Test getting schedule automation by ID."""
         conversation_id = str(uuid.uuid4())
 
@@ -242,7 +240,7 @@ class TestAutomationsRepository:
         assert automation.name == "Test Schedule"
 
     @pytest.mark.asyncio
-    async def test_get_by_id_event(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_id_event(self, db_context: Database) -> None:
         """Test getting event automation by ID."""
         conversation_id = str(uuid.uuid4())
 
@@ -269,7 +267,7 @@ class TestAutomationsRepository:
         assert automation.name == "Test Event"
 
     @pytest.mark.asyncio
-    async def test_get_by_name(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_name(self, db_context: Database) -> None:
         """Test getting automation by name (searches both types)."""
         conversation_id = str(uuid.uuid4())
 
@@ -314,9 +312,7 @@ class TestAutomationsRepository:
         assert automation.name == "Unique Event Name"
 
     @pytest.mark.asyncio
-    async def test_check_name_available_both_empty(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_check_name_available_both_empty(self, db_context: Database) -> None:
         """Test name availability when no automations exist."""
         conversation_id = str(uuid.uuid4())
 
@@ -328,7 +324,7 @@ class TestAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_check_name_available_schedule_exists(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test name availability when schedule automation with name exists."""
         conversation_id = str(uuid.uuid4())
@@ -354,7 +350,7 @@ class TestAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_check_name_available_event_exists(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test name availability when event automation with name exists."""
         conversation_id = str(uuid.uuid4())
@@ -384,7 +380,7 @@ class TestAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_check_name_available_cross_type_conflict(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test that name conflicts are detected across automation types."""
         conversation_id = str(uuid.uuid4())
@@ -409,7 +405,7 @@ class TestAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_check_name_available_with_exclude(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test name availability check with exclusion for updates."""
         conversation_id = str(uuid.uuid4())
@@ -456,7 +452,7 @@ class TestAutomationsRepository:
         assert "already exists" in error
 
     @pytest.mark.asyncio
-    async def test_update_enabled_schedule(self, db_context: DatabaseContext) -> None:
+    async def test_update_enabled_schedule(self, db_context: Database) -> None:
         """Test updating enabled status for schedule automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -486,7 +482,7 @@ class TestAutomationsRepository:
         assert automation["enabled"] is False
 
     @pytest.mark.asyncio
-    async def test_update_enabled_event(self, db_context: DatabaseContext) -> None:
+    async def test_update_enabled_event(self, db_context: Database) -> None:
         """Test updating enabled status for event automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -517,7 +513,7 @@ class TestAutomationsRepository:
         assert event["enabled"] is False
 
     @pytest.mark.asyncio
-    async def test_delete_schedule(self, db_context: DatabaseContext) -> None:
+    async def test_delete_schedule(self, db_context: Database) -> None:
         """Test deleting schedule automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -541,7 +537,7 @@ class TestAutomationsRepository:
         assert automation is None
 
     @pytest.mark.asyncio
-    async def test_delete_event(self, db_context: DatabaseContext) -> None:
+    async def test_delete_event(self, db_context: Database) -> None:
         """Test deleting event automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -568,9 +564,7 @@ class TestAutomationsRepository:
         assert event is None
 
     @pytest.mark.asyncio
-    async def test_get_execution_stats_schedule(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_get_execution_stats_schedule(self, db_context: Database) -> None:
         """Test getting execution stats for schedule automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -592,7 +586,7 @@ class TestAutomationsRepository:
         assert "next_scheduled_at" in stats
 
     @pytest.mark.asyncio
-    async def test_get_execution_stats_event(self, db_context: DatabaseContext) -> None:
+    async def test_get_execution_stats_event(self, db_context: Database) -> None:
         """Test getting execution stats for event automation."""
         conversation_id = str(uuid.uuid4())
 

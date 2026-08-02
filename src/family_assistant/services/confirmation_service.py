@@ -13,12 +13,13 @@ from family_assistant.services.notifier import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from contextlib import AbstractAsyncContextManager
-
     from family_assistant.security.taint import TaintMetadata
     from family_assistant.services.notifier import Notifier
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import (
+        Database,
+        DatabaseExecutor,
+        DatabaseTransaction,
+    )
     from family_assistant.storage.repositories.confirmation_requests import (
         ConfirmationRequestRow,
         ConfirmationStatus,
@@ -58,10 +59,10 @@ class ConfirmationService:
     def __init__(
         self,
         *,
-        db_context_factory: Callable[[], AbstractAsyncContextManager[DatabaseContext]],
+        db: Database,
         notifier: Notifier | None = None,
     ) -> None:
-        self._db_context_factory = db_context_factory
+        self._db = db
         self._notifier = notifier
 
     async def create_request(
@@ -90,25 +91,24 @@ class ConfirmationService:
         task — see :meth:`_approve`.
         """
         request_id = f"confirm_{uuid.uuid4().hex[:12]}"
-        async with self._db_context_factory() as db:
-            request = await db.confirmation_requests.create(
-                request_id=request_id,
-                target_user_id=target_user_id,
-                tool_name=tool_name,
-                tool_args=tool_args,
-                tool_call_id=tool_call_id,
-                source_message_internal_id=source_message_internal_id,
-                confirmation_prompt=confirmation_prompt,
-                expires_at=expires_at,
-                processing_profile_id=processing_profile_id,
-                origin_interface_type=origin_interface_type,
-                origin_conversation_id=origin_conversation_id,
-                taint_state_json=taint_state_json,
-                sink_class=sink_class,
-                static_policy_reason=static_policy_reason,
-                taint_policy_reason=taint_policy_reason,
-                decision_only=decision_only,
-            )
+        request = await self._db.confirmation_requests.create(
+            request_id=request_id,
+            target_user_id=target_user_id,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_call_id=tool_call_id,
+            source_message_internal_id=source_message_internal_id,
+            confirmation_prompt=confirmation_prompt,
+            expires_at=expires_at,
+            processing_profile_id=processing_profile_id,
+            origin_interface_type=origin_interface_type,
+            origin_conversation_id=origin_conversation_id,
+            taint_state_json=taint_state_json,
+            sink_class=sink_class,
+            static_policy_reason=static_policy_reason,
+            taint_policy_reason=taint_policy_reason,
+            decision_only=decision_only,
+        )
         # Notify only after the request transaction has committed, so a recipient that immediately
         # approves/rejects (on a separate connection) can resolve the request_id.
         await self._notify_pending(target_user_id, request_id, confirmation_prompt)
@@ -124,17 +124,16 @@ class ConfirmationService:
         if self._notifier is None or not self._notifier.enabled:
             return
         try:
-            async with self._db_context_factory() as db:
-                await self._notifier.send_notification(
-                    user_identifier=target_user_id,
-                    title="Confirmation needed",
-                    body=confirmation_prompt[:150],
-                    db_context=db,
-                    metadata=NotificationMetadata(
-                        category=CONFIRMATION_CATEGORY,
-                        request_id=request_id,
-                    ),
-                )
+            await self._notifier.send_notification(
+                user_identifier=target_user_id,
+                title="Confirmation needed",
+                body=confirmation_prompt[:150],
+                db_context=self._db,
+                metadata=NotificationMetadata(
+                    category=CONFIRMATION_CATEGORY,
+                    request_id=request_id,
+                ),
+            )
         except Exception:
             logger.warning(
                 "Failed to send confirmation push notification", exc_info=True
@@ -178,10 +177,11 @@ class ConfirmationService:
         approving_interface: str,
         enqueue_execution: bool,
     ) -> ConfirmationRequestRow:
-        """Approve a pending request and optionally enqueue background execution."""
-        async with self._db_context_factory() as db:
+        """Approve a pending request and optionally enqueue background execution atomically."""
+
+        async def _body(txn: DatabaseTransaction) -> ConfirmationRequestRow:
             request = await self._get_authorized_request(
-                db=db,
+                db=txn,
                 request_id=request_id,
                 user_id=approving_user_id,
             )
@@ -205,7 +205,7 @@ class ConfirmationService:
             execution_task_id = (
                 f"confirmation_tool_execution:{request_id}" if should_enqueue else None
             )
-            approved = await db.confirmation_requests.approve_pending(
+            approved = await txn.confirmation_requests.approve_pending(
                 request_id=request_id,
                 resolving_user_id=approving_user_id,
                 resolving_interface=approving_interface,
@@ -213,7 +213,7 @@ class ConfirmationService:
                 now=now,
             )
             if approved is None:
-                refreshed = await db.confirmation_requests.get(request_id)
+                refreshed = await txn.confirmation_requests.get(request_id)
                 if refreshed is None:
                     raise ConfirmationNotFoundError(
                         f"Confirmation request {request_id} not found"
@@ -221,7 +221,7 @@ class ConfirmationService:
                 return self._handle_concurrent_resolution(refreshed, "approved", now)
 
             if execution_task_id is not None:
-                await db.tasks.enqueue(
+                await txn.tasks.enqueue(
                     task_id=execution_task_id,
                     task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
                     payload={"confirmation_request_id": request_id},
@@ -229,6 +229,8 @@ class ConfirmationService:
                     max_retries_override=0,
                 )
             return approved
+
+        return await self._db.atomic(_body)
 
     async def reject(
         self,
@@ -238,37 +240,36 @@ class ConfirmationService:
         rejecting_interface: str,
     ) -> ConfirmationRequestRow:
         """Reject a pending confirmation request."""
-        async with self._db_context_factory() as db:
-            request = await self._get_authorized_request(
-                db=db,
-                request_id=request_id,
-                user_id=rejecting_user_id,
-            )
-            if request["status"] == "rejected":
-                return request
-            if request["status"] != "pending":
-                self._raise_if_not_pending(request)
+        request = await self._get_authorized_request(
+            db=self._db,
+            request_id=request_id,
+            user_id=rejecting_user_id,
+        )
+        if request["status"] == "rejected":
+            return request
+        if request["status"] != "pending":
+            self._raise_if_not_pending(request)
 
-            now = datetime.now(UTC)
-            if request["expires_at"] <= now:
-                raise ConfirmationExpiredError(
-                    f"Confirmation request {request_id} has expired"
+        now = datetime.now(UTC)
+        if request["expires_at"] <= now:
+            raise ConfirmationExpiredError(
+                f"Confirmation request {request_id} has expired"
+            )
+
+        rejected = await self._db.confirmation_requests.reject_pending(
+            request_id=request_id,
+            resolving_user_id=rejecting_user_id,
+            resolving_interface=rejecting_interface,
+            now=now,
+        )
+        if rejected is None:
+            refreshed = await self._db.confirmation_requests.get(request_id)
+            if refreshed is None:
+                raise ConfirmationNotFoundError(
+                    f"Confirmation request {request_id} not found"
                 )
-
-            rejected = await db.confirmation_requests.reject_pending(
-                request_id=request_id,
-                resolving_user_id=rejecting_user_id,
-                resolving_interface=rejecting_interface,
-                now=now,
-            )
-            if rejected is None:
-                refreshed = await db.confirmation_requests.get(request_id)
-                if refreshed is None:
-                    raise ConfirmationNotFoundError(
-                        f"Confirmation request {request_id} not found"
-                    )
-                return self._handle_concurrent_resolution(refreshed, "rejected", now)
-            return rejected
+            return self._handle_concurrent_resolution(refreshed, "rejected", now)
+        return rejected
 
     async def list_pending_for_user(
         self,
@@ -276,8 +277,7 @@ class ConfirmationService:
         user_id: str,
     ) -> list[ConfirmationRequestRow]:
         """List pending requests for a user."""
-        async with self._db_context_factory() as db:
-            return await db.confirmation_requests.list_pending_for_user(user_id)
+        return await self._db.confirmation_requests.list_pending_for_user(user_id)
 
     async def get_for_user(
         self,
@@ -286,25 +286,23 @@ class ConfirmationService:
         user_id: str,
     ) -> ConfirmationRequestRow:
         """Get a confirmation request after checking target-user authorization."""
-        async with self._db_context_factory() as db:
-            return await self._get_authorized_request(
-                db=db,
-                request_id=request_id,
-                user_id=user_id,
-            )
+        return await self._get_authorized_request(
+            db=self._db,
+            request_id=request_id,
+            user_id=user_id,
+        )
 
     async def mark_expired(self, *, now: datetime) -> int:
         """Expire pending requests whose deadline has passed."""
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now must be timezone-aware")
         now = now.astimezone(UTC)
-        async with self._db_context_factory() as db:
-            return await db.confirmation_requests.mark_expired(now=now)
+        return await self._db.confirmation_requests.mark_expired(now=now)
 
     @staticmethod
     async def _get_authorized_request(
         *,
-        db: DatabaseContext,
+        db: DatabaseExecutor,
         request_id: str,
         user_id: str,
     ) -> ConfirmationRequestRow:
@@ -353,7 +351,7 @@ class ConfirmationService:
 async def create_durable_confirmation(
     *,
     confirmation_service: ConfirmationService,
-    db_context: DatabaseContext,
+    db_context: Database,
     target_user_id: str,
     tool_name: str,
     tool_call_id: str | None,

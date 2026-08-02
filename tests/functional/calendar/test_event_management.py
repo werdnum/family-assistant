@@ -25,7 +25,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -92,7 +92,7 @@ async def get_event_by_summary_from_radicale(
         # caldav.objects.Event.data is a vobject.base.Component
         # We need to access the VEVENT component and then its summary.
         try:
-            vevent = event_obj.vobject_instance.vevent  # type: ignore[attr-defined]
+            vevent = event_obj.vobject_instance.vevent
             if (
                 vevent
                 and hasattr(vevent, "summary")
@@ -287,20 +287,18 @@ async def test_modify_event(
     user_message_create_original = (
         f"Please schedule {original_summary} for day after tomorrow at 2 PM."
     )
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service_for_add.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),  # Mock interface for this interaction
-            interface_type="test_initial_add",  # Distinguish interface type
-            conversation_id=f"{TEST_CHAT_ID}_initial_add",  # Distinguish conversation
-            trigger_content_parts=[
-                {"type": "text", "text": user_message_create_original}
-            ],
-            trigger_interface_message_id="msg_create_orig_for_modify",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply_create = result.text_reply
-        error_create = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service_for_add.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),  # Mock interface for this interaction
+        interface_type="test_initial_add",  # Distinguish interface type
+        conversation_id=f"{TEST_CHAT_ID}_initial_add",  # Distinguish conversation
+        trigger_content_parts=[{"type": "text", "text": user_message_create_original}],
+        trigger_interface_message_id="msg_create_orig_for_modify",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply_create = result.text_reply
+    error_create = result.error_traceback
 
     assert error_create is None, (
         f"Error during LLM-based initial event creation: {error_create}"
@@ -324,7 +322,7 @@ async def test_modify_event(
         f"Event '{original_summary}' not found in Radicale after LLM tool creation."
     )
     # Ensure event_uid is correctly typed as str for JSON serialization
-    event_uid: str = str(original_radicale_event.vobject_instance.vevent.uid.value)  # type: ignore[attr-defined]
+    event_uid: str = str(original_radicale_event.vobject_instance.vevent.uid.value)
     logger.info(
         f"Retrieved UID for '{original_summary}' created by LLM tool: {event_uid}"
     )
@@ -335,30 +333,30 @@ async def test_modify_event(
     )
 
     # Create a database context for the search operation
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_ctx:
-        search_result = await search_calendar_events_tool(
-            exec_context=ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test-verify",
-                user_name="TestUser",
-                turn_id="test-turn-verify",
-                db_context=db_ctx,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                chat_interface=None,
-                timezone=ZoneInfo(TEST_TIMEZONE_STR),
-                request_confirmation_callback=None,
-                camera_backend=None,
-                credential_resolvers=None,
-                api_backend=None,
-            ),
-            calendar_config=test_calendar_config_for_add,
-            search_text=original_summary,
-        )
-        logger.info(f"Search result for '{original_summary}': {search_result}")
+    db_ctx = Database(engine=pg_vector_db_engine)
+    search_result = await search_calendar_events_tool(
+        exec_context=ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-verify",
+            user_name="TestUser",
+            turn_id="test-turn-verify",
+            db_context=db_ctx,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            chat_interface=None,
+            timezone=ZoneInfo(TEST_TIMEZONE_STR),
+            request_confirmation_callback=None,
+            camera_backend=None,
+            credential_resolvers=None,
+            api_backend=None,
+        ),
+        calendar_config=test_calendar_config_for_add,
+        search_text=original_summary,
+    )
+    logger.info(f"Search result for '{original_summary}': {search_result}")
 
     # Extract the calendar URL from the search result to ensure we use the correct one
 
@@ -508,18 +506,18 @@ async def test_modify_event(
 
     # --- Simulate User Interaction to Modify ---
     user_message_modify = f"Please change event {original_summary} to start at 3 PM and call it {modified_summary}."
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message_modify}],
-            trigger_interface_message_id="msg_mod",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply_modify = result.text_reply
-        error_modify = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message_modify}],
+        trigger_interface_message_id="msg_mod",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply_modify = result.text_reply
+    error_modify = result.error_traceback
 
     assert error_modify is None, f"Error during modify chat interaction: {error_modify}"
     assert (
@@ -706,20 +704,18 @@ async def test_delete_event(
     user_message_create_to_delete = (
         f"Please schedule {event_to_delete_summary} for 3 days from now at 11 AM."
     )
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[
-                {"type": "text", "text": user_message_create_to_delete}
-            ],
-            trigger_interface_message_id="msg_create_del",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply_create_del = result.text_reply
-        error_create_del = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message_create_to_delete}],
+        trigger_interface_message_id="msg_create_del",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply_create_del = result.text_reply
+    error_create_del = result.error_traceback
 
     assert error_create_del is None, (
         f"Error during creation of event to delete: {error_create_del}"
@@ -738,7 +734,7 @@ async def test_delete_event(
     assert radicale_event_to_delete is not None, (
         f"Event '{event_to_delete_summary}' not found in Radicale after tool creation."
     )
-    event_uid_del = radicale_event_to_delete.vobject_instance.vevent.uid.value  # type: ignore[attr-defined]
+    event_uid_del = radicale_event_to_delete.vobject_instance.vevent.uid.value
     logger.info(f"Retrieved UID for '{event_to_delete_summary}': {event_uid_del}")
 
     # --- LLM Rule for Deleting Event ---
@@ -794,18 +790,18 @@ async def test_delete_event(
 
     # --- Simulate User Interaction to Delete ---
     user_message_delete = f"Please delete event {event_to_delete_summary}."
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message_delete}],
-            trigger_interface_message_id="msg_del",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply_delete = result.text_reply
-        error_delete = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message_delete}],
+        trigger_interface_message_id="msg_del",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply_delete = result.text_reply
+    error_delete = result.error_traceback
 
     assert error_delete is None, f"Error during delete chat interaction: {error_delete}"
     assert (
@@ -970,19 +966,19 @@ async def test_search_events(
             (final_response_matcher_event1, final_response_event1),
         ]
     )
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test_search",
-            conversation_id=f"{TEST_CHAT_ID}_add1",
-            trigger_content_parts=[
-                {"type": "text", "text": f"schedule {event1_summary.lower()}"}
-            ],
-            trigger_interface_message_id="msg_add_event1_for_search",
-            user_name=TEST_USER_NAME,
-        )
-        err_add1 = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test_search",
+        conversation_id=f"{TEST_CHAT_ID}_add1",
+        trigger_content_parts=[
+            {"type": "text", "text": f"schedule {event1_summary.lower()}"}
+        ],
+        trigger_interface_message_id="msg_add_event1_for_search",
+        user_name=TEST_USER_NAME,
+    )
+    err_add1 = result.error_traceback
     assert err_add1 is None, f"Error creating event1 for search test: {err_add1}"
     assert (
         await get_event_by_summary_from_radicale(radicale_server, event1_summary)
@@ -1036,19 +1032,19 @@ async def test_search_events(
             (final_response_matcher_event2, final_response_event2),
         ]
     )
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test_search",
-            conversation_id=f"{TEST_CHAT_ID}_add2",
-            trigger_content_parts=[
-                {"type": "text", "text": f"schedule {event2_summary.lower()}"}
-            ],
-            trigger_interface_message_id="msg_add_event2_for_search",
-            user_name=TEST_USER_NAME,
-        )
-        err_add2 = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test_search",
+        conversation_id=f"{TEST_CHAT_ID}_add2",
+        trigger_content_parts=[
+            {"type": "text", "text": f"schedule {event2_summary.lower()}"}
+        ],
+        trigger_interface_message_id="msg_add_event2_for_search",
+        user_name=TEST_USER_NAME,
+    )
+    err_add2 = result.error_traceback
     assert err_add2 is None, f"Error creating event2 for search test: {err_add2}"
     assert (
         await get_event_by_summary_from_radicale(radicale_server, event2_summary)
@@ -1154,18 +1150,18 @@ async def test_search_events(
     # --- Simulate User Interaction ---
     # User asks a general question, LLM will refine it to search_query_text ("Search Event")
     user_message_search = "What are my events for day after tomorrow plus two?"
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message_search}],
-            trigger_interface_message_id="msg_search",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply_search = result.text_reply
-        error_search = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message_search}],
+        trigger_interface_message_id="msg_search",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply_search = result.text_reply
+    error_search = result.error_traceback
 
     assert error_search is None, f"Error during search chat interaction: {error_search}"
     assert final_reply_search is not None
@@ -1429,19 +1425,17 @@ async def test_similarity_based_search_finds_similar_events(
             (final_response_matcher_event1, final_response_event1),
         ]
     )
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test_similarity",
-            conversation_id=f"{TEST_CHAT_ID}_similarity_add1",
-            trigger_content_parts=[
-                {"type": "text", "text": f"schedule {event1_summary}"}
-            ],
-            trigger_interface_message_id="msg_add_event1_similarity",
-            user_name=TEST_USER_NAME,
-        )
-        err_add1 = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test_similarity",
+        conversation_id=f"{TEST_CHAT_ID}_similarity_add1",
+        trigger_content_parts=[{"type": "text", "text": f"schedule {event1_summary}"}],
+        trigger_interface_message_id="msg_add_event1_similarity",
+        user_name=TEST_USER_NAME,
+    )
+    err_add1 = result.error_traceback
     assert err_add1 is None, f"Error creating event1: {err_add1}"
 
     # Create event 2
@@ -1490,19 +1484,17 @@ async def test_similarity_based_search_finds_similar_events(
             (final_response_matcher_event2, final_response_event2),
         ]
     )
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test_similarity",
-            conversation_id=f"{TEST_CHAT_ID}_similarity_add2",
-            trigger_content_parts=[
-                {"type": "text", "text": f"schedule {event2_summary}"}
-            ],
-            trigger_interface_message_id="msg_add_event2_similarity",
-            user_name=TEST_USER_NAME,
-        )
-        err_add2 = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test_similarity",
+        conversation_id=f"{TEST_CHAT_ID}_similarity_add2",
+        trigger_content_parts=[{"type": "text", "text": f"schedule {event2_summary}"}],
+        trigger_interface_message_id="msg_add_event2_similarity",
+        user_name=TEST_USER_NAME,
+    )
+    err_add2 = result.error_traceback
     assert err_add2 is None, f"Error creating event2: {err_add2}"
 
     # Create event 3 (dissimilar)
@@ -1551,72 +1543,70 @@ async def test_similarity_based_search_finds_similar_events(
             (final_response_matcher_event3, final_response_event3),
         ]
     )
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test_similarity",
-            conversation_id=f"{TEST_CHAT_ID}_similarity_add3",
-            trigger_content_parts=[
-                {"type": "text", "text": f"schedule {event3_summary}"}
-            ],
-            trigger_interface_message_id="msg_add_event3_similarity",
-            user_name=TEST_USER_NAME,
-        )
-        err_add3 = result.error_traceback
+    db_context = Database(engine=pg_vector_db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test_similarity",
+        conversation_id=f"{TEST_CHAT_ID}_similarity_add3",
+        trigger_content_parts=[{"type": "text", "text": f"schedule {event3_summary}"}],
+        trigger_interface_message_id="msg_add_event3_similarity",
+        user_name=TEST_USER_NAME,
+    )
+    err_add3 = result.error_traceback
     assert err_add3 is None, f"Error creating event3: {err_add3}"
 
     # Now search for "doctor" directly using the tool
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-similarity-search",
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            chat_interface=None,
-            timezone=ZoneInfo(TEST_TIMEZONE_STR),
-            request_confirmation_callback=None,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(engine=pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-similarity-search",
+        user_name="TestUser",
+        turn_id="test-turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        request_confirmation_callback=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        search_result = await search_calendar_events_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            search_text="doctor",
-        )
+    search_result = await search_calendar_events_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        search_text="doctor",
+    )
 
-        logger.info(f"Search tool result:\n{search_result}")
+    logger.info(f"Search tool result:\n{search_result}")
 
-        # Verify semantic matching: "doctor" should find both events
-        # Event 1: "Doctor appointment" - high similarity
-        # Event 2: "Dr. Smith checkup" - moderate similarity (has "Dr.")
-        # Event 3: "Soccer practice" - low similarity (should be excluded)
+    # Verify semantic matching: "doctor" should find both events
+    # Event 1: "Doctor appointment" - high similarity
+    # Event 2: "Dr. Smith checkup" - moderate similarity (has "Dr.")
+    # Event 3: "Soccer practice" - low similarity (should be excluded)
 
-        # Check that similarity scores are present
-        assert "similarity:" in search_result.lower(), (
-            "Search results should include similarity scores"
-        )
+    # Check that similarity scores are present
+    assert "similarity:" in search_result.lower(), (
+        "Search results should include similarity scores"
+    )
 
-        # Both doctor-related events should be in results
-        # Note: With fuzzy matching, "doctor" vs "Dr. Smith checkup" has low similarity
-        # But "doctor" vs "Doctor appointment" has very high similarity
-        # So we should at least find event1
-        assert event1_summary in search_result, (
-            f"Event 1 '{event1_summary}' should be found by 'doctor' search"
-        )
+    # Both doctor-related events should be in results
+    # Note: With fuzzy matching, "doctor" vs "Dr. Smith checkup" has low similarity
+    # But "doctor" vs "Doctor appointment" has very high similarity
+    # So we should at least find event1
+    assert event1_summary in search_result, (
+        f"Event 1 '{event1_summary}' should be found by 'doctor' search"
+    )
 
-        # Event 3 (soccer) should NOT be in results
-        assert event3_summary not in search_result, (
-            f"Event 3 '{event3_summary}' should NOT be found by 'doctor' search"
-        )
+    # Event 3 (soccer) should NOT be in results
+    assert event3_summary not in search_result, (
+        f"Event 3 '{event3_summary}' should NOT be found by 'doctor' search"
+    )
 
     logger.info("Test similarity-based search semantic matching PASSED.")
 
@@ -1671,74 +1661,74 @@ async def test_similarity_search_threshold_filtering(
     )
 
     # Create events directly using tool
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-threshold",
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            chat_interface=None,
-            timezone=ZoneInfo(TEST_TIMEZONE_STR),
-            request_confirmation_callback=None,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(engine=pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-threshold",
+        user_name="TestUser",
+        turn_id="test-turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        request_confirmation_callback=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create high similarity event
-        await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary=high_similarity_event,
-            start_time=start_time.isoformat(),
-            end_time=end_time.isoformat(),
-            all_day=False,
-        )
+    # Create high similarity event
+    await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary=high_similarity_event,
+        start_time=start_time.isoformat(),
+        end_time=end_time.isoformat(),
+        all_day=False,
+    )
 
-        # Create medium similarity event
-        await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary=medium_similarity_event,
-            start_time=(start_time + timedelta(hours=1)).isoformat(),
-            end_time=(end_time + timedelta(hours=1)).isoformat(),
-            all_day=False,
-        )
+    # Create medium similarity event
+    await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary=medium_similarity_event,
+        start_time=(start_time + timedelta(hours=1)).isoformat(),
+        end_time=(end_time + timedelta(hours=1)).isoformat(),
+        all_day=False,
+    )
 
-        # Create low similarity event
-        await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary=low_similarity_event,
-            start_time=(start_time + timedelta(hours=2)).isoformat(),
-            end_time=(end_time + timedelta(hours=2)).isoformat(),
-            all_day=False,
-        )
+    # Create low similarity event
+    await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary=low_similarity_event,
+        start_time=(start_time + timedelta(hours=2)).isoformat(),
+        end_time=(end_time + timedelta(hours=2)).isoformat(),
+        all_day=False,
+    )
 
-        # Search for "meeting" with threshold 0.50
-        search_result = await search_calendar_events_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            search_text="meeting",
-        )
+    # Search for "meeting" with threshold 0.50
+    search_result = await search_calendar_events_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        search_text="meeting",
+    )
 
-        logger.info(f"Search result with threshold 0.50:\n{search_result}")
+    logger.info(f"Search result with threshold 0.50:\n{search_result}")
 
-        # High similarity event should be found
-        assert high_similarity_event in search_result, (
-            f"High similarity event '{high_similarity_event}' should be in results"
-        )
+    # High similarity event should be found
+    assert high_similarity_event in search_result, (
+        f"High similarity event '{high_similarity_event}' should be in results"
+    )
 
-        # Low similarity event should NOT be found (below threshold)
-        assert low_similarity_event not in search_result, (
-            f"Low similarity event '{low_similarity_event}' should NOT be in results"
-        )
+    # Low similarity event should NOT be found (below threshold)
+    assert low_similarity_event not in search_result, (
+        f"Low similarity event '{low_similarity_event}' should NOT be in results"
+    )
 
     logger.info("Test similarity search threshold filtering PASSED.")
 
@@ -1787,80 +1777,80 @@ async def test_similarity_search_score_sorting(
         },
     )
 
-    async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-sorting",
-            user_name="TestUser",
-            turn_id="test-turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            chat_interface=None,
-            timezone=ZoneInfo(TEST_TIMEZONE_STR),
-            request_confirmation_callback=None,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(engine=pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-sorting",
+        user_name="TestUser",
+        turn_id="test-turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        request_confirmation_callback=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create events (in random order)
-        await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary=partial_match,
-            start_time=(start_time + timedelta(hours=2)).isoformat(),
-            end_time=(start_time + timedelta(hours=3)).isoformat(),
-            all_day=False,
-        )
+    # Create events (in random order)
+    await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary=partial_match,
+        start_time=(start_time + timedelta(hours=2)).isoformat(),
+        end_time=(start_time + timedelta(hours=3)).isoformat(),
+        all_day=False,
+    )
 
-        await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary=exact_match,
-            start_time=start_time.isoformat(),
-            end_time=(start_time + timedelta(hours=1)).isoformat(),
-            all_day=False,
-        )
+    await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary=exact_match,
+        start_time=start_time.isoformat(),
+        end_time=(start_time + timedelta(hours=1)).isoformat(),
+        all_day=False,
+    )
 
-        await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary=close_match,
-            start_time=(start_time + timedelta(hours=1)).isoformat(),
-            end_time=(start_time + timedelta(hours=2)).isoformat(),
-            all_day=False,
-            bypass_duplicate_check=True,  # Bypass since we want multiple similar events for sorting test
-        )
+    await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary=close_match,
+        start_time=(start_time + timedelta(hours=1)).isoformat(),
+        end_time=(start_time + timedelta(hours=2)).isoformat(),
+        all_day=False,
+        bypass_duplicate_check=True,  # Bypass since we want multiple similar events for sorting test
+    )
 
-        # Search for "appointment"
-        search_result = await search_calendar_events_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            search_text="appointment",
-        )
+    # Search for "appointment"
+    search_result = await search_calendar_events_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        search_text="appointment",
+    )
 
-        logger.info(f"Search result:\n{search_result}")
+    logger.info(f"Search result:\n{search_result}")
 
-        # Parse the result to verify sorting
-        # Results should be sorted by similarity (highest first)
-        # exact_match should come before close_match
-        exact_match_pos = search_result.find(exact_match)
-        close_match_pos = search_result.find(close_match)
+    # Parse the result to verify sorting
+    # Results should be sorted by similarity (highest first)
+    # exact_match should come before close_match
+    exact_match_pos = search_result.find(exact_match)
+    close_match_pos = search_result.find(close_match)
 
-        assert exact_match_pos != -1, "Exact match should be in results"
-        assert close_match_pos != -1, "Close match should be in results"
-        assert exact_match_pos < close_match_pos, (
-            "Results should be sorted by similarity: exact match before close match"
-        )
+    assert exact_match_pos != -1, "Exact match should be in results"
+    assert close_match_pos != -1, "Close match should be in results"
+    assert exact_match_pos < close_match_pos, (
+        "Results should be sorted by similarity: exact match before close match"
+    )
 
-        # Verify similarity scores are included
-        assert "similarity:" in search_result.lower(), (
-            "Results should include similarity scores"
-        )
+    # Verify similarity scores are included
+    assert "similarity:" in search_result.lower(), (
+        "Results should include similarity scores"
+    )
 
     logger.info("Test similarity search score sorting PASSED.")
 
@@ -1904,103 +1894,103 @@ async def test_duplicate_detection_error_shown(
     )
 
     # Create execution context
-    async with DatabaseContext(pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conv",
-            user_name="testuser",
-            turn_id="test_turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            timezone=ZoneInfo("America/New_York"),
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="testuser",
+        turn_id="test_turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("America/New_York"),
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create first event
-        tomorrow = date.today() + timedelta(days=1)
-        event1_start = datetime(
-            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
-        ).replace(tzinfo=ZoneInfo("America/New_York"))
-        event1_end = event1_start + timedelta(hours=1)
+    # Create first event
+    tomorrow = date.today() + timedelta(days=1)
+    event1_start = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+    ).replace(tzinfo=ZoneInfo("America/New_York"))
+    event1_end = event1_start + timedelta(hours=1)
 
-        event1_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Doctor appointment",
-            start_time=event1_start.isoformat(),
-            end_time=event1_end.isoformat(),
-        )
+    event1_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Doctor appointment",
+        start_time=event1_start.isoformat(),
+        end_time=event1_end.isoformat(),
+    )
 
-        assert "OK. Event 'Doctor appointment' added" in event1_result
-        assert "Error:" not in event1_result, (
-            "First event should not trigger duplicate error"
-        )
+    assert "OK. Event 'Doctor appointment' added" in event1_result
+    assert "Error:" not in event1_result, (
+        "First event should not trigger duplicate error"
+    )
 
-        # RADICALE WORKAROUND: Wait for first event to become searchable
-        # Radicale CalDAV server doesn't immediately index events for search
-        # Real CalDAV servers (iCloud, Google Calendar) don't need this
-        indexed = await wait_for_radicale_indexing(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            event_summary="Doctor appointment",
-            timeout_seconds=5.0,
-        )
-        assert indexed, "First event should become searchable within timeout"
+    # RADICALE WORKAROUND: Wait for first event to become searchable
+    # Radicale CalDAV server doesn't immediately index events for search
+    # Real CalDAV servers (iCloud, Google Calendar) don't need this
+    indexed = await wait_for_radicale_indexing(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        event_summary="Doctor appointment",
+        timeout_seconds=5.0,
+    )
+    assert indexed, "First event should become searchable within timeout"
 
-        # Create second event with similar name at nearby time (15 min later)
-        # This should be BLOCKED by duplicate detection
-        event2_start = event1_start + timedelta(minutes=15)
-        event2_end = event2_start + timedelta(hours=1)
+    # Create second event with similar name at nearby time (15 min later)
+    # This should be BLOCKED by duplicate detection
+    event2_start = event1_start + timedelta(minutes=15)
+    event2_end = event2_start + timedelta(hours=1)
 
-        event2_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Doctor appt",  # Very similar to "Doctor appointment" (fuzzy similarity ~0.88)
-            start_time=event2_start.isoformat(),
-            end_time=event2_end.isoformat(),
-        )
+    event2_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Doctor appt",  # Very similar to "Doctor appointment" (fuzzy similarity ~0.88)
+        start_time=event2_start.isoformat(),
+        end_time=event2_end.isoformat(),
+    )
 
-        logger.info(f"Event 2 result (should be error):\n{event2_result}")
+    logger.info(f"Event 2 result (should be error):\n{event2_result}")
 
-        # Verify error is shown (event not created)
-        assert "Error: Cannot create event" in event2_result, (
-            "Error should be shown for similar event at nearby time"
-        )
-        assert "similar event(s) at nearby times" in event2_result
-        assert "Doctor appointment" in event2_result, (
-            "Error should mention the similar event"
-        )
-        assert "similarity:" in event2_result, "Error should include similarity score"
-        assert "UID:" in event2_result, "Error should include UID for reference"
-        assert "bypass_duplicate_check=true" in event2_result, (
-            "Error should tell LLM how to bypass if not a duplicate"
-        )
+    # Verify error is shown (event not created)
+    assert "Error: Cannot create event" in event2_result, (
+        "Error should be shown for similar event at nearby time"
+    )
+    assert "similar event(s) at nearby times" in event2_result
+    assert "Doctor appointment" in event2_result, (
+        "Error should mention the similar event"
+    )
+    assert "similarity:" in event2_result, "Error should include similarity score"
+    assert "UID:" in event2_result, "Error should include UID for reference"
+    assert "bypass_duplicate_check=true" in event2_result, (
+        "Error should tell LLM how to bypass if not a duplicate"
+    )
 
-        # Now retry with bypass flag - should succeed
-        event2_bypass_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Doctor appt",
-            start_time=event2_start.isoformat(),
-            end_time=event2_end.isoformat(),
-            bypass_duplicate_check=True,
-        )
+    # Now retry with bypass flag - should succeed
+    event2_bypass_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Doctor appt",
+        start_time=event2_start.isoformat(),
+        end_time=event2_end.isoformat(),
+        bypass_duplicate_check=True,
+    )
 
-        logger.info(f"Event 2 with bypass result:\n{event2_bypass_result}")
+    logger.info(f"Event 2 with bypass result:\n{event2_bypass_result}")
 
-        # Verify success with bypass
-        assert "OK. Event 'Doctor appt' added" in event2_bypass_result, (
-            "Event should be created with bypass flag"
-        )
-        assert "duplicate check bypassed" in event2_bypass_result, (
-            "Response should indicate bypass was used"
-        )
+    # Verify success with bypass
+    assert "OK. Event 'Doctor appt' added" in event2_bypass_result, (
+        "Event should be created with bypass flag"
+    )
+    assert "duplicate check bypassed" in event2_bypass_result, (
+        "Response should indicate bypass was used"
+    )
 
     logger.info("Test duplicate detection error shown PASSED.")
 
@@ -2041,63 +2031,63 @@ async def test_duplicate_detection_no_error_different_time(
         },
     )
 
-    async with DatabaseContext(pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conv",
-            user_name="testuser",
-            turn_id="test_turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            timezone=ZoneInfo("America/New_York"),
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="testuser",
+        turn_id="test_turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("America/New_York"),
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create first event
-        tomorrow = date.today() + timedelta(days=1)
-        event1_start = datetime(
-            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
-        ).replace(tzinfo=ZoneInfo("America/New_York"))
-        event1_end = event1_start + timedelta(hours=1)
+    # Create first event
+    tomorrow = date.today() + timedelta(days=1)
+    event1_start = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+    ).replace(tzinfo=ZoneInfo("America/New_York"))
+    event1_end = event1_start + timedelta(hours=1)
 
-        event1_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Weekly team meeting",
-            start_time=event1_start.isoformat(),
-            end_time=event1_end.isoformat(),
-        )
+    event1_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Weekly team meeting",
+        start_time=event1_start.isoformat(),
+        end_time=event1_end.isoformat(),
+    )
 
-        assert "OK. Event 'Weekly team meeting' added" in event1_result
+    assert "OK. Event 'Weekly team meeting' added" in event1_result
 
-        # Create second event with same title but different day (outside time window)
-        next_week = date.today() + timedelta(days=8)
-        event2_start = datetime(
-            next_week.year, next_week.month, next_week.day, 14, 0, 0
-        ).replace(tzinfo=ZoneInfo("America/New_York"))
-        event2_end = event2_start + timedelta(hours=1)
+    # Create second event with same title but different day (outside time window)
+    next_week = date.today() + timedelta(days=8)
+    event2_start = datetime(
+        next_week.year, next_week.month, next_week.day, 14, 0, 0
+    ).replace(tzinfo=ZoneInfo("America/New_York"))
+    event2_end = event2_start + timedelta(hours=1)
 
-        event2_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Weekly team meeting",  # Exact same title
-            start_time=event2_start.isoformat(),
-            end_time=event2_end.isoformat(),
-        )
+    event2_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Weekly team meeting",  # Exact same title
+        start_time=event2_start.isoformat(),
+        end_time=event2_end.isoformat(),
+    )
 
-        logger.info(f"Event 2 result:\n{event2_result}")
+    logger.info(f"Event 2 result:\n{event2_result}")
 
-        # Verify NO error is shown (events are on different days, outside time window)
-        assert "OK. Event 'Weekly team meeting' added" in event2_result
-        assert "Error:" not in event2_result, (
-            "No error should be shown for events outside time window"
-        )
+    # Verify NO error is shown (events are on different days, outside time window)
+    assert "OK. Event 'Weekly team meeting' added" in event2_result
+    assert "Error:" not in event2_result, (
+        "No error should be shown for events outside time window"
+    )
 
     logger.info("Test duplicate detection no error different time PASSED.")
 
@@ -2137,60 +2127,60 @@ async def test_duplicate_detection_disabled(
         },
     )
 
-    async with DatabaseContext(pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conv",
-            user_name="testuser",
-            turn_id="test_turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            timezone=ZoneInfo("America/New_York"),
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="testuser",
+        turn_id="test_turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("America/New_York"),
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create first event
-        tomorrow = date.today() + timedelta(days=1)
-        event1_start = datetime(
-            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
-        ).replace(tzinfo=ZoneInfo("America/New_York"))
-        event1_end = event1_start + timedelta(hours=1)
+    # Create first event
+    tomorrow = date.today() + timedelta(days=1)
+    event1_start = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+    ).replace(tzinfo=ZoneInfo("America/New_York"))
+    event1_end = event1_start + timedelta(hours=1)
 
-        event1_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Doctor appointment",
-            start_time=event1_start.isoformat(),
-            end_time=event1_end.isoformat(),
-        )
+    event1_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Doctor appointment",
+        start_time=event1_start.isoformat(),
+        end_time=event1_end.isoformat(),
+    )
 
-        assert "OK. Event 'Doctor appointment' added" in event1_result
+    assert "OK. Event 'Doctor appointment' added" in event1_result
 
-        # Create second similar event at nearby time
-        event2_start = event1_start + timedelta(minutes=15)
-        event2_end = event2_start + timedelta(hours=1)
+    # Create second similar event at nearby time
+    event2_start = event1_start + timedelta(minutes=15)
+    event2_end = event2_start + timedelta(hours=1)
 
-        event2_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Dr. Smith checkup",
-            start_time=event2_start.isoformat(),
-            end_time=event2_end.isoformat(),
-        )
+    event2_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Dr. Smith checkup",
+        start_time=event2_start.isoformat(),
+        end_time=event2_end.isoformat(),
+    )
 
-        logger.info(f"Event 2 result:\n{event2_result}")
+    logger.info(f"Event 2 result:\n{event2_result}")
 
-        # Verify NO error is shown (duplicate detection disabled)
-        assert "OK. Event 'Dr. Smith checkup' added" in event2_result
-        assert "Error:" not in event2_result, (
-            "No error should be shown when duplicate detection is disabled"
-        )
+    # Verify NO error is shown (duplicate detection disabled)
+    assert "OK. Event 'Dr. Smith checkup' added" in event2_result
+    assert "Error:" not in event2_result, (
+        "No error should be shown when duplicate detection is disabled"
+    )
 
     logger.info("Test duplicate detection disabled PASSED.")
 
@@ -2229,78 +2219,78 @@ async def test_duplicate_detection_all_day_events(
         },
     )
 
-    async with DatabaseContext(pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conv",
-            user_name="testuser",
-            turn_id="test_turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            timezone=ZoneInfo("America/New_York"),
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conv",
+        user_name="testuser",
+        turn_id="test_turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("America/New_York"),
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create first all-day event
-        tomorrow = date.today() + timedelta(days=1)
-        day_after = tomorrow + timedelta(days=1)
+    # Create first all-day event
+    tomorrow = date.today() + timedelta(days=1)
+    day_after = tomorrow + timedelta(days=1)
 
-        event1_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Birthday party",
-            start_time=str(tomorrow),
-            end_time=str(day_after),  # All-day events end on the day after
-            all_day=True,
-        )
+    event1_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Birthday party",
+        start_time=str(tomorrow),
+        end_time=str(day_after),  # All-day events end on the day after
+        all_day=True,
+    )
 
-        assert "OK. Event 'Birthday party' added" in event1_result
+    assert "OK. Event 'Birthday party' added" in event1_result
 
-        # Create second all-day event with similar name on SAME date
-        event2_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Birthday celebration",  # Similar
-            start_time=str(tomorrow),
-            end_time=str(day_after),
-            all_day=True,
-        )
+    # Create second all-day event with similar name on SAME date
+    event2_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Birthday celebration",  # Similar
+        start_time=str(tomorrow),
+        end_time=str(day_after),
+        all_day=True,
+    )
 
-        logger.info(f"Event 2 (same date) result:\n{event2_result}")
+    logger.info(f"Event 2 (same date) result:\n{event2_result}")
 
-        # Should show error for same-date similar event
-        assert "Error: Cannot create event" in event2_result, (
-            "Error should be shown for similar all-day events on same date"
-        )
-        assert "Birthday party" in event2_result, "Error should mention similar event"
+    # Should show error for same-date similar event
+    assert "Error: Cannot create event" in event2_result, (
+        "Error should be shown for similar all-day events on same date"
+    )
+    assert "Birthday party" in event2_result, "Error should mention similar event"
 
-        # Now create third all-day event with similar name on DIFFERENT date
-        # This should succeed (outside time window)
-        next_week = date.today() + timedelta(days=8)
-        next_week_day_after = next_week + timedelta(days=1)
+    # Now create third all-day event with similar name on DIFFERENT date
+    # This should succeed (outside time window)
+    next_week = date.today() + timedelta(days=8)
+    next_week_day_after = next_week + timedelta(days=1)
 
-        event3_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Birthday party",  # Same title as event1
-            start_time=str(next_week),
-            end_time=str(next_week_day_after),
-            all_day=True,
-        )
+    event3_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Birthday party",  # Same title as event1
+        start_time=str(next_week),
+        end_time=str(next_week_day_after),
+        all_day=True,
+    )
 
-        logger.info(f"Event 3 (different date) result:\n{event3_result}")
+    logger.info(f"Event 3 (different date) result:\n{event3_result}")
 
-        # Should NOT show error for different-date event
-        assert "OK. Event 'Birthday party' added" in event3_result
-        assert "Error:" not in event3_result, (
-            "No error for all-day events on different dates"
-        )
+    # Should NOT show error for different-date event
+    assert "OK. Event 'Birthday party' added" in event3_result
+    assert "Error:" not in event3_result, (
+        "No error for all-day events on different dates"
+    )
 
     logger.info("Test duplicate detection all-day events PASSED.")
 
@@ -2340,92 +2330,90 @@ async def test_duplicate_detection_exact_same_title(
         },
     )
 
-    async with DatabaseContext(pg_vector_db_engine) as db_context:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_exact_duplicate",
-            user_name="testuser",
-            turn_id="test_turn",
-            db_context=db_context,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            timezone=ZoneInfo("America/New_York"),
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_exact_duplicate",
+        user_name="testuser",
+        turn_id="test_turn",
+        db_context=db_context,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        timezone=ZoneInfo("America/New_York"),
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create first event
-        tomorrow = date.today() + timedelta(days=1)
-        event1_start = datetime(
-            tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
-        ).replace(tzinfo=ZoneInfo("America/New_York"))
-        event1_end = event1_start + timedelta(hours=1)
+    # Create first event
+    tomorrow = date.today() + timedelta(days=1)
+    event1_start = datetime(
+        tomorrow.year, tomorrow.month, tomorrow.day, 14, 0, 0
+    ).replace(tzinfo=ZoneInfo("America/New_York"))
+    event1_end = event1_start + timedelta(hours=1)
 
-        event1_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Team Meeting",  # Exact title
-            start_time=event1_start.isoformat(),
-            end_time=event1_end.isoformat(),
-        )
+    event1_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Team Meeting",  # Exact title
+        start_time=event1_start.isoformat(),
+        end_time=event1_end.isoformat(),
+    )
 
-        logger.info(f"Event 1 result:\n{event1_result}")
-        assert "OK. Event 'Team Meeting' added" in event1_result
-        assert "Error:" not in event1_result
+    logger.info(f"Event 1 result:\n{event1_result}")
+    assert "OK. Event 'Team Meeting' added" in event1_result
+    assert "Error:" not in event1_result
 
-        # Wait for indexing
-        indexed = await wait_for_radicale_indexing(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            event_summary="Team Meeting",
-            timeout_seconds=10.0,
-        )
-        assert indexed, "Radicale failed to index first event"
+    # Wait for indexing
+    indexed = await wait_for_radicale_indexing(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        event_summary="Team Meeting",
+        timeout_seconds=10.0,
+    )
+    assert indexed, "Radicale failed to index first event"
 
-        # Try to create second event with EXACT SAME title at nearby time
-        # This should be blocked by duplicate detection
-        event2_start = event1_start + timedelta(minutes=30)  # Within 2-hour window
-        event2_end = event2_start + timedelta(hours=1)
+    # Try to create second event with EXACT SAME title at nearby time
+    # This should be blocked by duplicate detection
+    event2_start = event1_start + timedelta(minutes=30)  # Within 2-hour window
+    event2_end = event2_start + timedelta(hours=1)
 
-        event2_result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            summary="Team Meeting",  # EXACT same title
-            start_time=event2_start.isoformat(),
-            end_time=event2_end.isoformat(),
-        )
+    event2_result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        summary="Team Meeting",  # EXACT same title
+        start_time=event2_start.isoformat(),
+        end_time=event2_end.isoformat(),
+    )
 
-        logger.info(f"Event 2 (exact duplicate) result:\n{event2_result}")
+    logger.info(f"Event 2 (exact duplicate) result:\n{event2_result}")
 
-        # Verify error is shown (event not created)
-        assert "Error: Cannot create event" in event2_result, (
-            "Exact duplicate should be blocked"
-        )
-        assert "Team Meeting" in event2_result, (
-            "Error should mention the duplicate event"
-        )
-        assert "similarity: 1.00" in event2_result, (
-            "Similarity should be 1.00 for exact match"
-        )
-        assert "bypass_duplicate_check=true" in event2_result
+    # Verify error is shown (event not created)
+    assert "Error: Cannot create event" in event2_result, (
+        "Exact duplicate should be blocked"
+    )
+    assert "Team Meeting" in event2_result, "Error should mention the duplicate event"
+    assert "similarity: 1.00" in event2_result, (
+        "Similarity should be 1.00 for exact match"
+    )
+    assert "bypass_duplicate_check=true" in event2_result
 
-        # Verify only one event exists in calendar
-        search_result = await search_calendar_events_tool(
-            exec_context=exec_context,
-            calendar_config=test_calendar_config,
-            search_text="Team Meeting",
-        )
+    # Verify only one event exists in calendar
+    search_result = await search_calendar_events_tool(
+        exec_context=exec_context,
+        calendar_config=test_calendar_config,
+        search_text="Team Meeting",
+    )
 
-        # Count how many times "Team Meeting" appears in the results
-        # Should only appear once (for the first event)
-        meeting_count = search_result.count("Team Meeting")
-        assert meeting_count == 1, (
-            f"Expected exactly 1 'Team Meeting' event, found {meeting_count}"
-        )
+    # Count how many times "Team Meeting" appears in the results
+    # Should only appear once (for the first event)
+    meeting_count = search_result.count("Team Meeting")
+    assert meeting_count == 1, (
+        f"Expected exactly 1 'Team Meeting' event, found {meeting_count}"
+    )
 
     logger.info("Test duplicate detection exact same title PASSED.")
 

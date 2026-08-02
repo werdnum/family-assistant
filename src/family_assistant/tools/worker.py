@@ -20,7 +20,7 @@ from family_assistant.utils.workspace import get_workspace_root, validate_worksp
 
 if TYPE_CHECKING:
     from family_assistant.services.worker_backend import WorkerBackend
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database, DatabaseTransaction
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -189,9 +189,7 @@ _STATUS_MAP = {
 _TERMINAL_DB_STATUSES = set(_STATUS_MAP.values())
 
 
-async def reconcile_stale_tasks(
-    db_context: DatabaseContext, backend: WorkerBackend
-) -> int:
+async def reconcile_stale_tasks(db_context: Database, backend: WorkerBackend) -> int:
     """Check active DB tasks against backend state and mark stale ones as failed.
 
     For each task with status "submitted" or "running" in the DB:
@@ -427,40 +425,40 @@ async def spawn_worker_tool(
         # Generate callback token for webhook verification (32 bytes = 64 hex chars)
         callback_token = secrets.token_hex(32)
 
-        # Create database record
-        await db_context.worker_tasks.create_task(
-            task_id=task_id,
-            conversation_id=exec_context.conversation_id,
-            interface_type=exec_context.interface_type,
-            task_description=task_description,
-            model=agent,
-            context_files=validated_context_paths,
-            timeout_minutes=timeout_minutes,
-            user_name=exec_context.user_name,
-            callback_token=callback_token,
-        )
+        async def _create_worker_with_listener(txn: DatabaseTransaction) -> None:
+            await txn.worker_tasks.create_task(
+                task_id=task_id,
+                conversation_id=exec_context.conversation_id,
+                interface_type=exec_context.interface_type,
+                task_description=task_description,
+                model=agent,
+                context_files=validated_context_paths,
+                timeout_minutes=timeout_minutes,
+                user_name=exec_context.user_name,
+                callback_token=callback_token,
+            )
+            await txn.events.create_event_listener(
+                name=f"worker-{task_id}-completion",
+                source_id="webhook",
+                match_conditions={
+                    "event_type": "worker_completion",
+                    "data.task_id": task_id,
+                },
+                conversation_id=exec_context.conversation_id,
+                interface_type=exec_context.interface_type,
+                description=f"Notification when worker task {task_id} completes",
+                action_type="wake_llm",
+                action_config={
+                    "context": (
+                        f"Worker task {task_id} has completed. "
+                        f"Use read_task_result('{task_id}') to see the results."
+                    ),
+                },
+                one_time=True,
+                enabled=True,
+            )
 
-        # Create event listener for completion notification
-        await db_context.events.create_event_listener(
-            name=f"worker-{task_id}-completion",
-            source_id="webhook",
-            match_conditions={
-                "event_type": "worker_completion",
-                "data.task_id": task_id,
-            },
-            conversation_id=exec_context.conversation_id,
-            interface_type=exec_context.interface_type,
-            description=f"Notification when worker task {task_id} completes",
-            action_type="wake_llm",
-            action_config={
-                "context": (
-                    f"Worker task {task_id} has completed. "
-                    f"Use read_task_result('{task_id}') to see the results."
-                ),
-            },
-            one_time=True,
-            enabled=True,
-        )
+        await db_context.atomic(_create_worker_with_listener)
 
         # Get backend and spawn task
         backend = get_worker_backend(

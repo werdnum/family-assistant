@@ -17,7 +17,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import (
     TaskWorker,
@@ -48,18 +48,18 @@ async def test_script_wake_llm_single_call(
     logger.info(f"\n--- Running Script Wake LLM Single Call Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with script that calls wake_llm
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name=f"Temperature Alert {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={
-                "entity_id": "sensor.test_temperature",
-            },
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={
-                "script_code": """
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name=f"Temperature Alert {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={
+            "entity_id": "sensor.test_temperature",
+        },
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={
+            "script_code": """
 temp = float(event["new_state"]["state"])
 if temp > 25.0:
     wake_llm({
@@ -68,9 +68,9 @@ if temp > 25.0:
         "action_needed": "Please check the cooling system"
     })
 """
-            },
-            enabled=True,
-        )
+        },
+        enabled=True,
+    )
 
     # Step 2: Create infrastructure
     shutdown_event = asyncio.Event()
@@ -80,7 +80,7 @@ if temp > 25.0:
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -216,18 +216,18 @@ async def test_script_wake_llm_multiple_contexts(db_engine: AsyncEngine) -> None
     )
 
     # Step 1: Create event listener with script that calls wake_llm multiple times
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name=f"Multi-Sensor Monitor {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={
-                "entity_id": "sensor.environment",
-            },
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={
-                "script_code": """
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name=f"Multi-Sensor Monitor {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={
+            "entity_id": "sensor.environment",
+        },
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={
+            "script_code": """
 # Check temperature
 temp = float(event["new_state"]["attributes"]["temperature"])
 if temp > 25:
@@ -258,9 +258,9 @@ if air_quality < 50:
         "severity": "warning"
     })
 """
-            },
-            enabled=True,
-        )
+        },
+        enabled=True,
+    )
 
     # Step 2: Create infrastructure
     shutdown_event = asyncio.Event()
@@ -269,7 +269,7 @@ if air_quality < 50:
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -411,18 +411,18 @@ async def test_script_conditional_wake_llm(db_engine: AsyncEngine) -> None:
     logger.info(f"\n--- Running Script Conditional Wake LLM Test ({test_run_id}) ---")
 
     # Step 1: Create event listener with conditional wake_llm
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.events.create_event_listener(
-            name=f"Smart Temperature Monitor {test_run_id}",
-            source_id=EventSourceType.home_assistant,
-            match_conditions={
-                "entity_id": "sensor.smart_temp",
-            },
-            conversation_id="test_conv",
-            interface_type="telegram",
-            action_type=EventActionType.script,
-            action_config={
-                "script_code": """
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.events.create_event_listener(
+        name=f"Smart Temperature Monitor {test_run_id}",
+        source_id=EventSourceType.home_assistant,
+        match_conditions={
+            "entity_id": "sensor.smart_temp",
+        },
+        conversation_id="test_conv",
+        interface_type="telegram",
+        action_type=EventActionType.script,
+        action_config={
+            "script_code": """
 temp = float(event["new_state"]["state"])
 
 # Log all temperature changes
@@ -440,9 +440,9 @@ if temp > 30 or temp < 10:
         "recommendation": "immediate_action"
     })
 """
-            },
-            enabled=True,
-        )
+        },
+        enabled=True,
+    )
 
     # Step 2: Create infrastructure
     shutdown_event = asyncio.Event()
@@ -451,7 +451,7 @@ if temp > 30 or temp < 10:
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -530,12 +530,10 @@ if temp > 30 or temp < 10:
     new_task_event.set()
 
     # Step 4: Verify note was created but LLM was NOT woken
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        note = await db_ctx.notes.get_by_title(
-            "Temperature Log", visibility_grants=None
-        )
-        assert note is not None
-        assert "22.5°C" in note.content
+    db_ctx = Database(engine=db_engine)
+    note = await db_ctx.notes.get_by_title("Temperature Log", visibility_grants=None)
+    assert note is not None
+    assert "22.5°C" in note.content
 
     # LLM should not have been called
     mock_chat_interface.send_message.assert_not_called()

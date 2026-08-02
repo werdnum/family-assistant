@@ -182,11 +182,11 @@ async def test_send_message_to_user_tool(
     try:
         await fix.handler.message_handler(update_alice, context_alice)
 
-        async with fix.get_db_context_func() as db_context:
-            bob_history_all = await db_context.message_history.get_recent_with_metadata(
-                interface_type="telegram",
-                conversation_id=str(bob_chat_id),
-            )
+        db_context = fix.database
+        bob_history_all = await db_context.message_history.get_recent_with_metadata(
+            interface_type="telegram",
+            conversation_id=str(bob_chat_id),
+        )
 
         # Assert - verify bot responses via telegram-test-api
         bot_responses = await wait_for_bot_response(

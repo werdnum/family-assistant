@@ -7,11 +7,12 @@ import logging
 import secrets
 import string
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from sqlalchemy import insert, select, update  # Added select and update
 
 from family_assistant.storage.base import api_tokens_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.web.auth import pwd_context  # For hashing
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ def generate_token_secret() -> str:
 
 
 async def add_api_token(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     user_identifier: str,
     name: str,
     hashed_token: str,
@@ -92,7 +93,7 @@ async def add_api_token(
         )
         .returning(api_tokens_table.c.id)
     )
-    result = await db_context.execute_with_retry(query)
+    result = await db_context.execute(query)
     new_token_id = result.scalar_one_or_none()
 
     if new_token_id is None:
@@ -115,8 +116,34 @@ async def add_api_token(
     return new_token_id
 
 
+class MintedApiToken(NamedTuple):
+    """Token material generated before any database work.
+
+    Hashing is deliberately separable: bcrypt is blocking and must not run
+    inside a transaction, where on SQLite it would hold the engine-wide
+    transaction lock for its whole duration.
+    """
+
+    full_token: str
+    hashed_secret: str
+    prefix: str
+    created_at: datetime
+
+
+def mint_api_token() -> MintedApiToken:
+    """Generate a new API token and hash its secret. Does no database work."""
+    prefix = generate_token_prefix()
+    secret = generate_token_secret()
+    return MintedApiToken(
+        full_token=f"{prefix}{secret}",
+        hashed_secret=pwd_context.hash(secret),
+        prefix=prefix,
+        created_at=datetime.now(UTC),
+    )
+
+
 async def create_and_store_api_token(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     user_identifier: str,
     name: str,
     expires_at: datetime | None = None,
@@ -138,12 +165,9 @@ async def create_and_store_api_token(
             - The ID of the newly created token in the database.
             - The creation timestamp (UTC).
     """
-    prefix = generate_token_prefix()
-    secret = generate_token_secret()
-    full_token = f"{prefix}{secret}"
-
-    hashed_secret = pwd_context.hash(secret)
-    created_at_utc = datetime.now(UTC)
+    minted = mint_api_token()
+    full_token = minted.full_token
+    created_at_utc = minted.created_at
 
     # Note: The `api_tokens_table` uses `hashed_token` for the column name
     # that stores the hashed version of the *secret part* of the token.
@@ -152,8 +176,8 @@ async def create_and_store_api_token(
         db_context=db_context,
         user_identifier=user_identifier,
         name=name,
-        hashed_token=hashed_secret,
-        prefix=prefix,
+        hashed_token=minted.hashed_secret,
+        prefix=minted.prefix,
         created_at=created_at_utc,
         expires_at=expires_at,
         token_type=token_type,
@@ -170,7 +194,7 @@ async def create_and_store_api_token(
 
 
 async def get_api_tokens_for_user(
-    db_context: DatabaseContext, user_identifier: str
+    db_context: DatabaseExecutor, user_identifier: str
 ) -> list[dict]:
     """
     Retrieves all API tokens for a given user.
@@ -205,7 +229,7 @@ async def get_api_tokens_for_user(
 
 
 async def get_api_token_by_id_and_user(
-    db_context: DatabaseContext, token_id: int, user_identifier: str
+    db_context: DatabaseExecutor, token_id: int, user_identifier: str
 ) -> dict | None:
     """
     Retrieves a specific API token by its ID, ensuring it belongs to the user.
@@ -237,7 +261,7 @@ async def get_api_token_by_id_and_user(
 
 
 async def revoke_api_token(
-    db_context: DatabaseContext, token_id: int, user_identifier: str
+    db_context: DatabaseExecutor, token_id: int, user_identifier: str
 ) -> bool:
     """
     Revokes an API token by setting its is_revoked flag to True.
@@ -273,22 +297,36 @@ async def revoke_api_token(
         )
         return True  # Considered success as the state is already as desired
 
-    update_query = (
-        update(api_tokens_table)
-        .where(
-            api_tokens_table.c.id == token_id,
-            api_tokens_table.c.user_identifier
-            == user_identifier,  # Double check ownership
-        )
-        .values(
-            is_revoked=True, last_used_at=datetime.now(UTC)
-        )  # Update last_used_at on revoke
-        .returning(api_tokens_table.c.id)  # To check if any row was updated
-    )
-    result = await db_context.execute_with_retry(update_query)
-    updated_id = result.scalar_one_or_none()
+    async def _revoke(txn: DatabaseTransaction) -> bool:
+        """Revoke the token and its refresh-token children, atomically.
 
-    if updated_id is not None:
+        A failure between the two would leave a revoked token whose refresh
+        token can still mint a replacement.
+        """
+        update_query = (
+            update(api_tokens_table)
+            .where(
+                api_tokens_table.c.id == token_id,
+                api_tokens_table.c.user_identifier
+                == user_identifier,  # Double check ownership
+            )
+            .values(
+                is_revoked=True, last_used_at=datetime.now(UTC)
+            )  # Update last_used_at on revoke
+            .returning(api_tokens_table.c.id)  # To check if any row was updated
+        )
+        result = await txn.execute(update_query)
+        updated_id = result.scalar_one_or_none()
+
+        if updated_id is None:
+            # This case should ideally be caught by the initial check, but as a safeguard:
+            logger.warning(
+                "Failed to revoke token ID %s for user %s (possibly due to ownership mismatch or token not found during update).",
+                token_id,
+                user_identifier,
+            )
+            return False
+
         # Cascade: also revoke any child tokens (e.g., refresh tokens linked to this API token)
         child_revoke_query = (
             update(api_tokens_table)
@@ -298,7 +336,7 @@ async def revoke_api_token(
             )
             .values(is_revoked=True, last_used_at=datetime.now(UTC))
         )
-        await db_context.execute_with_retry(child_revoke_query)
+        await txn.execute(child_revoke_query)
 
         logger.info(
             "Successfully revoked API token ID %s (and child tokens) for user %s.",
@@ -307,17 +345,11 @@ async def revoke_api_token(
         )
         return True
 
-    # This case should ideally be caught by the initial check, but as a safeguard:
-    logger.warning(
-        "Failed to revoke token ID %s for user %s (possibly due to ownership mismatch or token not found during update).",
-        token_id,
-        user_identifier,
-    )
-    return False
+    return await db_context.atomic(_revoke)
 
 
 async def validate_token_by_value(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     token_value: str,
     expected_type: str = "refresh",
 ) -> dict | None:
@@ -360,7 +392,7 @@ async def validate_token_by_value(
     return row_dict
 
 
-async def is_token_valid(db_context: DatabaseContext, token_id: int) -> bool:
+async def is_token_valid(db_context: DatabaseExecutor, token_id: int) -> bool:
     """Check if a token (by ID) is still valid (not revoked, not expired)."""
     query = select(
         api_tokens_table.c.is_revoked,

@@ -7,7 +7,7 @@ import logging
 from asyncio import Event
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import (
     JSON,
@@ -29,7 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.types import TaskDict
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ tasks_table = Table(
 
 
 async def enqueue_task(
-    db_context: DatabaseContext,  # Added context
+    db_context: DatabaseExecutor,  # Added context
     task_id: str,
     task_type: str,
     # ast-grep-ignore: no-dict-any - task payload has varying keys per task type
@@ -146,7 +146,7 @@ async def enqueue_task(
     """Adds a task to the queue with automatic notification for immediate tasks.
 
     Args:
-        db_context: Database context for the operation
+        db_context: DatabaseExecutor context for the operation
         task_id: Unique identifier for the task
         task_type: Type of task (determines which handler processes it)
         payload: Optional data payload for the task
@@ -187,13 +187,19 @@ async def enqueue_task(
         if v is not None or k in {"payload", "error"}
     }
 
-    try:
-        # Check if this is a system task (starts with "system_")
-        is_system_task = task_id.startswith("system_")
+    # Check if this is a system task (starts with "system_")
+    is_system_task = task_id.startswith("system_")
 
+    async def _enqueue(txn: DatabaseTransaction) -> None:
+        """Write the row and arm the worker wake, as one unit.
+
+        The SQLite branch reads before it writes, and the wake must not fire
+        before the row is visible -- an idle sibling would poll an empty queue,
+        clear its event, and miss the row until the next 5s poll.
+        """
         if is_system_task:
             # For system tasks, do an upsert to handle re-scheduling
-            if db_context.engine.dialect.name == "postgresql":
+            if txn.dialect_name == "postgresql":
                 # PostgreSQL: Use ON CONFLICT DO UPDATE
                 stmt = pg_insert(tasks_table).values(**values_to_insert)
                 # Only update fields that might change for system tasks
@@ -212,7 +218,7 @@ async def enqueue_task(
                 )
             else:
                 # SQLite: Check if exists first, then update or insert
-                existing = await db_context.fetch_one(
+                existing = await txn.fetch_one(
                     select(tasks_table.c.id, tasks_table.c.status).where(
                         tasks_table.c.task_id == task_id
                     )
@@ -243,8 +249,7 @@ async def enqueue_task(
             # For regular tasks, do normal insert
             stmt = insert(tasks_table).values(**values_to_insert)
 
-        # Use execute_with_retry as commit is handled by context manager
-        await db_context.execute_with_retry(stmt)
+        await txn.execute(stmt)
         logger.info(
             f"{'Updated' if is_system_task else 'Enqueued'} task {task_id} (Type: {task_type}, Original: {values_to_insert.get('original_task_id')}, Recurrence: {'Yes' if recurrence_rule else 'No'})."
         )
@@ -256,9 +261,11 @@ async def enqueue_task(
                 notify_workers()
                 logger.info(f"Notified workers about immediate task {task_id}.")
 
-            # Trigger eager task execution after the transaction commits.
             logger.info("Scheduling worker task notification for transaction commit.")
-            db_context.on_commit(notify)
+            txn.on_commit(notify)
+
+    try:
+        await db_context.atomic(_enqueue)
     except ValueError:  # Re-raise specific errors
         raise
     except SQLAlchemyError as e:
@@ -267,7 +274,7 @@ async def enqueue_task(
 
 
 async def dequeue_task(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     worker_id: str,
     task_types: list[str],  # Added context
     current_time: datetime,  # Added current_time parameter
@@ -277,13 +284,9 @@ async def dequeue_task(
     logger.debug(
         f"Attempting to dequeue task. Worker: {worker_id}, Types: {task_types}, Current Time: {current_time.isoformat()}"
     )
-    assert db_context.conn is not None  # Ensure conn is available in this context
 
-    # This operation needs to be atomic (SELECT FOR UPDATE + UPDATE)
-    # The transaction is now managed by the DatabaseContext context manager itself.
-    try:
-        # No need to call db_context.begin() here
-
+    async def _claim(txn: DatabaseTransaction) -> TaskDict | None:
+        """Select a task and lock it, atomically -- the lock *is* the claim."""
         stmt = (
             select(tasks_table)
             .where(tasks_table.c.status == "pending")
@@ -308,48 +311,41 @@ async def dequeue_task(
         logger.debug(
             f"Dequeue task SQL query: {stmt.compile(compile_kwargs={'literal_binds': True})}"
         )
-        # Execute directly on the connection within the existing transaction
-        result = await db_context.conn.execute(stmt)
-        task_row = result.fetchone()  # Use fetchone directly on the result proxy
+        task_row = await txn.fetch_one(stmt)
 
-        if task_row:
-            logger.debug(
-                f"Task found by {worker_id}: {task_row.task_id} (Internal ID: {task_row.id})"
-            )
-            update_stmt = (
-                update(tasks_table)
-                .where(tasks_table.c.id == task_row.id)
-                .where(
-                    tasks_table.c.status == "pending"
-                )  # Ensure status hasn't changed
-                .values(
-                    status="processing", locked_by=worker_id, locked_at=current_time
-                )  # Use passed current_time
-            )
-            # Execute update directly on the connection
-            update_result = await db_context.conn.execute(update_stmt)
-
-            if update_result.rowcount == 1:
-                # No need to call db_context.commit() here, context manager handles it
-                logger.info(f"Worker {worker_id} dequeued task {task_row.task_id}")
-                return task_row._asdict()  # type: ignore[return-value]
-            else:
-                # This means the row was locked or status changed between select and update
-                logger.warning(
-                    f"Worker {worker_id} failed to lock task {task_row.task_id} after selection (rowcount={update_result.rowcount}). Task might have been picked up by another worker."
-                )
-                # No need to call db_context.rollback() here, context manager handles it on exit if error occurred
-                return None
-        else:
+        if not task_row:
             logger.debug(
                 f"No suitable task found for worker {worker_id} with types {task_types} at {current_time.isoformat()}."
             )
-            # No need to call db_context.rollback() here, context manager handles it on exit
-            return None  # No suitable task found
+            return None
 
+        logger.debug(
+            f"Task found by {worker_id}: {task_row['task_id']} (Internal ID: {task_row['id']})"
+        )
+        update_stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.id == task_row["id"])
+            .where(tasks_table.c.status == "pending")  # Ensure status hasn't changed
+            .values(
+                status="processing", locked_by=worker_id, locked_at=current_time
+            )  # Use passed current_time
+        )
+        update_result = await txn.execute(update_stmt)
+
+        if update_result.rowcount != 1:
+            # The row was locked or its status changed between select and update
+            logger.warning(
+                f"Worker {worker_id} failed to lock task {task_row['task_id']} after selection (rowcount={update_result.rowcount}). Task might have been picked up by another worker."
+            )
+            return None
+
+        logger.info(f"Worker {worker_id} dequeued task {task_row['task_id']}")
+        return cast("TaskDict", task_row)
+
+    try:
+        return await db_context.atomic(_claim)
     except SQLAlchemyError as e:
         logger.exception(f"Database error in dequeue_task: {e}")
-        # Rollback is handled by the context manager's __aexit__ on exception
         raise
     except Exception as e:
         logger.exception(f"Unexpected error in dequeue_task: {e}")
@@ -358,7 +354,7 @@ async def dequeue_task(
 
 
 async def update_task_status(
-    db_context: DatabaseContext,  # Added context
+    db_context: DatabaseExecutor,  # Added context
     task_id: str,
     status: str,
     error: str | None = None,
@@ -375,8 +371,8 @@ async def update_task_status(
             .values(**values_to_update)
         )
         # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:  # type: ignore[attr-defined]
+        result = await db_context.execute(stmt)
+        if result.rowcount > 0:
             logger.info(f"Updated task {task_id} status to {status}.")
             return True
         else:
@@ -390,7 +386,7 @@ async def update_task_status(
 
 
 async def reschedule_task_for_retry(
-    db_context: DatabaseContext,  # Added context
+    db_context: DatabaseExecutor,  # Added context
     task_id: str,
     next_scheduled_at: datetime,
     new_retry_count: int,
@@ -414,8 +410,8 @@ async def reschedule_task_for_retry(
             )
         )
         # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute_with_retry(stmt)
-        if result.rowcount > 0:  # type: ignore[attr-defined]
+        result = await db_context.execute(stmt)
+        if result.rowcount > 0:
             logger.info(
                 f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
             )
@@ -431,7 +427,7 @@ async def reschedule_task_for_retry(
 
 
 async def manually_retry_task(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     internal_task_id: int,  # This is tasks_table.c.id
 ) -> bool:
     """
@@ -482,9 +478,15 @@ async def manually_retry_task(
             .values(**update_values)
         )
 
-        result = await db_context.execute_with_retry(update_stmt)
+        async def _retry(txn: DatabaseTransaction) -> bool:
+            """Reschedule the task and arm the worker wake, as one unit."""
+            result = await txn.execute(update_stmt)
+            if result.rowcount == 0:
+                logger.error(
+                    f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."
+                )
+                return False
 
-        if result.rowcount > 0:  # type: ignore[attr-defined]
             logger.info(
                 f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row['max_retries'] + 1}."
             )
@@ -496,13 +498,10 @@ async def manually_retry_task(
                     f"Notified workers about manual retry for task internal ID {internal_task_id}."
                 )
 
-            db_context.on_commit(notify)
+            txn.on_commit(notify)
             return True
-        else:
-            logger.error(
-                f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."  # type: ignore
-            )
-            return False
+
+        return await db_context.atomic(_retry)
 
     except SQLAlchemyError as e:
         logger.exception(
@@ -517,7 +516,7 @@ async def manually_retry_task(
 
 
 async def get_all_tasks(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     limit: int = 100,
 ) -> list[TaskDict]:
     """Retrieves tasks, ordered by creation descending."""

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
         RequestConfirmationCallback,
     )
     from family_assistant.security.taint import TaintSource
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class RemoteA2AService:
 
     async def handle_chat_interaction(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: list[ContentPartDict],
@@ -78,7 +78,6 @@ class RemoteA2AService:
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
-        save_history_with_isolated_context: bool | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> ChatInteractionResult:
         """Send the request to the remote A2A agent and return the result."""
@@ -100,7 +99,6 @@ class RemoteA2AService:
         _ = trigger_is_internal
         _ = pinned_history_message_ids
         _ = trigger_role
-        _ = save_history_with_isolated_context
 
         metadata: dict[str, object] | None = None
         if initial_taint_sources:
@@ -142,7 +140,7 @@ class RemoteA2AService:
         conversation_id: str,
         subconversation_id: str | None,
         user_name: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> RemoteSubmission:
         """Submit to the remote agent without blocking; the remote assigns the id.

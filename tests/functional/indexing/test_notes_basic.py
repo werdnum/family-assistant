@@ -21,7 +21,7 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.pipeline import ContentProcessor, IndexingPipeline
 from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.storage.tasks import tasks_table
@@ -224,46 +224,46 @@ async def test_notes_indexing_e2e(
 
     try:
         # --- Act: Create Note (triggers indexing task) ---
-        async with DatabaseContext(engine=pg_vector_db_engine) as db_context:
-            result = await db_context.notes.add_or_update(
-                title=unique_note_title,
-                content=TEST_NOTE_CONTENT,
-                write_policy=NoteWritePolicy.UNCONSTRAINED,
-            )
-            assert result == "Success", f"Failed to create note: {result}"
-            logger.info(f"Created note with title: {unique_note_title}")
+        db_context = Database(engine=pg_vector_db_engine)
+        result = await db_context.notes.add_or_update(
+            title=unique_note_title,
+            content=TEST_NOTE_CONTENT,
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
+        assert result == "Success", f"Failed to create note: {result}"
+        logger.info(f"Created note with title: {unique_note_title}")
 
-            # Get the note ID for tracking
+        # Get the note ID for tracking
 
-            note_stmt = select(notes_table.c.id).where(
-                notes_table.c.title == unique_note_title
-            )
-            note_row = await db_context.fetch_one(note_stmt)
-            assert note_row is not None, "Note not found after creation"
-            note_id = note_row["id"]
-            logger.info(f"Note created with ID: {note_id}")
+        note_stmt = select(notes_table.c.id).where(
+            notes_table.c.title == unique_note_title
+        )
+        note_row = await db_context.fetch_one(note_stmt)
+        assert note_row is not None, "Note not found after creation"
+        note_id = note_row["id"]
+        logger.info(f"Note created with ID: {note_id}")
 
         # --- Act: Find the Indexing Task ---
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            await asyncio.sleep(0.2)  # Wait for task to be enqueued
+        db = Database(engine=pg_vector_db_engine)
+        await asyncio.sleep(0.2)  # Wait for task to be enqueued
 
-            select_task_stmt = (
-                select(tasks_table.c.task_id)
-                .where(
-                    tasks_table.c.task_type == "index_note",
-                    tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
-                )
-                .order_by(tasks_table.c.created_at.desc())
-                .limit(1)
+        select_task_stmt = (
+            select(tasks_table.c.task_id)
+            .where(
+                tasks_table.c.task_type == "index_note",
+                tasks_table.c.payload.cast(Text).like(f'%"note_id": {note_id}%'),
             )
-            task_info = await db.fetch_one(select_task_stmt)
-            assert task_info is not None, (
-                f"Could not find enqueued indexing task for note ID {note_id}"
-            )
-            indexing_task_id = task_info["task_id"]
-            logger.info(
-                f"Found indexing task ID: {indexing_task_id} for note ID: {note_id}"
-            )
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(1)
+        )
+        task_info = await db.fetch_one(select_task_stmt)
+        assert task_info is not None, (
+            f"Could not find enqueued indexing task for note ID {note_id}"
+        )
+        indexing_task_id = task_info["task_id"]
+        logger.info(
+            f"Found indexing task ID: {indexing_task_id} for note ID: {note_id}"
+        )
 
         # --- Act: Wait for Task Completion ---
         test_new_task_event.set()  # Signal worker to check for tasks
@@ -286,18 +286,18 @@ async def test_notes_indexing_e2e(
         )
 
         # --- Assert: Find Document Record ---
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            # Find the document that was created for our note
-            doc_record = await db.vector.get_document_by_source_id(
-                unique_note_title
-            )  # Notes use title as source_id
-            assert doc_record is not None, (
-                f"Document record not found for note with title: {unique_note_title}"
-            )
-            document_db_id = doc_record.id
-            assert doc_record.source_type == "note"
-            assert doc_record.title == unique_note_title
-            logger.info(f"Found document record with ID: {document_db_id}")
+        db = Database(engine=pg_vector_db_engine)
+        # Find the document that was created for our note
+        doc_record = await db.vector.get_document_by_source_id(
+            unique_note_title
+        )  # Notes use title as source_id
+        assert doc_record is not None, (
+            f"Document record not found for note with title: {unique_note_title}"
+        )
+        document_db_id = doc_record.id
+        assert doc_record.source_type == "note"
+        assert doc_record.title == unique_note_title
+        logger.info(f"Found document record with ID: {document_db_id}")
 
         # --- Assert: Semantic Query ---
         semantic_query_embedding = mock_embedding_generator_notes.embedding_map[
@@ -305,18 +305,16 @@ async def test_notes_indexing_e2e(
         ]
 
         semantic_query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(
-                f"Querying vectors using semantic text: '{TEST_QUERY_SEMANTIC}'"
-            )
-            semantic_query_results = await query_vectors(
-                db,
-                query_embedding=semantic_query_embedding,
-                embedding_model=TEST_EMBEDDING_MODEL,
-                limit=5,
-                filters={"source_type": "note"},
-                embedding_type_filter=["raw_note_text"],
-            )
+        db = Database(engine=pg_vector_db_engine)
+        logger.info(f"Querying vectors using semantic text: '{TEST_QUERY_SEMANTIC}'")
+        semantic_query_results = await query_vectors(
+            db,
+            query_embedding=semantic_query_embedding,
+            embedding_model=TEST_EMBEDDING_MODEL,
+            limit=5,
+            filters={"source_type": "note"},
+            embedding_type_filter=["raw_note_text"],
+        )
 
         assert semantic_query_results is not None, "Semantic query returned None"
         assert len(semantic_query_results) > 0, "No results from semantic query"
@@ -357,17 +355,17 @@ async def test_notes_indexing_e2e(
         ]
 
         keyword_query_results = None
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            logger.info(f"Querying vectors using keyword text: '{TEST_QUERY_KEYWORD}'")
-            keyword_query_results = await query_vectors(
-                db,
-                query_embedding=keyword_query_embedding,
-                embedding_model=TEST_EMBEDDING_MODEL,
-                keywords=TEST_QUERY_KEYWORD,  # Add FTS keywords
-                limit=5,
-                filters={"source_type": "note"},
-                embedding_type_filter=["raw_note_text"],
-            )
+        db = Database(engine=pg_vector_db_engine)
+        logger.info(f"Querying vectors using keyword text: '{TEST_QUERY_KEYWORD}'")
+        keyword_query_results = await query_vectors(
+            db,
+            query_embedding=keyword_query_embedding,
+            embedding_model=TEST_EMBEDDING_MODEL,
+            keywords=TEST_QUERY_KEYWORD,  # Add FTS keywords
+            limit=5,
+            filters={"source_type": "note"},
+            embedding_type_filter=["raw_note_text"],
+        )
 
         assert keyword_query_results is not None, "Keyword query returned None"
         assert len(keyword_query_results) > 0, "No results from keyword query"
@@ -396,13 +394,13 @@ async def test_notes_indexing_e2e(
 
         # --- Assert: Verify Note Content Accessibility ---
         # Verify that the original note content is still accessible via storage
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            retrieved_note = await db.notes.get_by_title(
-                unique_note_title, visibility_grants=None
-            )
-            assert retrieved_note is not None, "Could not retrieve original note"
-            assert retrieved_note.content == TEST_NOTE_CONTENT
-            logger.info("Verified original note content is still accessible")
+        db = Database(engine=pg_vector_db_engine)
+        retrieved_note = await db.notes.get_by_title(
+            unique_note_title, visibility_grants=None
+        )
+        assert retrieved_note is not None, "Could not retrieve original note"
+        assert retrieved_note.content == TEST_NOTE_CONTENT
+        logger.info("Verified original note content is still accessible")
 
         logger.info("--- Notes Indexing E2E Test Passed ---")
 
@@ -424,27 +422,27 @@ async def test_notes_indexing_e2e(
         # Clean up test data
         if document_db_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.vector.delete_document(document_db_id)
-                    logger.info(f"Cleaned up test document DB ID {document_db_id}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.vector.delete_document(document_db_id)
+                logger.info(f"Cleaned up test document DB ID {document_db_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during document cleanup: {cleanup_err}")
 
         if note_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    await db_cleanup.notes.delete(unique_note_title)
-                    logger.info(f"Cleaned up test note: {unique_note_title}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                await db_cleanup.notes.delete(unique_note_title)
+                logger.info(f"Cleaned up test note: {unique_note_title}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during note cleanup: {cleanup_err}")
 
         if indexing_task_id:
             try:
-                async with DatabaseContext(engine=pg_vector_db_engine) as db_cleanup:
-                    delete_stmt = tasks_table.delete().where(
-                        tasks_table.c.task_id == indexing_task_id
-                    )
-                    await db_cleanup.execute_with_retry(delete_stmt)
-                    logger.info(f"Cleaned up test task ID {indexing_task_id}")
+                db_cleanup = Database(engine=pg_vector_db_engine)
+                delete_stmt = tasks_table.delete().where(
+                    tasks_table.c.task_id == indexing_task_id
+                )
+                await db_cleanup.execute(delete_stmt)
+                logger.info(f"Cleaned up test task ID {indexing_task_id}")
             except Exception as cleanup_err:
                 logger.warning(f"Error during task cleanup: {cleanup_err}")

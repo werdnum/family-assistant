@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import update
 
 from family_assistant.services.backends.mock import MockBackend
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.tools.worker import (
@@ -30,10 +30,10 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
     """Create a database context for testing."""
-    async with DatabaseContext(engine=db_engine) as context:
-        yield context
+    context = Database(engine=db_engine)
+    yield context
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def mock_backend() -> MockBackend:
 
 
 def _make_exec_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     conversation_id: str = "conv-test",
     processing_service: MagicMock | None = None,
 ) -> ToolExecutionContext:
@@ -75,9 +75,7 @@ def _make_exec_context(
     )
 
 
-async def _backdate_task(
-    db_context: DatabaseContext, task_id: str, age: timedelta
-) -> None:
+async def _backdate_task(db_context: Database, task_id: str, age: timedelta) -> None:
     """Set a task's created_at to (now - age)."""
     old_time = datetime.now(UTC) - age
     stmt = (
@@ -85,7 +83,7 @@ async def _backdate_task(
         .where(worker_tasks_table.c.task_id == task_id)
         .values(created_at=old_time)
     )
-    await db_context.execute_with_retry(stmt)
+    await db_context.execute(stmt)
 
 
 class TestReconcileStale:
@@ -93,7 +91,7 @@ class TestReconcileStale:
 
     @pytest.mark.asyncio
     async def test_reconcile_marks_tasks_without_job_name(
-        self, db_context: DatabaseContext, mock_backend: MockBackend
+        self, db_context: Database, mock_backend: MockBackend
     ) -> None:
         """Tasks in 'submitted' with no job_name should be marked failed."""
         await db_context.worker_tasks.create_task(
@@ -116,7 +114,7 @@ class TestReconcileStale:
 
     @pytest.mark.asyncio
     async def test_reconcile_updates_from_backend_terminal_status(
-        self, db_context: DatabaseContext, mock_backend: MockBackend
+        self, db_context: Database, mock_backend: MockBackend
     ) -> None:
         """Tasks whose backend job is terminal should be updated in DB."""
         job_id = await mock_backend.spawn_task(
@@ -149,7 +147,7 @@ class TestReconcileStale:
 
     @pytest.mark.asyncio
     async def test_reconcile_leaves_active_backend_tasks(
-        self, db_context: DatabaseContext, mock_backend: MockBackend
+        self, db_context: Database, mock_backend: MockBackend
     ) -> None:
         """Tasks that are still active in the backend should be left alone."""
         job_id = await mock_backend.spawn_task(
@@ -180,7 +178,7 @@ class TestReconcileStale:
 
     @pytest.mark.asyncio
     async def test_reconcile_handles_unknown_job(
-        self, db_context: DatabaseContext, mock_backend: MockBackend
+        self, db_context: Database, mock_backend: MockBackend
     ) -> None:
         """Tasks with a job_name that backend doesn't recognize should be marked failed."""
         await db_context.worker_tasks.create_task(
@@ -202,7 +200,7 @@ class TestReconcileStale:
 
     @pytest.mark.asyncio
     async def test_reconcile_no_active_tasks(
-        self, db_context: DatabaseContext, mock_backend: MockBackend
+        self, db_context: Database, mock_backend: MockBackend
     ) -> None:
         """Reconciliation with no active tasks should return 0."""
         reconciled = await reconcile_stale_tasks(db_context, mock_backend)
@@ -214,7 +212,7 @@ class TestCancelWorkerTask:
 
     @pytest.mark.asyncio
     async def test_cancel_active_task(
-        self, db_context: DatabaseContext, mock_backend: MockBackend
+        self, db_context: Database, mock_backend: MockBackend
     ) -> None:
         """Cancelling an active task should update DB and cancel in backend."""
         job_id = await mock_backend.spawn_task(
@@ -250,7 +248,7 @@ class TestCancelWorkerTask:
 
     @pytest.mark.asyncio
     async def test_cancel_terminal_task_returns_error(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Cancelling a task that already completed should return an error."""
         await db_context.worker_tasks.create_task(
@@ -274,7 +272,7 @@ class TestCancelWorkerTask:
 
     @pytest.mark.asyncio
     async def test_cancel_nonexistent_task_returns_error(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Cancelling a task that doesn't exist should return an error."""
         exec_context = _make_exec_context(db_context, conversation_id="conv-x")
@@ -290,7 +288,7 @@ class TestMarkStaleTasks:
     """Tests for WorkerTasksRepository.mark_stale_tasks."""
 
     @pytest.mark.asyncio
-    async def test_marks_old_submitted_tasks(self, db_context: DatabaseContext) -> None:
+    async def test_marks_old_submitted_tasks(self, db_context: Database) -> None:
         """Submitted tasks older than the timeout should be marked failed."""
         await db_context.worker_tasks.create_task(
             task_id="stale-submitted",
@@ -314,9 +312,7 @@ class TestMarkStaleTasks:
         assert "stuck in submitted" in (task.get("error_message") or "")
 
     @pytest.mark.asyncio
-    async def test_leaves_recent_submitted_tasks(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_leaves_recent_submitted_tasks(self, db_context: Database) -> None:
         """Recently submitted tasks should not be marked stale."""
         await db_context.worker_tasks.create_task(
             task_id="fresh-submitted",
@@ -338,9 +334,7 @@ class TestMarkStaleTasks:
         assert task["status"] == "submitted"
 
     @pytest.mark.asyncio
-    async def test_marks_overtime_running_tasks(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_marks_overtime_running_tasks(self, db_context: Database) -> None:
         """Running tasks that exceed timeout+buffer should be marked failed."""
         await db_context.worker_tasks.create_task(
             task_id="overtime-running",
@@ -374,7 +368,7 @@ class TestAtomicLifecycleTransitions:
         "status", ["running", "success", "failed", "timeout", "cancelled"]
     )
     async def test_record_submission_preserves_newer_status(
-        self, db_context: DatabaseContext, status: str
+        self, db_context: Database, status: str
     ) -> None:
         task_id = f"submission-{status}"
         await db_context.worker_tasks.create_task(
@@ -397,7 +391,7 @@ class TestAtomicLifecycleTransitions:
 
     @pytest.mark.asyncio
     async def test_record_submission_transitions_pending_task(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         await db_context.worker_tasks.create_task(
             task_id="submission-pending",
@@ -419,7 +413,7 @@ class TestAtomicLifecycleTransitions:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["success", "failed", "timeout", "cancelled"])
     async def test_mark_running_preserves_terminal_status(
-        self, db_context: DatabaseContext, status: str
+        self, db_context: Database, status: str
     ) -> None:
         task_id = f"late-start-{status}"
         await db_context.worker_tasks.create_task(
@@ -443,7 +437,7 @@ class TestAtomicLifecycleTransitions:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["pending", "submitted"])
     async def test_mark_running_transitions_prestart_status(
-        self, db_context: DatabaseContext, status: str
+        self, db_context: Database, status: str
     ) -> None:
         task_id = f"start-{status}"
         await db_context.worker_tasks.create_task(
@@ -478,9 +472,7 @@ class TestCleanupProtectsActive:
     """Tests for cleanup_old_tasks skipping active tasks."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_skips_submitted_tasks(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_cleanup_skips_submitted_tasks(self, db_context: Database) -> None:
         """Old tasks in 'submitted' status should not be deleted by cleanup."""
         # Create two old tasks: one submitted (active), one success (terminal)
         await db_context.worker_tasks.create_task(
@@ -522,9 +514,7 @@ class TestCleanupProtectsActive:
         assert task is None
 
     @pytest.mark.asyncio
-    async def test_cleanup_skips_running_tasks(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_cleanup_skips_running_tasks(self, db_context: Database) -> None:
         """Old tasks in 'running' status should not be deleted by cleanup."""
         await db_context.worker_tasks.create_task(
             task_id="old-running",

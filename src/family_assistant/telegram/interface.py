@@ -11,7 +11,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
 from family_assistant.interfaces import ChatInterface
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 
 if TYPE_CHECKING:
@@ -263,230 +263,220 @@ class TelegramChatInterface(ChatInterface):
             return message_ids
 
         try:
-            async with DatabaseContext(
-                self.attachment_registry.db_engine
-            ) as db_context:
-                attachments_data = []
-                for attachment_id in attachment_ids:
-                    try:
-                        metadata = await self.attachment_registry.get_attachment(
-                            db_context,
-                            attachment_id,
-                            acting_user_id=on_behalf_of_user_id,
-                        )
-                        if not metadata:
-                            logger.warning(f"Attachment {attachment_id} not found")
-                            continue
+            db_context = Database(self.attachment_registry.db_engine)
+            attachments_data = []
+            for attachment_id in attachment_ids:
+                try:
+                    metadata = await self.attachment_registry.get_attachment(
+                        db_context,
+                        attachment_id,
+                        acting_user_id=on_behalf_of_user_id,
+                    )
+                    if not metadata:
+                        logger.warning(f"Attachment {attachment_id} not found")
+                        continue
 
-                        content = await self.attachment_registry.get_attachment_content(
-                            db_context,
-                            attachment_id,
-                            acting_user_id=on_behalf_of_user_id,
-                        )
-                        if not content:
-                            logger.warning(
-                                f"Content for attachment {attachment_id} not found"
-                            )
-                            continue
-
-                        attachments_data.append({
-                            "id": attachment_id,
-                            "metadata": metadata,
-                            "content": content,
-                        })
-                    except Exception as e:
-                        logger.exception(
-                            f"Error fetching attachment {attachment_id}: {e}"
+                    content = await self.attachment_registry.get_attachment_content(
+                        db_context,
+                        attachment_id,
+                        acting_user_id=on_behalf_of_user_id,
+                    )
+                    if not content:
+                        logger.warning(
+                            f"Content for attachment {attachment_id} not found"
                         )
                         continue
 
-                i = 0
-                while i < len(attachments_data):
-                    attachment = attachments_data[i]
-                    content_type = attachment["metadata"].mime_type or ""
+                    attachments_data.append({
+                        "id": attachment_id,
+                        "metadata": metadata,
+                        "content": content,
+                    })
+                except Exception as e:
+                    logger.exception(f"Error fetching attachment {attachment_id}: {e}")
+                    continue
 
-                    if content_type.startswith("image/"):
-                        image_group = [attachment]
-                        j = i + 1
-                        while j < len(attachments_data):
-                            next_attachment = attachments_data[j]
-                            next_content_type = (
-                                next_attachment["metadata"].mime_type or ""
-                            )
-                            if next_content_type.startswith("image/"):
-                                image_group.append(next_attachment)
-                                j += 1
-                            else:
-                                break
+            i = 0
+            while i < len(attachments_data):
+                attachment = attachments_data[i]
+                content_type = attachment["metadata"].mime_type or ""
 
-                        if len(image_group) > 1:
-                            media_group = []
-                            resize_notes = []
-                            oversized_attachments = []
-
-                            for img_data in image_group:
-                                processed_content, size_note = (
-                                    self._resize_image_if_needed(
-                                        img_data["content"],
-                                        img_data["id"],
-                                    )
-                                )
-
-                                if size_note:
-                                    resize_notes.append(size_note)
-
-                                if len(processed_content) > TELEGRAM_PHOTO_SIZE_LIMIT:
-                                    oversized_attachments.append(img_data)
-                                    continue
-
-                                media_group.append(
-                                    InputMediaPhoto(media=io.BytesIO(processed_content))
-                                )
-
-                            caption_parts = []
-                            first_filename = (
-                                image_group[0]["metadata"].description
-                                or f"attachment_{image_group[0]['id']}"
-                            )
-                            caption_parts.append(first_filename)
-
-                            if resize_notes:
-                                caption_parts.extend(resize_notes)
-
-                            caption = "\n".join(caption_parts)[:1024]
-
-                            if media_group:
-                                sent_messages = (
-                                    await self.application.bot.send_media_group(
-                                        chat_id=chat_id,
-                                        media=media_group,
-                                        reply_to_message_id=reply_to_msg_id,
-                                        caption=caption,
-                                    )
-                                )
-                                for sent_msg in sent_messages:
-                                    message_ids.append(str(sent_msg.message_id))
-
-                                logger.info(
-                                    f"Sent media group with {len(media_group)} images: "
-                                    f"{[img['id'] for img in image_group if img not in oversized_attachments]}"
-                                )
-
-                            for img_data in oversized_attachments:
-                                filename = (
-                                    img_data["metadata"].description
-                                    or f"attachment_{img_data['id']}"
-                                )
-                                sent_msg = await self.application.bot.send_document(
-                                    chat_id=chat_id,
-                                    document=io.BytesIO(img_data["content"]),
-                                    filename=filename,
-                                    caption=f"Image too large to send as photo (>10MB)\n[View: /attachment {img_data['id']}]",
-                                    reply_to_message_id=reply_to_msg_id,
-                                )
-                                message_ids.append(str(sent_msg.message_id))
-                                logger.warning(
-                                    f"Sent oversized image {img_data['id']} as document"
-                                )
-
+                if content_type.startswith("image/"):
+                    image_group = [attachment]
+                    j = i + 1
+                    while j < len(attachments_data):
+                        next_attachment = attachments_data[j]
+                        next_content_type = next_attachment["metadata"].mime_type or ""
+                        if next_content_type.startswith("image/"):
+                            image_group.append(next_attachment)
+                            j += 1
                         else:
-                            img_data = image_group[0]
+                            break
+
+                    if len(image_group) > 1:
+                        media_group = []
+                        resize_notes = []
+                        oversized_attachments = []
+
+                        for img_data in image_group:
                             processed_content, size_note = self._resize_image_if_needed(
-                                img_data["content"], img_data["id"]
+                                img_data["content"],
+                                img_data["id"],
                             )
 
-                            caption_parts = []
+                            if size_note:
+                                resize_notes.append(size_note)
+
+                            if len(processed_content) > TELEGRAM_PHOTO_SIZE_LIMIT:
+                                oversized_attachments.append(img_data)
+                                continue
+
+                            media_group.append(
+                                InputMediaPhoto(media=io.BytesIO(processed_content))
+                            )
+
+                        caption_parts = []
+                        first_filename = (
+                            image_group[0]["metadata"].description
+                            or f"attachment_{image_group[0]['id']}"
+                        )
+                        caption_parts.append(first_filename)
+
+                        if resize_notes:
+                            caption_parts.extend(resize_notes)
+
+                        caption = "\n".join(caption_parts)[:1024]
+
+                        if media_group:
+                            sent_messages = await self.application.bot.send_media_group(
+                                chat_id=chat_id,
+                                media=media_group,
+                                reply_to_message_id=reply_to_msg_id,
+                                caption=caption,
+                            )
+                            for sent_msg in sent_messages:
+                                message_ids.append(str(sent_msg.message_id))
+
+                            logger.info(
+                                f"Sent media group with {len(media_group)} images: "
+                                f"{[img['id'] for img in image_group if img not in oversized_attachments]}"
+                            )
+
+                        for img_data in oversized_attachments:
                             filename = (
                                 img_data["metadata"].description
                                 or f"attachment_{img_data['id']}"
                             )
-                            caption_parts.append(filename)
+                            sent_msg = await self.application.bot.send_document(
+                                chat_id=chat_id,
+                                document=io.BytesIO(img_data["content"]),
+                                filename=filename,
+                                caption=f"Image too large to send as photo (>10MB)\n[View: /attachment {img_data['id']}]",
+                                reply_to_message_id=reply_to_msg_id,
+                            )
+                            message_ids.append(str(sent_msg.message_id))
+                            logger.warning(
+                                f"Sent oversized image {img_data['id']} as document"
+                            )
 
-                            if size_note:
-                                caption_parts.append(size_note)
-
-                            caption = "\n".join(caption_parts)[:1024]
-
-                            if len(processed_content) > TELEGRAM_PHOTO_SIZE_LIMIT:
-                                filename = (
-                                    img_data["metadata"].description
-                                    or f"attachment_{img_data['id']}"
-                                )
-                                sent_msg = await self.application.bot.send_document(
-                                    chat_id=chat_id,
-                                    document=io.BytesIO(img_data["content"]),
-                                    filename=filename,
-                                    caption=f"Image too large to send as photo (>10MB)\n[View: /attachment {img_data['id']}]",
-                                    reply_to_message_id=reply_to_msg_id,
-                                )
-                                message_ids.append(str(sent_msg.message_id))
-                                logger.warning(
-                                    f"Sent oversized image {img_data['id']} as document"
-                                )
-                            else:
-                                sent_msg = await self.application.bot.send_photo(
-                                    chat_id=chat_id,
-                                    photo=io.BytesIO(processed_content),
-                                    caption=caption,
-                                    reply_to_message_id=reply_to_msg_id,
-                                )
-                                message_ids.append(str(sent_msg.message_id))
-                                logger.info(
-                                    f"Sent image attachment {img_data['id']} as message {sent_msg.message_id}"
-                                )
-
-                        i = j
-                    elif content_type.startswith("video/"):
-                        # Send as video
-                        caption = (
-                            attachment["metadata"].description
-                            or f"attachment_{attachment['id']}"
-                        )[:1024]
-
-                        sent_msg = await self.application.bot.send_video(
-                            chat_id=chat_id,
-                            video=io.BytesIO(attachment["content"]),
-                            caption=caption,
-                            reply_to_message_id=reply_to_msg_id,
-                        )
-                        message_ids.append(str(sent_msg.message_id))
-                        logger.info(
-                            f"Sent video attachment {attachment['id']} as message {sent_msg.message_id}"
-                        )
-                        i += 1
                     else:
-                        # Determine filename
-                        filename = None
-                        metadata_dict = attachment["metadata"].metadata
-                        if metadata_dict and "original_filename" in metadata_dict:
-                            filename = metadata_dict["original_filename"]
-
-                        if not filename:
-                            # Construct filename
-                            ext = mimetypes.guess_extension(content_type) or ""
-                            # Handle common types explicitly if mimetypes fails or returns weird extensions
-                            if content_type == "text/plain" and not ext:
-                                ext = ".txt"
-
-                            filename = f"attachment_{attachment['id']}{ext}"
-
-                        caption = (
-                            attachment["metadata"].description
-                            or f"attachment_{attachment['id']}"
-                        )[:1024]
-
-                        sent_msg = await self.application.bot.send_document(
-                            chat_id=chat_id,
-                            document=io.BytesIO(attachment["content"]),
-                            filename=filename,
-                            caption=caption,
-                            reply_to_message_id=reply_to_msg_id,
+                        img_data = image_group[0]
+                        processed_content, size_note = self._resize_image_if_needed(
+                            img_data["content"], img_data["id"]
                         )
-                        message_ids.append(str(sent_msg.message_id))
-                        logger.info(
-                            f"Sent document attachment {attachment['id']} as message {sent_msg.message_id}"
+
+                        caption_parts = []
+                        filename = (
+                            img_data["metadata"].description
+                            or f"attachment_{img_data['id']}"
                         )
-                        i += 1
+                        caption_parts.append(filename)
+
+                        if size_note:
+                            caption_parts.append(size_note)
+
+                        caption = "\n".join(caption_parts)[:1024]
+
+                        if len(processed_content) > TELEGRAM_PHOTO_SIZE_LIMIT:
+                            filename = (
+                                img_data["metadata"].description
+                                or f"attachment_{img_data['id']}"
+                            )
+                            sent_msg = await self.application.bot.send_document(
+                                chat_id=chat_id,
+                                document=io.BytesIO(img_data["content"]),
+                                filename=filename,
+                                caption=f"Image too large to send as photo (>10MB)\n[View: /attachment {img_data['id']}]",
+                                reply_to_message_id=reply_to_msg_id,
+                            )
+                            message_ids.append(str(sent_msg.message_id))
+                            logger.warning(
+                                f"Sent oversized image {img_data['id']} as document"
+                            )
+                        else:
+                            sent_msg = await self.application.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=io.BytesIO(processed_content),
+                                caption=caption,
+                                reply_to_message_id=reply_to_msg_id,
+                            )
+                            message_ids.append(str(sent_msg.message_id))
+                            logger.info(
+                                f"Sent image attachment {img_data['id']} as message {sent_msg.message_id}"
+                            )
+
+                    i = j
+                elif content_type.startswith("video/"):
+                    # Send as video
+                    caption = (
+                        attachment["metadata"].description
+                        or f"attachment_{attachment['id']}"
+                    )[:1024]
+
+                    sent_msg = await self.application.bot.send_video(
+                        chat_id=chat_id,
+                        video=io.BytesIO(attachment["content"]),
+                        caption=caption,
+                        reply_to_message_id=reply_to_msg_id,
+                    )
+                    message_ids.append(str(sent_msg.message_id))
+                    logger.info(
+                        f"Sent video attachment {attachment['id']} as message {sent_msg.message_id}"
+                    )
+                    i += 1
+                else:
+                    # Determine filename
+                    filename = None
+                    metadata_dict = attachment["metadata"].metadata
+                    if metadata_dict and "original_filename" in metadata_dict:
+                        filename = metadata_dict["original_filename"]
+
+                    if not filename:
+                        # Construct filename
+                        ext = mimetypes.guess_extension(content_type) or ""
+                        # Handle common types explicitly if mimetypes fails or returns weird extensions
+                        if content_type == "text/plain" and not ext:
+                            ext = ".txt"
+
+                        filename = f"attachment_{attachment['id']}{ext}"
+
+                    caption = (
+                        attachment["metadata"].description
+                        or f"attachment_{attachment['id']}"
+                    )[:1024]
+
+                    sent_msg = await self.application.bot.send_document(
+                        chat_id=chat_id,
+                        document=io.BytesIO(attachment["content"]),
+                        filename=filename,
+                        caption=caption,
+                        reply_to_message_id=reply_to_msg_id,
+                    )
+                    message_ids.append(str(sent_msg.message_id))
+                    logger.info(
+                        f"Sent document attachment {attachment['id']} as message {sent_msg.message_id}"
+                    )
+                    i += 1
 
         except Exception as e:
             logger.exception(f"Error in _send_attachments: {e}")

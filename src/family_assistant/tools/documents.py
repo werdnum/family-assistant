@@ -43,7 +43,7 @@ from family_assistant.tools.types import (
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.embeddings import EmbeddingGenerator
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolExecutionContext
 
 
@@ -703,7 +703,7 @@ async def reindex_email_tool(
         # email row may still point at a stale/NULL task id even though a
         # fresh indexing job is already pending. Repair the link here so
         # callers always see the task that's actually in flight.
-        await db_context.execute_with_retry(
+        await db_context.execute(
             update(received_emails_table)
             .where(received_emails_table.c.id == email_db_id)
             .values(indexing_task_id=existing_task["task_id"])
@@ -732,7 +732,7 @@ async def reindex_email_tool(
     # Keep ``received_emails.indexing_task_id`` in sync with the newly
     # enqueued job so any status/debugging code that reads it sees the
     # currently-active task rather than a stale or NULL reference.
-    await db_context.execute_with_retry(
+    await db_context.execute(
         update(received_emails_table)
         .where(received_emails_table.c.id == email_db_id)
         .values(indexing_task_id=task_id)
@@ -786,7 +786,7 @@ def format_email_attachments_text(
 
 async def resolve_email_attachments(
     *,
-    db_context: DatabaseContext,
+    db_context: Database,
     message_id_header: str,
 ) -> list[EmailAttachmentSummary] | None:
     """Return a read-only summary of attachments for an email.
@@ -833,7 +833,7 @@ async def resolve_email_attachments(
 
 
 async def _get_text_content_fallback(
-    db_context: DatabaseContext, document_id: int
+    db_context: Database, document_id: int
 ) -> str | None:
     """Helper function to get text content from embeddings."""
     # First try to get raw/full content types that contain complete text

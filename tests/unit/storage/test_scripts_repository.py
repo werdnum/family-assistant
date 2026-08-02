@@ -6,21 +6,21 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    """Provides an entered DatabaseContext for repository tests."""
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        yield db_ctx
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
+    """Provides an entered Database for repository tests."""
+    db_ctx = Database(engine=db_engine)
+    yield db_ctx
 
 
 class TestScriptsRepository:
     """Tests for ScriptsRepository operations."""
 
     @pytest.mark.asyncio
-    async def test_save_and_get_by_name(self, db_context: DatabaseContext) -> None:
+    async def test_save_and_get_by_name(self, db_context: Database) -> None:
         """Test saving a script and retrieving it by name."""
         name = "test_script"
         description = "A test script"
@@ -52,9 +52,7 @@ class TestScriptsRepository:
         assert retrieved.parameters_schema is None
 
     @pytest.mark.asyncio
-    async def test_save_upsert_updates_existing(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_save_upsert_updates_existing(self, db_context: Database) -> None:
         """Test that saving with same name updates the existing script."""
         name = "upsert_test"
         original_code = "print('original')"
@@ -84,13 +82,13 @@ class TestScriptsRepository:
         assert saved2.updated_at >= saved1.updated_at
 
     @pytest.mark.asyncio
-    async def test_get_by_name_not_found(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_name_not_found(self, db_context: Database) -> None:
         """Test that get_by_name returns None for nonexistent name."""
         result = await db_context.scripts.get_by_name("nonexistent_script")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_by_id(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_id(self, db_context: Database) -> None:
         """Test saving a script and retrieving it by ID."""
         name = "get_by_id_test"
         description = "Test get by ID"
@@ -113,19 +111,19 @@ class TestScriptsRepository:
         assert retrieved.script_code == script_code
 
     @pytest.mark.asyncio
-    async def test_get_by_id_not_found(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_id_not_found(self, db_context: Database) -> None:
         """Test that get_by_id returns None for nonexistent ID."""
         result = await db_context.scripts.get_by_id(99999)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_list_all_empty(self, db_context: DatabaseContext) -> None:
+    async def test_list_all_empty(self, db_context: Database) -> None:
         """Test that list_all returns empty list when no scripts exist."""
         scripts = await db_context.scripts.list_all()
         assert scripts == []
 
     @pytest.mark.asyncio
-    async def test_list_all(self, db_context: DatabaseContext) -> None:
+    async def test_list_all(self, db_context: Database) -> None:
         """Test listing all scripts returns them ordered by name."""
         # Save multiple scripts
         script_names = ["charlie", "alice", "bob"]
@@ -147,7 +145,7 @@ class TestScriptsRepository:
         assert retrieved_names == ["alice", "bob", "charlie"]
 
     @pytest.mark.asyncio
-    async def test_delete(self, db_context: DatabaseContext) -> None:
+    async def test_delete(self, db_context: Database) -> None:
         """Test deleting a script by name."""
         name = "delete_test"
 
@@ -171,15 +169,13 @@ class TestScriptsRepository:
         assert retrieved is None
 
     @pytest.mark.asyncio
-    async def test_delete_not_found(self, db_context: DatabaseContext) -> None:
+    async def test_delete_not_found(self, db_context: Database) -> None:
         """Test that deleting a nonexistent script returns False."""
         result = await db_context.scripts.delete("nonexistent_script")
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_save_with_parameters_schema(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_save_with_parameters_schema(self, db_context: Database) -> None:
         """Test saving a script with a JSON schema."""
         name = "schema_test"
         schema = {
@@ -208,9 +204,7 @@ class TestScriptsRepository:
         assert retrieved.parameters_schema == schema
 
     @pytest.mark.asyncio
-    async def test_save_without_parameters_schema(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_save_without_parameters_schema(self, db_context: Database) -> None:
         """Test saving without schema returns None for parameters_schema."""
         name = "no_schema_test"
 
@@ -231,7 +225,7 @@ class TestScriptsRepository:
 
     @pytest.mark.asyncio
     async def test_save_with_complex_parameters_schema(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test saving with a complex nested JSON schema."""
         name = "complex_schema_test"

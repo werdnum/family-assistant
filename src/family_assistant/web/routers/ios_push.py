@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import exc as sqlalchemy_exc
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.auth import User
 from family_assistant.web.dependencies import get_current_user, get_db
 
@@ -30,7 +30,7 @@ class IosPushTokenRequest(BaseModel):
 async def register_token(
     request: IosPushTokenRequest,
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Register (or refresh) an iOS APNs device token for the current user.
 
@@ -66,7 +66,7 @@ async def register_token(
 async def unregister_token(
     token: str,
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Unregister an iOS APNs device token belonging to the current user.
 

@@ -12,7 +12,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.types import ToolResult
 from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
@@ -74,15 +74,15 @@ async def test_empty_response_retries_and_succeeds(
     service = _make_service(llm_client)
 
     with caplog.at_level(logging.WARNING, logger="family_assistant.processing"):
-        async with get_db_context(db_engine) as db_context:
-            result = await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-1",
-                trigger_content_parts=[{"type": "text", "text": "Hello"}],
-                trigger_interface_message_id="msg-1",
-                user_name="TestUser",
-            )
+        db_context = Database(db_engine)
+        result = await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-1",
+            trigger_content_parts=[{"type": "text", "text": "Hello"}],
+            trigger_interface_message_id="msg-1",
+            user_name="TestUser",
+        )
 
     assert result.text_reply == "Here is my response"
     assert call_count == 2
@@ -106,15 +106,15 @@ async def test_empty_response_retry_exhausted_still_returns(
     service = _make_service(llm_client)
 
     with caplog.at_level(logging.WARNING, logger="family_assistant.processing"):
-        async with get_db_context(db_engine) as db_context:
-            result = await service.handle_chat_interaction(
-                db_context=db_context,
-                interface_type="test",
-                conversation_id="test-conv-2",
-                trigger_content_parts=[{"type": "text", "text": "Hello"}],
-                trigger_interface_message_id="msg-2",
-                user_name="TestUser",
-            )
+        db_context = Database(db_engine)
+        result = await service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type="test",
+            conversation_id="test-conv-2",
+            trigger_content_parts=[{"type": "text", "text": "Hello"}],
+            trigger_interface_message_id="msg-2",
+            user_name="TestUser",
+        )
 
     # Both attempts were empty; response should be None/empty
     assert not result.text_reply

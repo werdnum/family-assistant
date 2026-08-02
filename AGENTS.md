@@ -447,15 +447,44 @@ placement, auth, and the error-vs-telemetry reporting lanes.
 - Always use symbolic SQLAlchemy queries, avoid literal SQL text as much as possible. Literal SQL
   text may break across engines.
 
-- **Database Access Pattern**: Use the repository pattern via DatabaseContext:
+- **Database Access Pattern**: use the repository pattern via a `Database` handle. It is **not** a
+  context manager: every operation on it opens its own transaction and commits before returning, so
+  the write is durable when the call returns and the handle can be passed freely across turns,
+  tasks, and tool calls.
 
   ```python
-  from family_assistant.storage.context import DatabaseContext
+  from family_assistant.storage.database import Database
 
-  async with DatabaseContext() as db:
-      await db.notes.add_or_update(title, content)
-      tasks = await db.tasks.get_pending_tasks()
+  db = Database(engine)
+  await db.notes.add_or_update(title, content)   # committed
+  tasks = await db.tasks.get_pending_tasks()
   ```
+
+  Reach for `DatabaseTransaction` only where rollback is load-bearing — a sequence that must not be
+  half-applied:
+
+  ```python
+  async with db.transaction() as txn:
+      run_id = await txn.delegation_runs.create_run(...)
+      await txn.tasks.enqueue(DELEGATED_PROFILE_RUN_TASK_TYPE, ...)
+  ```
+
+  Three rules follow, all enforced at runtime rather than by review:
+
+  - **Nothing inside a transaction may reach the handle.** Use `txn.<repository>`, hoist handle work
+    to before the block, or — for genuinely detached work — `spawn_detached()`. A handle operation
+    under an open transaction raises `AmbientTransactionError` in production on both backends,
+    because the alternatives are a deadlock on SQLite and a silent escape from rollback on
+    PostgreSQL.
+  - **Converting a site to a transaction includes auditing its call tree.** Everything reached from
+    inside must take the `DatabaseTransaction` or touch no database at all — including chat
+    interfaces, which resolve targets and fetch attachments from their own handle while sending.
+  - **No transaction may span an LLM call, a tool dispatch, or a network round trip.** Split the
+    work; do not widen the block.
+
+  For multi-statement repository methods, use the closure form `await db.atomic(body)` rather than
+  the block: it can be replayed after a rollback, which is what makes serialization failures and
+  deadlocks retryable. See [docs/design/db-commit-as-you-go.md](docs/design/db-commit-as-you-go.md).
 
 - **SQLAlchemy Count Queries**: give `func.count()` an alias with `.label("count")` — this avoids a
   KeyError when accessing the result:

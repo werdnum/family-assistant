@@ -17,7 +17,7 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.errors import ScriptError
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     TaskWorker,
@@ -97,7 +97,7 @@ async def _provider_without_note_tool() -> CompositeToolsProvider:
 
 def _build_script_exec_context(
     *,
-    db_ctx: DatabaseContext,
+    db_ctx: Database,
     conversation_id: str,
     processing_service: ProcessingService,
     processing_profile_id: str | None = None,
@@ -142,26 +142,26 @@ async def test_script_executes_under_creating_profile(db_engine: AsyncEngine) ->
 add_or_update_note(title="Provenance {test_run_id}", content="written by script")
 """
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = _build_script_exec_context(
-            db_ctx=db_ctx,
-            conversation_id=f"prov_{test_run_id}",
-            processing_service=default_service,
-        )
-        await handle_script_execution(
-            exec_context,
-            {
-                "script_code": script_code,
-                "conversation_id": f"prov_{test_run_id}",
-                "processing_profile_id": "creator_profile",
-                "config": {},
-            },
-        )
+    db_ctx = Database(engine=db_engine)
+    exec_context = _build_script_exec_context(
+        db_ctx=db_ctx,
+        conversation_id=f"prov_{test_run_id}",
+        processing_service=default_service,
+    )
+    await handle_script_execution(
+        exec_context,
+        {
+            "script_code": script_code,
+            "conversation_id": f"prov_{test_run_id}",
+            "processing_profile_id": "creator_profile",
+            "config": {},
+        },
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        notes = await db_ctx.notes.get_all(visibility_grants=None)
-        matching = [n for n in notes if f"Provenance {test_run_id}" in n.title]
-        assert len(matching) == 1
+    db_ctx = Database(engine=db_engine)
+    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    matching = [n for n in notes if f"Provenance {test_run_id}" in n.title]
+    assert len(matching) == 1
 
 
 @pytest.mark.asyncio
@@ -186,28 +186,28 @@ async def test_script_falls_back_to_default_profile_for_legacy_automation(
 add_or_update_note(title="Legacy {test_run_id}", content="should not be written")
 """
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = _build_script_exec_context(
-            db_ctx=db_ctx,
-            conversation_id=f"legacy_{test_run_id}",
-            processing_service=default_service,
+    db_ctx = Database(engine=db_engine)
+    exec_context = _build_script_exec_context(
+        db_ctx=db_ctx,
+        conversation_id=f"legacy_{test_run_id}",
+        processing_service=default_service,
+    )
+    # No processing_profile_id -> falls back to the default profile, which
+    # does not expose add_or_update_note, so the script raises.
+    with pytest.raises(ScriptError):
+        await handle_script_execution(
+            exec_context,
+            {
+                "script_code": script_code,
+                "conversation_id": f"legacy_{test_run_id}",
+                "config": {},
+            },
         )
-        # No processing_profile_id -> falls back to the default profile, which
-        # does not expose add_or_update_note, so the script raises.
-        with pytest.raises(ScriptError):
-            await handle_script_execution(
-                exec_context,
-                {
-                    "script_code": script_code,
-                    "conversation_id": f"legacy_{test_run_id}",
-                    "config": {},
-                },
-            )
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        notes = await db_ctx.notes.get_all(visibility_grants=None)
-        matching = [n for n in notes if f"Legacy {test_run_id}" in n.title]
-        assert len(matching) == 0
+    db_ctx = Database(engine=db_engine)
+    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    matching = [n for n in notes if f"Legacy {test_run_id}" in n.title]
+    assert len(matching) == 0
 
 
 @pytest.mark.asyncio
@@ -224,22 +224,22 @@ async def test_script_with_unresolvable_stamped_profile_fails(
         registry={},
     )
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = _build_script_exec_context(
-            db_ctx=db_ctx,
-            conversation_id=f"missing_{test_run_id}",
-            processing_service=default_service,
+    db_ctx = Database(engine=db_engine)
+    exec_context = _build_script_exec_context(
+        db_ctx=db_ctx,
+        conversation_id=f"missing_{test_run_id}",
+        processing_service=default_service,
+    )
+    with pytest.raises(RuntimeError, match="cannot be resolved"):
+        await handle_script_execution(
+            exec_context,
+            {
+                "script_code": "x = 1\n",
+                "conversation_id": f"missing_{test_run_id}",
+                "processing_profile_id": "removed_profile",
+                "config": {},
+            },
         )
-        with pytest.raises(RuntimeError, match="cannot be resolved"):
-            await handle_script_execution(
-                exec_context,
-                {
-                    "script_code": "x = 1\n",
-                    "conversation_id": f"missing_{test_run_id}",
-                    "processing_profile_id": "removed_profile",
-                    "config": {},
-                },
-            )
 
 
 @pytest.mark.asyncio
@@ -254,25 +254,25 @@ async def test_create_automation_validates_stored_script_against_profile(
         tools_provider=await _provider_without_note_tool(),
     )
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.scripts.save(
-            name="note-writer",
-            description="Writes a note",
-            script_code='add_or_update_note(title="t", content="c")\n',
-        )
-        exec_context = _build_script_exec_context(
-            db_ctx=db_ctx,
-            conversation_id="stored_profile_conv",
-            processing_service=limited_service,
-        )
-        result = await create_automation_tool(
-            exec_context=exec_context,
-            name="Stored Script Profile Check",
-            automation_type="event",
-            trigger_config={"event_source": "home_assistant", "event_filter": {}},
-            action_type="script",
-            action_config={"script_name": "note-writer"},
-        )
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.scripts.save(
+        name="note-writer",
+        description="Writes a note",
+        script_code='add_or_update_note(title="t", content="c")\n',
+    )
+    exec_context = _build_script_exec_context(
+        db_ctx=db_ctx,
+        conversation_id="stored_profile_conv",
+        processing_service=limited_service,
+    )
+    result = await create_automation_tool(
+        exec_context=exec_context,
+        name="Stored Script Profile Check",
+        automation_type="event",
+        trigger_config={"event_source": "home_assistant", "event_filter": {}},
+        action_type="script",
+        action_config={"script_name": "note-writer"},
+    )
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -291,25 +291,25 @@ async def test_create_automation_accepts_stored_script_matching_profile(
         tools_provider=await _provider_with_note_tool(),
     )
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await db_ctx.scripts.save(
-            name="note-writer",
-            description="Writes a note",
-            script_code='add_or_update_note(title="t", content="c")\n',
-        )
-        exec_context = _build_script_exec_context(
-            db_ctx=db_ctx,
-            conversation_id="stored_profile_ok_conv",
-            processing_service=capable_service,
-        )
-        result = await create_automation_tool(
-            exec_context=exec_context,
-            name="Stored Script Profile OK",
-            automation_type="event",
-            trigger_config={"event_source": "home_assistant", "event_filter": {}},
-            action_type="script",
-            action_config={"script_name": "note-writer"},
-        )
+    db_ctx = Database(engine=db_engine)
+    await db_ctx.scripts.save(
+        name="note-writer",
+        description="Writes a note",
+        script_code='add_or_update_note(title="t", content="c")\n',
+    )
+    exec_context = _build_script_exec_context(
+        db_ctx=db_ctx,
+        conversation_id="stored_profile_ok_conv",
+        processing_service=capable_service,
+    )
+    result = await create_automation_tool(
+        exec_context=exec_context,
+        name="Stored Script Profile OK",
+        automation_type="event",
+        trigger_config={"event_source": "home_assistant", "event_filter": {}},
+        action_type="script",
+        action_config={"script_name": "note-writer"},
+    )
 
     data = result.get_data()
     assert isinstance(data, dict)
@@ -323,22 +323,22 @@ async def test_execute_action_script_payload_includes_interface(
     """Queued script actions carry the interface type, so contexts built from
     the payload (and any deferred confirmations they create) record the real
     origin interface instead of the worker's 'unknown_interface' default."""
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        await execute_action(
-            db_ctx=db_ctx,
-            action_type=ActionType.SCRIPT,
-            action_config={"script_code": "x = 1\n"},
-            conversation_id="iface_conv",
-            interface_type="telegram",
-        )
+    db_ctx = Database(engine=db_engine)
+    await execute_action(
+        db_ctx=db_ctx,
+        action_type=ActionType.SCRIPT,
+        action_config={"script_code": "x = 1\n"},
+        conversation_id="iface_conv",
+        interface_type="telegram",
+    )
 
-        rows = await db_ctx.fetch_all(
-            select(tasks_table).where(tasks_table.c.task_type == "script_execution")
-        )
-        assert len(rows) == 1
-        payload = rows[0]["payload"]
-        assert payload["interface_type"] == "telegram"
-        assert payload["conversation_id"] == "iface_conv"
+    rows = await db_ctx.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "script_execution")
+    )
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert payload["interface_type"] == "telegram"
+    assert payload["conversation_id"] == "iface_conv"
 
 
 @pytest.mark.asyncio
@@ -353,37 +353,37 @@ async def test_script_confirm_gated_tool_defers_to_durable_confirmation(
     )
     callback = build_script_confirmation_callback("owner-user")
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = _build_script_exec_context(
-            db_ctx=db_ctx,
-            conversation_id="confirm_conv",
-            processing_service=default_service,
-            processing_profile_id="creator_profile",
-        )
-        outcome = await callback(
-            interface_type="web",
-            conversation_id="confirm_conv",
-            turn_id="test_turn",
-            tool_name="delete_calendar_event",
-            call_id="call-1",
-            tool_args={"event_id": "evt-123"},
-            timeout_seconds=3600.0,
-            context=exec_context,
-        )
+    db_ctx = Database(engine=db_engine)
+    exec_context = _build_script_exec_context(
+        db_ctx=db_ctx,
+        conversation_id="confirm_conv",
+        processing_service=default_service,
+        processing_profile_id="creator_profile",
+    )
+    outcome = await callback(
+        interface_type="web",
+        conversation_id="confirm_conv",
+        turn_id="test_turn",
+        tool_name="delete_calendar_event",
+        call_id="call-1",
+        tool_args={"event_id": "evt-123"},
+        timeout_seconds=3600.0,
+        context=exec_context,
+    )
 
-        assert outcome.kind == "completed"
-        assert isinstance(outcome.result, str)
-        assert "hasn't run yet" in outcome.result
+    assert outcome.kind == "completed"
+    assert isinstance(outcome.result, str)
+    assert "hasn't run yet" in outcome.result
 
-        pending = await db_ctx.confirmation_requests.list_pending_for_user("owner-user")
-        assert len(pending) == 1
-        assert pending[0]["tool_name"] == "delete_calendar_event"
-        # The confirmation records the creating profile and origin conversation
-        # so the deferred execution runs under the same profile and acts in the
-        # requesting conversation rather than the worker's placeholder context.
-        assert pending[0]["processing_profile_id"] == "creator_profile"
-        assert pending[0]["origin_interface_type"] == "web"
-        assert pending[0]["origin_conversation_id"] == "confirm_conv"
+    pending = await db_ctx.confirmation_requests.list_pending_for_user("owner-user")
+    assert len(pending) == 1
+    assert pending[0]["tool_name"] == "delete_calendar_event"
+    # The confirmation records the creating profile and origin conversation
+    # so the deferred execution runs under the same profile and acts in the
+    # requesting conversation rather than the worker's placeholder context.
+    assert pending[0]["processing_profile_id"] == "creator_profile"
+    assert pending[0]["origin_interface_type"] == "web"
+    assert pending[0]["origin_conversation_id"] == "confirm_conv"
 
 
 @pytest.mark.asyncio
@@ -398,22 +398,22 @@ async def test_script_confirm_gated_tool_without_owner_is_not_run(
     )
     callback = build_script_confirmation_callback(None)
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = _build_script_exec_context(
-            db_ctx=db_ctx,
-            conversation_id="confirm_legacy_conv",
-            processing_service=default_service,
-        )
-        outcome = await callback(
-            interface_type="web",
-            conversation_id="confirm_legacy_conv",
-            turn_id="test_turn",
-            tool_name="delete_calendar_event",
-            call_id="call-1",
-            tool_args={"event_id": "evt-123"},
-            timeout_seconds=3600.0,
-            context=exec_context,
-        )
+    db_ctx = Database(engine=db_engine)
+    exec_context = _build_script_exec_context(
+        db_ctx=db_ctx,
+        conversation_id="confirm_legacy_conv",
+        processing_service=default_service,
+    )
+    outcome = await callback(
+        interface_type="web",
+        conversation_id="confirm_legacy_conv",
+        turn_id="test_turn",
+        tool_name="delete_calendar_event",
+        call_id="call-1",
+        tool_args={"event_id": "evt-123"},
+        timeout_seconds=3600.0,
+        context=exec_context,
+    )
 
     assert outcome.kind == "failed"
     assert isinstance(outcome.result, str)
@@ -423,45 +423,45 @@ async def test_script_confirm_gated_tool_without_owner_is_not_run(
 @pytest.mark.asyncio
 async def test_get_automation_stats_event(db_engine: AsyncEngine) -> None:
     """Test getting execution stats for an event automation."""
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="web",
-            conversation_id="stats_conv",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(engine=db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="stats_conv",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await create_automation_tool(
-            exec_context=exec_context,
-            name="Stats Test",
-            automation_type="event",
-            trigger_config={"event_source": "home_assistant", "event_filter": {}},
-            action_type="wake_llm",
-            action_config={"context": "Test"},
-        )
+    result = await create_automation_tool(
+        exec_context=exec_context,
+        name="Stats Test",
+        automation_type="event",
+        trigger_config={"event_source": "home_assistant", "event_filter": {}},
+        action_type="wake_llm",
+        action_config={"context": "Test"},
+    )
 
-        data = result.get_data()
-        assert isinstance(data, dict), "Expected structured data"
-        assert "id" in data, "Missing id in result data"
-        auto_id = int(data["id"])
+    data = result.get_data()
+    assert isinstance(data, dict), "Expected structured data"
+    assert "id" in data, "Missing id in result data"
+    auto_id = int(data["id"])
 
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context.db_context = db_ctx
-        result = await get_automation_stats_tool(
-            exec_context=exec_context,
-            automation_id=auto_id,
-            automation_type="event",
-        )
+    db_ctx = Database(engine=db_engine)
+    exec_context.db_context = db_ctx
+    result = await get_automation_stats_tool(
+        exec_context=exec_context,
+        automation_id=auto_id,
+        automation_type="event",
+    )
 
     assert "Statistics for automation" in result.get_text()
     assert "Total executions: 0" in result.get_text()
@@ -470,29 +470,29 @@ async def test_get_automation_stats_event(db_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_get_automation_stats_not_found(db_engine: AsyncEngine) -> None:
     """Test getting stats for non-existent automation returns error."""
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="web",
-            conversation_id="stats_fail_conv",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(engine=db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="stats_fail_conv",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await get_automation_stats_tool(
-            exec_context=exec_context,
-            automation_id=99999,
-            automation_type="event",
-        )
+    result = await get_automation_stats_tool(
+        exec_context=exec_context,
+        automation_id=99999,
+        automation_type="event",
+    )
 
     assert "Error:" in result.get_text()
     assert "not found" in result.get_text().lower()
@@ -519,26 +519,26 @@ async def test_event_automation_with_script_execution(
     await tools_provider.get_tool_definitions()
 
     # Create event automation with script
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="web",
-            conversation_id=f"event_script_{test_run_id}",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            tools_provider=tools_provider,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(engine=db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id=f"event_script_{test_run_id}",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        tools_provider=tools_provider,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        script_code = f"""
+    script_code = f"""
 def log_event():
     entity = event.get("entity_id", "unknown")
     add_or_update_note(
@@ -550,28 +550,28 @@ def log_event():
 log_event()
 """
 
-        result = await create_automation_tool(
-            exec_context=exec_context,
-            name=f"Event Script {test_run_id}",
-            automation_type="event",
-            trigger_config={
-                "event_source": "home_assistant",
-                "event_filter": {
-                    "entity_id": f"sensor.test_{test_run_id}",
-                    "new_state.state": "on",
-                },
+    result = await create_automation_tool(
+        exec_context=exec_context,
+        name=f"Event Script {test_run_id}",
+        automation_type="event",
+        trigger_config={
+            "event_source": "home_assistant",
+            "event_filter": {
+                "entity_id": f"sensor.test_{test_run_id}",
+                "new_state.state": "on",
             },
-            action_type="script",
-            action_config={"script_code": script_code, "task_name": "Event Logger"},
-        )
+        },
+        action_type="script",
+        action_config={"script_code": script_code, "task_name": "Event Logger"},
+    )
 
-        assert "Created event automation" in result.get_text()
+    assert "Created event automation" in result.get_text()
 
     # Set up event processor and task worker
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -619,10 +619,10 @@ log_event()
     await wait_for_tasks_to_complete(db_engine, task_types={"script_execution"})
 
     # Verify the script created the note
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        notes = await db_ctx.notes.get_all(visibility_grants=None)
-        matching_notes = [n for n in notes if f"Event Log {test_run_id}" in n.title]
-        assert len(matching_notes) == 1
-        note = matching_notes[0]
-        assert "Event triggered for" in note.content
-        assert f"sensor.test_{test_run_id}" in note.content
+    db_ctx = Database(engine=db_engine)
+    notes = await db_ctx.notes.get_all(visibility_grants=None)
+    matching_notes = [n for n in notes if f"Event Log {test_run_id}" in n.title]
+    assert len(matching_notes) == 1
+    note = matching_notes[0]
+    assert "Event triggered for" in note.content
+    assert f"sensor.test_{test_run_id}" in note.content

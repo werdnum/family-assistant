@@ -17,7 +17,10 @@ from family_assistant.events.condition_evaluator import EventConditionEvaluator
 from family_assistant.events.sources import EventSource
 from family_assistant.events.storage import EventStorage
 from family_assistant.scripting import ScriptExecutionError
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import (
+    Database,
+    DatabaseTransaction,
+)
 from family_assistant.storage.events import (
     check_and_update_rate_limit,
     event_listeners_table,
@@ -71,10 +74,10 @@ class EventProcessor:
     def __init__(
         self,
         sources: dict[str, EventSource],
-        db_context: DatabaseContext | None = None,
+        db_context: Database | None = None,
         sample_interval_hours: float = 1.0,
         config: EventConditionEvaluatorConfig | None = None,
-        get_db_context_func: Callable[[], DatabaseContext] | None = None,
+        get_db_context_func: Callable[[], Database] | None = None,
         timezone: tzinfo | None = None,
         profile_wake_llm_flags: Mapping[str, bool] | None = None,
     ) -> None:
@@ -83,10 +86,10 @@ class EventProcessor:
 
         Args:
             sources: Dictionary of source_id -> EventSource instances
-            db_context: Database context (optional, will create if needed)
+            db_context: Database handle (optional, will create if needed)
             sample_interval_hours: Hours between storing event samples
             config: Optional configuration for script execution
-            get_db_context_func: Function to get database context with engine
+            get_db_context_func: Function to get a Database handle
             timezone: Timezone for condition script time API functions.
             profile_wake_llm_flags: Mapping of profile id -> allow_wake_llm, used
                 to refuse wake_llm listeners whose *origin* profile may not wake
@@ -152,51 +155,80 @@ class EventProcessor:
             # Get all active listeners for this source
             listeners = self._listener_cache.get(source_id, [])
 
-        # Process all database operations in a single transaction to avoid deadlocks
-        # Use provided db_context for tests, otherwise create new one
-        async def process_with_context(db_ctx: DatabaseContext) -> None:
-            triggered_listener_ids = []
-
-            # Check each listener
-            for listener in listeners:
-                if await self._check_match_conditions(
-                    event_data,
-                    listener["match_conditions"],
-                    listener.get("condition_script"),
-                ):
-                    # Check and update rate limit atomically
-                    allowed, reason = await check_and_update_rate_limit(
-                        db_ctx, listener["id"], listener["conversation_id"]
-                    )
-                    if allowed:
-                        await self._execute_action_in_context(
-                            db_ctx, listener, event_data
-                        )
-                        triggered_listener_ids.append(listener["id"])
-
-                        # Handle one-time listeners
-                        if listener.get("one_time"):
-                            await self._disable_listener_in_context(
-                                db_ctx, listener["id"]
-                            )
-                    else:
-                        logger.warning(
-                            f"Listener {listener['id']} rate limited: {reason}"
-                        )
-
-            # Store event for debugging/testing in same transaction
-            await self.event_storage.store_event_in_context(
-                db_ctx, source_id, event_data, triggered_listener_ids
-            )
-
+        # Get database handle (for tests or via factory function)
         if self._db_context:
-            await process_with_context(self._db_context)
+            db_ctx = self._db_context
         elif self.get_db_context_func:
-            async with self.get_db_context_func() as db_ctx:
-                await process_with_context(db_ctx)
+            db_ctx = self.get_db_context_func()
         else:
             raise RuntimeError(
                 "EventProcessor requires get_db_context_func to be provided"
+            )
+
+        # Match conditions may run a condition script, so they are evaluated
+        # before the transaction opens rather than inside it.
+        matched = [
+            listener
+            for listener in listeners
+            if await self._check_match_conditions(
+                event_data,
+                listener["match_conditions"],
+                listener.get("condition_script"),
+            )
+        ]
+
+        async def _process_matched(txn: DatabaseTransaction) -> list[int]:
+            """Every matched listener as one unit.
+
+            Within a listener the rate-limit update, the action enqueue and the
+            one-time disable must not come apart, or a failed disable re-fires a
+            one-time action and a failed enqueue burns quota.
+
+            Across listeners it matters just as much. A failure here reaches the
+            caller -- it has to, or a webhook source acknowledges an event whose
+            action was dropped and the sender never retries -- and the retry
+            replays the whole event. A listener that had committed on its own
+            would then fire a second time.
+
+            ``triggered`` is built inside the closure because ``atomic`` replays
+            this body after a rollback.
+            """
+            triggered: list[int] = []
+            for listener in matched:
+                allowed, reason = await check_and_update_rate_limit(
+                    txn, listener["id"], listener["conversation_id"]
+                )
+                if not allowed:
+                    logger.warning(f"Listener {listener['id']} rate limited: {reason}")
+                    continue
+
+                await self._execute_action_in_context(txn, listener, event_data)
+
+                # Handle one-time listeners
+                if listener.get("one_time"):
+                    await self._disable_listener_in_context(txn, listener["id"])
+                triggered.append(listener["id"])
+
+            return triggered
+
+        triggered_listener_ids = await db_ctx.atomic(_process_matched)
+
+        # Deliberately after the commit, on the handle, and unable to fail the
+        # call. This row is a debug and sampling artifact: nothing derives from
+        # it, so losing one costs nothing, while letting it affect the listeners
+        # costs plenty. Inside the transaction a failed INSERT would poison it
+        # on PostgreSQL and roll back real listener work; raising here would
+        # make the caller retry an event whose actions are already committed,
+        # firing them twice.
+        try:
+            await self.event_storage.store_event_in_context(
+                db_ctx, source_id, event_data, triggered_listener_ids
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record event from %s for debugging; its listener "
+                "actions are already committed and are unaffected.",
+                source_id,
             )
 
     async def _check_match_conditions(
@@ -258,8 +290,8 @@ class EventProcessor:
         if self._db_context:
             result = await self._db_context.fetch_all(query)
         elif self.get_db_context_func:
-            async with self.get_db_context_func() as db_ctx:
-                result = await db_ctx.fetch_all(query)
+            db_ctx = self.get_db_context_func()
+            result = await db_ctx.fetch_all(query)
         else:
             raise RuntimeError(
                 "EventProcessor requires get_db_context_func to be provided"
@@ -301,8 +333,8 @@ class EventProcessor:
     ) -> None:
         """Execute the action defined in the listener (opens new DB context)."""
         if self.get_db_context_func:
-            async with self.get_db_context_func() as db_ctx:
-                await self._execute_action_in_context(db_ctx, listener, event_data)
+            db_ctx = self.get_db_context_func()
+            await self._execute_action_in_context(db_ctx, listener, event_data)
         else:
             raise RuntimeError(
                 "EventProcessor requires get_db_context_func to be provided"
@@ -310,7 +342,7 @@ class EventProcessor:
 
     async def _execute_action_in_context(
         self,
-        db_ctx: DatabaseContext,
+        db_ctx: Database | DatabaseTransaction,
         listener: EventListenerDict,
         # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
         event_data: dict[str, Any],
@@ -364,7 +396,7 @@ class EventProcessor:
             action_profile_id = listener.get("processing_profile_id")
 
         await execute_action(
-            db_ctx=db_ctx,
+            db_ctx=db_ctx,  # type: ignore[arg-type] # DatabaseTransaction implements the same interface as Database
             action_type=action_type,
             action_config=cast("dict[str, Any]", action_config),
             conversation_id=listener["conversation_id"],
@@ -381,18 +413,18 @@ class EventProcessor:
     async def _disable_listener(self, listener_id: int) -> None:
         """Disable a one-time listener after it triggers (opens new DB context)."""
         if self.get_db_context_func:
-            async with self.get_db_context_func() as db_ctx:
-                await self._disable_listener_in_context(db_ctx, listener_id)
+            db_ctx = self.get_db_context_func()
+            await self._disable_listener_in_context(db_ctx, listener_id)
         else:
             raise RuntimeError(
                 "EventProcessor requires get_db_context_func to be provided"
             )
 
     async def _disable_listener_in_context(
-        self, db_ctx: DatabaseContext, listener_id: int
+        self, db_ctx: Database | DatabaseTransaction, listener_id: int
     ) -> None:
         """Disable a one-time listener after it triggers within existing DB context."""
-        await db_ctx.execute_with_retry(
+        await db_ctx.execute(
             text("UPDATE event_listeners SET enabled = FALSE WHERE id = :id"),
             {"id": listener_id},
         )

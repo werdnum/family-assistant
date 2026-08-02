@@ -26,7 +26,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
 from family_assistant.storage.base import metadata
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor
 from family_assistant.storage.types import (
     ActionConfig,
     EventListenerDict,
@@ -158,7 +158,7 @@ recent_events_table = Table(
 
 
 async def create_event_listener(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     name: str,
     source_id: str,
     match_conditions: MatchConditions,
@@ -188,7 +188,7 @@ async def create_event_listener(
 
 
 async def get_event_listeners(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     conversation_id: str,
     source_id: str | None = None,
     enabled: bool | None = None,
@@ -202,7 +202,7 @@ async def get_event_listeners(
 
 
 async def get_event_listener_by_id(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
 ) -> EventListenerDict | None:
@@ -214,7 +214,7 @@ async def get_event_listener_by_id(
 
 
 async def update_event_listener_enabled(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
     enabled: bool,
@@ -228,7 +228,7 @@ async def update_event_listener_enabled(
 
 
 async def delete_event_listener(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
 ) -> bool:
@@ -243,7 +243,7 @@ async def delete_event_listener(
 
 
 async def store_event(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     source_id: str,
     # ast-grep-ignore: no-dict-any - event data has varying keys per event source type
     event_data: dict[str, Any],
@@ -260,7 +260,7 @@ async def store_event(
 
 
 async def query_recent_events(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     source_id: str | None = None,
     hours: int = 24,
     limit: int = 100,
@@ -274,7 +274,7 @@ async def query_recent_events(
 
 
 async def cleanup_old_events(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     retention_hours: int = 48,
 ) -> int:
     """Clean up events older than retention period."""
@@ -287,7 +287,7 @@ async def cleanup_old_events(
 
 
 async def check_and_update_rate_limit(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     listener_id: int,
     conversation_id: str,
 ) -> tuple[bool, str | None]:

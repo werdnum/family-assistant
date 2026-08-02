@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from family_assistant.config_models import AppConfig
+    from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.tools.policy import PolicyEvaluation, ResolvedPolicyRule
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -275,21 +276,20 @@ async def query_database(
     if not _is_select_only(query):
         return ToolResult(data={"error": "Only SELECT queries are allowed"})
 
-    engine = exec_context.db_context.engine
+    # Goes through the transaction API rather than engine.begin(): on SQLite
+    # every scope shares one connection, so a raw block would bypass the
+    # engine lock, read another unit of work's uncommitted rows, and commit
+    # them on exit.
+    # ast-grep-ignore: no-dict-any - diagnostic rows have whatever columns the query selected
+    async def _run(txn: DatabaseTransaction) -> list[dict[str, object]]:
+        if txn.dialect_name == "postgresql":
+            await txn.connection.execute(text("SET TRANSACTION READ ONLY"))
+        result = await txn.connection.execute(text(query))
+        # Bounded fetch: a diagnostic query must not materialize a whole table.
+        return [dict(row) for row in result.mappings().fetchmany(_MAX_QUERY_ROWS + 1)]
 
     try:
-        # Use a separate connection to avoid interfering with the active
-        # transaction in db_context (which may have already executed queries,
-        # making SET TRANSACTION READ ONLY fail on PostgreSQL).
-        async with engine.begin() as conn:
-            dialect = engine.dialect.name
-            if dialect == "postgresql":
-                await conn.execute(text("SET TRANSACTION READ ONLY"))
-
-            result = await conn.execute(text(query))
-            rows = [
-                dict(row) for row in result.mappings().fetchmany(_MAX_QUERY_ROWS + 1)
-            ]
+        rows = await exec_context.db_context.atomic(_run)
 
         if len(rows) > _MAX_QUERY_ROWS:
             rows = rows[:_MAX_QUERY_ROWS]
@@ -1109,12 +1109,12 @@ async def get_system_info(
     """
     logger.info("get_system_info: gathering runtime environment info")
 
-    db_dialect = "unknown"
     db_context = exec_context.db_context
-    engine = getattr(db_context, "engine", None)
-    if engine is not None:
-        dialect = getattr(engine, "dialect", None)
-        db_dialect = getattr(dialect, "name", "unknown")
+    db_dialect = (
+        "unknown"
+        if db_context is None
+        else getattr(db_context, "dialect_name", "unknown")
+    )
 
     return ToolResult(
         data={

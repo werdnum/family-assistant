@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.llm.messages import AssistantMessage, UserMessage
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
@@ -112,53 +112,53 @@ async def test_get_conversations_excludes_delegated_subconversations_from_summar
     conv_id = f"test_conv_delegated_summary_{uuid.uuid4().hex[:8]}"
     timestamp = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
-    async with get_db_context(db_engine) as db_context:
-        await db_context.message_history.add_message(
-            UserMessage(content="Main user request"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="main-turn",
-            processing_profile_id="default_assistant",
-            user_id="test_user",
-        )
-        await db_context.message_history.add_message(
-            AssistantMessage(content="Main assistant answer"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="main-turn",
-            processing_profile_id="default_assistant",
-            user_id="test_user",
-        )
-        await db_context.message_history.add_message(
-            UserMessage(content="Delegated prompt from model"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="delegated-turn",
-            processing_profile_id="browser",
-            subconversation_id="delegated-subconversation",
-        )
-        await db_context.message_history.add_message(
-            AssistantMessage(content="Delegated profile answer"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="delegated-turn",
-            processing_profile_id="browser",
-            subconversation_id="delegated-subconversation",
-        )
-        await db_context.message_history.add_message(
-            UserMessage(content="Internal delegated result data"),
-            interface_type="web",
-            conversation_id=conv_id,
-            timestamp=timestamp,
-            turn_id="internal-turn",
-            processing_profile_id="default_assistant",
-            user_id="test_user",
-            is_internal=True,
-        )
+    db_context = Database(db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(content="Main user request"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="main-turn",
+        processing_profile_id="default_assistant",
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Main assistant answer"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="main-turn",
+        processing_profile_id="default_assistant",
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        UserMessage(content="Delegated prompt from model"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="delegated-turn",
+        processing_profile_id="browser",
+        subconversation_id="delegated-subconversation",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Delegated profile answer"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="delegated-turn",
+        processing_profile_id="browser",
+        subconversation_id="delegated-subconversation",
+    )
+    await db_context.message_history.add_message(
+        UserMessage(content="Internal delegated result data"),
+        interface_type="web",
+        conversation_id=conv_id,
+        timestamp=timestamp,
+        turn_id="internal-turn",
+        processing_profile_id="default_assistant",
+        user_id="test_user",
+        is_internal=True,
+    )
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
@@ -241,52 +241,52 @@ async def test_get_conversations_interface_filter(
     base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
     # Create test conversations in different interfaces
-    async with get_db_context(db_engine) as db_context:
-        # Add web conversation
-        result1 = await db_context.message_history.add_message(
-            UserMessage(content="Web user message"),
-            interface_type="web",
-            conversation_id="web_conv_filter_test",
-            interface_message_id="web_msg_1",
-            turn_id="turn_1",
-            thread_root_id=None,
-            timestamp=base_time,
-        )
-        assert result1 is not None, "Failed to add web user message"
+    db_context = Database(db_engine)
+    # Add web conversation
+    result1 = await db_context.message_history.add_message(
+        UserMessage(content="Web user message"),
+        interface_type="web",
+        conversation_id="web_conv_filter_test",
+        interface_message_id="web_msg_1",
+        turn_id="turn_1",
+        thread_root_id=None,
+        timestamp=base_time,
+    )
+    assert result1 is not None, "Failed to add web user message"
 
-        result2 = await db_context.message_history.add_message(
-            AssistantMessage(content="Web assistant response"),
-            interface_type="web",
-            conversation_id="web_conv_filter_test",
-            interface_message_id="web_msg_2",
-            turn_id="turn_1",
-            thread_root_id=None,
-            timestamp=base_time + timedelta(seconds=1),
-        )
-        assert result2 is not None, "Failed to add web assistant message"
+    result2 = await db_context.message_history.add_message(
+        AssistantMessage(content="Web assistant response"),
+        interface_type="web",
+        conversation_id="web_conv_filter_test",
+        interface_message_id="web_msg_2",
+        turn_id="turn_1",
+        thread_root_id=None,
+        timestamp=base_time + timedelta(seconds=1),
+    )
+    assert result2 is not None, "Failed to add web assistant message"
 
-        # Add telegram conversation
-        result3 = await db_context.message_history.add_message(
-            UserMessage(content="Telegram user message"),
-            interface_type="telegram",
-            conversation_id="tg_conv_filter_test",
-            interface_message_id="tg_msg_1",
-            turn_id="turn_2",
-            thread_root_id=None,
-            timestamp=base_time + timedelta(seconds=2),
-        )
-        assert result3 is not None, "Failed to add telegram user message"
+    # Add telegram conversation
+    result3 = await db_context.message_history.add_message(
+        UserMessage(content="Telegram user message"),
+        interface_type="telegram",
+        conversation_id="tg_conv_filter_test",
+        interface_message_id="tg_msg_1",
+        turn_id="turn_2",
+        thread_root_id=None,
+        timestamp=base_time + timedelta(seconds=2),
+    )
+    assert result3 is not None, "Failed to add telegram user message"
 
-        result4 = await db_context.message_history.add_message(
-            AssistantMessage(content="Telegram assistant response"),
-            interface_type="telegram",
-            conversation_id="tg_conv_filter_test",
-            interface_message_id="tg_msg_2",
-            turn_id="turn_2",
-            thread_root_id=None,
-            timestamp=base_time + timedelta(seconds=3),
-        )
-        assert result4 is not None, "Failed to add telegram assistant message"
+    result4 = await db_context.message_history.add_message(
+        AssistantMessage(content="Telegram assistant response"),
+        interface_type="telegram",
+        conversation_id="tg_conv_filter_test",
+        interface_message_id="tg_msg_2",
+        turn_id="turn_2",
+        thread_root_id=None,
+        timestamp=base_time + timedelta(seconds=3),
+    )
+    assert result4 is not None, "Failed to add telegram assistant message"
 
     # Get conversations via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
@@ -346,19 +346,19 @@ async def test_get_conversations_conversation_id_filter(
     base_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
     # Create test conversations
-    async with get_db_context(db_engine) as db_context:
-        for i in range(3):
-            conv_id = f"conv_id_filter_test_{i}"
-            result = await db_context.message_history.add_message(
-                UserMessage(content=f"Test message {i}"),
-                interface_type="web",
-                conversation_id=conv_id,
-                interface_message_id=f"msg_{i}",
-                turn_id=f"turn_{i}",
-                thread_root_id=None,
-                timestamp=base_time + timedelta(minutes=i),
-            )
-            assert result is not None, f"Failed to add message for conv {i}"
+    db_context = Database(db_engine)
+    for i in range(3):
+        conv_id = f"conv_id_filter_test_{i}"
+        result = await db_context.message_history.add_message(
+            UserMessage(content=f"Test message {i}"),
+            interface_type="web",
+            conversation_id=conv_id,
+            interface_message_id=f"msg_{i}",
+            turn_id=f"turn_{i}",
+            thread_root_id=None,
+            timestamp=base_time + timedelta(minutes=i),
+        )
+        assert result is not None, f"Failed to add message for conv {i}"
 
     # Get conversations via API with retry for SQLite transaction visibility
     assert web_only_assistant.fastapi_app is not None
@@ -402,42 +402,42 @@ async def test_get_conversations_date_filters(
 
     # Use fixed base time for deterministic timestamps
     base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
-    async with get_db_context(db_engine) as db_context:
-        # Old conversation (3 days ago)
-        result1 = await db_context.message_history.add_message(
-            UserMessage(content="Old message"),
-            interface_type="web",
-            conversation_id="old_conv",
-            interface_message_id="old_msg",
-            turn_id="turn_old",
-            thread_root_id=None,
-            timestamp=base_time - timedelta(days=3),
-        )
-        assert result1 is not None, "Failed to add old_conv message"
+    db_context = Database(db_engine)
+    # Old conversation (3 days ago)
+    result1 = await db_context.message_history.add_message(
+        UserMessage(content="Old message"),
+        interface_type="web",
+        conversation_id="old_conv",
+        interface_message_id="old_msg",
+        turn_id="turn_old",
+        thread_root_id=None,
+        timestamp=base_time - timedelta(days=3),
+    )
+    assert result1 is not None, "Failed to add old_conv message"
 
-        # Recent conversation (1 day ago)
-        result2 = await db_context.message_history.add_message(
-            UserMessage(content="Recent message"),
-            interface_type="web",
-            conversation_id="recent_conv",
-            interface_message_id="recent_msg",
-            turn_id="turn_recent",
-            thread_root_id=None,
-            timestamp=base_time - timedelta(days=1),
-        )
-        assert result2 is not None, "Failed to add recent_conv message"
+    # Recent conversation (1 day ago)
+    result2 = await db_context.message_history.add_message(
+        UserMessage(content="Recent message"),
+        interface_type="web",
+        conversation_id="recent_conv",
+        interface_message_id="recent_msg",
+        turn_id="turn_recent",
+        thread_root_id=None,
+        timestamp=base_time - timedelta(days=1),
+    )
+    assert result2 is not None, "Failed to add recent_conv message"
 
-        # Today's conversation
-        result3 = await db_context.message_history.add_message(
-            UserMessage(content="Today's message"),
-            interface_type="web",
-            conversation_id="today_conv",
-            interface_message_id="today_msg",
-            turn_id="turn_today",
-            thread_root_id=None,
-            timestamp=base_time,
-        )
-        assert result3 is not None, "Failed to add today_conv message"
+    # Today's conversation
+    result3 = await db_context.message_history.add_message(
+        UserMessage(content="Today's message"),
+        interface_type="web",
+        conversation_id="today_conv",
+        interface_message_id="today_msg",
+        turn_id="turn_today",
+        thread_root_id=None,
+        timestamp=base_time,
+    )
+    assert result3 is not None, "Failed to add today_conv message"
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
@@ -521,42 +521,42 @@ async def test_get_conversations_combined_filters(
     base_time = datetime(2024, 1, 15, 12, 0, 0, tzinfo=UTC)
 
     # Create test data
-    async with get_db_context(db_engine) as db_context:
-        # Web conversation from yesterday matching all filters
-        result1 = await db_context.message_history.add_message(
-            UserMessage(content="Matching message"),
-            interface_type="web",
-            conversation_id="matching_conv",
-            interface_message_id="match_msg",
-            turn_id="turn_match",
-            thread_root_id=None,
-            timestamp=base_time - timedelta(days=1),
-        )
-        assert result1 is not None, "Failed to add matching_conv message"
+    db_context = Database(db_engine)
+    # Web conversation from yesterday matching all filters
+    result1 = await db_context.message_history.add_message(
+        UserMessage(content="Matching message"),
+        interface_type="web",
+        conversation_id="matching_conv",
+        interface_message_id="match_msg",
+        turn_id="turn_match",
+        thread_root_id=None,
+        timestamp=base_time - timedelta(days=1),
+    )
+    assert result1 is not None, "Failed to add matching_conv message"
 
-        # Telegram conversation from yesterday (wrong interface)
-        result2 = await db_context.message_history.add_message(
-            UserMessage(content="Wrong interface message"),
-            interface_type="telegram",
-            conversation_id="wrong_interface_conv",
-            interface_message_id="wrong_msg",
-            turn_id="turn_wrong",
-            thread_root_id=None,
-            timestamp=base_time - timedelta(days=1) + timedelta(minutes=1),
-        )
-        assert result2 is not None, "Failed to add wrong_interface_conv message"
+    # Telegram conversation from yesterday (wrong interface)
+    result2 = await db_context.message_history.add_message(
+        UserMessage(content="Wrong interface message"),
+        interface_type="telegram",
+        conversation_id="wrong_interface_conv",
+        interface_message_id="wrong_msg",
+        turn_id="turn_wrong",
+        thread_root_id=None,
+        timestamp=base_time - timedelta(days=1) + timedelta(minutes=1),
+    )
+    assert result2 is not None, "Failed to add wrong_interface_conv message"
 
-        # Web conversation from 3 days ago (wrong date)
-        result3 = await db_context.message_history.add_message(
-            UserMessage(content="Wrong date message"),
-            interface_type="web",
-            conversation_id="wrong_date_conv",
-            interface_message_id="date_msg",
-            turn_id="turn_date",
-            thread_root_id=None,
-            timestamp=base_time - timedelta(days=3),
-        )
-        assert result3 is not None, "Failed to add wrong_date_conv message"
+    # Web conversation from 3 days ago (wrong date)
+    result3 = await db_context.message_history.add_message(
+        UserMessage(content="Wrong date message"),
+        interface_type="web",
+        conversation_id="wrong_date_conv",
+        interface_message_id="date_msg",
+        turn_id="turn_date",
+        thread_root_id=None,
+        timestamp=base_time - timedelta(days=3),
+    )
+    assert result3 is not None, "Failed to add wrong_date_conv message"
 
     assert web_only_assistant.fastapi_app is not None
     transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)

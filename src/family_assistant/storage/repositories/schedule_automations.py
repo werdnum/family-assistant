@@ -11,6 +11,7 @@ from dateutil.parser import ParserError
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.schedule_automations import schedule_automations_table
@@ -198,85 +199,94 @@ class ScheduleAutomationsRepository(BaseRepository):
             if next_scheduled_at is None:
                 raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
-            # Create the automation record
-            stmt = (
-                insert(schedule_automations_table)
-                .values(
-                    name=name,
-                    description=description,
-                    recurrence_rule=recurrence_rule,
-                    next_scheduled_at=next_scheduled_at,
-                    action_type=action_type,
-                    action_config=action_config,
-                    conversation_id=conversation_id,
-                    interface_type=interface_type,
-                    enabled=enabled,
-                    processing_profile_id=processing_profile_id,
-                    created_by_user_id=created_by_user_id,
-                    created_at=datetime.now(UTC),
-                    execution_count=0,
+            async def _create(txn: DatabaseTransaction) -> int:
+                """Insert the automation and enqueue its first task together.
+
+                Split, a failed enqueue leaves an enabled automation with a
+                next_scheduled_at and no pending task -- it never fires until
+                someone toggles or repairs it.
+                """
+                # Create the automation record
+                stmt = (
+                    insert(schedule_automations_table)
+                    .values(
+                        name=name,
+                        description=description,
+                        recurrence_rule=recurrence_rule,
+                        next_scheduled_at=next_scheduled_at,
+                        action_type=action_type,
+                        action_config=action_config,
+                        conversation_id=conversation_id,
+                        interface_type=interface_type,
+                        enabled=enabled,
+                        processing_profile_id=processing_profile_id,
+                        created_by_user_id=created_by_user_id,
+                        created_at=datetime.now(UTC),
+                        execution_count=0,
+                    )
+                    .returning(schedule_automations_table.c.id)
                 )
-                .returning(schedule_automations_table.c.id)
-            )
 
-            result = await self._db.execute_with_retry(stmt)
-            automation_id = result.scalar_one()
+                result = await txn.execute(stmt)
+                automation_id = result.scalar_one()
 
-            self._logger.info(
-                f"Created schedule automation '{name}' (ID: {automation_id}) "
-                f"for conversation {conversation_id}"
-            )
+                self._logger.info(
+                    f"Created schedule automation '{name}' (ID: {automation_id}) "
+                    f"for conversation {conversation_id}"
+                )
 
-            # Schedule the first task instance
-            task_type = (
-                "llm_callback" if action_type == "wake_llm" else "script_execution"
-            )
-            task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
+                # Schedule the first task instance
+                task_type = (
+                    "llm_callback" if action_type == "wake_llm" else "script_execution"
+                )
+                task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            if action_type == "wake_llm":
-                payload: LlmCallbackPayload | ScriptExecutionPayload = (
-                    LlmCallbackPayload(
+                if action_type == "wake_llm":
+                    payload: LlmCallbackPayload | ScriptExecutionPayload = (
+                        LlmCallbackPayload(
+                            conversation_id=conversation_id,
+                            interface_type=interface_type,
+                            automation_id=str(automation_id),
+                            automation_type="schedule",
+                            callback_context=action_config.get("context", ""),
+                            scheduling_timestamp=datetime.now(UTC).isoformat(),
+                        )
+                    )
+                    if created_by_user_id is not None:
+                        payload["created_by_user_id"] = created_by_user_id
+                    # Scheduled wakes run under their originating profile (a trusted,
+                    # user-set-up trigger), honored by handle_llm_callback.
+                    if processing_profile_id is not None:
+                        payload["processing_profile_id"] = processing_profile_id
+                else:  # script
+                    payload = _build_script_payload(
+                        action_config=action_config,
                         conversation_id=conversation_id,
                         interface_type=interface_type,
                         automation_id=str(automation_id),
-                        automation_type="schedule",
-                        callback_context=action_config.get("context", ""),
-                        scheduling_timestamp=datetime.now(UTC).isoformat(),
+                        task_name=name,
+                        processing_profile_id=processing_profile_id,
+                        created_by_user_id=created_by_user_id,
                     )
-                )
-                if created_by_user_id is not None:
-                    payload["created_by_user_id"] = created_by_user_id
-                # Scheduled wakes run under their originating profile (a trusted,
-                # user-set-up trigger), honored by handle_llm_callback.
-                if processing_profile_id is not None:
-                    payload["processing_profile_id"] = processing_profile_id
-            else:  # script
-                payload = _build_script_payload(
-                    action_config=action_config,
-                    conversation_id=conversation_id,
-                    interface_type=interface_type,
-                    automation_id=str(automation_id),
-                    task_name=name,
-                    processing_profile_id=processing_profile_id,
-                    created_by_user_id=created_by_user_id,
+
+                # Note: We do NOT pass recurrence_rule here because recurrence
+                # is managed manually via after_task_execution callback, not
+                # by the task worker's automatic recurrence system
+                await enqueue_task(
+                    db_context=txn,
+                    task_id=task_id,
+                    task_type=task_type,
+                    payload=payload,
+                    scheduled_at=next_scheduled_at,
                 )
 
-            # Note: We do NOT pass recurrence_rule here because recurrence
-            # is managed manually via after_task_execution callback, not
-            # by the task worker's automatic recurrence system
-            await enqueue_task(
-                db_context=self._db,
-                task_id=task_id,
-                task_type=task_type,
-                payload=payload,
-                scheduled_at=next_scheduled_at,
-            )
+                self._logger.info(
+                    f"Scheduled first task for automation {automation_id} at {next_scheduled_at}"
+                )
 
-            self._logger.info(
-                f"Scheduled first task for automation {automation_id} at {next_scheduled_at}"
-            )
+                return automation_id
 
-            return automation_id
+            return await self._db.atomic(_create)
 
         except IntegrityError as e:
             error_msg = str(e).lower()
@@ -444,74 +454,106 @@ class ScheduleAutomationsRepository(BaseRepository):
         Returns:
             True if updated, False if not found
         """
-        # When enabling, fetch the automation so we can reschedule
-        if enabled:
-            automation = await self.get_by_id(automation_id, conversation_id)
-            if not automation:
-                self._logger.warning(
-                    f"Schedule automation {automation_id} not found "
-                    f"for conversation {conversation_id}"
+
+        async def _apply(txn: DatabaseTransaction) -> bool:
+            """Cancel stale tasks, (re)schedule, and flip the flag as one unit.
+
+            Split, a failure between them leaves an automation that reads
+            enabled with all its tasks cancelled -- enabled and permanently
+            dead -- or disabled while still firing on schedule.
+            """
+            # When enabling, fetch the automation so we can reschedule
+            if enabled:
+                automation = await txn.schedule_automations.get_by_id(
+                    automation_id, conversation_id
                 )
-                return False
+                if not automation:
+                    self._logger.warning(
+                        f"Schedule automation {automation_id} not found "
+                        f"for conversation {conversation_id}"
+                    )
+                    return False
 
-            next_scheduled_at = self._parse_rrule_and_get_next(
-                automation["recurrence_rule"], timezone=timezone
-            )
-            if next_scheduled_at is None:
-                self._logger.error(
-                    f"Cannot enable automation {automation_id}: "
-                    f"RRULE '{automation['recurrence_rule']}' yields no future occurrences"
+                next_scheduled_at = self._parse_rrule_and_get_next(
+                    automation["recurrence_rule"], timezone=timezone
                 )
-                raise ValueError(
-                    f"Cannot enable: RRULE '{automation['recurrence_rule']}' "
-                    "yields no future occurrences"
+                if next_scheduled_at is None:
+                    self._logger.error(
+                        f"Cannot enable automation {automation_id}: "
+                        f"RRULE '{automation['recurrence_rule']}' yields no future occurrences"
+                    )
+                    raise ValueError(
+                        f"Cannot enable: RRULE '{automation['recurrence_rule']}' "
+                        "yields no future occurrences"
+                    )
+
+                # Cancel stale pending tasks and schedule a fresh one
+                await self._cancel_pending_tasks(automation_id, db=txn)
+
+                action_type = automation["action_type"]
+                task_type = (
+                    "llm_callback" if action_type == "wake_llm" else "script_execution"
                 )
+                task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-            # Cancel stale pending tasks and schedule a fresh one
-            await self._cancel_pending_tasks(automation_id)
-
-            action_type = automation["action_type"]
-            task_type = (
-                "llm_callback" if action_type == "wake_llm" else "script_execution"
-            )
-            task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
-
-            action_config = automation["action_config"]
-            if action_type == "wake_llm":
-                enqueue_payload: LlmCallbackPayload | ScriptExecutionPayload = (
-                    LlmCallbackPayload(
+                action_config = automation["action_config"]
+                if action_type == "wake_llm":
+                    enqueue_payload: LlmCallbackPayload | ScriptExecutionPayload = (
+                        LlmCallbackPayload(
+                            conversation_id=conversation_id,
+                            interface_type=automation["interface_type"],
+                            automation_id=str(automation_id),
+                            automation_type="schedule",
+                            callback_context=action_config.get("context", ""),
+                            scheduling_timestamp=datetime.now(UTC).isoformat(),
+                        )
+                    )
+                    created_by = automation.get("created_by_user_id")
+                    if created_by is not None:
+                        enqueue_payload["created_by_user_id"] = created_by
+                    enable_profile_id = automation.get("processing_profile_id")
+                    if enable_profile_id is not None:
+                        enqueue_payload["processing_profile_id"] = enable_profile_id
+                else:
+                    enqueue_payload = _build_script_payload(
+                        action_config=action_config,
                         conversation_id=conversation_id,
                         interface_type=automation["interface_type"],
                         automation_id=str(automation_id),
-                        automation_type="schedule",
-                        callback_context=action_config.get("context", ""),
-                        scheduling_timestamp=datetime.now(UTC).isoformat(),
+                        task_name=automation["name"],
+                        processing_profile_id=automation.get("processing_profile_id"),
+                        created_by_user_id=automation.get("created_by_user_id"),
                     )
-                )
-                created_by = automation.get("created_by_user_id")
-                if created_by is not None:
-                    enqueue_payload["created_by_user_id"] = created_by
-                enable_profile_id = automation.get("processing_profile_id")
-                if enable_profile_id is not None:
-                    enqueue_payload["processing_profile_id"] = enable_profile_id
-            else:
-                enqueue_payload = _build_script_payload(
-                    action_config=action_config,
-                    conversation_id=conversation_id,
-                    interface_type=automation["interface_type"],
-                    automation_id=str(automation_id),
-                    task_name=automation["name"],
-                    processing_profile_id=automation.get("processing_profile_id"),
-                    created_by_user_id=automation.get("created_by_user_id"),
+
+                await enqueue_task(
+                    db_context=txn,
+                    task_id=task_id,
+                    task_type=task_type,
+                    payload=enqueue_payload,
+                    scheduled_at=next_scheduled_at,
                 )
 
-            await enqueue_task(
-                db_context=self._db,
-                task_id=task_id,
-                task_type=task_type,
-                payload=enqueue_payload,
-                scheduled_at=next_scheduled_at,
-            )
+                stmt = (
+                    update(schedule_automations_table)
+                    .where(
+                        (schedule_automations_table.c.id == automation_id)
+                        & (
+                            schedule_automations_table.c.conversation_id
+                            == conversation_id
+                        )
+                    )
+                    .values(enabled=True, next_scheduled_at=next_scheduled_at)
+                )
+                await txn.execute(stmt)
+
+                self._logger.info(
+                    f"Enabled schedule automation {automation_id}, "
+                    f"next execution at {next_scheduled_at}"
+                )
+                return True
+
+            # Disabling — cancel pending tasks and update
+            await self._cancel_pending_tasks(automation_id, db=txn)
 
             stmt = (
                 update(schedule_automations_table)
@@ -519,39 +561,22 @@ class ScheduleAutomationsRepository(BaseRepository):
                     (schedule_automations_table.c.id == automation_id)
                     & (schedule_automations_table.c.conversation_id == conversation_id)
                 )
-                .values(enabled=True, next_scheduled_at=next_scheduled_at)
+                .values(enabled=False)
             )
-            await self._db.execute_with_retry(stmt)
 
-            self._logger.info(
-                f"Enabled schedule automation {automation_id}, "
-                f"next execution at {next_scheduled_at}"
-            )
-            return True
+            result = await txn.execute(stmt)
+            updated_count = result.rowcount
 
-        # Disabling — cancel pending tasks and update
-        await self._cancel_pending_tasks(automation_id)
+            if updated_count > 0:
+                self._logger.info(f"Disabled schedule automation {automation_id}")
+                return True
+            else:
+                self._logger.warning(
+                    f"Schedule automation {automation_id} not found for conversation {conversation_id}"
+                )
+                return False
 
-        stmt = (
-            update(schedule_automations_table)
-            .where(
-                (schedule_automations_table.c.id == automation_id)
-                & (schedule_automations_table.c.conversation_id == conversation_id)
-            )
-            .values(enabled=False)
-        )
-
-        result = await self._db.execute_with_retry(stmt)
-        updated_count = result.rowcount  # type: ignore[attr-defined]
-
-        if updated_count > 0:
-            self._logger.info(f"Disabled schedule automation {automation_id}")
-            return True
-        else:
-            self._logger.warning(
-                f"Schedule automation {automation_id} not found for conversation {conversation_id}"
-            )
-            return False
+        return await self._db.atomic(_apply)
 
     async def update(
         self,
@@ -658,59 +683,72 @@ class ScheduleAutomationsRepository(BaseRepository):
             or provenance_changing
         )
 
-        if needs_task_sync:
-            will_be_enabled = (
-                enabled if isinstance(enabled, bool) else existing["enabled"]
+        will_be_enabled = enabled if isinstance(enabled, bool) else existing["enabled"]
+        # Bound here rather than inside the closure: a closure does not inherit
+        # the narrowing these isinstance checks establish, and ``next_at`` only
+        # exists on the recurrence-changing branch.
+        recurrence_override = recurrence_rule if recurrence_changing else None
+        next_at_override = next_at if recurrence_changing else None
+
+        async def _apply(txn: DatabaseTransaction) -> bool:
+            """Re-sync the task queue and write the new state as one unit.
+
+            Split, a failure between them leaves the automation describing one
+            schedule while the queue holds a task built from another: an edit
+            that reads as applied but still fires the old configuration, or a
+            cancelled task with no replacement.
+
+            ``update_values`` is copied rather than mutated because ``atomic``
+            replays this body after a serialization failure.
+            """
+            values = dict(update_values)
+
+            if needs_task_sync:
+                next_scheduled_at = await self._sync_pending_tasks(
+                    automation_id,
+                    existing,
+                    enabled=will_be_enabled,
+                    action_config_override=cast("ActionConfig", action_config)
+                    if isinstance(action_config, dict)
+                    else None,
+                    recurrence_rule_override=recurrence_override,
+                    name_override=name if isinstance(name, str) else None,
+                    timezone=timezone,
+                    next_at_override=next_at_override,
+                    db=txn,
+                )
+
+                if next_scheduled_at is not None and "next_scheduled_at" not in values:
+                    values["next_scheduled_at"] = next_scheduled_at
+
+            if not values:
+                self._logger.warning("No update values provided for automation update")
+                return True
+
+            stmt = (
+                update(schedule_automations_table)
+                .where(
+                    (schedule_automations_table.c.id == automation_id)
+                    & (schedule_automations_table.c.conversation_id == conversation_id)
+                )
+                .values(**values)
             )
 
-            next_scheduled_at = await self._sync_pending_tasks(
-                automation_id,
-                existing,
-                enabled=will_be_enabled,
-                action_config_override=cast("ActionConfig", action_config)
-                if isinstance(action_config, dict)
-                else None,
-                recurrence_rule_override=recurrence_rule
-                if recurrence_changing
-                else None,
-                name_override=name if isinstance(name, str) else None,
-                timezone=timezone,
-                next_at_override=next_at if recurrence_changing else None,
-            )
+            result = await txn.execute(stmt)
+            updated_count = result.rowcount
 
-            if (
-                next_scheduled_at is not None
-                and "next_scheduled_at" not in update_values
-            ):
-                update_values["next_scheduled_at"] = next_scheduled_at
-
-        if not update_values:
-            self._logger.warning("No update values provided for automation update")
-            return True
-
-        stmt = (
-            update(schedule_automations_table)
-            .where(
-                (schedule_automations_table.c.id == automation_id)
-                & (schedule_automations_table.c.conversation_id == conversation_id)
-            )
-            .values(**update_values)
-        )
-
-        result = await self._db.execute_with_retry(stmt)
-        updated_count = result.rowcount  # type: ignore[attr-defined]
-
-        if updated_count > 0:
-            self._logger.info(
-                f"Updated schedule automation {automation_id} "
-                f"for conversation {conversation_id}"
-            )
-            return True
-        else:
+            if updated_count > 0:
+                self._logger.info(
+                    f"Updated schedule automation {automation_id} "
+                    f"for conversation {conversation_id}"
+                )
+                return True
             self._logger.error(
                 f"Failed to update automation {automation_id} - update returned 0 rows"
             )
             return False
+
+        return await self._db.atomic(_apply)
 
     async def delete(
         self,
@@ -735,43 +773,57 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             return False
 
-        # Cancel all pending tasks for this automation
-        await self._cancel_pending_tasks(automation_id)
+        async def _remove(txn: DatabaseTransaction) -> bool:
+            """Cancel the queued tasks and drop the row as one unit.
 
-        # Delete the automation record
-        stmt = delete(schedule_automations_table).where(
-            (schedule_automations_table.c.id == automation_id)
-            & (schedule_automations_table.c.conversation_id == conversation_id)
-        )
+            Split, a failure between them leaves either an automation whose
+            tasks are all cancelled -- present but permanently dead -- or a
+            queued task with no automation behind it, which fires against a row
+            that no longer exists.
+            """
+            await self._cancel_pending_tasks(automation_id, db=txn)
 
-        result = await self._db.execute_with_retry(stmt)
-        deleted_count = result.rowcount  # type: ignore[attr-defined]
-
-        if deleted_count > 0:
-            self._logger.info(
-                f"Deleted schedule automation '{automation['name']}' (ID: {automation_id}) "
-                f"for conversation {conversation_id}"
+            stmt = delete(schedule_automations_table).where(
+                (schedule_automations_table.c.id == automation_id)
+                & (schedule_automations_table.c.conversation_id == conversation_id)
             )
-            return True
-        else:
+
+            result = await txn.execute(stmt)
+            deleted_count = result.rowcount
+
+            if deleted_count > 0:
+                self._logger.info(
+                    f"Deleted schedule automation '{automation['name']}' "
+                    f"(ID: {automation_id}) for conversation {conversation_id}"
+                )
+                return True
             self._logger.error(
                 f"Failed to delete automation {automation_id} - deletion returned 0 rows"
             )
             return False
 
-    async def _cancel_pending_tasks(self, automation_id: int) -> int:
+        return await self._db.atomic(_remove)
+
+    async def _cancel_pending_tasks(
+        self, automation_id: int, db: DatabaseExecutor | None = None
+    ) -> int:
         """
         Cancel all pending task instances for an automation.
 
         Args:
             automation_id: Automation ID
+            db: Optional DatabaseTransaction to use instead of self._db. When
+                provided, marks and updates tasks within the caller's transaction.
 
         Returns:
             Number of cancelled tasks
         """
+        executor = db if db is not None else self._db
         try:
-            await self._mark_pending_advance_tasks_stats_only(automation_id)
-            await self._mark_persisted_advance_outboxes_stats_only(automation_id)
+            await self._mark_pending_advance_tasks_stats_only(automation_id, executor)
+            await self._mark_persisted_advance_outboxes_stats_only(
+                automation_id, executor
+            )
 
             # Find pending tasks with this automation_id in payload
             stmt = (
@@ -785,8 +837,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .values(status="cancelled")
             )
 
-            result = await self._db.execute_with_retry(stmt)
-            cancelled_count = result.rowcount  # type: ignore[attr-defined]
+            result = await executor.execute(stmt)
+            cancelled_count = result.rowcount
 
             if cancelled_count > 0:
                 self._logger.info(
@@ -801,8 +853,11 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
             return 0
 
-    async def _mark_pending_advance_tasks_stats_only(self, automation_id: int) -> int:
+    async def _mark_pending_advance_tasks_stats_only(
+        self, automation_id: int, db: DatabaseExecutor | None = None
+    ) -> int:
         """Prevent preserved terminal-stat tasks from scheduling a future run."""
+        executor = db if db is not None else self._db
         stmt = (
             select(tasks_table.c.task_id, tasks_table.c.payload)
             .where(tasks_table.c.status == "pending")
@@ -811,7 +866,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
             )
         )
-        rows = await self._db.fetch_all(stmt)
+        rows = await executor.fetch_all(stmt)
         marked_count = 0
         for row in rows:
             payload = dict(row["payload"] or {})
@@ -823,7 +878,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .where(tasks_table.c.task_id == row["task_id"])
                 .values(payload=payload)
             )
-            await self._db.execute_with_retry(update_stmt)
+            await executor.execute(update_stmt)
             marked_count += 1
 
         if marked_count > 0:
@@ -834,9 +889,10 @@ class ScheduleAutomationsRepository(BaseRepository):
         return marked_count
 
     async def _mark_persisted_advance_outboxes_stats_only(
-        self, automation_id: int
+        self, automation_id: int, db: DatabaseExecutor | None = None
     ) -> int:
         """Prevent persisted source-task outboxes from scheduling a future run."""
+        executor = db if db is not None else self._db
         stmt = (
             select(tasks_table.c.task_id, tasks_table.c.payload)
             .where(tasks_table.c.status.in_(["done", "failed"]))
@@ -845,7 +901,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
             )
         )
-        rows = await self._db.fetch_all(stmt)
+        rows = await executor.fetch_all(stmt)
         marked_count = 0
         for row in rows:
             payload = dict(row["payload"] or {})
@@ -860,7 +916,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .where(tasks_table.c.task_id == row["task_id"])
                 .values(payload=payload)
             )
-            await self._db.execute_with_retry(update_stmt)
+            await executor.execute(update_stmt)
             marked_count += 1
 
         if marked_count > 0:
@@ -881,6 +937,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         *,
         timezone: ZoneInfo,
         next_at_override: datetime | None = None,
+        db: DatabaseExecutor | None = None,
     ) -> datetime | None:
         """
         Synchronize pending task queue items with automation state.
@@ -899,11 +956,14 @@ class ScheduleAutomationsRepository(BaseRepository):
             next_at_override: Pre-calculated next execution time. When provided,
                 skips recalculation to avoid race conditions from clock drift
                 between validation and scheduling.
+            db: Optional DatabaseTransaction to use instead of self._db, so the
+                cancel and the re-enqueue land with the caller's own write.
 
         Returns:
             The next_scheduled_at datetime if a task was scheduled, None otherwise
         """
-        await self._cancel_pending_tasks(automation_id)
+        executor = db if db is not None else self._db
+        await self._cancel_pending_tasks(automation_id, db=executor)
 
         if not enabled:
             return None
@@ -961,7 +1021,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             )
 
         await enqueue_task(
-            db_context=self._db,
+            db_context=executor,
             task_id=task_id,
             task_type=task_type,
             payload=payload,
@@ -991,14 +1051,20 @@ class ScheduleAutomationsRepository(BaseRepository):
             schedule_next: Whether to schedule the next run after recording
                 terminal execution stats
         """
-        try:
-            normalized_execution_time = normalize_datetime(execution_time)
-            if normalized_execution_time is None:
-                raise ValueError("execution_time must be a valid datetime")
-            execution_time = normalized_execution_time
+        normalized_execution_time = normalize_datetime(execution_time)
+        if normalized_execution_time is None:
+            raise ValueError("execution_time must be a valid datetime")
+        execution_time = normalized_execution_time
 
+        async def _advance(txn: DatabaseTransaction) -> None:
+            """Record the execution and schedule the next run as one unit.
+
+            Split, a retry of the advancement task replays against
+            already-committed stats (inflating execution_count), or leaves an
+            automation advertising a future run with no queued task.
+            """
             # Get the automation
-            automation = await self.get_by_id(automation_id)
+            automation = await txn.schedule_automations.get_by_id(automation_id)
             if not automation:
                 self._logger.warning(
                     f"Automation {automation_id} not found during after_task_execution"
@@ -1023,7 +1089,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     execution_count=schedule_automations_table.c.execution_count + 1,
                 )
             )
-            await self._db.execute_with_retry(stmt)
+            await txn.execute(stmt)
 
             if not schedule_next:
                 self._logger.info(
@@ -1058,7 +1124,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .where(schedule_automations_table.c.id == automation_id)
                 .values(next_scheduled_at=next_scheduled_at)
             )
-            await self._db.execute_with_retry(stmt)
+            await txn.execute(stmt)
 
             # Schedule next task instance
             action_type = automation["action_type"]
@@ -1100,7 +1166,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             # is managed manually via after_task_execution callback, not
             # by the task worker's automatic recurrence system
             await enqueue_task(
-                db_context=self._db,
+                db_context=txn,
                 task_id=task_id,
                 task_type=task_type,
                 payload=recur_payload,
@@ -1111,6 +1177,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                 f"Scheduled next task for automation {automation_id} at {next_scheduled_at}"
             )
 
+        try:
+            await self._db.atomic(_advance)
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Database error in after_task_execution for automation {automation_id}: {e}"

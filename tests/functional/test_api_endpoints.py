@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
 
@@ -144,8 +144,8 @@ async def test_notes_api_crud(api_client: httpx.AsyncClient) -> None:
 async def test_tasks_api_list(
     api_client: httpx.AsyncClient, db_engine: AsyncEngine
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.tasks.enqueue(task_id="t1", task_type="demo", payload={})
+    db = Database(engine=db_engine)
+    await db.tasks.enqueue(task_id="t1", task_type="demo", payload={})
 
     resp = await api_client.get("/api/tasks/")
     assert resp.status_code == 200
@@ -159,8 +159,8 @@ async def test_tasks_api_cancel_pending(
 ) -> None:
     """Test successfully cancelling a pending task."""
     # Create a pending task
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.tasks.enqueue(task_id="t_cancel", task_type="demo", payload={})
+    db = Database(engine=db_engine)
+    await db.tasks.enqueue(task_id="t_cancel", task_type="demo", payload={})
 
     # Get the task to find its internal ID
     resp = await api_client.get("/api/tasks/")
@@ -187,9 +187,9 @@ async def test_tasks_api_cancel_non_pending(
 ) -> None:
     """Test that cancelling a non-pending task fails."""
     # Create a task and mark it as done
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.tasks.enqueue(task_id="t_done", task_type="demo", payload={})
-        await db.tasks.update_status(task_id="t_done", status="done")
+    db = Database(engine=db_engine)
+    await db.tasks.enqueue(task_id="t_done", task_type="demo", payload={})
+    await db.tasks.update_status(task_id="t_done", status="done")
 
     # Get the task to find its internal ID
     resp = await api_client.get("/api/tasks/")
@@ -219,10 +219,10 @@ async def test_tasks_api_cancel_nonexistent(
 async def test_events_api_list_and_detail(
     api_client: httpx.AsyncClient, db_engine: AsyncEngine
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.events.store_event(source_id="indexing", event_data={"a": 1})
-        events, _ = await db.events.get_events_with_listeners()
-        event_id = events[0]["event_id"]
+    db = Database(engine=db_engine)
+    await db.events.store_event(source_id="indexing", event_data={"a": 1})
+    events, _ = await db.events.get_events_with_listeners()
+    event_id = events[0]["event_id"]
 
     resp = await api_client.get("/api/events/")
     assert resp.status_code == 200
@@ -238,18 +238,18 @@ async def test_events_api_list_and_detail(
 async def test_documents_api_list_and_detail(
     api_client: httpx.AsyncClient, db_engine: AsyncEngine
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        doc = TestDocument(
-            source_type="note",
-            source_id="doc1",
-            id=None,
-            source_uri=None,
-            title="Doc One",
-            created_at=datetime.now(UTC),
-            metadata=None,
-            file_path=None,
-        )
-        doc_id = await db.vector.add_document(doc)
+    db = Database(engine=db_engine)
+    doc = TestDocument(
+        source_type="note",
+        source_id="doc1",
+        id=None,
+        source_uri=None,
+        title="Doc One",
+        created_at=datetime.now(UTC),
+        metadata=None,
+        file_path=None,
+    )
+    doc_id = await db.vector.add_document(doc)
 
     resp = await api_client.get("/api/documents/")
     assert resp.status_code == 200
@@ -267,9 +267,9 @@ async def vector_api_client(
 ) -> AsyncGenerator[httpx.AsyncClient]:
     """API client with PostgreSQL vector DB setup."""
 
-    async def override_get_db() -> AsyncGenerator[DatabaseContext]:
-        async with DatabaseContext(engine=pg_vector_db_engine) as db:
-            yield db  # noqa: ASYNC119
+    async def override_get_db() -> AsyncGenerator[Database]:
+        db = Database(engine=pg_vector_db_engine)
+        yield db
 
     # Create embedder with dimensions that match PostgreSQL indexes
     embedder = MockEmbeddingGenerator(
@@ -298,28 +298,28 @@ async def test_vector_search_api_search(
     vector_api_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
     """Test vector search API endpoint."""
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        # Create test document
-        doc = TestDocument(
-            source_type="note",
-            source_id="doc2",
-            id=None,
-            source_uri=None,
-            title="Doc Two",
-            created_at=datetime.now(UTC),
-            metadata=None,
-            file_path=None,
-        )
-        doc_id = await db.vector.add_document(doc)
-        # Use correct dimensions and model name
-        await db.vector.add_embedding(
-            document_id=doc_id,
-            chunk_index=0,
-            embedding_type="content_chunk",
-            embedding=[0.1] * 1536,  # Match expected dimensions
-            embedding_model="gemini-exp-03-07",  # Match expected model
-            content="content",
-        )
+    db = Database(engine=pg_vector_db_engine)
+    # Create test document
+    doc = TestDocument(
+        source_type="note",
+        source_id="doc2",
+        id=None,
+        source_uri=None,
+        title="Doc Two",
+        created_at=datetime.now(UTC),
+        metadata=None,
+        file_path=None,
+    )
+    doc_id = await db.vector.add_document(doc)
+    # Use correct dimensions and model name
+    await db.vector.add_embedding(
+        document_id=doc_id,
+        chunk_index=0,
+        embedding_type="content_chunk",
+        embedding=[0.1] * 1536,  # Match expected dimensions
+        embedding_model="gemini-exp-03-07",  # Match expected model
+        content="content",
+    )
 
     # Test basic search
     resp = await vector_api_client.post(
@@ -344,30 +344,30 @@ async def test_vector_search_api_with_limit(
     vector_api_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
     """Test vector search API with limit parameter."""
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        # Create multiple test documents
-        doc_ids = []
-        for i in range(5):
-            doc = TestDocument(
-                source_type="note",
-                source_id=f"doc{i}",
-                id=None,
-                source_uri=None,
-                title=f"Document {i}",
-                created_at=datetime.now(UTC),
-                metadata=None,
-                file_path=None,
-            )
-            doc_id = await db.vector.add_document(doc)
-            doc_ids.append(doc_id)
-            await db.vector.add_embedding(
-                document_id=doc_id,
-                chunk_index=0,
-                embedding_type="content_chunk",
-                embedding=[0.1] * 1536,  # Correct dimensions
-                embedding_model="gemini-exp-03-07",  # Correct model
-                content=f"content {i}",
-            )
+    db = Database(engine=pg_vector_db_engine)
+    # Create multiple test documents
+    doc_ids = []
+    for i in range(5):
+        doc = TestDocument(
+            source_type="note",
+            source_id=f"doc{i}",
+            id=None,
+            source_uri=None,
+            title=f"Document {i}",
+            created_at=datetime.now(UTC),
+            metadata=None,
+            file_path=None,
+        )
+        doc_id = await db.vector.add_document(doc)
+        doc_ids.append(doc_id)
+        await db.vector.add_embedding(
+            document_id=doc_id,
+            chunk_index=0,
+            embedding_type="content_chunk",
+            embedding=[0.1] * 1536,  # Correct dimensions
+            embedding_model="gemini-exp-03-07",  # Correct model
+            content=f"content {i}",
+        )
 
     # Test with limit
     resp = await vector_api_client.post(
@@ -384,18 +384,18 @@ async def test_vector_search_api_document_detail(
     vector_api_client: httpx.AsyncClient, pg_vector_db_engine: AsyncEngine
 ) -> None:
     """Test vector search document detail API endpoint."""
-    async with DatabaseContext(engine=pg_vector_db_engine) as db:
-        doc = TestDocument(
-            source_type="pdf",
-            source_id="test_pdf",
-            id=None,
-            source_uri="file:///test.pdf",
-            title="Test PDF Document",
-            created_at=datetime.now(UTC),
-            metadata={"author": "Test User", "pages": 10},
-            file_path=None,
-        )
-        doc_id = await db.vector.add_document(doc)
+    db = Database(engine=pg_vector_db_engine)
+    doc = TestDocument(
+        source_type="pdf",
+        source_id="test_pdf",
+        id=None,
+        source_uri="file:///test.pdf",
+        title="Test PDF Document",
+        created_at=datetime.now(UTC),
+        metadata={"author": "Test User", "pages": 10},
+        file_path=None,
+    )
+    doc_id = await db.vector.add_document(doc)
 
     # Test document detail endpoint
     resp = await vector_api_client.get(f"/api/vector-search/document/{doc_id}")

@@ -31,7 +31,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError  # Use broader except
 from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor
 from family_assistant.storage.vector import Document  # Import Document protocol
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ class NoteDocument(Document):
 
 
 # ast-grep-ignore: no-dict-any - database rows have dynamic columns from query
-async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, Any]]:
+async def get_all_notes(db_context: DatabaseExecutor) -> list[dict[str, Any]]:
     """Retrieves all notes."""
     try:
         stmt = select(
@@ -164,7 +164,7 @@ async def get_all_notes(db_context: DatabaseContext) -> list[dict[str, Any]]:
         raise  # Re-raise after logging
 
 
-async def get_prompt_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
+async def get_prompt_notes(db_context: DatabaseExecutor) -> list[dict[str, str]]:
     """Retrieves only notes that should be included in prompts."""
     try:
         stmt = (
@@ -180,7 +180,7 @@ async def get_prompt_notes(db_context: DatabaseContext) -> list[dict[str, str]]:
 
 
 async def get_note_by_title(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     title: str,
     # ast-grep-ignore: no-dict-any - database row has dynamic columns from query
 ) -> dict[str, Any] | None:
@@ -197,7 +197,7 @@ async def get_note_by_title(
 
 
 async def get_note_by_id(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     note_id: int,
     # ast-grep-ignore: no-dict-any - database row has dynamic columns from query
 ) -> dict[str, Any] | None:
@@ -219,7 +219,7 @@ async def get_note_by_id(
 
 
 async def add_or_update_note(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     title: str,
     content: str,
     include_in_prompt: bool = True,
@@ -227,7 +227,7 @@ async def add_or_update_note(
     """Adds a new note or updates an existing note with the given title (upsert)."""
     now = datetime.now(UTC)
 
-    if db_context.engine.dialect.name == "postgresql":
+    if db_context.dialect_name == "postgresql":
         # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
         try:
             stmt = pg_insert(notes_table).values(
@@ -248,7 +248,7 @@ async def add_or_update_note(
                 set_=update_dict,
             )
             # Use execute_with_retry as commit is handled by context manager
-            await db_context.execute_with_retry(stmt)
+            await db_context.execute(stmt)
             logger.info(f"Successfully added/updated note: {title} (using ON CONFLICT)")
 
             # Enqueue indexing task
@@ -260,7 +260,7 @@ async def add_or_update_note(
 
     else:
         # Fallback for SQLite and other dialects: Try INSERT, then UPDATE on IntegrityError.
-        # The surrounding DatabaseContext handles the overall transaction commit/rollback.
+        # The surrounding Database handles the overall transaction commit/rollback.
         try:
             # Attempt INSERT first
             insert_stmt = insert(notes_table).values(
@@ -270,7 +270,7 @@ async def add_or_update_note(
                 created_at=now,
                 updated_at=now,
             )
-            await db_context.execute_with_retry(insert_stmt)
+            await db_context.execute(insert_stmt)
             logger.info(f"Inserted new note: {title} (SQLite fallback)")
 
             # Enqueue indexing task
@@ -293,8 +293,8 @@ async def add_or_update_note(
                     )
                 )
                 # Execute update within the same transaction context
-                result = await db_context.execute_with_retry(update_stmt)
-                if result.rowcount == 0:  # type: ignore[attr-defined]
+                result = await db_context.execute(update_stmt)
+                if result.rowcount == 0:
                     # This could happen if the note was deleted between the failed INSERT and this UPDATE
                     logger.error(
                         f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently."
@@ -316,13 +316,13 @@ async def add_or_update_note(
                 raise e
 
 
-async def delete_note(db_context: DatabaseContext, title: str) -> bool:
+async def delete_note(db_context: DatabaseExecutor, title: str) -> bool:
     """Deletes a note by title."""
     try:
         stmt = delete(notes_table).where(notes_table.c.title == title)
         # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute_with_retry(stmt)
-        deleted_count = result.rowcount  # type: ignore[attr-defined]
+        result = await db_context.execute(stmt)
+        deleted_count = result.rowcount
         if deleted_count > 0:
             logger.info(f"Deleted note: {title}")
             return True
@@ -334,12 +334,12 @@ async def delete_note(db_context: DatabaseContext, title: str) -> bool:
         raise
 
 
-async def _enqueue_note_indexing_task(db_context: DatabaseContext, title: str) -> None:
+async def _enqueue_note_indexing_task(db_context: DatabaseExecutor, title: str) -> None:
     """
     Helper function to enqueue an indexing task for a note.
 
     Args:
-        db_context: Database context with task enqueueing capability
+        db_context: DatabaseExecutor context with task enqueueing capability
         title: Title of the note to index
     """
     try:

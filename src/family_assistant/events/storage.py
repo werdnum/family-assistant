@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database, DatabaseExecutor
 from family_assistant.storage.events import EventSourceType
 
 logger = logging.getLogger(__name__)
@@ -23,14 +23,14 @@ class EventStorage:
     def __init__(
         self,
         sample_interval_hours: float = 1.0,
-        get_db_context_func: Callable[[], DatabaseContext] | None = None,
+        get_db_context_func: Callable[[], Database] | None = None,
     ) -> None:
         """
         Initialize event storage.
 
         Args:
             sample_interval_hours: Hours between storing samples (default: 1 hour)
-            get_db_context_func: Function to get database context with engine
+            get_db_context_func: Function to get a Database handle
         """
         self.sample_interval_seconds = sample_interval_hours * 3600
         self.last_stored: dict[str, float] = {}  # key -> timestamp for sampling
@@ -46,10 +46,10 @@ class EventStorage:
     ) -> None:
         """Store event if it should be stored based on sampling rules (opens new DB context)."""
         if self.get_db_context_func:
-            async with self.get_db_context_func() as db_ctx:
-                await self.store_event_in_context(
-                    db_ctx, source_id, event_data, triggered_listener_ids
-                )
+            db_ctx = self.get_db_context_func()
+            await self.store_event_in_context(
+                db_ctx, source_id, event_data, triggered_listener_ids
+            )
         else:
             raise RuntimeError(
                 "EventStorage requires get_db_context_func to be provided"
@@ -57,7 +57,7 @@ class EventStorage:
 
     async def store_event_in_context(
         self,
-        db_ctx: DatabaseContext,
+        db_ctx: DatabaseExecutor,
         source_id: EventSourceType | str,
         # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
         event_data: dict[str, Any],
@@ -105,10 +105,10 @@ class EventStorage:
     ) -> None:
         """Write event to database (opens new DB context)."""
         if self.get_db_context_func:
-            async with self.get_db_context_func() as db_ctx:
-                await self._write_event_in_context(
-                    db_ctx, source_id, event_data, triggered_listener_ids
-                )
+            db_ctx = self.get_db_context_func()
+            await self._write_event_in_context(
+                db_ctx, source_id, event_data, triggered_listener_ids
+            )
         else:
             raise RuntimeError(
                 "EventStorage requires get_db_context_func to be provided"
@@ -116,7 +116,7 @@ class EventStorage:
 
     async def _write_event_in_context(
         self,
-        db_ctx: DatabaseContext,
+        db_ctx: DatabaseExecutor,
         source_id: str,
         # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
         event_data: dict[str, Any],
@@ -127,7 +127,7 @@ class EventStorage:
             # Generate unique event ID
             event_id = f"{source_id}:{int(time.time() * 1000000)}"
 
-            await db_ctx.execute_with_retry(
+            await db_ctx.execute(
                 text("""INSERT INTO recent_events 
                    (event_id, source_id, event_data, triggered_listener_ids, timestamp)
                    VALUES (:event_id, :source_id, :event_data, :triggered_listener_ids, :timestamp)"""),

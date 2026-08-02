@@ -56,7 +56,7 @@ def _coerce_scopes(value: list[str] | str | None) -> list[str]:
     return list(parsed) if isinstance(parsed, list) else []
 
 
-# ast-grep-ignore: no-dict-any - dict[str, Any] from DatabaseContext.fetch_one
+# ast-grep-ignore: no-dict-any - dict[str, Any] from Database.fetch_one
 def _row_to_connection(row: dict[str, Any]) -> OAuthConnectionModel:
     """Convert a database row dict to a OAuthConnectionModel."""
     return OAuthConnectionModel(
@@ -74,7 +74,7 @@ def _row_to_connection(row: dict[str, Any]) -> OAuthConnectionModel:
     )
 
 
-# ast-grep-ignore: no-dict-any - dict[str, Any] from DatabaseContext.fetch_one
+# ast-grep-ignore: no-dict-any - dict[str, Any] from Database.fetch_one
 def _row_to_pending_flow(row: dict[str, Any]) -> PendingOAuthFlowModel:
     """Convert a database row dict to a PendingOAuthFlowModel."""
     return PendingOAuthFlowModel(
@@ -143,7 +143,7 @@ class OAuthConnectionsRepository(BaseRepository):
         # preserved on an update; every write rotates ``credential_generation``,
         # resets ``status`` to active, and bumps ``updated_at``.
         insert_ctor = (
-            pg_insert if self._db.engine.dialect.name == "postgresql" else sqlite_insert
+            pg_insert if self._db.dialect_name == "postgresql" else sqlite_insert
         )
         base_stmt = insert_ctor(user_oauth_connections_table).values(
             user_id=user_id,
@@ -170,7 +170,7 @@ class OAuthConnectionsRepository(BaseRepository):
                 "updated_at": base_stmt.excluded.updated_at,
             },
         )
-        await self._db.execute_with_retry(stmt)
+        await self._db.execute(stmt)
         connection = await self.get_connection(user_id, provider)
         if connection is None:  # pragma: no cover - row always exists after write
             raise RuntimeError("Connection row missing immediately after upsert")
@@ -202,7 +202,7 @@ class OAuthConnectionsRepository(BaseRepository):
                 updated_at=now,
             )
         )
-        result = await self._db.execute_with_retry(stmt)
+        result = await self._db.execute(stmt)
         return result.rowcount > 0  # type: ignore[union-attr] # rowcount available on CursorResult
 
     async def update_last_used(self, user_id: str, provider: str) -> None:
@@ -216,7 +216,7 @@ class OAuthConnectionsRepository(BaseRepository):
             )
             .values(last_used_at=now)
         )
-        await self._db.execute_with_retry(stmt)
+        await self._db.execute(stmt)
 
     async def delete_connection(self, user_id: str, provider: str) -> bool:
         """Delete a connection. Returns True iff a row was removed."""
@@ -224,7 +224,7 @@ class OAuthConnectionsRepository(BaseRepository):
             user_oauth_connections_table.c.user_id == user_id,
             user_oauth_connections_table.c.provider == provider,
         )
-        result = await self._db.execute_with_retry(stmt)
+        result = await self._db.execute(stmt)
         return result.rowcount > 0  # type: ignore[union-attr] # rowcount available on CursorResult
 
     async def create_pending_flow(
@@ -238,7 +238,7 @@ class OAuthConnectionsRepository(BaseRepository):
             user_id=user_id,
             created_at=now,
         )
-        await self._db.execute_with_retry(stmt)
+        await self._db.execute(stmt)
 
     async def claim_pending_flow(
         self,
@@ -264,7 +264,7 @@ class OAuthConnectionsRepository(BaseRepository):
         delete_stmt = delete(pending_oauth_flows_table).where(
             pending_oauth_flows_table.c.id == row["id"]
         )
-        result = await self._db.execute_with_retry(delete_stmt)
+        result = await self._db.execute(delete_stmt)
         if result.rowcount != 1:  # type: ignore[union-attr] # rowcount available on CursorResult
             return None
 
@@ -286,5 +286,5 @@ class OAuthConnectionsRepository(BaseRepository):
         stmt = delete(pending_oauth_flows_table).where(
             pending_oauth_flows_table.c.created_at < expiry_cutoff
         )
-        result = await self._db.execute_with_retry(stmt)
+        result = await self._db.execute(stmt)
         return result.rowcount or 0  # type: ignore[union-attr] # rowcount available on CursorResult

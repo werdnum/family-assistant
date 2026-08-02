@@ -25,7 +25,7 @@ from family_assistant.services.attachment_registry import (
     compute_email_identity_hash,
 )
 from family_assistant.storage.base import attachment_metadata_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database, DatabaseTransaction
 from family_assistant.storage.email import (
     AttachmentData,
     parse_attachment_infos_with_raw,
@@ -179,7 +179,7 @@ class EmailDocument(Document):
 
 async def _register_or_reuse_email_attachment(
     *,
-    db_context: DatabaseContext,
+    db_context: DatabaseTransaction,
     attachment_registry: AttachmentRegistry,
     email_db_id: int,
     message_id_header: str,
@@ -217,15 +217,7 @@ async def _register_or_reuse_email_attachment(
         return existing_row["attachment_id"]
 
     new_id = str(uuid.uuid4())
-    conn = db_context.conn
-    if conn is None:
-        # Hard-fail: silently returning None would surface as a perpetual
-        # "needs reindex" state to readers while the real problem is a
-        # missing DB connection.
-        raise RuntimeError(
-            f"Cannot register email attachment '{attachment.filename}' for "
-            f"message {message_id_header}: no active database connection"
-        )
+    conn = db_context.connection
 
     # Wrap the insert in a savepoint so that on Postgres a unique-violation
     # does not abort the outer indexer transaction. Once the savepoint is
@@ -279,7 +271,7 @@ async def _register_or_reuse_email_attachment(
 
 
 async def _register_resolvable_email_attachment(
-    db_context: DatabaseContext,
+    db_context: Database,
     attachment_registry: AttachmentRegistry,
     email_db_id: int,
     message_id_header: str,
@@ -297,14 +289,20 @@ async def _register_resolvable_email_attachment(
     ``None`` if a concurrent-registration race left no discoverable canonical
     row.
     """
-    return await _register_or_reuse_email_attachment(
-        db_context=db_context,
-        attachment_registry=attachment_registry,
-        email_db_id=email_db_id,
-        message_id_header=message_id_header,
-        attachment=attachment,
-        provenance_metadata=provenance_metadata,
-    )
+
+    # The registration nests a savepoint, which needs a guaranteed enclosing
+    # transaction to roll back to.
+    async def _register(txn: DatabaseTransaction) -> str | None:
+        return await _register_or_reuse_email_attachment(
+            db_context=txn,
+            attachment_registry=attachment_registry,
+            email_db_id=email_db_id,
+            message_id_header=message_id_header,
+            attachment=attachment,
+            provenance_metadata=provenance_metadata,
+        )
+
+    return await db_context.atomic(_register)
 
 
 # --- EmailIndexer Class ---
@@ -378,9 +376,9 @@ class EmailIndexer:
         db_context = exec_context.db_context
         if not db_context:
             logger.error(
-                "DatabaseContext not found in ToolExecutionContext for handle_index_email."
+                "Database not found in ToolExecutionContext for handle_index_email."
             )
-            raise ValueError("Missing DatabaseContext dependency in context.")
+            raise ValueError("Missing Database dependency in context.")
 
         email_db_id = payload.get("email_db_id")
         if not email_db_id:
@@ -623,7 +621,7 @@ class EmailIndexer:
                 initial_items.append(attachment_item)
 
             if attachment_info_dirty:
-                await db_context.execute_with_retry(
+                await db_context.execute(
                     update(received_emails_table)
                     .where(received_emails_table.c.id == email_db_id)
                     .values(attachment_info=new_attachment_info)

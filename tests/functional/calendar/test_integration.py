@@ -23,7 +23,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -103,7 +103,7 @@ async def get_event_by_summary_from_radicale(
     events = await asyncio.to_thread(target_calendar.events)
     for event_obj in events:
         try:
-            vevent = event_obj.vobject_instance.vevent  # type: ignore[attr-defined]
+            vevent = event_obj.vobject_instance.vevent
             if (
                 vevent
                 and hasattr(vevent, "summary")
@@ -286,18 +286,18 @@ async def test_add_event_and_verify_in_system_prompt(
     )
 
     user_message_create = f"Please schedule {event_summary} for tomorrow at 10 AM."
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message_create}],
-            trigger_interface_message_id="msg_add_event_prompt_test",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply = result.text_reply
-        error_create = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message_create}],
+        trigger_interface_message_id="msg_add_event_prompt_test",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply = result.text_reply
+    error_create = result.error_traceback
 
     assert error_create is None, f"Error during event creation: {error_create}"
     assert final_reply and final_llm_response_content in final_reply, (

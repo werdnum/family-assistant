@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from tests.functional.web.conftest import WebTestFixture
 
 
@@ -108,30 +108,30 @@ async def test_events_with_actual_data(
     assert engine is not None
 
     # Create some test event data via the repository
-    async with DatabaseContext(engine=engine) as db_context:
-        # Create a test event
-        await db_context.events.store_event(
-            source_id="home_assistant",
-            event_data={
-                "entity_id": "light.living_room",
-                "state": "on",
-                "attributes": {"brightness": 255},
-            },
-            triggered_listener_ids=[],
-            timestamp=datetime.now(UTC),
-        )
+    db_context = Database(engine=engine)
+    # Create a test event
+    await db_context.events.store_event(
+        source_id="home_assistant",
+        event_data={
+            "entity_id": "light.living_room",
+            "state": "on",
+            "attributes": {"brightness": 255},
+        },
+        triggered_listener_ids=[],
+        timestamp=datetime.now(UTC),
+    )
 
-        # Create another event with triggered listeners
-        await db_context.events.store_event(
-            source_id="indexing",
-            event_data={
-                "document_id": "test_doc_123",
-                "action": "indexed",
-                "chunks": 5,
-            },
-            triggered_listener_ids=[1, 2],
-            timestamp=datetime.now(UTC),
-        )
+    # Create another event with triggered listeners
+    await db_context.events.store_event(
+        source_id="indexing",
+        event_data={
+            "document_id": "test_doc_123",
+            "action": "indexed",
+            "chunks": 5,
+        },
+        triggered_listener_ids=[1, 2],
+        timestamp=datetime.now(UTC),
+    )
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -235,26 +235,26 @@ async def test_events_json_formatting_in_detail_view(
 
     # Create a test event with complex JSON data
     test_event_id = None
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.events.store_event(
-            source_id="home_assistant",
-            event_data={
-                "entity_id": "sensor.temperature",
-                "state": "22.5",
-                "attributes": {
-                    "unit_of_measurement": "°C",
-                    "friendly_name": "Living Room Temperature",
-                    "device_class": "temperature",
-                },
+    db_context = Database(engine=engine)
+    await db_context.events.store_event(
+        source_id="home_assistant",
+        event_data={
+            "entity_id": "sensor.temperature",
+            "state": "22.5",
+            "attributes": {
+                "unit_of_measurement": "°C",
+                "friendly_name": "Living Room Temperature",
+                "device_class": "temperature",
             },
-            triggered_listener_ids=[1, 2, 3],
-            timestamp=datetime.now(UTC),
-        )
+        },
+        triggered_listener_ids=[1, 2, 3],
+        timestamp=datetime.now(UTC),
+    )
 
-        # Get the created event ID (it will be in the format source_id:timestamp)
-        events, _ = await db_context.events.get_events_with_listeners(limit=1)
-        if events:
-            test_event_id = events[0]["event_id"]
+    # Get the created event ID (it will be in the format source_id:timestamp)
+    events, _ = await db_context.events.get_events_with_listeners(limit=1)
+    if events:
+        test_event_id = events[0]["event_id"]
 
     if test_event_id:
         # Navigate to event detail page
@@ -293,18 +293,18 @@ async def test_events_triggered_listeners_display(
 
     # Create a test event with triggered listeners
     test_event_id = None
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.events.store_event(
-            source_id="indexing",
-            event_data={"document": "test.pdf", "status": "processed"},
-            triggered_listener_ids=[1, 2],
-            timestamp=datetime.now(UTC),
-        )
+    db_context = Database(engine=engine)
+    await db_context.events.store_event(
+        source_id="indexing",
+        event_data={"document": "test.pdf", "status": "processed"},
+        triggered_listener_ids=[1, 2],
+        timestamp=datetime.now(UTC),
+    )
 
-        # Get the created event ID
-        events, _ = await db_context.events.get_events_with_listeners(limit=1)
-        if events:
-            test_event_id = events[0]["event_id"]
+    # Get the created event ID
+    events, _ = await db_context.events.get_events_with_listeners(limit=1)
+    if events:
+        test_event_id = events[0]["event_id"]
 
     if test_event_id:
         # Navigate to event detail page
@@ -339,18 +339,18 @@ async def test_events_source_icons_display(
     assert engine is not None
 
     # Create events with different sources
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.events.store_event(
-            source_id="home_assistant",
-            event_data={"test": "data"},
-            timestamp=datetime.now(UTC),
-        )
+    db_context = Database(engine=engine)
+    await db_context.events.store_event(
+        source_id="home_assistant",
+        event_data={"test": "data"},
+        timestamp=datetime.now(UTC),
+    )
 
-        await db_context.events.store_event(
-            source_id="indexing",
-            event_data={"test": "data"},
-            timestamp=datetime.now(UTC),
-        )
+    await db_context.events.store_event(
+        source_id="indexing",
+        event_data={"test": "data"},
+        timestamp=datetime.now(UTC),
+    )
 
     # Navigate to events page
     await page.goto(f"{server_url}/events")
@@ -386,17 +386,17 @@ async def test_events_metadata_display(
 
     # Create a test event
     test_event_id = None
-    async with DatabaseContext(engine=engine) as db_context:
-        await db_context.events.store_event(
-            source_id="home_assistant",
-            event_data={"entity_id": "test.entity"},
-            timestamp=datetime.now(UTC),
-        )
+    db_context = Database(engine=engine)
+    await db_context.events.store_event(
+        source_id="home_assistant",
+        event_data={"entity_id": "test.entity"},
+        timestamp=datetime.now(UTC),
+    )
 
-        # Get the created event ID
-        events, _ = await db_context.events.get_events_with_listeners(limit=1)
-        if events:
-            test_event_id = events[0]["event_id"]
+    # Get the created event ID
+    events, _ = await db_context.events.get_events_with_listeners(limit=1)
+    if events:
+        test_event_id = events[0]["event_id"]
 
     if test_event_id:
         # Navigate to event detail page

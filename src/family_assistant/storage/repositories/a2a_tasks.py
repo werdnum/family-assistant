@@ -33,6 +33,8 @@ from family_assistant.storage.repositories.base import BaseRepository
 if TYPE_CHECKING:
     from sqlalchemy.sql.dml import Insert as SqlInsert
 
+    from family_assistant.storage.database import DatabaseTransaction
+
 logger = logging.getLogger(__name__)
 
 a2a_tasks_table = Table(
@@ -114,60 +116,72 @@ class A2ATasksRepository(BaseRepository):
         status: str = "submitted",
         history_json: list[dict[str, object]] | None = None,
     ) -> A2ATaskRow | None:
-        """Create a task, or return the existing row for a duplicate task ID."""
-        existing = await self.get_task(task_id)
-        if existing is not None:
-            return existing
+        """Create a task, or return the existing row for a duplicate task ID.
 
-        if self._db.engine.dialect.name in {"postgresql", "sqlite"}:
-            stmt = self._insert_task_ignoring_conflict(
-                dialect_name=self._db.engine.dialect.name,
+        The read and the insert are one unit: a concurrent retry with the same
+        task ID must get the existing row back rather than a unique-constraint
+        error.
+        """
+
+        async def _create(txn: DatabaseTransaction) -> A2ATaskRow | None:
+            # Everything below runs against the transaction, never the handle:
+            # reaching the handle from inside an open transaction is exactly
+            # what the ambient-transaction guard rejects.
+            existing = await txn.a2a_tasks.get_task(task_id)
+            if existing is not None:
+                return existing
+
+            if txn.dialect_name in {"postgresql", "sqlite"}:
+                stmt = self._insert_task_ignoring_conflict(
+                    dialect_name=txn.dialect_name,
+                    task_id=task_id,
+                    profile_id=profile_id,
+                    conversation_id=conversation_id,
+                    context_id=context_id,
+                    status=status,
+                    history_json=history_json,
+                )
+                result = await txn.execute(stmt)
+                if result.rowcount > 0:
+                    return None
+
+                existing = await txn.a2a_tasks.get_task(task_id)
+                if existing is None:
+                    raise RuntimeError(
+                        f"A2A task {task_id!r} insert conflicted but no existing row was found"
+                    )
+                return existing
+
+            # Dialects without an INSERT ... ON CONFLICT DO NOTHING spelling
+            # need a savepoint, which is why this needs a guaranteed enclosing
+            # transaction to nest inside.
+            conn = txn.connection
+            stmt = insert(a2a_tasks_table).values(
                 task_id=task_id,
+                context_id=context_id,
                 profile_id=profile_id,
                 conversation_id=conversation_id,
-                context_id=context_id,
                 status=status,
                 history_json=history_json,
             )
-            result = await self._execute_with_logging("create_a2a_task_if_absent", stmt)
-            if result.rowcount > 0:  # type: ignore[attr-defined]  # CursorResult always has rowcount
+
+            savepoint = await conn.begin_nested()
+            try:
+                await conn.execute(stmt)
+            except IntegrityError:
+                await savepoint.rollback()
+                existing = await txn.a2a_tasks.get_task(task_id)
+                if existing is None:
+                    raise
+                return existing
+            except Exception:
+                await savepoint.rollback()
+                raise
+            else:
+                await savepoint.commit()
                 return None
 
-            existing = await self.get_task(task_id)
-            if existing is None:
-                raise RuntimeError(
-                    f"A2A task {task_id!r} insert conflicted but no existing row was found"
-                )
-            return existing
-
-        conn = self._db.conn
-        if conn is None:
-            raise RuntimeError("No active database connection")
-
-        stmt = insert(a2a_tasks_table).values(
-            task_id=task_id,
-            context_id=context_id,
-            profile_id=profile_id,
-            conversation_id=conversation_id,
-            status=status,
-            history_json=history_json,
-        )
-
-        savepoint = await conn.begin_nested()
-        try:
-            await conn.execute(stmt)
-        except IntegrityError:
-            await savepoint.rollback()
-            existing = await self.get_task(task_id)
-            if existing is None:
-                raise
-            return existing
-        except Exception:
-            await savepoint.rollback()
-            raise
-        else:
-            await savepoint.commit()
-            return None
+        return await self._db.atomic(_create)
 
     @staticmethod
     def _insert_task_ignoring_conflict(

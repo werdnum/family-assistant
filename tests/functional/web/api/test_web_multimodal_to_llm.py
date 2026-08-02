@@ -36,7 +36,7 @@ from family_assistant.llm.messages import ImageUrlContentPart
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -182,10 +182,10 @@ async def parse_streaming_response(
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
-    """Provides a DatabaseContext for a single test function."""
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+) -> AsyncGenerator[Database]:
+    """Provides a Database for a single test function."""
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -269,9 +269,9 @@ def test_processing_service(
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
-        async with get_db_context(engine=db_engine) as new_ctx:
-            return new_ctx
+    def get_entered_db_context_for_provider() -> Database:
+        new_ctx = Database(engine=db_engine)
+        return new_ctx
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
@@ -329,9 +329,9 @@ async def app_fixture(
     app.state.web_chat_interface = WebChatInterface(db_engine)
     app.state.attachment_registry = test_attachment_registry
 
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)
-        await temp_db_ctx.init_vector_db()
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_db_ctx.init_vector_db()
 
     yield app
 

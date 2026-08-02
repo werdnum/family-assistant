@@ -30,7 +30,7 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.telegram.ui import (
     PendingTelegramConfirmation,
@@ -1077,8 +1077,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         assert any("added" in t.lower() or "note" in t.lower() for t in texts), (
             f"Expected final response after confirmation, got: {texts}"
         )
-        async with DatabaseContext(engine=fix.assistant.database_engine) as db:
-            note = await db.notes.get_by_title(note_title, visibility_grants=None)
+        db = Database(engine=fix.assistant.database_engine)
+        note = await db.notes.get_by_title(note_title, visibility_grants=None)
         assert note is not None
         assert note.content == note_content
 

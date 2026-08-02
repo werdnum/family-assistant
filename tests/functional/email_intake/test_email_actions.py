@@ -26,7 +26,7 @@ from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.email import ParsedEmailData
 from family_assistant.task_worker import handle_confirmation_tool_execution
 from family_assistant.tools import (
@@ -290,8 +290,8 @@ async def _store_email(db_engine: AsyncEngine) -> int:
         ),
         "target_user_id": "buyer@example.com",
     })
-    async with DatabaseContext(engine=db_engine) as db:
-        email_db_id = await db.email.store_incoming(parsed)
+    db = Database(engine=db_engine)
+    email_db_id = await db.email.store_incoming(parsed)
     assert email_db_id is not None
     return email_db_id
 
@@ -306,8 +306,8 @@ async def _store_email_without_envelope_sender(db_engine: AsyncEngine) -> int:
         "body-plain": "This row has only a visible From header.",
         "target_user_id": "buyer@example.com",
     })
-    async with DatabaseContext(engine=db_engine) as db:
-        email_db_id = await db.email.store_incoming(parsed)
+    db = Database(engine=db_engine)
+    email_db_id = await db.email.store_incoming(parsed)
     assert email_db_id is not None
     return email_db_id
 
@@ -320,8 +320,8 @@ async def _store_email_without_target_user(db_engine: AsyncEngine) -> int:
         "subject": "Missing target",
         "body-plain": "This row was accepted before action processing.",
     })
-    async with DatabaseContext(engine=db_engine) as db:
-        email_db_id = await db.email.store_incoming(parsed)
+    db = Database(engine=db_engine)
+    email_db_id = await db.email.store_incoming(parsed)
     assert email_db_id is not None
     return email_db_id
 
@@ -335,15 +335,15 @@ async def _store_email_from_unmapped_sender(db_engine: AsyncEngine) -> int:
         "body-plain": "This row was mapped by recipient only.",
         "target_user_id": "buyer@example.com",
     })
-    async with DatabaseContext(engine=db_engine) as db:
-        email_db_id = await db.email.store_incoming(parsed)
+    db = Database(engine=db_engine)
+    email_db_id = await db.email.store_incoming(parsed)
     assert email_db_id is not None
     return email_db_id
 
 
 def _execution_context(
     *,
-    db: DatabaseContext,
+    db: Database,
     service: ProcessingService,
     email_interface: EmailChatInterface,
     email_db_id: int,
@@ -597,29 +597,29 @@ async def test_email_action_without_target_user_fails(
     )
     email_db_id = await _store_email_without_target_user(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="email",
-            conversation_id=email_conversation_id(email_db_id),
-            user_name="buyer@example.com",
-            user_id=None,
-            turn_id=None,
-            db_context=db,
-            processing_service=None,
-            clock=SystemClock(),
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            chat_interface=email_interface,
-            chat_interfaces={"email": email_interface},
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="email",
+        conversation_id=email_conversation_id(email_db_id),
+        user_name="buyer@example.com",
+        user_id=None,
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=SystemClock(),
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        chat_interface=email_interface,
+        chat_interfaces={"email": email_interface},
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        with pytest.raises(ValueError, match="without target_user_id"):
-            await handle_email_intake_action(context, {"email_db_id": email_db_id})
+    with pytest.raises(ValueError, match="without target_user_id"):
+        await handle_email_intake_action(context, {"email_db_id": email_db_id})
 
 
 @pytest.mark.asyncio
@@ -660,16 +660,16 @@ async def test_email_action_delivery_failure_does_not_retry_completed_turn(
     service = _build_email_processing_service(app_config, llm)
     email_db_id = await _store_email(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await handle_email_intake_action(
-            _execution_context(
-                db=db,
-                service=service,
-                email_interface=email_interface,
-                email_db_id=email_db_id,
-            ),
-            {"email_db_id": email_db_id},
-        )
+    db = Database(engine=db_engine)
+    await handle_email_intake_action(
+        _execution_context(
+            db=db,
+            service=service,
+            email_interface=email_interface,
+            email_db_id=email_db_id,
+        ),
+        {"email_db_id": email_db_id},
+    )
 
 
 @pytest.mark.asyncio
@@ -707,21 +707,21 @@ async def test_email_action_seeds_unknown_external_taint_on_saved_reply(
     )
     email_db_id = await _store_email(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await handle_email_intake_action(
-            _execution_context(
-                db=db,
-                service=service,
-                email_interface=email_interface,
-                email_db_id=email_db_id,
-            ),
-            {"email_db_id": email_db_id},
-        )
-        messages = await db.message_history.get_recent(
-            interface_type="email",
-            conversation_id=email_conversation_id(email_db_id),
-            processing_profile_id="email_intake",
-        )
+    db = Database(engine=db_engine)
+    await handle_email_intake_action(
+        _execution_context(
+            db=db,
+            service=service,
+            email_interface=email_interface,
+            email_db_id=email_db_id,
+        ),
+        {"email_db_id": email_db_id},
+    )
+    messages = await db.message_history.get_recent(
+        interface_type="email",
+        conversation_id=email_conversation_id(email_db_id),
+        processing_profile_id="email_intake",
+    )
 
     assistant_messages = [
         message
@@ -798,37 +798,35 @@ async def test_email_action_creates_durable_confirmation_and_replies_by_email(
     service = _build_email_processing_service(app_config, llm)
     email_db_id = await _store_email(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await handle_email_intake_action(
-            _execution_context(
-                db=db,
-                service=service,
-                email_interface=email_interface,
-                email_db_id=email_db_id,
-                telegram_confirmation_manager=telegram_confirmation_manager,
-            ),
-            {"email_db_id": email_db_id},
+    db = Database(engine=db_engine)
+    await handle_email_intake_action(
+        _execution_context(
+            db=db,
+            service=service,
+            email_interface=email_interface,
+            email_db_id=email_db_id,
+            telegram_confirmation_manager=telegram_confirmation_manager,
+        ),
+        {"email_db_id": email_db_id},
+    )
+    pending = await db.confirmation_requests.list_pending_for_user("buyer@example.com")
+    assert len(pending) == 1
+    request = pending[0]
+    assert request["tool_name"] == "add_or_update_note"
+    assert request["tool_args_json"]["title"] == "Soccer tickets"
+    assert "From your email" in request["confirmation_prompt"]
+    assert request["taint_state_json"] is not None
+    assert request["taint_state_json"].get("max_tier") == "unknown_external"
+    note_content = request["tool_args_json"]["content"]
+    assert isinstance(note_content, str)
+    assert "Special instruction for agents" not in note_content
+    assert (
+        await db.notes.get_by_title(
+            "Soccer tickets",
+            visibility_grants=None,
         )
-        pending = await db.confirmation_requests.list_pending_for_user(
-            "buyer@example.com"
-        )
-        assert len(pending) == 1
-        request = pending[0]
-        assert request["tool_name"] == "add_or_update_note"
-        assert request["tool_args_json"]["title"] == "Soccer tickets"
-        assert "From your email" in request["confirmation_prompt"]
-        assert request["taint_state_json"] is not None
-        assert request["taint_state_json"].get("max_tier") == "unknown_external"
-        note_content = request["tool_args_json"]["content"]
-        assert isinstance(note_content, str)
-        assert "Special instruction for agents" not in note_content
-        assert (
-            await db.notes.get_by_title(
-                "Soccer tickets",
-                visibility_grants=None,
-            )
-            is None
-        )
+        is None
+    )
 
     assert len(outbound_client.sent) == 1
     assert outbound_client.sent[0].to_address == "buyer@example.com"
@@ -896,54 +894,50 @@ async def test_approved_email_confirmation_executes_exact_tool_and_notifies_send
     )
     email_db_id = await _store_email(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await handle_email_intake_action(
-            _execution_context(
-                db=db,
-                service=service,
-                email_interface=email_interface,
-                email_db_id=email_db_id,
-            ),
-            {"email_db_id": email_db_id},
-        )
-        pending = await db.confirmation_requests.list_pending_for_user(
-            "buyer@example.com"
-        )
-        request_id = pending[0]["id"]
-
-    confirmation_service = ConfirmationService(
-        db_context_factory=lambda: get_db_context(engine=db_engine)
+    db = Database(engine=db_engine)
+    await handle_email_intake_action(
+        _execution_context(
+            db=db,
+            service=service,
+            email_interface=email_interface,
+            email_db_id=email_db_id,
+        ),
+        {"email_db_id": email_db_id},
     )
+    pending = await db.confirmation_requests.list_pending_for_user("buyer@example.com")
+    request_id = pending[0]["id"]
+
+    confirmation_service = ConfirmationService(db=Database(engine=db_engine))
     await confirmation_service.approve_and_enqueue_execution(
         request_id=request_id,
         approving_user_id="buyer@example.com",
         approving_interface="web",
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await handle_confirmation_tool_execution(
-            _execution_context(
-                db=db,
-                service=service,
-                email_interface=email_interface,
-                email_db_id=email_db_id,
-            ),
-            {"confirmation_request_id": request_id},
-        )
-        note = await db.notes.get_by_title(
-            "Soccer tickets",
-            visibility_grants=None,
-        )
-        assert note is not None
-        assert note.visibility_labels == []
-        assert note.provenance_metadata is not None
-        assert note.provenance_metadata.get("provenance_labels") == [
-            "source_unknown_external"
-        ]
-        taint_metadata = note.provenance_metadata.get("taint_metadata")
-        assert isinstance(taint_metadata, dict)
-        assert taint_metadata.get("max_tier") == "unknown_external"
-        assert "2026-06-10 19:30" in note.content
+    db = Database(engine=db_engine)
+    await handle_confirmation_tool_execution(
+        _execution_context(
+            db=db,
+            service=service,
+            email_interface=email_interface,
+            email_db_id=email_db_id,
+        ),
+        {"confirmation_request_id": request_id},
+    )
+    note = await db.notes.get_by_title(
+        "Soccer tickets",
+        visibility_grants=None,
+    )
+    assert note is not None
+    assert note.visibility_labels == []
+    assert note.provenance_metadata is not None
+    assert note.provenance_metadata.get("provenance_labels") == [
+        "source_unknown_external"
+    ]
+    taint_metadata = note.provenance_metadata.get("taint_metadata")
+    assert isinstance(taint_metadata, dict)
+    assert taint_metadata.get("max_tier") == "unknown_external"
+    assert "2026-06-10 19:30" in note.content
 
     assert len(outbound_client.sent) == 2
     assert outbound_client.sent[1].to_address == "buyer@example.com"

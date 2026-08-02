@@ -28,10 +28,9 @@ from family_assistant.storage.base import (
     create_engine_with_sqlite_optimizations,
     metadata,
 )
-from family_assistant.storage.context import (
-    DatabaseContext,
-    get_db_context,
-)  # Need get_db_context for fixture
+from family_assistant.storage.database import (
+    Database,
+)  # Need Database for fixture
 from family_assistant.storage.message_history import (
     add_message_to_history,
     get_message_by_interface_id,
@@ -50,28 +49,25 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
     engine = create_engine_with_sqlite_optimizations(TEST_DATABASE_URL, instrument=True)
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with engine.begin() as conn:
         # Ensure tables are created - only creates if they don't exist
         await conn.run_sync(metadata.create_all)
 
     yield engine
 
-    check_db_engine_invariants(engine, "test_message_history db_engine")
+    await check_db_engine_invariants(engine, "test_message_history db_engine")
     await engine.dispose()
 
 
-@pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    """Provides an *entered* DatabaseContext instance for interacting with the test database."""
-    # Using the factory function aligns better with potential future DI usage
-    context_instance = get_db_context(engine=db_engine, base_delay=0.01)
-    async with context_instance as entered_context:
-        yield entered_context
-    # Context is automatically exited here
+@pytest.fixture
+def db_context(db_engine: AsyncEngine) -> Database:
+    """Provides an *entered* Database instance for interacting with the test database."""
+    return Database(engine=db_engine, base_delay=0.01)
 
 
 @pytest.mark.asyncio
-async def test_add_message_stores_optional_fields(db_context: DatabaseContext) -> None:
+async def test_add_message_stores_optional_fields(db_context: Database) -> None:
     """Verify storing messages with optional fields populated."""
     # Arrange
     interface_type = "test_optional"  # Define interface_type
@@ -176,7 +172,7 @@ async def test_add_message_stores_optional_fields(db_context: DatabaseContext) -
 
 @pytest.mark.asyncio
 async def test_get_recent_history_retrieves_correct_messages(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Verify get_recent_history filters, limits, orders, and handles age correctly."""
     # Arrange
@@ -256,7 +252,7 @@ async def test_get_recent_history_retrieves_correct_messages(
 
 @pytest.mark.asyncio
 async def test_get_message_by_interface_id_retrieval(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Verify retrieving a specific message by its interface identifiers."""
     # Arrange
@@ -302,7 +298,7 @@ async def test_get_message_by_interface_id_retrieval(
 
 @pytest.mark.asyncio
 async def test_get_messages_by_turn_id_retrieves_correct_sequence(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Verify retrieving all messages for a specific turn_id in order."""
     # Arrange
@@ -394,7 +390,7 @@ async def test_get_messages_by_turn_id_retrieves_correct_sequence(
 
 
 @pytest.mark.asyncio
-async def test_update_message_interface_id_sets_id(db_context: DatabaseContext) -> None:
+async def test_update_message_interface_id_sets_id(db_context: Database) -> None:
     """Verify that the interface message ID can be updated after insertion."""
     # Arrange
     interface = "update_test"
@@ -442,7 +438,7 @@ async def test_update_message_interface_id_sets_id(db_context: DatabaseContext) 
 
 @pytest.mark.asyncio
 async def test_get_messages_by_thread_id_retrieves_correct_sequence(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Verify retrieving all messages for a specific thread_root_id in order."""
     # Arrange
@@ -534,7 +530,7 @@ async def test_get_messages_by_thread_id_retrieves_correct_sequence(
 
 @pytest.mark.asyncio
 async def test_add_message_without_taint_metadata_logs_regression_guard(
-    db_context: DatabaseContext,
+    db_context: Database,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Assistant/tool rows persisted without taint metadata trip the write guard."""
@@ -599,7 +595,7 @@ async def test_add_message_without_taint_metadata_logs_regression_guard(
 
 @pytest.mark.asyncio
 async def test_subconversation_taint_merges_tool_rows_after_assistant(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     conversation_id = str(uuid.uuid4())
     subconversation_id = str(uuid.uuid4())

@@ -22,7 +22,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import enqueue_task, tasks_table
 from family_assistant.storage.types import TaskDict
 from family_assistant.task_worker import (
@@ -95,18 +95,18 @@ async def _wait_for_notification_tasks(
     notification_tasks: list[TaskDict] = []
     deadline = datetime.now(UTC) + timedelta(seconds=timeout_seconds)
     while datetime.now(UTC) < deadline:
-        async with get_db_context(engine=engine) as db_ctx:
-            stmt = select(tasks_table).where(
-                tasks_table.c.task_type == "llm_callback",
-            )
-            rows = await db_ctx.fetch_all(stmt)
-            notification_tasks = [
-                cast("TaskDict", r)
-                for r in rows
-                if r["task_id"].startswith("script_error_notify_")
-            ]
-            if len(notification_tasks) >= expected_count:
-                return notification_tasks
+        db_ctx = Database(engine=engine)
+        stmt = select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+        )
+        rows = await db_ctx.fetch_all(stmt)
+        notification_tasks = [
+            cast("TaskDict", r)
+            for r in rows
+            if r["task_id"].startswith("script_error_notify_")
+        ]
+        if len(notification_tasks) >= expected_count:
+            return notification_tasks
         # ast-grep-ignore: no-asyncio-sleep-in-tests - Polling interval in condition-checking loop
         await asyncio.sleep(0.1)
     return notification_tasks
@@ -138,22 +138,22 @@ async def test_script_failure_notification_is_processable(
     # Enqueue a script that will always fail (syntax error) with max_retries=0
     # so it fails immediately without retrying
     task_id = f"test_fail_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="script_execution",
-            payload={
-                "script_code": "this is not valid python!!!",
-                "conversation_id": "test_conv",
-                "interface_type": "telegram",
-                "task_name": "Broken Automation",
-                "automation_id": "42",
-                "created_by_user_id": "script-owner",
-                "config": {},
-            },
-            max_retries_override=0,
-        )
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="script_execution",
+        payload={
+            "script_code": "this is not valid python!!!",
+            "conversation_id": "test_conv",
+            "interface_type": "telegram",
+            "task_name": "Broken Automation",
+            "automation_id": "42",
+            "created_by_user_id": "script-owner",
+            "config": {},
+        },
+        max_retries_override=0,
+    )
 
     new_task_event.set()
 
@@ -213,19 +213,19 @@ async def test_notify_on_failure_false_suppresses_notification(
     await asyncio.sleep(0.1)
 
     task_id = f"test_nonotify_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="script_execution",
-            payload={
-                "script_code": "this is not valid python!!!",
-                "conversation_id": "test_conv",
-                "interface_type": "telegram",
-                "config": {"notify_on_failure": False},
-            },
-            max_retries_override=0,
-        )
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="script_execution",
+        payload={
+            "script_code": "this is not valid python!!!",
+            "conversation_id": "test_conv",
+            "interface_type": "telegram",
+            "config": {"notify_on_failure": False},
+        },
+        max_retries_override=0,
+    )
 
     new_task_event.set()
 
@@ -269,18 +269,18 @@ async def test_llm_callback_failure_does_not_trigger_notification(
     await asyncio.sleep(0.1)
 
     task_id = f"test_llm_fail_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="llm_callback",
-            payload={
-                "conversation_id": "test_conv",
-                "interface_type": "telegram",
-                "callback_context": "Some callback",
-            },
-            max_retries_override=0,
-        )
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="llm_callback",
+        payload={
+            "conversation_id": "test_conv",
+            "interface_type": "telegram",
+            "callback_context": "Some callback",
+        },
+        max_retries_override=0,
+    )
 
     new_task_event.set()
 
@@ -317,25 +317,25 @@ async def test_notification_contains_event_data(
     await asyncio.sleep(0.1)
 
     task_id = f"test_evdata_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="script_execution",
-            payload={
-                "script_code": "raise_error('intentional failure')",
-                "conversation_id": "test_conv",
-                "interface_type": "telegram",
-                "task_name": "Event Script",
-                "listener_id": "listener_99",
-                "event_data": {
-                    "entity_id": "sensor.temperature",
-                    "new_state": {"state": "25.5"},
-                },
-                "config": {},
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="script_execution",
+        payload={
+            "script_code": "raise_error('intentional failure')",
+            "conversation_id": "test_conv",
+            "interface_type": "telegram",
+            "task_name": "Event Script",
+            "listener_id": "listener_99",
+            "event_data": {
+                "entity_id": "sensor.temperature",
+                "new_state": {"state": "25.5"},
             },
-            max_retries_override=0,
-        )
+            "config": {},
+        },
+        max_retries_override=0,
+    )
 
     new_task_event.set()
 
@@ -382,20 +382,20 @@ async def test_confined_profile_failure_skips_llm_notification(
     worker.register_task_handler("script_execution", handle_script_execution)
 
     task_id = f"test_confined_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="script_execution",
-            payload={
-                "script_code": "this is not valid python!!!",
-                "conversation_id": "test_conv",
-                "interface_type": "telegram",
-                "processing_profile_id": "ops_automation",
-                "config": {},
-            },
-            max_retries_override=0,
-        )
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="script_execution",
+        payload={
+            "script_code": "this is not valid python!!!",
+            "conversation_id": "test_conv",
+            "interface_type": "telegram",
+            "processing_profile_id": "ops_automation",
+            "config": {},
+        },
+        max_retries_override=0,
+    )
 
     new_task_event.set()
 
@@ -440,20 +440,20 @@ async def test_stamped_profile_carried_into_notification(
     worker.register_task_handler("script_execution", handle_script_execution)
 
     task_id = f"test_stamped_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="script_execution",
-            payload={
-                "script_code": "this is not valid python!!!",
-                "conversation_id": "test_conv",
-                "interface_type": "telegram",
-                "processing_profile_id": "automation_creation",
-                "config": {},
-            },
-            max_retries_override=0,
-        )
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="script_execution",
+        payload={
+            "script_code": "this is not valid python!!!",
+            "conversation_id": "test_conv",
+            "interface_type": "telegram",
+            "processing_profile_id": "automation_creation",
+            "config": {},
+        },
+        max_retries_override=0,
+    )
 
     new_task_event.set()
 

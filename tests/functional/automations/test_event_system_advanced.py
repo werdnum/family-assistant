@@ -9,16 +9,21 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant import actions as actions_module
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
+from family_assistant.events.storage import EventStorage
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage import get_db_context
-from family_assistant.storage.events import EventSourceType
+from family_assistant.storage import Database
+from family_assistant.storage.database import DatabaseTransaction
+from family_assistant.storage.events import EventSourceType, recent_events_table
+from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.types import EventListenerDict
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
 from family_assistant.tools import (
     CompositeToolsProvider,
@@ -51,75 +56,75 @@ def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can
 async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     """Test that event type matching works correctly."""
     # Arrange - store different event types
-    async with get_db_context(db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(text("DELETE FROM recent_events"))
 
-        now = datetime.now(UTC)
+    now = datetime.now(UTC)
 
-        # Store a state_changed event
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO recent_events
+    # Store a state_changed event
+    await db_ctx.execute(
+        text("""INSERT INTO recent_events
                    (event_id, source_id, event_data, timestamp)
                    VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
-            {
-                "event_id": "test_state_1",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "event_type": "state_changed",
-                    "entity_id": "light.living_room",
-                    "old_state": {"state": "off"},
-                    "new_state": {"state": "on"},
-                }),
-                "timestamp": now,
-            },
-        )
-
-        # Store a call_service event
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO recent_events
-                   (event_id, source_id, event_data, timestamp)
-                   VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
-            {
-                "event_id": "test_service_1",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "event_type": "call_service",
-                    "domain": "light",
-                    "service": "turn_on",
-                    "service_data": {"entity_id": "light.living_room"},
-                }),
-                "timestamp": now,
-            },
-        )
-
-    # Act - test matching state_changed events only
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        result = await event_listener_test_tool(
-            exec_context,
-            source=EventSourceType.home_assistant.value,
-            match_conditions={
+        {
+            "event_id": "test_state_1",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
                 "event_type": "state_changed",
                 "entity_id": "light.living_room",
-            },
-            hours=1,
-        )
+                "old_state": {"state": "off"},
+                "new_state": {"state": "on"},
+            }),
+            "timestamp": now,
+        },
+    )
+
+    # Store a call_service event
+    await db_ctx.execute(
+        text("""INSERT INTO recent_events
+                   (event_id, source_id, event_data, timestamp)
+                   VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
+        {
+            "event_id": "test_service_1",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
+                "event_type": "call_service",
+                "domain": "light",
+                "service": "turn_on",
+                "service_data": {"entity_id": "light.living_room"},
+            }),
+            "timestamp": now,
+        },
+    )
+
+    # Act - test matching state_changed events only
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await event_listener_test_tool(
+        exec_context,
+        source=EventSourceType.home_assistant.value,
+        match_conditions={
+            "event_type": "state_changed",
+            "entity_id": "light.living_room",
+        },
+        hours=1,
+    )
 
     # Assert
     data = json.loads(result)
@@ -129,33 +134,33 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     assert data["matched_events"][0]["event_data"]["event_type"] == "state_changed"
 
     # Act - test matching call_service events only
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await event_listener_test_tool(
-            exec_context,
-            source=EventSourceType.home_assistant.value,
-            match_conditions={
-                "event_type": "call_service",
-                "domain": "light",
-            },
-            hours=1,
-        )
+    result = await event_listener_test_tool(
+        exec_context,
+        source=EventSourceType.home_assistant.value,
+        match_conditions={
+            "event_type": "call_service",
+            "domain": "light",
+        },
+        hours=1,
+    )
 
     # Assert
     data = json.loads(result)
@@ -173,35 +178,35 @@ async def test_end_to_end_event_listener_wakes_llm(
     """Test end-to-end flow: event triggers listener which enqueues LLM callback task."""
 
     # Step 1: Create an event listener that watches for motion detection
-    async with get_db_context(db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO event_listeners
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(
+        text("""INSERT INTO event_listeners
                  (name, match_conditions, source_id, action_type, action_config, enabled,
                   conversation_id, interface_type)
                  VALUES (:name, :conditions, :source_id, :action_type, :action_config,
                          :enabled, :conversation_id, :interface_type)"""),
-            {
-                "name": "Motion Light Automation",
-                "conditions": json.dumps({
-                    "entity_id": "binary_sensor.hallway_motion",
-                    "new_state.state": "on",
-                }),
-                "source_id": EventSourceType.home_assistant.value,
-                "action_type": "wake_llm",
-                "action_config": json.dumps({
-                    "include_event_data": True,
-                }),
-                "enabled": True,
-                "conversation_id": "test_chat_123",
-                "interface_type": "telegram",
-            },
-        )
+        {
+            "name": "Motion Light Automation",
+            "conditions": json.dumps({
+                "entity_id": "binary_sensor.hallway_motion",
+                "new_state.state": "on",
+            }),
+            "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
+            "action_config": json.dumps({
+                "include_event_data": True,
+            }),
+            "enabled": True,
+            "conversation_id": "test_chat_123",
+            "interface_type": "telegram",
+        },
+    )
 
     # Step 2: Create event processor and refresh cache
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -230,64 +235,61 @@ async def test_end_to_end_event_listener_wakes_llm(
     await processor.process_event("home_assistant", motion_event)
 
     # Step 4: Verify the event was stored
-    async with get_db_context(db_engine) as db_ctx:
-        events_result = await db_ctx.fetch_all(
-            text("SELECT * FROM recent_events WHERE source_id = 'home_assistant'")
-        )
-        assert len(events_result) >= 1
+    db_ctx = Database(db_engine)
+    events_result = await db_ctx.fetch_all(
+        text("SELECT * FROM recent_events WHERE source_id = 'home_assistant'")
+    )
+    assert len(events_result) >= 1
 
-        # Find our motion event
-        motion_event_stored = None
-        for event in events_result:
-            # Handle both string (SQLite) and dict (PostgreSQL) formats
-            event_data = safe_json_loads(event["event_data"])
-            if event_data.get("entity_id") == "binary_sensor.hallway_motion":
-                motion_event_stored = event
-                break
+    # Find our motion event
+    motion_event_stored = None
+    for event in events_result:
+        # Handle both string (SQLite) and dict (PostgreSQL) formats
+        event_data = safe_json_loads(event["event_data"])
+        if event_data.get("entity_id") == "binary_sensor.hallway_motion":
+            motion_event_stored = event
+            break
 
-        assert motion_event_stored is not None
-        # Handle both string (SQLite) and dict/list (PostgreSQL) formats
-        triggered_listeners = motion_event_stored["triggered_listener_ids"]
-        if triggered_listeners is None:
-            triggered_listeners = []
-        else:
-            triggered_listeners = safe_json_loads(triggered_listeners)
-        assert len(triggered_listeners) == 1
+    assert motion_event_stored is not None
+    # Handle both string (SQLite) and dict/list (PostgreSQL) formats
+    triggered_listeners = motion_event_stored["triggered_listener_ids"]
+    if triggered_listeners is None:
+        triggered_listeners = []
+    else:
+        triggered_listeners = safe_json_loads(triggered_listeners)
+    assert len(triggered_listeners) == 1
 
     # Step 5: Verify an LLM callback task was created
-    async with get_db_context(db_engine) as db_ctx:
-        # Check tasks table for our callback
-        tasks_result = await db_ctx.fetch_all(
-            text(
-                "SELECT * FROM tasks WHERE task_type = 'llm_callback' AND status = 'pending'"
-            )
+    db_ctx = Database(db_engine)
+    # Check tasks table for our callback
+    tasks_result = await db_ctx.fetch_all(
+        text(
+            "SELECT * FROM tasks WHERE task_type = 'llm_callback' AND status = 'pending'"
         )
+    )
 
-        # There should be at least one llm_callback task
-        assert len(tasks_result) > 0
-        callback_task = tasks_result[0]  # Get the first one
+    # There should be at least one llm_callback task
+    assert len(tasks_result) > 0
+    callback_task = tasks_result[0]  # Get the first one
 
-        # Verify task payload
-        # Handle both string (SQLite) and dict (PostgreSQL) formats
-        payload = safe_json_loads(callback_task["payload"])
-        assert payload["interface_type"] == "telegram"
-        assert payload["conversation_id"] == "test_chat_123"
-        # Event-triggered wake_llm routes to the restricted event_handler profile,
-        # not the (full-trust) listener creator profile.
-        assert payload["processing_profile_id"] == "event_handler"
-        assert "callback_context" in payload
+    # Verify task payload
+    # Handle both string (SQLite) and dict (PostgreSQL) formats
+    payload = safe_json_loads(callback_task["payload"])
+    assert payload["interface_type"] == "telegram"
+    assert payload["conversation_id"] == "test_chat_123"
+    # Event-triggered wake_llm routes to the restricted event_handler profile,
+    # not the (full-trust) listener creator profile.
+    assert payload["processing_profile_id"] == "event_handler"
+    assert "callback_context" in payload
 
-        callback_context = payload["callback_context"]
-        assert (
-            callback_context["trigger"]
-            == "Event listener 'Motion Light Automation' matched"
-        )
-        assert callback_context["source"] == "home_assistant"
-        assert "event_data" in callback_context
-        assert (
-            callback_context["event_data"]["entity_id"]
-            == "binary_sensor.hallway_motion"
-        )
+    callback_context = payload["callback_context"]
+    assert (
+        callback_context["trigger"]
+        == "Event listener 'Motion Light Automation' matched"
+    )
+    assert callback_context["source"] == "home_assistant"
+    assert "event_data" in callback_context
+    assert callback_context["event_data"]["entity_id"] == "binary_sensor.hallway_motion"
 
     # Step 6: Start a task worker that will process the callback task
 
@@ -393,41 +395,219 @@ async def test_end_to_end_event_listener_wakes_llm(
 
 
 @pytest.mark.asyncio
+async def test_failing_listener_undoes_the_ones_that_already_ran(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One event, two matched listeners: a failure in the second undoes the first.
+
+    The failure has to reach the caller, or a webhook source acknowledges an
+    event whose action was dropped and the sender never retries. That retry
+    replays the whole event, so a listener that had committed on its own would
+    fire a second time.
+    """
+    db_ctx = Database(db_engine)
+    for name in ("Succeeding alert", "Failing alert"):
+        await db_ctx.execute(
+            text("""INSERT INTO event_listeners
+                     (name, match_conditions, source_id, action_type, enabled,
+                      conversation_id, interface_type, one_time)
+                     VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                             :conversation_id, :interface_type, :one_time)"""),
+            {
+                "name": name,
+                "conditions": json.dumps({"entity_id": "binary_sensor.back_door"}),
+                "source_id": EventSourceType.home_assistant.value,
+                "action_type": "wake_llm",
+                "enabled": True,
+                "conversation_id": "test_chat_789",
+                "interface_type": "telegram",
+                "one_time": False,
+            },
+        )
+
+    real_execute = EventProcessor._execute_action_in_context
+
+    async def fail_the_second(
+        self: EventProcessor,
+        db_ctx: DatabaseTransaction,
+        listener: EventListenerDict,
+        # ast-grep-ignore: no-dict-any - mirrors the patched method's own signature for arbitrary event payloads
+        event_data: dict[str, Any],
+    ) -> None:
+        if listener["name"] == "Failing alert":
+            raise RuntimeError("action enqueue unavailable")
+        await real_execute(self, db_ctx, listener, event_data)
+
+    monkeypatch.setattr(EventProcessor, "_execute_action_in_context", fail_the_second)
+
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: Database(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    with pytest.raises(RuntimeError, match="action enqueue unavailable"):
+        await processor.process_event(
+            "home_assistant", {"entity_id": "binary_sensor.back_door"}
+        )
+
+    monkeypatch.undo()
+    db_ctx = Database(db_engine)
+    queued = await db_ctx.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert queued == [], "the succeeding listener's action must not survive"
+    assert await db_ctx.fetch_all(select(recent_events_table)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_event_record_does_not_disturb_the_listeners(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The debug event row cannot cost an action.
+
+    Raising would make the caller retry an event whose actions are already
+    committed, firing them twice -- for a row nothing derives from.
+    """
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(
+        text("""INSERT INTO event_listeners
+                 (name, match_conditions, source_id, action_type, enabled,
+                  conversation_id, interface_type, one_time)
+                 VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                         :conversation_id, :interface_type, :one_time)"""),
+        {
+            "name": "Undisturbed alert",
+            "conditions": json.dumps({"entity_id": "binary_sensor.gate"}),
+            "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
+            "enabled": True,
+            "conversation_id": "test_chat_gate",
+            "interface_type": "telegram",
+            "one_time": False,
+        },
+    )
+
+    async def fail_store(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise RuntimeError("event store unavailable")
+
+    monkeypatch.setattr(EventStorage, "store_event_in_context", fail_store)
+
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: Database(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    await processor.process_event("home_assistant", {"entity_id": "binary_sensor.gate"})
+
+    monkeypatch.undo()
+    queued = await Database(db_engine).fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert len(queued) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_listeners_on_one_event_both_enqueue_their_action(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Actions from the same event get distinct task ids.
+
+    The clock is frozen because that is the case worth pinning: task ids built
+    from a millisecond stamp alone collide on the unique constraint when two
+    enqueues land in the same millisecond, which measurably happens across a
+    round trip -- and now that the listeners share a transaction, the collision
+    would lose the whole event rather than one listener's action.
+    """
+    monkeypatch.setattr(actions_module.time, "time", lambda: 1_700_000_000.0)
+
+    db_ctx = Database(db_engine)
+    for name in ("First alert", "Second alert"):
+        await db_ctx.execute(
+            text("""INSERT INTO event_listeners
+                     (name, match_conditions, source_id, action_type, enabled,
+                      conversation_id, interface_type, one_time)
+                     VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                             :conversation_id, :interface_type, :one_time)"""),
+            {
+                "name": name,
+                "conditions": json.dumps({"entity_id": "binary_sensor.side_door"}),
+                "source_id": EventSourceType.home_assistant.value,
+                "action_type": "wake_llm",
+                "enabled": True,
+                "conversation_id": "test_chat_two",
+                "interface_type": "telegram",
+                "one_time": False,
+            },
+        )
+
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: Database(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    await processor.process_event(
+        "home_assistant", {"entity_id": "binary_sensor.side_door"}
+    )
+
+    queued = await Database(db_engine).fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert len(queued) == 2
+    assert len({row["task_id"] for row in queued}) == 2
+
+
+@pytest.mark.asyncio
 async def test_one_time_listener_disables_after_trigger(
     db_engine: AsyncEngine,
 ) -> None:
     """Test that one-time listeners are disabled after they trigger."""
 
     # Create a one-time listener
-    async with get_db_context(db_engine) as db_ctx:
-        result = await db_ctx.execute_with_retry(
-            text("""INSERT INTO event_listeners
+    db_ctx = Database(db_engine)
+    result = await db_ctx.execute(
+        text("""INSERT INTO event_listeners
                  (name, match_conditions, source_id, action_type, enabled,
                   conversation_id, interface_type, one_time)
                  VALUES (:name, :conditions, :source_id, :action_type, :enabled,
                          :conversation_id, :interface_type, :one_time)
                  RETURNING id"""),
-            {
-                "name": "One-time door alert",
-                "conditions": json.dumps({
-                    "entity_id": "binary_sensor.front_door",
-                    "new_state.state": "open",
-                }),
-                "source_id": EventSourceType.home_assistant.value,
-                "action_type": "wake_llm",
-                "enabled": True,
-                "conversation_id": "test_chat_456",
-                "interface_type": "telegram",
-                "one_time": True,
-            },
-        )
-        listener_id = result.scalar_one()
+        {
+            "name": "One-time door alert",
+            "conditions": json.dumps({
+                "entity_id": "binary_sensor.front_door",
+                "new_state.state": "open",
+            }),
+            "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
+            "enabled": True,
+            "conversation_id": "test_chat_456",
+            "interface_type": "telegram",
+            "one_time": True,
+        },
+    )
+    listener_id = result.scalar_one()
 
     # Create processor and process matching event
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -443,10 +623,10 @@ async def test_one_time_listener_disables_after_trigger(
     await processor.process_event("home_assistant", door_event)
 
     # Verify listener is now disabled
-    async with get_db_context(db_engine) as db_ctx:
-        result = await db_ctx.fetch_one(
-            text("SELECT enabled FROM event_listeners WHERE id = :id"),
-            {"id": listener_id},
-        )
-        assert result is not None
-        assert result["enabled"] == 0  # SQLite stores False as 0
+    db_ctx = Database(db_engine)
+    result = await db_ctx.fetch_one(
+        text("SELECT enabled FROM event_listeners WHERE id = :id"),
+        {"id": listener_id},
+    )
+    assert result is not None
+    assert result["enabled"] == 0  # SQLite stores False as 0

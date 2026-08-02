@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.services.notifier import NotificationMetadata
 from family_assistant.services.push_notification import PushNotificationService
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 # Dummy VAPID keys for testing
 TEST_PRIVATE_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -39,10 +39,10 @@ async def test_send_notification_disabled(
 ) -> None:
     """Test that send_notification does nothing if the service is disabled."""
     service = PushNotificationService(vapid_private_key=None, vapid_contact_email=None)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        with caplog.at_level(logging.DEBUG):
-            await service.send_notification("user1", "title", "body", db_context)
-            assert "Push notifications disabled" in caplog.text
+    db_context = Database(engine=db_engine)
+    with caplog.at_level(logging.DEBUG):
+        await service.send_notification("user1", "title", "body", db_context)
+        assert "Push notifications disabled" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -56,28 +56,26 @@ async def test_send_notification_success(
         "keys": {"p256dh": "key", "auth": "auth_key"},
     })
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Create subscription in database
-        await db_context.push_subscriptions.add(
-            user_identifier="user1",
-            subscription_json=json.loads(sub_json),
-        )
+    db_context = Database(engine=db_engine)
+    # Create subscription in database
+    await db_context.push_subscriptions.add(
+        user_identifier="user1",
+        subscription_json=json.loads(sub_json),
+    )
 
-        service = PushNotificationService(
-            vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
-        )
-        await service.send_notification("user1", "Test Title", "Test Body", db_context)
+    service = PushNotificationService(
+        vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
+    )
+    await service.send_notification("user1", "Test Title", "Test Body", db_context)
 
-        mock_webpush.assert_called_once()
-        call_args = mock_webpush.call_args
-        assert call_args.kwargs["subscription_info"] == json.loads(sub_json)
-        assert call_args.kwargs["vapid_private_key"] == TEST_PRIVATE_KEY
-        assert call_args.kwargs["vapid_claims"] == {
-            "sub": f"mailto:{TEST_CONTACT_EMAIL}"
-        }
-        sent_payload = json.loads(call_args.kwargs["data"])
-        assert sent_payload["title"] == "Test Title"
-        assert sent_payload["body"] == "Test Body"
+    mock_webpush.assert_called_once()
+    call_args = mock_webpush.call_args
+    assert call_args.kwargs["subscription_info"] == json.loads(sub_json)
+    assert call_args.kwargs["vapid_private_key"] == TEST_PRIVATE_KEY
+    assert call_args.kwargs["vapid_claims"] == {"sub": f"mailto:{TEST_CONTACT_EMAIL}"}
+    sent_payload = json.loads(call_args.kwargs["data"])
+    assert sent_payload["title"] == "Test Title"
+    assert sent_payload["body"] == "Test Body"
 
 
 @pytest.mark.asyncio
@@ -86,33 +84,33 @@ async def test_send_notification_serializes_metadata_for_service_worker(
     mock_webpush: MagicMock, db_engine: AsyncEngine
 ) -> None:
     """Metadata is delivered under data using the service worker's camelCase keys."""
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.push_subscriptions.add(
-            user_identifier="user1",
-            subscription_json={
-                "endpoint": "https://example.com/push",
-                "keys": {"p256dh": "key", "auth": "auth_key"},
-            },
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.push_subscriptions.add(
+        user_identifier="user1",
+        subscription_json={
+            "endpoint": "https://example.com/push",
+            "keys": {"p256dh": "key", "auth": "auth_key"},
+        },
+    )
 
-        service = PushNotificationService(
-            vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
-        )
-        await service.send_notification(
-            "user1",
-            "Title",
-            "Body",
-            db_context,
-            metadata=NotificationMetadata(
-                category="FAMILY_ASSISTANT_MESSAGE", conversation_id="conv-1"
-            ),
-        )
+    service = PushNotificationService(
+        vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
+    )
+    await service.send_notification(
+        "user1",
+        "Title",
+        "Body",
+        db_context,
+        metadata=NotificationMetadata(
+            category="FAMILY_ASSISTANT_MESSAGE", conversation_id="conv-1"
+        ),
+    )
 
-        sent_payload = json.loads(mock_webpush.call_args.kwargs["data"])
-        # The PWA service worker reads data.conversationId.
-        assert sent_payload["data"]["conversationId"] == "conv-1"
-        assert sent_payload["data"]["category"] == "FAMILY_ASSISTANT_MESSAGE"
-        assert "conversation_id" not in sent_payload["data"]
+    sent_payload = json.loads(mock_webpush.call_args.kwargs["data"])
+    # The PWA service worker reads data.conversationId.
+    assert sent_payload["data"]["conversationId"] == "conv-1"
+    assert sent_payload["data"]["category"] == "FAMILY_ASSISTANT_MESSAGE"
+    assert "conversation_id" not in sent_payload["data"]
 
 
 @pytest.mark.asyncio
@@ -125,28 +123,27 @@ async def test_handle_stale_subscription_410_gone(
     mock_response.status_code = 410
     mock_webpush.side_effect = WebPushException("Gone", response=mock_response)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Create subscription in database
-        await db_context.push_subscriptions.add(
-            user_identifier="user1",
-            subscription_json={"endpoint": "stale"},
+    db_context = Database(engine=db_engine)
+    # Create subscription in database
+    await db_context.push_subscriptions.add(
+        user_identifier="user1",
+        subscription_json={"endpoint": "stale"},
+    )
+
+    service = PushNotificationService(
+        vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
+    )
+    with caplog.at_level(logging.INFO):
+        await service.send_notification("user1", "title", "body", db_context)
+        assert (
+            "Subscription for user user1 is stale (410 Gone). Deleting." in caplog.text
         )
 
-        service = PushNotificationService(
-            vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
-        )
-        with caplog.at_level(logging.INFO):
-            await service.send_notification("user1", "title", "body", db_context)
-            assert (
-                "Subscription for user user1 is stale (410 Gone). Deleting."
-                in caplog.text
-            )
+    mock_webpush.assert_called_once()
 
-        mock_webpush.assert_called_once()
-
-        # Verify subscription was deleted
-        subscriptions = await db_context.push_subscriptions.get_by_user("user1")
-        assert len(subscriptions) == 0
+    # Verify subscription was deleted
+    subscriptions = await db_context.push_subscriptions.get_by_user("user1")
+    assert len(subscriptions) == 0
 
 
 @pytest.mark.asyncio
@@ -159,22 +156,22 @@ async def test_handle_other_web_push_exception(
     mock_response.status_code = 404
     mock_webpush.side_effect = WebPushException("Not Found", response=mock_response)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Create subscription in database
-        await db_context.push_subscriptions.add(
-            user_identifier="user1",
-            subscription_json={"endpoint": "not-found"},
-        )
+    db_context = Database(engine=db_engine)
+    # Create subscription in database
+    await db_context.push_subscriptions.add(
+        user_identifier="user1",
+        subscription_json={"endpoint": "not-found"},
+    )
 
-        service = PushNotificationService(
-            vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
-        )
-        with caplog.at_level(logging.WARNING):
-            await service.send_notification("user1", "title", "body", db_context)
-            assert "Failed to send push notification" in caplog.text
+    service = PushNotificationService(
+        vapid_private_key=TEST_PRIVATE_KEY, vapid_contact_email=TEST_CONTACT_EMAIL
+    )
+    with caplog.at_level(logging.WARNING):
+        await service.send_notification("user1", "title", "body", db_context)
+        assert "Failed to send push notification" in caplog.text
 
-        mock_webpush.assert_called_once()
+    mock_webpush.assert_called_once()
 
-        # Verify subscription was NOT deleted
-        subscriptions = await db_context.push_subscriptions.get_by_user("user1")
-        assert len(subscriptions) == 1
+    # Verify subscription was NOT deleted
+    subscriptions = await db_context.push_subscriptions.get_by_user("user1")
+    assert len(subscriptions) == 1

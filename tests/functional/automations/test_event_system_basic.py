@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.storage import EventStorage
-from family_assistant.storage import get_db_context
+from family_assistant.storage import Database
 from family_assistant.storage.events import (
     EventSourceType,
     cleanup_old_events,
@@ -78,7 +78,7 @@ def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can
 async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
     """Test that event storage properly samples events (1 per entity per hour)."""
     storage = EventStorage(
-        sample_interval_hours=1.0, get_db_context_func=lambda: get_db_context(db_engine)
+        sample_interval_hours=1.0, get_db_context_func=lambda: Database(db_engine)
     )
 
     # First event should be stored
@@ -103,11 +103,9 @@ async def test_event_storage_sampling(db_engine: AsyncEngine) -> None:
     )
 
     # Check stored events
-    async with get_db_context(db_engine) as db_ctx:
-        result = await db_ctx.fetch_all(
-            text("SELECT COUNT(*) as count FROM recent_events")
-        )
-        assert result[0]["count"] == 2  # Only 2 events should be stored
+    db_ctx = Database(db_engine)
+    result = await db_ctx.fetch_all(text("SELECT COUNT(*) as count FROM recent_events"))
+    assert result[0]["count"] == 2  # Only 2 events should be stored
 
 
 @pytest.mark.asyncio
@@ -126,7 +124,7 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
     processor = EventProcessor(
         sources={"ha_test": ha_source},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -156,50 +154,50 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
     await asyncio.sleep(0.1)
 
     # Query recent events
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await query_recent_events_tool(
-            exec_context=exec_context, source_id="home_assistant", hours=1
-        )
+    result = await query_recent_events_tool(
+        exec_context=exec_context, source_id="home_assistant", hours=1
+    )
 
-        # Parse JSON result
-        result_data = json.loads(result)
+    # Parse JSON result
+    result_data = json.loads(result)
 
-        assert result_data["count"] >= 1
-        assert result_data["source_filter"] == "home_assistant"
+    assert result_data["count"] >= 1
+    assert result_data["source_filter"] == "home_assistant"
 
-        # Check event data
-        events = result_data["events"]
-        assert len(events) >= 1
+    # Check event data
+    events = result_data["events"]
+    assert len(events) >= 1
 
-        # Find our temperature event
-        temp_event = None
-        for event in events:
-            if event["event_data"].get("entity_id") == "sensor.temperature":
-                temp_event = event
-                break
+    # Find our temperature event
+    temp_event = None
+    for event in events:
+        if event["event_data"].get("entity_id") == "sensor.temperature":
+            temp_event = event
+            break
 
-        assert temp_event is not None
-        assert temp_event["source_id"] == "home_assistant"
-        assert temp_event["event_data"]["event_type"] == "state_changed"
-        assert temp_event["event_data"]["old_state"]["state"] == "20.5"
-        assert temp_event["event_data"]["new_state"]["state"] == "21.0"
+    assert temp_event is not None
+    assert temp_event["source_id"] == "home_assistant"
+    assert temp_event["event_data"]["event_type"] == "state_changed"
+    assert temp_event["event_data"]["old_state"]["state"] == "20.5"
+    assert temp_event["event_data"]["new_state"]["state"] == "21.0"
 
     # Clean up janus queue
     await ha_source._event_queue.aclose()
@@ -209,27 +207,27 @@ async def test_home_assistant_event_processing(db_engine: AsyncEngine) -> None:
 async def test_event_listener_matching(db_engine: AsyncEngine) -> None:
     """Test event matching against listener conditions."""
     # Add a test listener
-    async with get_db_context(db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO event_listeners
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(
+        text("""INSERT INTO event_listeners
                  (name, match_conditions, source_id, enabled, conversation_id)
                  VALUES (:name, :conditions, :source_id, :enabled, :conversation_id)"""),
-            {
-                "name": "Temperature Monitor",
-                "conditions": json.dumps({
-                    "entity_id": "sensor.temperature",
-                    "new_state.state": "26.0",  # Simple equality match
-                }),
-                "source_id": EventSourceType.home_assistant.value,
-                "enabled": True,
-                "conversation_id": "test_conversation",
-            },
-        )
+        {
+            "name": "Temperature Monitor",
+            "conditions": json.dumps({
+                "entity_id": "sensor.temperature",
+                "new_state.state": "26.0",  # Simple equality match
+            }),
+            "source_id": EventSourceType.home_assistant.value,
+            "enabled": True,
+            "conversation_id": "test_conversation",
+        },
+    )
 
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -260,82 +258,82 @@ async def test_test_event_listener_tool_matches_person_coming_home(
 ) -> None:
     """Test that test_event_listener tool correctly matches person coming home."""
     # Arrange
-    async with get_db_context(db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(text("DELETE FROM recent_events"))
 
-        now = datetime.now(UTC)
-        events_to_insert = [
-            {
-                "event_id": "test_1",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "entity_id": "person.alex",
-                    "old_state": {"state": "Away"},
-                    "new_state": {"state": "Home", "last_changed": now.isoformat()},
-                }),
-                "timestamp": now,
-            },
-            {
-                "event_id": "test_2",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "entity_id": "person.alex",
-                    "old_state": {"state": "Home"},
-                    "new_state": {"state": "Away", "last_changed": now.isoformat()},
-                }),
-                "timestamp": now,
-            },
-            {
-                "event_id": "test_3",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "entity_id": "sensor.temperature",
-                    "old_state": {"state": "20"},
-                    "new_state": {
-                        "state": "22",
-                        "attributes": {"unit_of_measurement": "°C"},
-                    },
-                }),
-                "timestamp": now,
-            },
-        ]
+    now = datetime.now(UTC)
+    events_to_insert = [
+        {
+            "event_id": "test_1",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
+                "entity_id": "person.alex",
+                "old_state": {"state": "Away"},
+                "new_state": {"state": "Home", "last_changed": now.isoformat()},
+            }),
+            "timestamp": now,
+        },
+        {
+            "event_id": "test_2",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
+                "entity_id": "person.alex",
+                "old_state": {"state": "Home"},
+                "new_state": {"state": "Away", "last_changed": now.isoformat()},
+            }),
+            "timestamp": now,
+        },
+        {
+            "event_id": "test_3",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
+                "entity_id": "sensor.temperature",
+                "old_state": {"state": "20"},
+                "new_state": {
+                    "state": "22",
+                    "attributes": {"unit_of_measurement": "°C"},
+                },
+            }),
+            "timestamp": now,
+        },
+    ]
 
-        for event in events_to_insert:
-            await db_ctx.execute_with_retry(
-                text("""INSERT INTO recent_events
+    for event in events_to_insert:
+        await db_ctx.execute(
+            text("""INSERT INTO recent_events
                        (event_id, source_id, event_data, timestamp)
                        VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
-                event,
-            )
+            event,
+        )
 
     # Act
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await event_listener_test_tool(
-            exec_context,
-            source=EventSourceType.home_assistant.value,
-            match_conditions={
-                "entity_id": "person.alex",
-                "new_state.state": "Home",
-            },
-            hours=1,
-        )
+    result = await event_listener_test_tool(
+        exec_context,
+        source=EventSourceType.home_assistant.value,
+        match_conditions={
+            "entity_id": "person.alex",
+            "new_state.state": "Home",
+        },
+        hours=1,
+    )
 
     # Assert
     data = json.loads(result)
@@ -352,54 +350,54 @@ async def test_test_event_listener_tool_no_match_wrong_state(
 ) -> None:
     """Test that test_event_listener tool provides analysis when no events match."""
     # Arrange
-    async with get_db_context(db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(text("DELETE FROM recent_events"))
 
-        now = datetime.now(UTC)
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO recent_events
+    now = datetime.now(UTC)
+    await db_ctx.execute(
+        text("""INSERT INTO recent_events
                    (event_id, source_id, event_data, timestamp)
                    VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
-            {
-                "event_id": "test_1",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "entity_id": "person.alex",
-                    "old_state": {"state": "Away"},
-                    "new_state": {"state": "Home", "last_changed": now.isoformat()},
-                }),
-                "timestamp": now,
-            },
-        )
+        {
+            "event_id": "test_1",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
+                "entity_id": "person.alex",
+                "old_state": {"state": "Away"},
+                "new_state": {"state": "Home", "last_changed": now.isoformat()},
+            }),
+            "timestamp": now,
+        },
+    )
 
     # Act
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await event_listener_test_tool(
-            exec_context,
-            source=EventSourceType.home_assistant.value,
-            match_conditions={
-                "entity_id": "person.alex",
-                "new_state.state": "Vacation",  # This state doesn't exist
-            },
-            hours=1,
-        )
+    result = await event_listener_test_tool(
+        exec_context,
+        source=EventSourceType.home_assistant.value,
+        match_conditions={
+            "entity_id": "person.alex",
+            "new_state.state": "Vacation",  # This state doesn't exist
+        },
+        hours=1,
+    )
 
     # Assert
     data = json.loads(result)
@@ -420,30 +418,30 @@ async def test_test_event_listener_tool_empty_conditions_error(
     # Arrange - no events needed for this test
 
     # Act
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await event_listener_test_tool(
-            exec_context,
-            source=EventSourceType.home_assistant.value,
-            match_conditions={},
-            hours=1,
-        )
+    result = await event_listener_test_tool(
+        exec_context,
+        source=EventSourceType.home_assistant.value,
+        match_conditions={},
+        hours=1,
+    )
 
     # Assert
     data = json.loads(result)
@@ -456,56 +454,54 @@ async def test_cleanup_old_events(db_engine: AsyncEngine) -> None:
     """Test that old events are cleaned up correctly."""
 
     # Arrange - create events with different ages
-    async with get_db_context(db_engine) as db_ctx:
-        # Store events with different timestamps
-        now = datetime.now(UTC)
+    db_ctx = Database(db_engine)
+    # Store events with different timestamps
+    now = datetime.now(UTC)
 
-        # Use EventStorage to store events
-        storage = EventStorage(
-            sample_interval_hours=0.01,  # Short interval for testing
-            get_db_context_func=lambda: get_db_context(db_engine),
-        )
+    # Use EventStorage to store events
+    storage = EventStorage(
+        sample_interval_hours=0.01,  # Short interval for testing
+        get_db_context_func=lambda: Database(db_engine),
+    )
 
-        # Old event (should be cleaned up)
-        old_event_data = {
-            "entity_id": "test.old",
-            "old_state": {"state": "old"},
-            "new_state": {"state": "old"},
-        }
-        await storage.store_event(
-            EventSourceType.home_assistant.value,
-            old_event_data,
-            None,
-        )
+    # Old event (should be cleaned up)
+    old_event_data = {
+        "entity_id": "test.old",
+        "old_state": {"state": "old"},
+        "new_state": {"state": "old"},
+    }
+    await storage.store_event(
+        EventSourceType.home_assistant.value,
+        old_event_data,
+        None,
+    )
 
-        # Recent event (should NOT be cleaned up)
-        recent_event_data = {
-            "entity_id": "test.recent",
-            "old_state": {"state": "recent"},
-            "new_state": {"state": "recent"},
-        }
-        await storage.store_event(
-            EventSourceType.home_assistant.value,
-            recent_event_data,
-            None,
-        )
+    # Recent event (should NOT be cleaned up)
+    recent_event_data = {
+        "entity_id": "test.recent",
+        "old_state": {"state": "recent"},
+        "new_state": {"state": "recent"},
+    }
+    await storage.store_event(
+        EventSourceType.home_assistant.value,
+        recent_event_data,
+        None,
+    )
 
-        # Update the created_at timestamp for the old event
+    # Update the created_at timestamp for the old event
 
-        # Use SQLAlchemy's JSON operators for cross-database compatibility
-        stmt = (
-            update(recent_events_table)
-            .where(
-                recent_events_table.c.event_data["entity_id"].as_string() == "test.old"
-            )
-            .values(created_at=now - timedelta(hours=72))
-        )
+    # Use SQLAlchemy's JSON operators for cross-database compatibility
+    stmt = (
+        update(recent_events_table)
+        .where(recent_events_table.c.event_data["entity_id"].as_string() == "test.old")
+        .values(created_at=now - timedelta(hours=72))
+    )
 
-        await db_ctx.execute_with_retry(stmt)
+    await db_ctx.execute(stmt)
 
     # Act - run cleanup with 48 hour retention
-    async with get_db_context(db_engine) as db_ctx:
-        deleted_count = await cleanup_old_events(db_ctx, retention_hours=48)
+    db_ctx = Database(db_engine)
+    deleted_count = await cleanup_old_events(db_ctx, retention_hours=48)
 
     # Assert - the cleanup function works correctly
     assert deleted_count == 1  # Exactly one old event was deleted

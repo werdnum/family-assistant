@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from family_assistant.llm.request_buffer import get_request_buffer
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
 
@@ -285,7 +285,7 @@ def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
 
 @diagnostics_api_router.get("/export", response_model=None)
 async def export_diagnostics(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     _: Annotated[dict, Depends(get_diagnostics_reader)],
     minutes: Annotated[int, Query(ge=1, le=120)] = 30,
     max_errors: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -319,7 +319,7 @@ async def export_diagnostics(
     system_info = SystemInfo(
         python_version=sys.version.split()[0],
         platform=platform.platform(),
-        database_type=db_context.engine.dialect.name,
+        database_type=db_context.dialect_name,
     )
 
     # Get error logs
@@ -416,7 +416,7 @@ async def export_diagnostics(
 
 @diagnostics_api_router.get("/taint-audit")
 async def get_taint_diagnostics(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     _: Annotated[dict, Depends(get_diagnostics_reader)],
     days: Annotated[int, Query(ge=1, le=90)] = 7,
     max_events: Annotated[int, Query(ge=1, le=50000)] = 10000,

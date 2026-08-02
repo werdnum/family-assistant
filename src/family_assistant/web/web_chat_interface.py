@@ -10,7 +10,7 @@ from family_assistant.llm.messages import AssistantMessage, MessageAttachmentMet
 from family_assistant.security.taint import TaintMetadata, TurnTaintState
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -110,70 +110,71 @@ class WebChatInterface(ChatInterface):
         # saved message look like a failed send — callers would then resend or
         # retry an already-approved confirmation, causing duplicate side
         # effects. A publish failure is a programming error; let it propagate.
-        # Owner ids of the conversation, resolved while the save transaction is
-        # open so the post-commit activity ping can be scoped to them (the
-        # account-global activity channel filters subscribers by user_id).
+        # Owner ids of the conversation, resolved BEFORE the save so the
+        # post-commit activity ping can be scoped to them (the account-global
+        # activity channel filters subscribers by user_id). Resolving after the
+        # save would put a read between a committed message and this method's
+        # return: a failure there returns None for a message that was in fact
+        # delivered, and the caller resends. Ownership comes from the
+        # conversation's existing user messages, so it does not depend on the
+        # row about to be written.
         owner_ids: set[str] = set()
         try:
             clock = SystemClock()
 
             # Save message to database - SSE notification happens automatically
-            async with get_db_context(engine=self.database_engine) as db_context:
-                # Prepare attachment metadata if provided
-                attachments: list[MessageAttachmentMetadata] | None = None
-                if attachment_ids:
-                    attachments = [
-                        MessageAttachmentMetadata(
-                            type="attachment_reference",
-                            attachment_id=attachment_id,
-                        )
-                        for attachment_id in attachment_ids
-                    ]
+            db_context = Database(engine=self.database_engine)
 
-                saved_message = await db_context.message_history.add_message(
-                    AssistantMessage(
-                        content=text,
-                        taint_metadata=(
-                            taint_metadata
-                            if taint_metadata is not None
-                            else TurnTaintState.empty().to_metadata()
-                        ),
-                    ),
-                    interface_type="web",
-                    conversation_id=conversation_id,
-                    timestamp=clock.now(),
-                    attachments=attachments,
+            if self.stream_hub is not None:
+                owner_ids = await db_context.message_history.get_conversation_owner_ids(
+                    conversation_id
                 )
 
-                # Resolve owners now (inside the txn) for the post-commit activity
-                # ping. This save carries no user_id of its own, so ownership comes
-                # from the conversation's existing user messages.
-                if saved_message is not None and self.stream_hub is not None:
-                    owner_ids = (
-                        await db_context.message_history.get_conversation_owner_ids(
-                            conversation_id
-                        )
+            # Prepare attachment metadata if provided
+            attachments: list[MessageAttachmentMetadata] | None = None
+            if attachment_ids:
+                attachments = [
+                    MessageAttachmentMetadata(
+                        type="attachment_reference",
+                        attachment_id=attachment_id,
                     )
+                    for attachment_id in attachment_ids
+                ]
 
-                # Notify the conversation owner about the new assistant reply.
-                if saved_message is not None and self.notifier is not None:
-                    try:
-                        await notify_conversation(
-                            self.notifier,
-                            db_context,
-                            interface_type="web",
+            saved_message = await db_context.message_history.add_message(
+                AssistantMessage(
+                    content=text,
+                    taint_metadata=(
+                        taint_metadata
+                        if taint_metadata is not None
+                        else TurnTaintState.empty().to_metadata()
+                    ),
+                ),
+                interface_type="web",
+                conversation_id=conversation_id,
+                timestamp=clock.now(),
+                attachments=attachments,
+            )
+
+            # Notify the conversation owner about the new assistant reply.
+            if saved_message is not None and self.notifier is not None:
+                try:
+                    await notify_conversation(
+                        self.notifier,
+                        db_context,
+                        interface_type="web",
+                        conversation_id=conversation_id,
+                        title="New message",
+                        body=text[:100],  # Truncate long messages
+                        metadata=NotificationMetadata(
+                            category=MESSAGE_CATEGORY,
                             conversation_id=conversation_id,
-                            title="New message",
-                            body=text[:100],  # Truncate long messages
-                            metadata=NotificationMetadata(
-                                category=MESSAGE_CATEGORY,
-                                conversation_id=conversation_id,
-                            ),
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to send push notification: {e}", exc_info=True
-                        )
+                        ),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to send push notification: {e}", exc_info=True
+                    )
         except Exception as e:
             logger.exception(
                 f"WebChatInterface: Error sending message to {conversation_id}: {e}"

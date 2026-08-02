@@ -14,7 +14,7 @@ from family_assistant.security.taint import (
     TaintMetadata,
     TurnTaintState,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     ToolExecutionContext,
     ToolNotFoundError,
@@ -48,7 +48,7 @@ async def execute_tool_api(
     current_user: Annotated[dict, Depends(get_current_user)],
     tools_provider: Annotated[ToolsProvider, Depends(get_tools_provider_dependency)],
     db_context: Annotated[
-        DatabaseContext, Depends(get_db)
+        Database, Depends(get_db)
     ],  # Inject DB context if tools need it
 ) -> JSONResponse:
     """Executes a specified tool with the given arguments."""
@@ -114,8 +114,6 @@ async def execute_tool_api(
     )
 
     async def error_response(*, status_code: int, detail: str) -> JSONResponse:
-        if db_context.conn is not None:
-            await db_context.conn.rollback()
         return JSONResponse(
             content={
                 "detail": detail,

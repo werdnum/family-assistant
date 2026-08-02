@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.scripting.monty_engine import MontyEngine
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
@@ -134,41 +134,41 @@ async def test_tools_api_list(db_engine: AsyncEngine) -> None:
     tools_provider = MockToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    # Create engine
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test script that lists tools
-        script = """
+    # Test script that lists tools
+    script = """
 tools_list = tools_list()
 tool_names = [tool["name"] for tool in tools_list]
 tool_names
 """
 
-        # Execute script
-        result = await engine.evaluate_async(script, execution_context=context)
+    # Execute script
+    result = await engine.evaluate_async(script, execution_context=context)
 
-        # Verify we got the expected tools
-        assert result == ["echo", "add_numbers"]
+    # Verify we got the expected tools
+    assert result == ["echo", "add_numbers"]
 
 
 @pytest.mark.asyncio
@@ -176,45 +176,45 @@ async def test_tools_api_get(db_engine: AsyncEngine) -> None:
     """Test getting a specific tool from script."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test script that gets a specific tool
-        script = """
+    # Test script that gets a specific tool
+    script = """
 echo_tool = tools_get("echo")
 echo_tool["name"] if echo_tool else None
 """
 
-        result = await engine.evaluate_async(script, execution_context=context)
-        assert result == "echo"
+    result = await engine.evaluate_async(script, execution_context=context)
+    assert result == "echo"
 
-        # Test getting non-existent tool
-        script2 = """
+    # Test getting non-existent tool
+    script2 = """
 fake_tool = tools_get("nonexistent")
 fake_tool
 """
 
-        result2 = await engine.evaluate_async(script2, execution_context=context)
-        assert result2 is None
+    result2 = await engine.evaluate_async(script2, execution_context=context)
+    assert result2 is None
 
 
 @pytest.mark.asyncio
@@ -222,45 +222,45 @@ async def test_tools_api_execute(db_engine: AsyncEngine) -> None:
     """Test executing tools from script."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test executing echo tool
-        script = """
+    # Test executing echo tool
+    script = """
 result = tools_execute("echo", message="Hello, Script!")
 result
 """
 
-        result = await engine.evaluate_async(script, execution_context=context)
-        assert result == "Echo: Hello, Script!"
+    result = await engine.evaluate_async(script, execution_context=context)
+    assert result == "Echo: Hello, Script!"
 
-        # Test executing add_numbers tool
-        script2 = """
+    # Test executing add_numbers tool
+    script2 = """
 result = tools_execute("add_numbers", a=5, b=3)
 result
 """
 
-        result2 = await engine.evaluate_async(script2, execution_context=context)
-        assert result2 == "Result: 8"
+    result2 = await engine.evaluate_async(script2, execution_context=context)
+    assert result2 == "Result: 8"
 
 
 @pytest.mark.asyncio
@@ -268,37 +268,37 @@ async def test_tools_api_execute_json(db_engine: AsyncEngine) -> None:
     """Test executing tools with JSON arguments from script."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test executing with JSON arguments
-        script = """
+    # Test executing with JSON arguments
+    script = """
 args_json = '{"message": "JSON test"}'
 result = tools_execute_json("echo", args_json)
 result
 """
 
-        result = await engine.evaluate_async(script, execution_context=context)
-        assert result == "Echo: JSON test"
+    result = await engine.evaluate_async(script, execution_context=context)
+    assert result == "Echo: JSON test"
 
 
 @pytest.mark.asyncio
@@ -337,37 +337,37 @@ async def test_tools_api_invalid_tool(db_engine: AsyncEngine) -> None:
     """Test that executing an invalid tool raises an error."""
     tools_provider = MockToolsProvider()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-123",
-            user_name="Test User",
-            turn_id="turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-123",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Test executing non-existent tool - should raise an error
-        script = """
+    # Test executing non-existent tool - should raise an error
+    script = """
 # This should fail because the tool doesn't exist
 tools_execute("nonexistent", arg="value")
 """
 
-        # This will raise an exception
-        with pytest.raises(Exception) as exc_info:
-            await engine.evaluate_async(script, execution_context=context)
+    # This will raise an exception
+    with pytest.raises(Exception) as exc_info:
+        await engine.evaluate_async(script, execution_context=context)
 
-        # Check that the error mentions the unknown tool
-        assert "Unknown tool" in str(exc_info.value)
+    # Check that the error mentions the unknown tool
+    assert "Unknown tool" in str(exc_info.value)

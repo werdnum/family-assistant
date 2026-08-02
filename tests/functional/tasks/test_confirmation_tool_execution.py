@@ -30,7 +30,7 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.tools.infrastructure import (
@@ -371,9 +371,7 @@ def _processing_service(
 
 
 def _confirmation_service(db_engine: AsyncEngine) -> ConfirmationService:
-    return ConfirmationService(
-        db_context_factory=lambda: DatabaseContext(engine=db_engine)
-    )
+    return ConfirmationService(db=Database(engine=db_engine))
 
 
 async def _create_source_message(
@@ -381,16 +379,16 @@ async def _create_source_message(
     *,
     processing_profile_id: str = "test-profile",
 ) -> int:
-    async with DatabaseContext(engine=db_engine) as db:
-        internal_id = await db.message_history.add_message(
-            UserMessage(content="Please run the confirmed tool."),
-            interface_type="web",
-            conversation_id="web-conversation-1",
-            interface_message_id="web-message-1",
-            timestamp=datetime_now_utc(),
-            processing_profile_id=processing_profile_id,
-            user_id="user-1",
-        )
+    db = Database(engine=db_engine)
+    internal_id = await db.message_history.add_message(
+        UserMessage(content="Please run the confirmed tool."),
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        interface_message_id="web-message-1",
+        timestamp=datetime_now_utc(),
+        processing_profile_id=processing_profile_id,
+        user_id="user-1",
+    )
     assert internal_id is not None
     return internal_id
 
@@ -490,12 +488,12 @@ async def _run_worker_until_task_finishes(
 
 
 async def _task_status(db_engine: AsyncEngine, task_id: str) -> tuple[str, str | None]:
-    async with DatabaseContext(engine=db_engine) as db:
-        row = await db.fetch_one(
-            select(tasks_table.c.status, tasks_table.c.error).where(
-                tasks_table.c.task_id == task_id
-            )
+    db = Database(engine=db_engine)
+    row = await db.fetch_one(
+        select(tasks_table.c.status, tasks_table.c.error).where(
+            tasks_table.c.task_id == task_id
         )
+    )
     assert row is not None
     return str(row["status"]), cast("str | None", row["error"])
 
@@ -684,12 +682,12 @@ async def test_confirmation_execution_failure_resolves_live_waiter(
     provider = TaintTrackingToolsProvider(wrapped_provider)
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(max_retries=0)
-        )
+    db = Database(engine=db_engine)
+    await db.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == task_id)
+        .values(max_retries=0)
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,
@@ -1097,13 +1095,13 @@ async def test_confirmation_task_skips_non_approved_request(
     provider = RecordingToolsProvider()
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.tasks.enqueue(
-            task_id=task_id,
-            task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
-            payload={"confirmation_request_id": request_id},
-            max_retries_override=0,
-        )
+    db = Database(engine=db_engine)
+    await db.tasks.enqueue(
+        task_id=task_id,
+        task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
+        payload={"confirmation_request_id": request_id},
+        max_retries_override=0,
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,
@@ -1139,12 +1137,12 @@ async def test_confirmation_task_fails_closed_when_current_policy_denies_tool(
     )
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(max_retries=0)
-        )
+    db = Database(engine=db_engine)
+    await db.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == task_id)
+        .values(max_retries=0)
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,
@@ -1321,12 +1319,12 @@ async def test_confirmation_task_fails_when_source_profile_is_missing(
     )
     chat_interface = RecordingChatInterface()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.execute_with_retry(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == task_id)
-            .values(max_retries=0)
-        )
+    db = Database(engine=db_engine)
+    await db.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == task_id)
+        .values(max_retries=0)
+    )
 
     await _run_worker_until_task_finishes(
         db_engine,

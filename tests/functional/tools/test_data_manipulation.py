@@ -17,7 +17,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import AVAILABLE_FUNCTIONS, TOOLS_DEFINITION
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.infrastructure import LocalToolsProvider
@@ -68,7 +68,7 @@ def _create_processing_service() -> ProcessingService:
 
 async def _store_test_attachment(
     registry: AttachmentRegistry,
-    db_context: DatabaseContext,
+    db_context: Database,
     content: bytes,
     filename: str,
     mime_type: str,
@@ -130,15 +130,15 @@ async def attachment_registry_with_json(
     conversation_id = "test_conversation"
 
     # Store attachment using helper (which uses registry's proper API)
-    async with DatabaseContext(db_engine) as db_context:
-        attachment_id = await _store_test_attachment(
-            registry=registry,
-            db_context=db_context,
-            content=json_bytes,
-            filename="test_data.json",
-            mime_type="application/json",
-            conversation_id=conversation_id,
-        )
+    db_context = Database(db_engine)
+    attachment_id = await _store_test_attachment(
+        registry=registry,
+        db_context=db_context,
+        content=json_bytes,
+        filename="test_data.json",
+        mime_type="application/json",
+        conversation_id=conversation_id,
+    )
 
     return registry, attachment_id, conversation_id
 
@@ -154,27 +154,27 @@ class TestJqQueryTool:
         """Test basic jq query on JSON attachment."""
         registry, attachment_id, conversation_id = attachment_registry_with_json
 
-        async with DatabaseContext(db_engine) as db_context:
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id=conversation_id,
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=conversation_id,
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Query: get all items (via script)
-            script = f'''
+        # Query: get all items (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program=".items"
@@ -182,20 +182,20 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script execution should succeed
-            assert result.text is not None
-            assert "Error" not in result.text
+        # Script execution should succeed
+        assert result.text is not None
+        assert "Error" not in result.text
 
-            # Parse the result data
-            data = result.get_data()
-            assert isinstance(data, list)
-            assert len(data) == 3
-            # Verify the data structure (type checker can't infer dict structure)
-            assert data[0]["name"] == "Alice"  # type: ignore[index]
-            assert data[1]["name"] == "Bob"  # type: ignore[index]
-            assert data[2]["name"] == "Charlie"  # type: ignore[index]
+        # Parse the result data
+        data = result.get_data()
+        assert isinstance(data, list)
+        assert len(data) == 3
+        # Verify the data structure (type checker can't infer dict structure)
+        assert data[0]["name"] == "Alice"  # type: ignore[index]
+        assert data[1]["name"] == "Bob"  # type: ignore[index]
+        assert data[2]["name"] == "Charlie"  # type: ignore[index]
 
     async def test_jq_query_count(
         self,
@@ -205,27 +205,27 @@ result
         """Test jq query to count items."""
         registry, attachment_id, conversation_id = attachment_registry_with_json
 
-        async with DatabaseContext(db_engine) as db_context:
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id=conversation_id,
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=conversation_id,
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Query: count items (via script)
-            script = f'''
+        # Query: count items (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program=".items | length"
@@ -233,15 +233,15 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script execution should succeed
-            assert result.text is not None
-            assert "Error" not in result.text
+        # Script execution should succeed
+        assert result.text is not None
+        assert "Error" not in result.text
 
-            # Parse the result - should be a single value
-            data = result.get_data()
-            assert data == 3
+        # Parse the result - should be a single value
+        data = result.get_data()
+        assert data == 3
 
     async def test_jq_query_first_item(
         self,
@@ -251,27 +251,27 @@ result
         """Test jq query to get first item."""
         registry, attachment_id, conversation_id = attachment_registry_with_json
 
-        async with DatabaseContext(db_engine) as db_context:
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id=conversation_id,
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=conversation_id,
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Query: get first item (via script)
-            script = f'''
+        # Query: get first item (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program=".items[0]"
@@ -279,17 +279,17 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script execution should succeed
-            assert result.text is not None
-            assert "Error" not in result.text
+        # Script execution should succeed
+        assert result.text is not None
+        assert "Error" not in result.text
 
-            # Parse the result
-            data = result.get_data()
-            assert isinstance(data, dict)
-            assert data["name"] == "Alice"
-            assert data["city"] == "New York"
+        # Parse the result
+        data = result.get_data()
+        assert isinstance(data, dict)
+        assert data["name"] == "Alice"
+        assert data["city"] == "New York"
 
     async def test_jq_query_map_field(
         self,
@@ -299,27 +299,27 @@ result
         """Test jq query to map/extract a specific field."""
         registry, attachment_id, conversation_id = attachment_registry_with_json
 
-        async with DatabaseContext(db_engine) as db_context:
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id=conversation_id,
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=conversation_id,
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Query: extract all names (via script)
-            script = f'''
+        # Query: extract all names (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program=".items | map(.name)"
@@ -327,16 +327,16 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script execution should succeed
-            assert result.text is not None
-            assert "Error" not in result.text
+        # Script execution should succeed
+        assert result.text is not None
+        assert "Error" not in result.text
 
-            # Parse the result
-            data = result.get_data()
-            assert isinstance(data, list)
-            assert data == ["Alice", "Bob", "Charlie"]
+        # Parse the result
+        data = result.get_data()
+        assert isinstance(data, list)
+        assert data == ["Alice", "Bob", "Charlie"]
 
     async def test_jq_query_date_range(
         self,
@@ -346,27 +346,27 @@ result
         """Test jq query to get date range (first and last item)."""
         registry, attachment_id, conversation_id = attachment_registry_with_json
 
-        async with DatabaseContext(db_engine) as db_context:
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id=conversation_id,
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=conversation_id,
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Query: get IDs of first and last item (via script)
-            script = f'''
+        # Query: get IDs of first and last item (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program="[.items[0].id, .items[-1].id]"
@@ -374,16 +374,16 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script execution should succeed
-            assert result.text is not None
-            assert "Error" not in result.text
+        # Script execution should succeed
+        assert result.text is not None
+        assert "Error" not in result.text
 
-            # Parse the result
-            data = result.get_data()
-            assert isinstance(data, list)
-            assert data == [1, 3]
+        # Parse the result
+        data = result.get_data()
+        assert isinstance(data, list)
+        assert data == [1, 3]
 
     async def test_jq_query_invalid_program(
         self,
@@ -393,27 +393,27 @@ result
         """Test jq query with invalid jq syntax."""
         registry, attachment_id, conversation_id = attachment_registry_with_json
 
-        async with DatabaseContext(db_engine) as db_context:
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id=conversation_id,
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=conversation_id,
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Query: invalid jq syntax (via script)
-            script = f'''
+        # Query: invalid jq syntax (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program="invalid jq syntax ["
@@ -421,12 +421,12 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script should report the error
-            assert result.text is not None
-            text = result.text.lower()
-            assert "error" in text or "invalid" in text
+        # Script should report the error
+        assert result.text is not None
+        text = result.text.lower()
+        assert "error" in text or "invalid" in text
 
     async def test_jq_query_attachment_not_found(
         self, db_engine: AsyncEngine, tmp_path: Path
@@ -439,39 +439,39 @@ result
             storage_path=str(storage_path), db_engine=db_engine, config=None
         )
 
-        async with DatabaseContext(db_engine) as db_context:
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Query with non-existent attachment ID (via script)
-            script = """
+        # Query with non-existent attachment ID (via script)
+        script = """
 result = jq_query(
     attachment_id="nonexistent-uuid",
     jq_program=".items"
 )
             """
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script should report the error
-            assert result.text is not None
-            text = result.text.lower()
-            assert "error" in text or "not found" in text
+        # Script should report the error
+        assert result.text is not None
+        text = result.text.lower()
+        assert "error" in text or "not found" in text
 
     async def test_jq_query_cross_conversation_access_allowed(
         self,
@@ -481,28 +481,28 @@ result = jq_query(
         """Test that jq query allows cross-conversation attachment access."""
         registry, attachment_id, _conversation_id = attachment_registry_with_json
 
-        async with DatabaseContext(db_engine) as db_context:
-            # Try to access from a different conversation
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="different_conversation",
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        # Try to access from a different conversation
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="different_conversation",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Try to query attachment from different conversation (via script)
-            script = f'''
+        # Try to query attachment from different conversation (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program=".items"
@@ -510,16 +510,16 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script execution should succeed
-            assert result.text is not None
-            assert "Error" not in result.text
+        # Script execution should succeed
+        assert result.text is not None
+        assert "Error" not in result.text
 
-            # Parse the result data
-            data = result.get_data()
-            assert isinstance(data, list)
-            assert len(data) == 3
+        # Parse the result data
+        data = result.get_data()
+        assert isinstance(data, list)
+        assert len(data) == 3
 
     async def test_jq_query_non_json_attachment(
         self, db_engine: AsyncEngine, tmp_path: Path
@@ -535,37 +535,37 @@ result
         conversation_id = "test_conversation"
         text_content = b"This is not JSON"
 
-        async with DatabaseContext(db_engine) as db_context:
-            # Store attachment using helper
-            attachment_id = await _store_test_attachment(
-                registry=registry,
-                db_context=db_context,
-                content=text_content,
-                filename="test.txt",
-                mime_type="text/plain",
-                conversation_id=conversation_id,
-            )
+        db_context = Database(db_engine)
+        # Store attachment using helper
+        attachment_id = await _store_test_attachment(
+            registry=registry,
+            db_context=db_context,
+            content=text_content,
+            filename="test.txt",
+            mime_type="text/plain",
+            conversation_id=conversation_id,
+        )
 
-            processing_service = _create_processing_service()
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id=conversation_id,
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=registry,
-                processing_service=processing_service,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        processing_service = _create_processing_service()
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id=conversation_id,
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=registry,
+            processing_service=processing_service,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Try to query non-JSON attachment (via script)
-            script = f'''
+        # Try to query non-JSON attachment (via script)
+        script = f'''
 result = jq_query(
     attachment_id="{attachment_id}",
     jq_program=".items"
@@ -573,48 +573,46 @@ result = jq_query(
 result
             '''
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script should report the error
-            assert result.text is not None
-            text = result.text.lower()
-            assert "error" in text or "not valid json" in text
+        # Script should report the error
+        assert result.text is not None
+        text = result.text.lower()
+        assert "error" in text or "not valid json" in text
 
     async def test_jq_query_no_attachment_registry(
         self, db_engine: AsyncEngine
     ) -> None:
         """Test jq query when attachment registry is not available."""
-        async with DatabaseContext(db_engine) as db_context:
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="TestUser",
-                turn_id="test-turn",
-                db_context=db_context,
-                attachment_registry=None,  # No registry
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources={},
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(db_engine)
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="TestUser",
+            turn_id="test-turn",
+            db_context=db_context,
+            attachment_registry=None,  # No registry
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources={},
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Try to query without attachment registry (via script)
-            script = """
+        # Try to query without attachment registry (via script)
+        script = """
 result = jq_query(
     attachment_id="some-id",
     jq_program=".items"
 )
             """
 
-            result = await execute_script_tool(exec_context, script=script)
+        result = await execute_script_tool(exec_context, script=script)
 
-            # Script should report the error
-            assert result.text is not None
-            text = result.text.lower()
-            assert (
-                "error" in text or "attachment registry not available" in text.lower()
-            )
+        # Script should report the error
+        assert result.text is not None
+        text = result.text.lower()
+        assert "error" in text or "attachment registry not available" in text.lower()

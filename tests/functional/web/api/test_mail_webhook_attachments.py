@@ -30,7 +30,7 @@ from family_assistant.indexing.email_indexer import EmailIndexer
 from family_assistant.indexing.pipeline import IndexingPipeline
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.base import attachment_metadata_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.email import AttachmentData, received_emails_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.documents import (
@@ -108,7 +108,7 @@ def _configure_app(
 
 
 def _build_indexer_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     attachment_registry: AttachmentRegistry,
 ) -> ToolExecutionContext:
     """Minimal ToolExecutionContext suitable for driving EmailIndexer in tests."""
@@ -151,67 +151,66 @@ async def test_email_indexer_registers_email_attachment(
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Ticket",
-                stripped_text="Body",
-                attachment_info=[
-                    {
-                        "filename": "ticket.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Ticket",
+            stripped_text="Body",
+            attachment_info=[
+                {
+                    "filename": "ticket.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                }
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
-        )
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
 
-        updated_row = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    updated_row = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert updated_row is not None
-        stored_attachments = [
-            AttachmentData.model_validate(item)
-            for item in updated_row["attachment_info"]
-        ]
-        assert len(stored_attachments) == 1
-        attachment_id = stored_attachments[0].attachment_id
-        assert attachment_id is not None
+    )
+    assert updated_row is not None
+    stored_attachments = [
+        AttachmentData.model_validate(item) for item in updated_row["attachment_info"]
+    ]
+    assert len(stored_attachments) == 1
+    attachment_id = stored_attachments[0].attachment_id
+    assert attachment_id is not None
 
-        registry_row = await db_context.fetch_one(
-            select(
-                attachment_metadata_table.c.source_type,
-                attachment_metadata_table.c.source_id,
-                attachment_metadata_table.c.storage_path,
-                attachment_metadata_table.c.mime_type,
-                attachment_metadata_table.c.size,
-            ).where(attachment_metadata_table.c.attachment_id == attachment_id)
-        )
-        assert registry_row is not None
-        assert registry_row["source_type"] == "email"
-        assert registry_row["source_id"] == message_id
-        assert registry_row["storage_path"] == str(external_file)
-        assert registry_row["mime_type"] == "application/pdf"
+    registry_row = await db_context.fetch_one(
+        select(
+            attachment_metadata_table.c.source_type,
+            attachment_metadata_table.c.source_id,
+            attachment_metadata_table.c.storage_path,
+            attachment_metadata_table.c.mime_type,
+            attachment_metadata_table.c.size,
+        ).where(attachment_metadata_table.c.attachment_id == attachment_id)
+    )
+    assert registry_row is not None
+    assert registry_row["source_type"] == "email"
+    assert registry_row["source_id"] == message_id
+    assert registry_row["storage_path"] == str(external_file)
+    assert registry_row["mime_type"] == "application/pdf"
 
-        content = await registry.get_attachment_content(
-            db_context, attachment_id, acting_user_id=None
-        )
-        assert content == b"PDF bytes here"
+    content = await registry.get_attachment_content(
+        db_context, attachment_id, acting_user_id=None
+    )
+    assert content == b"PDF bytes here"
 
 
 @pytest.mark.asyncio
@@ -235,44 +234,44 @@ async def test_email_indexer_registration_is_idempotent(
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Invoice",
-                stripped_text="Body",
-                attachment_info=[
-                    {
-                        "filename": "invoice.txt",
-                        "content_type": "text/plain",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Invoice",
+            stripped_text="Body",
+            attachment_info=[
+                {
+                    "filename": "invoice.txt",
+                    "content_type": "text/plain",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                }
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
-        )
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
-        )
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
 
-        registry_rows = await db_context.fetch_all(
-            select(attachment_metadata_table.c.attachment_id).where(
-                attachment_metadata_table.c.source_id == message_id
-            )
+    registry_rows = await db_context.fetch_all(
+        select(attachment_metadata_table.c.attachment_id).where(
+            attachment_metadata_table.c.source_id == message_id
         )
-        assert len(registry_rows) == 1
+    )
+    assert len(registry_rows) == 1
 
 
 @pytest.mark.asyncio
@@ -300,19 +299,19 @@ async def test_webhook_accepts_email_with_attachment(
 
     assert response.status_code == 200, response.text
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        email_row = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    db_context = Database(engine=db_engine)
+    email_row = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.message_id_header == message_id
         )
-        assert email_row is not None
-        stored = [
-            AttachmentData.model_validate(item) for item in email_row["attachment_info"]
-        ]
-        # Webhook stores the file; indexing (which runs separately) assigns the ID.
-        assert stored[0].storage_path.endswith("ticket.pdf")
-        assert stored[0].attachment_id is None
+    )
+    assert email_row is not None
+    stored = [
+        AttachmentData.model_validate(item) for item in email_row["attachment_info"]
+    ]
+    # Webhook stores the file; indexing (which runs separately) assigns the ID.
+    assert stored[0].storage_path.endswith("ticket.pdf")
+    assert stored[0].attachment_id is None
 
 
 @pytest.mark.asyncio
@@ -355,49 +354,49 @@ async def test_webhook_persists_duplicate_filenames_as_distinct_parts(
     )
     assert response.status_code == 200, response.text
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        email_row = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    db_context = Database(engine=db_engine)
+    email_row = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.message_id_header == message_id
         )
-        assert email_row is not None
-        stored = [
-            AttachmentData.model_validate(item) for item in email_row["attachment_info"]
-        ]
-        assert len(stored) == 2
-        # Each part gets a distinct storage_path so the second write does
-        # not overwrite the first. The persisted path is relative to the
-        # configured mailbox base; the registry resolves it at read time.
-        assert stored[0].storage_path != stored[1].storage_path
-        assert not Path(stored[0].storage_path).is_absolute()
-        assert not Path(stored[1].storage_path).is_absolute()
+    )
+    assert email_row is not None
+    stored = [
+        AttachmentData.model_validate(item) for item in email_row["attachment_info"]
+    ]
+    assert len(stored) == 2
+    # Each part gets a distinct storage_path so the second write does
+    # not overwrite the first. The persisted path is relative to the
+    # configured mailbox base; the registry resolves it at read time.
+    assert stored[0].storage_path != stored[1].storage_path
+    assert not Path(stored[0].storage_path).is_absolute()
+    assert not Path(stored[1].storage_path).is_absolute()
 
-        # Indexer dedupes on identity_hash(source_id, storage_path). With
-        # distinct storage paths the two parts must produce two distinct
-        # registry rows, not collapse into one.
-        pipeline = MagicMock(spec=IndexingPipeline)
-        pipeline.run = AsyncMock(return_value=None)
-        indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
-        email_db_row = await db_context.fetch_one(
-            select(received_emails_table.c.id).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    # Indexer dedupes on identity_hash(source_id, storage_path). With
+    # distinct storage paths the two parts must produce two distinct
+    # registry rows, not collapse into one.
+    pipeline = MagicMock(spec=IndexingPipeline)
+    pipeline.run = AsyncMock(return_value=None)
+    indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
+    email_db_row = await db_context.fetch_one(
+        select(received_emails_table.c.id).where(
+            received_emails_table.c.message_id_header == message_id
         )
-        assert email_db_row is not None
-        email_db_id = email_db_row["id"]
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
-        )
+    )
+    assert email_db_row is not None
+    email_db_id = email_db_row["id"]
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
 
-        registry_rows = await db_context.fetch_all(
-            select(attachment_metadata_table.c.attachment_id).where(
-                attachment_metadata_table.c.source_id == message_id
-            )
+    registry_rows = await db_context.fetch_all(
+        select(attachment_metadata_table.c.attachment_id).where(
+            attachment_metadata_table.c.source_id == message_id
         )
-        assert len(registry_rows) == 2
+    )
+    assert len(registry_rows) == 2
 
 
 @pytest.mark.asyncio
@@ -416,41 +415,41 @@ async def test_resolve_email_attachments_is_read_only(
 
     legacy_message_id = f"<legacy-{uuid.uuid4()}@example.com>"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.execute_with_retry(
-            insert(received_emails_table).values(
-                message_id_header=legacy_message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Legacy",
-                attachment_info=[
-                    {
-                        "filename": "invoice.txt",
-                        "content_type": "text/plain",
-                        "size": len(b"invoice body"),
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-        )
-
-        summary = await resolve_email_attachments(
-            db_context=db_context,
+    db_context = Database(engine=db_engine)
+    await db_context.execute(
+        insert(received_emails_table).values(
             message_id_header=legacy_message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Legacy",
+            attachment_info=[
+                {
+                    "filename": "invoice.txt",
+                    "content_type": "text/plain",
+                    "size": len(b"invoice body"),
+                    "storage_path": str(external_file),
+                }
+            ],
         )
+    )
 
-        assert summary is not None and len(summary) == 1
-        # ID is None because the indexer has not run for this email.
-        assert summary[0]["attachment_id"] is None
-        assert summary[0]["filename"] == "invoice.txt"
+    summary = await resolve_email_attachments(
+        db_context=db_context,
+        message_id_header=legacy_message_id,
+    )
 
-        # No registry rows should exist for this message id.
-        registry_rows = await db_context.fetch_all(
-            select(attachment_metadata_table.c.attachment_id).where(
-                attachment_metadata_table.c.source_id == legacy_message_id
-            )
+    assert summary is not None and len(summary) == 1
+    # ID is None because the indexer has not run for this email.
+    assert summary[0]["attachment_id"] is None
+    assert summary[0]["filename"] == "invoice.txt"
+
+    # No registry rows should exist for this message id.
+    registry_rows = await db_context.fetch_all(
+        select(attachment_metadata_table.c.attachment_id).where(
+            attachment_metadata_table.c.source_id == legacy_message_id
         )
-        assert registry_rows == []
+    )
+    assert registry_rows == []
 
 
 @pytest.mark.asyncio
@@ -479,67 +478,66 @@ async def test_email_indexer_dedups_on_retry(
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Ticket",
-                stripped_text="Body",
-                attachment_info=[
-                    {
-                        "filename": "ticket.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Ticket",
+            stripped_text="Body",
+            attachment_info=[
+                {
+                    "filename": "ticket.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                }
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        # Simulate the partial-failure case by pre-registering a row without
-        # writing the id back to received_emails.attachment_info.
-        orphan_id = str(uuid.uuid4())
-        await registry.register_attachment(
-            db_context=db_context,
-            attachment_id=orphan_id,
-            source_type="email",
-            source_id=message_id,
-            mime_type="application/pdf",
-            description="orphan",
-            size=external_file.stat().st_size,
-            storage_path=str(external_file),
-        )
+    # Simulate the partial-failure case by pre-registering a row without
+    # writing the id back to received_emails.attachment_info.
+    orphan_id = str(uuid.uuid4())
+    await registry.register_attachment(
+        db_context=db_context,
+        attachment_id=orphan_id,
+        source_type="email",
+        source_id=message_id,
+        mime_type="application/pdf",
+        description="orphan",
+        size=external_file.stat().st_size,
+        storage_path=str(external_file),
+    )
 
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
-        )
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
 
-        registry_rows = await db_context.fetch_all(
-            select(attachment_metadata_table.c.attachment_id).where(
-                attachment_metadata_table.c.source_id == message_id
-            )
+    registry_rows = await db_context.fetch_all(
+        select(attachment_metadata_table.c.attachment_id).where(
+            attachment_metadata_table.c.source_id == message_id
         )
-        assert len(registry_rows) == 1
-        assert registry_rows[0]["attachment_id"] == orphan_id
+    )
+    assert len(registry_rows) == 1
+    assert registry_rows[0]["attachment_id"] == orphan_id
 
-        updated_row = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    updated_row = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert updated_row is not None
-        stored = [
-            AttachmentData.model_validate(item)
-            for item in updated_row["attachment_info"]
-        ]
-        assert stored[0].attachment_id == orphan_id
+    )
+    assert updated_row is not None
+    stored = [
+        AttachmentData.model_validate(item) for item in updated_row["attachment_info"]
+    ]
+    assert stored[0].attachment_id == orphan_id
 
 
 @pytest.mark.asyncio
@@ -568,39 +566,39 @@ async def test_email_indexer_applies_chunk_index_offset_per_attachment(
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Two attachments",
-                stripped_text="Body",
-                attachment_info=[
-                    {
-                        "filename": "first.pdf",
-                        "content_type": "application/pdf",
-                        "size": first_pdf.stat().st_size,
-                        "storage_path": str(first_pdf),
-                    },
-                    {
-                        "filename": "second.pdf",
-                        "content_type": "application/pdf",
-                        "size": second_pdf.stat().st_size,
-                        "storage_path": str(second_pdf),
-                    },
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Two attachments",
+            stripped_text="Body",
+            attachment_info=[
+                {
+                    "filename": "first.pdf",
+                    "content_type": "application/pdf",
+                    "size": first_pdf.stat().st_size,
+                    "storage_path": str(first_pdf),
+                },
+                {
+                    "filename": "second.pdf",
+                    "content_type": "application/pdf",
+                    "size": second_pdf.stat().st_size,
+                    "storage_path": str(second_pdf),
+                },
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
-        )
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
 
     pipeline.run.assert_called_once()
     pipeline_kwargs = pipeline.run.call_args.kwargs
@@ -644,106 +642,105 @@ async def test_reindex_email_then_get_full_document_content_populates_ids(
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        email_insert = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Legacy ticket",
-                stripped_text="Body",
-                attachment_info=[
-                    {
-                        "filename": "ticket.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    email_insert = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Legacy ticket",
+            stripped_text="Body",
+            attachment_info=[
+                {
+                    "filename": "ticket.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                }
+            ],
         )
-        email_db_id = email_insert.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = email_insert.scalar_one()
 
-        await db_context.execute_with_retry(
-            sa_text(
-                "INSERT INTO documents (source_type, source_id, title, "
-                "visibility_labels) VALUES ('email', :sid, :title, '[]')"
-            ),
-            {"sid": message_id, "title": "Legacy ticket"},
-        )
-        doc_row = await db_context.fetch_one(
-            sa_text(
-                "SELECT id FROM documents WHERE source_type = 'email' "
-                "AND source_id = :sid"
-            ),
-            {"sid": message_id},
-        )
-        assert doc_row is not None
-        document_id = doc_row["id"]
+    await db_context.execute(
+        sa_text(
+            "INSERT INTO documents (source_type, source_id, title, "
+            "visibility_labels) VALUES ('email', :sid, :title, '[]')"
+        ),
+        {"sid": message_id, "title": "Legacy ticket"},
+    )
+    doc_row = await db_context.fetch_one(
+        sa_text(
+            "SELECT id FROM documents WHERE source_type = 'email' AND source_id = :sid"
+        ),
+        {"sid": message_id},
+    )
+    assert doc_row is not None
+    document_id = doc_row["id"]
 
-        exec_context = _build_indexer_context(db_context, registry)
+    exec_context = _build_indexer_context(db_context, registry)
 
-        # 1. Reading the email before any reindex surfaces attachment_id=null.
-        pre_result = await get_full_document_content_tool(
-            exec_context=exec_context, document_id=document_id
-        )
-        assert isinstance(pre_result, ToolResult)
-        pre_data = pre_result.get_data()
-        assert isinstance(pre_data, dict)
-        assert pre_data["attachments"][0]["attachment_id"] is None
+    # 1. Reading the email before any reindex surfaces attachment_id=null.
+    pre_result = await get_full_document_content_tool(
+        exec_context=exec_context, document_id=document_id
+    )
+    assert isinstance(pre_result, ToolResult)
+    pre_data = pre_result.get_data()
+    assert isinstance(pre_data, dict)
+    assert pre_data["attachments"][0]["attachment_id"] is None
 
-        # 2. reindex_email enqueues an index_email task and records it.
-        reindex_result = await reindex_email_tool(
-            exec_context=exec_context, document_id=document_id
-        )
-        reindex_data = reindex_result.get_data()
-        assert isinstance(reindex_data, dict)
-        assert reindex_data["status"] == "enqueued"
-        assert reindex_data["email_db_id"] == email_db_id
-        enqueued_task_id = reindex_data["task_id"]
+    # 2. reindex_email enqueues an index_email task and records it.
+    reindex_result = await reindex_email_tool(
+        exec_context=exec_context, document_id=document_id
+    )
+    reindex_data = reindex_result.get_data()
+    assert isinstance(reindex_data, dict)
+    assert reindex_data["status"] == "enqueued"
+    assert reindex_data["email_db_id"] == email_db_id
+    enqueued_task_id = reindex_data["task_id"]
 
-        task_row = await db_context.fetch_one(
-            select(
-                tasks_table.c.task_id,
-                tasks_table.c.task_type,
-                tasks_table.c.status,
-            ).where(tasks_table.c.task_id == enqueued_task_id)
-        )
-        assert task_row is not None
-        assert task_row["task_type"] == "index_email"
-        assert task_row["status"] == "pending"
+    task_row = await db_context.fetch_one(
+        select(
+            tasks_table.c.task_id,
+            tasks_table.c.task_type,
+            tasks_table.c.status,
+        ).where(tasks_table.c.task_id == enqueued_task_id)
+    )
+    assert task_row is not None
+    assert task_row["task_type"] == "index_email"
+    assert task_row["status"] == "pending"
 
-        email_row = await db_context.fetch_one(
-            select(received_emails_table.c.indexing_task_id).where(
-                received_emails_table.c.id == email_db_id
-            )
+    email_row = await db_context.fetch_one(
+        select(received_emails_table.c.indexing_task_id).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert email_row is not None
-        assert email_row["indexing_task_id"] == enqueued_task_id
+    )
+    assert email_row is not None
+    assert email_row["indexing_task_id"] == enqueued_task_id
 
-        # 3. Simulate the task worker by running the indexer directly.
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
-        )
+    # 3. Simulate the task worker by running the indexer directly.
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
 
-        # 4. Reading the email again surfaces the registered attachment_id.
-        post_result = await get_full_document_content_tool(
-            exec_context=exec_context, document_id=document_id
-        )
-        assert isinstance(post_result, ToolResult)
-        post_data = post_result.get_data()
-        assert isinstance(post_data, dict)
-        populated_id = post_data["attachments"][0]["attachment_id"]
-        assert populated_id is not None
+    # 4. Reading the email again surfaces the registered attachment_id.
+    post_result = await get_full_document_content_tool(
+        exec_context=exec_context, document_id=document_id
+    )
+    assert isinstance(post_result, ToolResult)
+    post_data = post_result.get_data()
+    assert isinstance(post_data, dict)
+    populated_id = post_data["attachments"][0]["attachment_id"]
+    assert populated_id is not None
 
-        # The populated ID resolves back to the external mailbox file.
-        content = await registry.get_attachment_content(
-            db_context, populated_id, acting_user_id=None
-        )
-        assert content == b"PDF body"
+    # The populated ID resolves back to the external mailbox file.
+    content = await registry.get_attachment_content(
+        db_context, populated_id, acting_user_id=None
+    )
+    assert content == b"PDF body"
 
 
 @pytest.mark.asyncio
@@ -760,64 +757,64 @@ async def test_reindex_email_tool_respects_visibility_grants(
     external_file.write_bytes(b"PDF")
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        email_insert = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Hidden",
-                stripped_text="Body",
-                attachment_info=[
-                    {
-                        "filename": "ticket.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    email_insert = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Hidden",
+            stripped_text="Body",
+            attachment_info=[
+                {
+                    "filename": "ticket.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                }
+            ],
         )
-        email_db_id = email_insert.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = email_insert.scalar_one()
 
-        # Insert a document row with a restricted visibility label.
-        doc_row = await db_context.execute_with_retry(
-            sa_text(
-                "INSERT INTO documents "
-                "(source_type, source_id, visibility_labels) "
-                "VALUES ('email', :sid, '[\"secret\"]') RETURNING id"
-            ),
-            {"sid": message_id},
+    # Insert a document row with a restricted visibility label.
+    doc_row = await db_context.execute(
+        sa_text(
+            "INSERT INTO documents "
+            "(source_type, source_id, visibility_labels) "
+            "VALUES ('email', :sid, '[\"secret\"]') RETURNING id"
+        ),
+        {"sid": message_id},
+    )
+    document_id = doc_row.scalar_one()
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    exec_context = _build_indexer_context(db_context, registry)
+    # Caller lacks the 'secret' visibility label.
+    exec_context.visibility_grants = {"public"}
+
+    result = await reindex_email_tool(
+        exec_context=exec_context, document_id=document_id
+    )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data.get("error") == f"Document {document_id} not found"
+
+    # Also confirm no reindex task was enqueued.
+    task_prefix = f"index_email_{email_db_id}_"
+    existing = await db_context.fetch_all(
+        select(tasks_table.c.task_id).where(
+            tasks_table.c.task_id.startswith(task_prefix)
         )
-        document_id = doc_row.scalar_one()
-
-        registry = AttachmentRegistry(
-            storage_path=str(tmp_path / "registry"),
-            db_engine=db_engine,
-            config=None,
-        )
-        exec_context = _build_indexer_context(db_context, registry)
-        # Caller lacks the 'secret' visibility label.
-        exec_context.visibility_grants = {"public"}
-
-        result = await reindex_email_tool(
-            exec_context=exec_context, document_id=document_id
-        )
-
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert data.get("error") == f"Document {document_id} not found"
-
-        # Also confirm no reindex task was enqueued.
-        task_prefix = f"index_email_{email_db_id}_"
-        existing = await db_context.fetch_all(
-            select(tasks_table.c.task_id).where(
-                tasks_table.c.task_id.startswith(task_prefix)
-            )
-        )
-        assert existing == []
+    )
+    assert existing == []
 
 
 @pytest.mark.asyncio
@@ -843,62 +840,62 @@ async def test_delete_email_attachment_clears_email_row(
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Ticket",
-                stripped_text="Body",
-                attachment_info=[
-                    {
-                        "filename": "ticket.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Ticket",
+            stripped_text="Body",
+            attachment_info=[
+                {
+                    "filename": "ticket.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                }
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(
-            exec_context=exec_context,
-            payload={"email_db_id": email_db_id},
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(
+        exec_context=exec_context,
+        payload={"email_db_id": email_db_id},
+    )
+
+    # Grab the attachment_id produced by the indexer, then delete it.
+    row = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
+    )
+    assert row is not None
+    attachments = [
+        AttachmentData.model_validate(item) for item in row["attachment_info"]
+    ]
+    attachment_id = attachments[0].attachment_id
+    assert attachment_id is not None
 
-        # Grab the attachment_id produced by the indexer, then delete it.
-        row = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    await registry.delete_attachment(db_context, attachment_id, acting_user_id=None)
+
+    # External file is preserved (owned by the email record), but the
+    # ``attachment_id`` entry in received_emails is cleared.
+    assert external_file.exists()
+    refreshed = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert row is not None
-        attachments = [
-            AttachmentData.model_validate(item) for item in row["attachment_info"]
-        ]
-        attachment_id = attachments[0].attachment_id
-        assert attachment_id is not None
-
-        await registry.delete_attachment(db_context, attachment_id, acting_user_id=None)
-
-        # External file is preserved (owned by the email record), but the
-        # ``attachment_id`` entry in received_emails is cleared.
-        assert external_file.exists()
-        refreshed = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
-        )
-        assert refreshed is not None
-        refreshed_atts = [
-            AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
-        ]
-        assert refreshed_atts[0].attachment_id is None
+    )
+    assert refreshed is not None
+    refreshed_atts = [
+        AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
+    ]
+    assert refreshed_atts[0].attachment_id is None
 
 
 @pytest.mark.asyncio
@@ -926,59 +923,58 @@ async def test_email_indexer_clears_stale_attachment_id_when_file_missing(
     indexer = EmailIndexer(pipeline=pipeline, attachment_registry=registry)
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Missing file",
-                stripped_text="body",
-                attachment_info=[
-                    {
-                        "filename": "gone.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Missing file",
+            stripped_text="body",
+            attachment_info=[
+                {
+                    "filename": "gone.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                }
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        # First run: register the attachment while the file exists.
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+    # First run: register the attachment while the file exists.
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
 
-        first_pass = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    first_pass = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert first_pass is not None
-        first_atts = [
-            AttachmentData.model_validate(item)
-            for item in first_pass["attachment_info"]
-        ]
-        stale_id = first_atts[0].attachment_id
-        assert stale_id is not None
+    )
+    assert first_pass is not None
+    first_atts = [
+        AttachmentData.model_validate(item) for item in first_pass["attachment_info"]
+    ]
+    stale_id = first_atts[0].attachment_id
+    assert stale_id is not None
 
-        # Simulate the file disappearing between reindex runs, then re-run.
-        external_file.unlink()
-        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+    # Simulate the file disappearing between reindex runs, then re-run.
+    external_file.unlink()
+    await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
 
-        refreshed = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    refreshed = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert refreshed is not None
-        refreshed_atts = [
-            AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
-        ]
-        assert refreshed_atts[0].attachment_id is None
+    )
+    assert refreshed is not None
+    refreshed_atts = [
+        AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
+    ]
+    assert refreshed_atts[0].attachment_id is None
 
 
 @pytest.mark.asyncio
@@ -993,62 +989,62 @@ async def test_reindex_email_tool_syncs_indexing_task_id_when_already_in_flight(
     the in-flight task rather than leaving it NULL/stale.
     """
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        email_insert = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Backfilled",
-                stripped_text="Body",
-                attachment_info=[],
-                indexing_task_id=None,
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    email_insert = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Backfilled",
+            stripped_text="Body",
+            attachment_info=[],
+            indexing_task_id=None,
         )
-        email_db_id = email_insert.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = email_insert.scalar_one()
 
-        doc_row = await db_context.execute_with_retry(
-            sa_text(
-                "INSERT INTO documents (source_type, source_id, visibility_labels) "
-                "VALUES ('email', :sid, '[]') RETURNING id"
-            ),
-            {"sid": message_id},
+    doc_row = await db_context.execute(
+        sa_text(
+            "INSERT INTO documents (source_type, source_id, visibility_labels) "
+            "VALUES ('email', :sid, '[]') RETURNING id"
+        ),
+        {"sid": message_id},
+    )
+    document_id = doc_row.scalar_one()
+
+    # Backfill-style direct enqueue: task row created, email row not updated.
+    in_flight_task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
+    await db_context.tasks.enqueue(
+        task_id=in_flight_task_id,
+        task_type="index_email",
+        payload={"email_db_id": email_db_id},
+    )
+
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    exec_context = _build_indexer_context(db_context, registry)
+
+    result = await reindex_email_tool(
+        exec_context=exec_context, document_id=document_id
+    )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data.get("status") == "already_in_flight"
+    assert data.get("task_id") == in_flight_task_id
+
+    refreshed = await db_context.fetch_one(
+        select(received_emails_table.c.indexing_task_id).where(
+            received_emails_table.c.id == email_db_id
         )
-        document_id = doc_row.scalar_one()
-
-        # Backfill-style direct enqueue: task row created, email row not updated.
-        in_flight_task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
-        await db_context.tasks.enqueue(
-            task_id=in_flight_task_id,
-            task_type="index_email",
-            payload={"email_db_id": email_db_id},
-        )
-
-        registry = AttachmentRegistry(
-            storage_path=str(tmp_path / "registry"),
-            db_engine=db_engine,
-            config=None,
-        )
-        exec_context = _build_indexer_context(db_context, registry)
-
-        result = await reindex_email_tool(
-            exec_context=exec_context, document_id=document_id
-        )
-
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert data.get("status") == "already_in_flight"
-        assert data.get("task_id") == in_flight_task_id
-
-        refreshed = await db_context.fetch_one(
-            select(received_emails_table.c.indexing_task_id).where(
-                received_emails_table.c.id == email_db_id
-            )
-        )
-        assert refreshed is not None
-        assert refreshed["indexing_task_id"] == in_flight_task_id
+    )
+    assert refreshed is not None
+    assert refreshed["indexing_task_id"] == in_flight_task_id
 
 
 @pytest.mark.asyncio
@@ -1077,45 +1073,45 @@ async def test_email_indexer_preserves_malformed_sibling_attachment_info(
 
     malformed_entry = {"filename": "legacy-no-path.bin", "size": 123}
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Mixed",
-                stripped_text="body",
-                attachment_info=[
-                    malformed_entry,
-                    {
-                        "filename": "valid.pdf",
-                        "content_type": "application/pdf",
-                        "size": good_file.stat().st_size,
-                        "storage_path": str(good_file),
-                    },
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Mixed",
+            stripped_text="body",
+            attachment_info=[
+                malformed_entry,
+                {
+                    "filename": "valid.pdf",
+                    "content_type": "application/pdf",
+                    "size": good_file.stat().st_size,
+                    "storage_path": str(good_file),
+                },
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
 
-        refreshed = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    refreshed = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert refreshed is not None
-        entries = refreshed["attachment_info"]
-        assert len(entries) == 2
-        # Malformed entry is preserved verbatim.
-        assert entries[0] == malformed_entry
-        # Valid sibling now has an attachment_id populated.
-        assert entries[1]["filename"] == "valid.pdf"
-        assert entries[1].get("attachment_id")
+    )
+    assert refreshed is not None
+    entries = refreshed["attachment_info"]
+    assert len(entries) == 2
+    # Malformed entry is preserved verbatim.
+    assert entries[0] == malformed_entry
+    # Valid sibling now has an attachment_id populated.
+    assert entries[1]["filename"] == "valid.pdf"
+    assert entries[1].get("attachment_id")
 
 
 @pytest.mark.asyncio
@@ -1139,58 +1135,58 @@ async def test_delete_email_attachment_tolerates_malformed_sibling(
     )
 
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        attachment_id = str(uuid.uuid4())
-        await registry.register_attachment(
-            db_context=db_context,
-            attachment_id=attachment_id,
-            source_type="email",
-            source_id=message_id,
-            mime_type="application/pdf",
-            description="Email attachment: to-delete.pdf",
-            size=external_file.stat().st_size,
-            storage_path=str(external_file),
+    db_context = Database(engine=db_engine)
+    attachment_id = str(uuid.uuid4())
+    await registry.register_attachment(
+        db_context=db_context,
+        attachment_id=attachment_id,
+        source_type="email",
+        source_id=message_id,
+        mime_type="application/pdf",
+        description="Email attachment: to-delete.pdf",
+        size=external_file.stat().st_size,
+        storage_path=str(external_file),
+    )
+    malformed_entry = {"filename": "legacy-no-path.bin", "size": 42}
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Mixed delete",
+            stripped_text="body",
+            attachment_info=[
+                malformed_entry,
+                {
+                    "filename": "to-delete.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                    "attachment_id": attachment_id,
+                },
+            ],
         )
-        malformed_entry = {"filename": "legacy-no-path.bin", "size": 42}
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Mixed delete",
-                stripped_text="body",
-                attachment_info=[
-                    malformed_entry,
-                    {
-                        "filename": "to-delete.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                        "attachment_id": attachment_id,
-                    },
-                ],
-            )
-            .returning(received_emails_table.c.id)
-        )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        deleted = await registry.delete_attachment(
-            db_context, attachment_id, acting_user_id=None
-        )
-        assert deleted is True
+    deleted = await registry.delete_attachment(
+        db_context, attachment_id, acting_user_id=None
+    )
+    assert deleted is True
 
-        refreshed = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    refreshed = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert refreshed is not None
-        entries = refreshed["attachment_info"]
-        assert len(entries) == 2
-        assert entries[0] == malformed_entry  # raw preserved
-        assert entries[1]["filename"] == "to-delete.pdf"
-        assert entries[1].get("attachment_id") is None
+    )
+    assert refreshed is not None
+    entries = refreshed["attachment_info"]
+    assert len(entries) == 2
+    assert entries[0] == malformed_entry  # raw preserved
+    assert entries[1]["filename"] == "to-delete.pdf"
+    assert entries[1].get("attachment_id") is None
 
 
 @pytest.mark.asyncio
@@ -1263,13 +1259,13 @@ async def test_webhook_accepts_email_when_mailbox_raw_dir_is_unset(
     assert response.status_code == 200, response.text
     # The email still lands in the database — only the raw-archive step
     # was skipped.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        row = await db_context.fetch_one(
-            select(received_emails_table.c.message_id_header).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    db_context = Database(engine=db_engine)
+    row = await db_context.fetch_one(
+        select(received_emails_table.c.message_id_header).where(
+            received_emails_table.c.message_id_header == message_id
         )
-        assert row is not None
+    )
+    assert row is not None
 
 
 @pytest.mark.asyncio
@@ -1285,74 +1281,72 @@ async def test_reindex_email_tool_does_not_match_similar_email_ids(
     report another email's task and overwrite ``indexing_task_id`` on
     the wrong row.
     """
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Target email: id=1 (no in-flight task of its own).
-        target_id_insert = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=f"<target-{uuid.uuid4()}@example.com>",
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Target",
-                stripped_text="body",
-                attachment_info=[],
-                indexing_task_id=None,
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    # Target email: id=1 (no in-flight task of its own).
+    target_id_insert = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=f"<target-{uuid.uuid4()}@example.com>",
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Target",
+            stripped_text="body",
+            attachment_info=[],
+            indexing_task_id=None,
         )
-        target_email_id = target_id_insert.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    target_email_id = target_id_insert.scalar_one()
 
-        # Sibling task for an email with a related numeric id (the LIKE
-        # predicate ``index_email_{id}_%`` would otherwise match this).
-        sibling_id = int(f"{target_email_id}9")
-        sibling_task_id = f"index_email_{sibling_id}_{uuid.uuid4()}"
-        await db_context.tasks.enqueue(
-            task_id=sibling_task_id,
-            task_type="index_email",
-            payload={"email_db_id": sibling_id},
-        )
+    # Sibling task for an email with a related numeric id (the LIKE
+    # predicate ``index_email_{id}_%`` would otherwise match this).
+    sibling_id = int(f"{target_email_id}9")
+    sibling_task_id = f"index_email_{sibling_id}_{uuid.uuid4()}"
+    await db_context.tasks.enqueue(
+        task_id=sibling_task_id,
+        task_type="index_email",
+        payload={"email_db_id": sibling_id},
+    )
 
-        # Register a document row for the target email so
-        # ``reindex_email_tool`` can resolve it.
-        target_row = await db_context.fetch_one(
-            select(received_emails_table.c.message_id_header).where(
-                received_emails_table.c.id == target_email_id
-            )
+    # Register a document row for the target email so
+    # ``reindex_email_tool`` can resolve it.
+    target_row = await db_context.fetch_one(
+        select(received_emails_table.c.message_id_header).where(
+            received_emails_table.c.id == target_email_id
         )
-        assert target_row is not None
-        message_id_header = target_row["message_id_header"]
-        doc_row = await db_context.execute_with_retry(
-            sa_text(
-                "INSERT INTO documents (source_type, source_id, visibility_labels) "
-                "VALUES ('email', :sid, '[]') RETURNING id"
-            ),
-            {"sid": message_id_header},
-        )
-        target_document_id = doc_row.scalar_one()
+    )
+    assert target_row is not None
+    message_id_header = target_row["message_id_header"]
+    doc_row = await db_context.execute(
+        sa_text(
+            "INSERT INTO documents (source_type, source_id, visibility_labels) "
+            "VALUES ('email', :sid, '[]') RETURNING id"
+        ),
+        {"sid": message_id_header},
+    )
+    target_document_id = doc_row.scalar_one()
 
-        registry = AttachmentRegistry(
-            storage_path=str(tmp_path / "registry"),
-            db_engine=db_engine,
-            config=None,
-        )
-        exec_context = _build_indexer_context(db_context, registry)
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "registry"),
+        db_engine=db_engine,
+        config=None,
+    )
+    exec_context = _build_indexer_context(db_context, registry)
 
-        result = await reindex_email_tool(
-            exec_context=exec_context, document_id=target_document_id
-        )
+    result = await reindex_email_tool(
+        exec_context=exec_context, document_id=target_document_id
+    )
 
-        data = result.get_data()
-        assert isinstance(data, dict)
-        # We must *not* be told the sibling's task is in flight for us.
-        assert data.get("status") != "already_in_flight"
-        assert data.get("task_id") != sibling_task_id
-        # A fresh reindex task was enqueued for our own email.
-        fresh = await db_context.fetch_one(
-            select(tasks_table.c.task_id).where(
-                tasks_table.c.task_id == data["task_id"]
-            )
-        )
-        assert fresh is not None
+    data = result.get_data()
+    assert isinstance(data, dict)
+    # We must *not* be told the sibling's task is in flight for us.
+    assert data.get("status") != "already_in_flight"
+    assert data.get("task_id") != sibling_task_id
+    # A fresh reindex task was enqueued for our own email.
+    fresh = await db_context.fetch_one(
+        select(tasks_table.c.task_id).where(tasks_table.c.task_id == data["task_id"])
+    )
+    assert fresh is not None
 
 
 @pytest.mark.asyncio
@@ -1397,13 +1391,13 @@ async def test_webhook_accepts_attachment_free_email_without_attachment_storage_
     response = await api_client.post("/webhook/mail", data=form)
     assert response.status_code == 200, response.text
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        row = await db_context.fetch_one(
-            select(received_emails_table.c.message_id_header).where(
-                received_emails_table.c.message_id_header == message_id
-            )
+    db_context = Database(engine=db_engine)
+    row = await db_context.fetch_one(
+        select(received_emails_table.c.message_id_header).where(
+            received_emails_table.c.message_id_header == message_id
         )
-        assert row is not None
+    )
+    assert row is not None
 
 
 @pytest.mark.asyncio
@@ -1433,47 +1427,47 @@ async def test_email_indexer_reregisters_when_stored_id_is_dangling(
 
     dangling_id = str(uuid.uuid4())
     message_id = f"<mailgun-{uuid.uuid4()}@example.com>"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        insert_result = await db_context.execute_with_retry(
-            insert(received_emails_table)
-            .values(
-                message_id_header=message_id,
-                sender_address=SENDER,
-                recipient_address=RECIPIENT,
-                subject="Dangling",
-                stripped_text="body",
-                attachment_info=[
-                    {
-                        "filename": "doc.pdf",
-                        "content_type": "application/pdf",
-                        "size": external_file.stat().st_size,
-                        "storage_path": str(external_file),
-                        "attachment_id": dangling_id,
-                    }
-                ],
-            )
-            .returning(received_emails_table.c.id)
+    db_context = Database(engine=db_engine)
+    insert_result = await db_context.execute(
+        insert(received_emails_table)
+        .values(
+            message_id_header=message_id,
+            sender_address=SENDER,
+            recipient_address=RECIPIENT,
+            subject="Dangling",
+            stripped_text="body",
+            attachment_info=[
+                {
+                    "filename": "doc.pdf",
+                    "content_type": "application/pdf",
+                    "size": external_file.stat().st_size,
+                    "storage_path": str(external_file),
+                    "attachment_id": dangling_id,
+                }
+            ],
         )
-        email_db_id = insert_result.scalar_one()
+        .returning(received_emails_table.c.id)
+    )
+    email_db_id = insert_result.scalar_one()
 
-        exec_context = _build_indexer_context(db_context, registry)
-        await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
+    exec_context = _build_indexer_context(db_context, registry)
+    await indexer.handle_index_email(exec_context, {"email_db_id": email_db_id})
 
-        refreshed = await db_context.fetch_one(
-            select(received_emails_table.c.attachment_info).where(
-                received_emails_table.c.id == email_db_id
-            )
+    refreshed = await db_context.fetch_one(
+        select(received_emails_table.c.attachment_info).where(
+            received_emails_table.c.id == email_db_id
         )
-        assert refreshed is not None
-        attachments = [
-            AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
-        ]
-        new_id = attachments[0].attachment_id
-        assert new_id is not None
-        # Row was replaced, not retained.
-        assert new_id != dangling_id
-        # The new id resolves in the registry.
-        assert (
-            await registry.get_attachment(db_context, new_id, acting_user_id=None)
-            is not None
-        )
+    )
+    assert refreshed is not None
+    attachments = [
+        AttachmentData.model_validate(item) for item in refreshed["attachment_info"]
+    ]
+    new_id = attachments[0].attachment_id
+    assert new_id is not None
+    # Row was replaced, not retained.
+    assert new_id != dangling_id
+    # The new id resolves in the registry.
+    assert (
+        await registry.get_attachment(db_context, new_id, acting_user_id=None)
+        is not None
+    )

@@ -16,7 +16,7 @@ from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -67,8 +67,8 @@ async def create_processing_service(
     await composite_provider.get_tool_definitions()
 
     # Create context providers
-    async def get_test_db_context_func() -> DatabaseContext:
-        return get_db_context(engine=db_engine)
+    def get_test_db_context_func() -> Database:
+        return Database(engine=db_engine)
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_test_db_context_func,
@@ -138,23 +138,23 @@ async def test_add_note_with_include_in_prompt(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {
-                    "type": "text",
-                    "text": f"Remember this: {note_title}. Content: {note_content}. Include in prompt.",
-                }
-            ],
-            trigger_interface_message_id="msg_001",
-            user_name=TEST_USER_NAME,
-        )
-        final_text_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {
+                "type": "text",
+                "text": f"Remember this: {note_title}. Content: {note_content}. Include in prompt.",
+            }
+        ],
+        trigger_interface_message_id="msg_001",
+        user_name=TEST_USER_NAME,
+    )
+    final_text_reply = result.text_reply
+    error = result.error_traceback
 
     # Assert
     assert error is None
@@ -222,20 +222,20 @@ async def test_get_note_that_exists(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {"type": "text", "text": f"Get the note titled '{note_title}'"}
-            ],
-            trigger_interface_message_id="msg_002",
-            user_name=TEST_USER_NAME,
-        )
-        final_text_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {"type": "text", "text": f"Get the note titled '{note_title}'"}
+        ],
+        trigger_interface_message_id="msg_002",
+        user_name=TEST_USER_NAME,
+    )
+    final_text_reply = result.text_reply
+    error = result.error_traceback
 
     # Assert
     assert error is None
@@ -278,20 +278,20 @@ async def test_get_note_that_does_not_exist(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {"type": "text", "text": f"Get the note titled '{note_title}'"}
-            ],
-            trigger_interface_message_id="msg_003",
-            user_name=TEST_USER_NAME,
-        )
-        final_text_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {"type": "text", "text": f"Get the note titled '{note_title}'"}
+        ],
+        trigger_interface_message_id="msg_003",
+        user_name=TEST_USER_NAME,
+    )
+    final_text_reply = result.text_reply
+    error = result.error_traceback
 
     # Assert
     assert error is None
@@ -347,18 +347,18 @@ async def test_list_all_notes(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[{"type": "text", "text": "List all notes"}],
-            trigger_interface_message_id="msg_004",
-            user_name=TEST_USER_NAME,
-        )
-        final_text_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[{"type": "text", "text": "List all notes"}],
+        trigger_interface_message_id="msg_004",
+        user_name=TEST_USER_NAME,
+    )
+    final_text_reply = result.text_reply
+    error = result.error_traceback
 
     # Assert
     assert error is None
@@ -417,20 +417,20 @@ async def test_list_notes_with_filter(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {"type": "text", "text": "List notes that are included in prompt"}
-            ],
-            trigger_interface_message_id="msg_005",
-            user_name=TEST_USER_NAME,
-        )
-        final_text_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {"type": "text", "text": "List notes that are included in prompt"}
+        ],
+        trigger_interface_message_id="msg_005",
+        user_name=TEST_USER_NAME,
+    )
+    final_text_reply = result.text_reply
+    error = result.error_traceback
 
     # Assert
     assert error is None
@@ -485,20 +485,20 @@ async def test_delete_note(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {"type": "text", "text": f"Delete the note titled '{note_title}'"}
-            ],
-            trigger_interface_message_id="msg_006",
-            user_name=TEST_USER_NAME,
-        )
-        final_text_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {"type": "text", "text": f"Delete the note titled '{note_title}'"}
+        ],
+        trigger_interface_message_id="msg_006",
+        user_name=TEST_USER_NAME,
+    )
+    final_text_reply = result.text_reply
+    error = result.error_traceback
 
     # Assert
     assert error is None
@@ -569,23 +569,23 @@ async def test_update_existing_note(db_engine: AsyncEngine) -> None:
     )
 
     # Act
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=str(TEST_CHAT_ID),
-            trigger_content_parts=[
-                {
-                    "type": "text",
-                    "text": f"Update the note '{note_title}' with this content: {updated_content}",
-                }
-            ],
-            trigger_interface_message_id="msg_007",
-            user_name=TEST_USER_NAME,
-        )
-        final_text_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=str(TEST_CHAT_ID),
+        trigger_content_parts=[
+            {
+                "type": "text",
+                "text": f"Update the note '{note_title}' with this content: {updated_content}",
+            }
+        ],
+        trigger_interface_message_id="msg_007",
+        user_name=TEST_USER_NAME,
+    )
+    final_text_reply = result.text_reply
+    error = result.error_traceback
 
     # Assert
     assert error is None

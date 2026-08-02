@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from sqlalchemy import String, and_, case, insert, or_, select, update
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import cast as sa_cast
 from sqlalchemy.sql import func as sql_func
 from sqlalchemy.sql import functions as func
@@ -46,6 +45,7 @@ from family_assistant.security.taint import (
     merge_history_taint,
     strip_legacy_labeled_echoes,
 )
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
@@ -875,7 +875,7 @@ class MessageHistoryRepository(BaseRepository):
             conditions.append(subconversation_condition)
 
         if include_text_query and query.query:
-            if self._db.engine.dialect.name == "postgresql":
+            if self._db.dialect_name == "postgresql":
                 postgres_text_query = sql_func.plainto_tsquery("english", query.query)
                 like_pattern = f"%{query.query.lower()}%"
                 conditions.append(
@@ -969,7 +969,7 @@ class MessageHistoryRepository(BaseRepository):
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
         is_internal: bool = False,
-    ) -> int | None:
+    ) -> int:
         """
         Stores a typed LLMMessage in the history table.
 
@@ -1094,7 +1094,7 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None,
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> int | None:
+    ) -> int:
         """
         Internal method that serializes and inserts a message into the database.
 
@@ -1177,36 +1177,46 @@ class MessageHistoryRepository(BaseRepository):
             }
         }
 
-        try:
+        async def _insert_and_enqueue(txn: DatabaseTransaction) -> int:
+            """Persist the row and queue its indexing as one unit.
+
+            Split, an enqueue failure reaches the caller as a failed
+            ``add_message`` even though the row is already committed, so a
+            caller that retries duplicates the message; and a row whose task
+            never lands is silently absent from search for good.
+            """
             stmt = (
                 insert(message_history_table)
                 .values(**values)
                 .returning(message_history_table.c.internal_id)
             )
-            result = await self._db.execute_with_retry(stmt)
-            row = result.one()  # type: ignore[attr-defined]
-            internal_id = row[0]
+            result = await txn.execute(stmt)
+            internal_id = cast("int", result.scalar_one())
 
             self._logger.info(
                 f"Added message to history: role={role}, "
                 f"interface={interface_type}, internal_id={internal_id}"
             )
 
-        except SQLAlchemyError as e:
-            self._logger.exception(f"Failed to add message to history: {e}")
-            return None
+            await self._enqueue_message_history_indexing_task(
+                internal_id=internal_id,
+                turn_id=turn_id,
+                db=txn,
+            )
+            return internal_id
 
-        await self._enqueue_message_history_indexing_task(
-            internal_id=internal_id,
-            turn_id=turn_id,
-        )
-        return internal_id
+        # Deliberately unguarded. A database write failure here used to become
+        # None, and callers that treat None as merely "no id" would carry on --
+        # continuing an LLM turn whose prompt or assistant checkpoint was never
+        # committed. Letting it propagate keeps a failed write looking like one.
+        return await self._db.atomic(_insert_and_enqueue)
 
     async def _enqueue_message_history_indexing_task(
         self,
         *,
         internal_id: int,
         turn_id: str | None,
+        db: DatabaseExecutor | None = None,
     ) -> None:
         """Queue indexing for newly persisted message history."""
         payload: dict[str, object] = {"limit": 50}
@@ -1215,7 +1225,7 @@ class MessageHistoryRepository(BaseRepository):
         else:
             payload["internal_id"] = internal_id
 
-        await self._db.tasks.enqueue(
+        await (db if db is not None else self._db).tasks.enqueue(
             task_id=f"index_message_history_{uuid.uuid4()}",
             task_type="index_message_history_batch",
             payload=payload,
@@ -1761,6 +1771,33 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return any(not row["tool_calls"] for row in rows)
 
+    async def get_undelivered_terminal_reply(
+        self,
+        turn_id: str,
+    ) -> MessageHistoryRow | None:
+        """The turn's final assistant reply, if it was never delivered.
+
+        A terminal reply carries no tool_calls (an intermediate tool-calling
+        iteration is not terminal), and ``interface_message_id`` is set only
+        once an interface has accepted it. A row matching both means generation
+        finished but delivery did not -- so a retry can resume at delivery
+        rather than running the turn again.
+        """
+        stmt = (
+            select(message_history_table)
+            .where(
+                message_history_table.c.turn_id == turn_id,
+                message_history_table.c.role == "assistant",
+                message_history_table.c.interface_message_id.is_(None),
+            )
+            .order_by(message_history_table.c.internal_id.desc())
+        )
+        rows = await self._db.fetch_all(stmt)
+        # tool_calls stores None as JSON null rather than SQL NULL, so the
+        # terminal check happens in Python (see has_terminal_reply_for_turn).
+        terminal = [row for row in rows if not row["tool_calls"]]
+        return cast("MessageHistoryRow", dict(terminal[0])) if terminal else None
+
     async def get_interface_type_for_conversation(
         self, conversation_id: str
     ) -> str | None:
@@ -1910,8 +1947,8 @@ class MessageHistoryRepository(BaseRepository):
             .values(interface_message_id=interface_message_id)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        if result.rowcount == 0:
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update interface ID"
             )
@@ -1934,7 +1971,7 @@ class MessageHistoryRepository(BaseRepository):
             .values(attachments=attachments)
         )
 
-        result = await self._db.execute_with_retry(stmt)
+        result = await self._db.execute(stmt)
         if result.rowcount == 0:  # type: ignore[attr-defined]  # SQLAlchemy runtime API.
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update attachments"
@@ -1956,8 +1993,8 @@ class MessageHistoryRepository(BaseRepository):
             .values(error_traceback=error_traceback)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        if result.rowcount == 0:
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update error traceback"
             )

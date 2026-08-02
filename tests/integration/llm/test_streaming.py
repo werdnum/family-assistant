@@ -124,7 +124,7 @@ async def llm_client_factory() -> (  # type: ignore[misc]
     # Clean up all created clients
     for client in created_clients:
         if hasattr(client, "close"):
-            await client.close()  # type: ignore[attr-defined]
+            await client.close()
 
 
 @pytest_asyncio.fixture

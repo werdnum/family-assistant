@@ -20,7 +20,7 @@ from family_assistant.processing.types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
 )
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -85,14 +85,14 @@ async def test_submit_async_renders_prompt_and_starts_interaction(
     )
     service = _make_service(llm_client)
 
-    async with get_db_context(db_engine) as db_context:
-        submission = await service.submit_async(
-            [{"type": "text", "text": "Research quantum computing."}],
-            conversation_id="conv-1",
-            subconversation_id="sub-1",
-            user_name="Andrew",
-            db_context=db_context,
-        )
+    db_context = Database(db_engine)
+    submission = await service.submit_async(
+        [{"type": "text", "text": "Research quantum computing."}],
+        conversation_id="conv-1",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=db_context,
+    )
 
     assert submission.remote_task_id == "inter_new"
     assert submission.remote_context_id is None
@@ -123,36 +123,36 @@ async def test_submit_async_chains_onto_prior_completed_run(
     )
     service = _make_service(llm_client)
 
-    async with get_db_context(db_engine) as db_context:
-        run: DelegationRunCreate = {
-            "delegation_id": "deleg-1",
-            "task_id": "task-1",
-            "source_profile_id": "default_assistant",
-            "target_service_id": "research",
-            "interface_type": "test",
-            "conversation_id": "conv-2",
-            "subconversation_id": "sub-2",
-            "request_text": "Initial question",
-            "content_parts_json": [{"type": "text", "text": "Initial question"}],
-        }
-        await db_context.delegation_runs.create_run(run)
-        await db_context.delegation_runs.update_remote_task(
-            "deleg-1", remote_task_id="inter_original", remote_context_id=None
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="deleg-1",
-            result_text="The original answer.",
-            result_attachment_ids=[],
-            completed_at=datetime.now(UTC),
-        )
+    db_context = Database(db_engine)
+    run: DelegationRunCreate = {
+        "delegation_id": "deleg-1",
+        "task_id": "task-1",
+        "source_profile_id": "default_assistant",
+        "target_service_id": "research",
+        "interface_type": "test",
+        "conversation_id": "conv-2",
+        "subconversation_id": "sub-2",
+        "request_text": "Initial question",
+        "content_parts_json": [{"type": "text", "text": "Initial question"}],
+    }
+    await db_context.delegation_runs.create_run(run)
+    await db_context.delegation_runs.update_remote_task(
+        "deleg-1", remote_task_id="inter_original", remote_context_id=None
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="deleg-1",
+        result_text="The original answer.",
+        result_attachment_ids=[],
+        completed_at=datetime.now(UTC),
+    )
 
-        await service.submit_async(
-            [{"type": "text", "text": "Tell me more."}],
-            conversation_id="conv-2",
-            subconversation_id="sub-2",
-            user_name="Andrew",
-            db_context=db_context,
-        )
+    await service.submit_async(
+        [{"type": "text", "text": "Tell me more."}],
+        conversation_id="conv-2",
+        subconversation_id="sub-2",
+        user_name="Andrew",
+        db_context=db_context,
+    )
 
     call_args = llm_client.start_deep_research_interaction.call_args
     assert call_args.kwargs["previous_interaction_id"] == "inter_original"

@@ -12,7 +12,7 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.web.routers.chat_api import (
     ToolConfirmationRequest,
@@ -30,7 +30,7 @@ async def _create_confirmation(
     decision_only: bool = False,
 ) -> str:
     service = ConfirmationService(
-        db_context_factory=lambda: get_db_context(db_engine),
+        db=Database(db_engine),
     )
     request = await service.create_request(
         target_user_id="test_user",
@@ -46,10 +46,10 @@ async def _create_confirmation(
 
 
 async def _task_exists(db_engine: AsyncEngine, task_id: str) -> bool:
-    async with DatabaseContext(engine=db_engine) as db:
-        row = await db.fetch_one(
-            select(tasks_table.c.id).where(tasks_table.c.original_task_id == task_id)
-        )
+    db = Database(engine=db_engine)
+    row = await db.fetch_one(
+        select(tasks_table.c.id).where(tasks_table.c.original_task_id == task_id)
+    )
     return row is not None
 
 
@@ -86,12 +86,12 @@ async def test_confirm_tool_decision_only_approval_does_not_enqueue_task(
         f"confirmation_tool_execution:{request_id}",
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        row = await db.fetch_one(
-            select(confirmation_requests_table).where(
-                confirmation_requests_table.c.id == request_id
-            )
+    db = Database(engine=db_engine)
+    row = await db.fetch_one(
+        select(confirmation_requests_table).where(
+            confirmation_requests_table.c.id == request_id
         )
+    )
 
     assert row is not None
     assert row["status"] == "approved"
@@ -129,12 +129,12 @@ async def test_confirm_tool_durable_decision_only_approval_does_not_enqueue_task
         f"confirmation_tool_execution:{request_id}",
     )
 
-    async with DatabaseContext(engine=db_engine) as db:
-        row = await db.fetch_one(
-            select(confirmation_requests_table).where(
-                confirmation_requests_table.c.id == request_id
-            )
+    db = Database(engine=db_engine)
+    row = await db.fetch_one(
+        select(confirmation_requests_table).where(
+            confirmation_requests_table.c.id == request_id
         )
+    )
 
     assert row is not None
     assert row["status"] == "approved"
