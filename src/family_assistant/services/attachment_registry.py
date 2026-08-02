@@ -22,7 +22,11 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import and_, delete, insert, or_, select, update
 
 from family_assistant.storage.base import attachment_metadata_table
-from family_assistant.storage.database import Database, DatabaseExecutor
+from family_assistant.storage.database import (
+    Database,
+    DatabaseExecutor,
+    DatabaseTransaction,
+)
 from family_assistant.storage.email import (
     parse_attachment_infos_with_raw,
     received_emails_table,
@@ -776,31 +780,38 @@ class AttachmentRegistry:
             self._owner_visibility_clause(acting_user_id),
         ]
 
-        # Atomic delete
         delete_stmt = delete(attachment_metadata_table).where(and_(*conditions))
-        result = await db_context.execute(delete_stmt)
 
-        success = result.rowcount > 0
+        async def _delete_row_and_references(txn: DatabaseTransaction) -> bool:
+            """Remove the registry row and any back-reference to it, together.
+
+            For an email attachment the ``received_emails.attachment_info`` JSON
+            still names the deleted ``attachment_id``; if that cleanup were a
+            separate commit, a failure would leave the email advertising a
+            handle that no longer resolves.
+            """
+            result = await txn.execute(delete_stmt)
+            if result.rowcount == 0:
+                return False
+            if source_type == "email" and source_id:
+                await _clear_email_attachment_id(
+                    db_context=txn,
+                    message_id_header=source_id,
+                    attachment_id=attachment_id,
+                )
+            return True
+
+        success = await db_context.atomic(_delete_row_and_references)
         file_deleted = False
 
         if success:
-            # Only delete file if database deletion succeeded
+            # The file is deleted only once the database state is consistent,
+            # since this part cannot be rolled back.
             file_deleted = self._delete_attachment_file(
                 attachment_id,
                 stored_path=stored_path,
                 source_type=source_type,
             )
-            # For email attachments the file is externally owned and the
-            # ``received_emails.attachment_info`` JSON still references the
-            # deleted ``attachment_id``. Clear that reference so subsequent
-            # reads/downloads no longer surface a broken ID. A later reindex
-            # will re-register the attachment with a fresh ID.
-            if source_type == "email" and source_id:
-                await _clear_email_attachment_id(
-                    db_context=db_context,
-                    message_id_header=source_id,
-                    attachment_id=attachment_id,
-                )
             logger.info(
                 f"Deleted attachment {attachment_id} (db: {success}, file: {file_deleted})"
             )
