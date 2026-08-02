@@ -1870,6 +1870,45 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.draftText, "typed while the send was pending")
     }
 
+    func testTurnStartConflictSteerFailureRemovesOptimisticConversation() async throws {
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_steer_failure/messages"):
+                return .json(
+                    #"{"conversation_id":"web_conv_conflict_steer_failure","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false,"active_turns":[]}"#
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                return .json(
+                    #"{"detail":{"message":"running","active_turn_id":"turn-won-failure-race"}}"#,
+                    statusCode: 409
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-failure-race/steer"):
+                steerRequests.increment()
+                return .json(#"{"detail":"steer rejected"}"#, statusCode: 400)
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_steer_failure/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_steer_failure")
+        model.draftText = "unsent prompt"
+
+        await model.sendDraft()
+        try await waitUntil {
+            steerRequests.value == 1 && model.draftText == "unsent prompt"
+        }
+
+        XCTAssertEqual(model.draftText, "unsent prompt")
+        XCTAssertFalse(
+            model.conversations.contains { $0.conversationID == "web_conv_conflict_steer_failure" },
+            "A prompt rejected as both a turn start and a steer must not leave a phantom conversation summary."
+        )
+    }
+
     func testTurnStartConflictTransfersSteerQueuedWhileRequestIsInFlight() async throws {
         let startResponse = HangingStream()
         let turnStarts = AtomicCounter()

@@ -2134,6 +2134,9 @@ final class ChatViewModel {
                 removeAwaitingEchoSteer(pendingSteer)
             }
             if !(await submitSteerPrompt(prompt, activeTurn: activeTurn)) {
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
                 recoverSteerAsDraft(prompt)
             }
             for pendingSteer in pendingSteers {
