@@ -84,10 +84,15 @@ Repositories already funnel through one executor seam (`storage/repositories/bas
 are rewritten against a small protocol implemented by both types (`execute`, `fetch_one`,
 `fetch_all`, `atomic()`, dialect info):
 
-- `Database.atomic()` opens a real transaction; `DatabaseTransaction.atomic()` is a join
-  (nullcontext). Multi-statement repository methods (`tasks.dequeue`, `email.store_incoming`,
-  `notes.add_or_update`, all of `schedule_automations`, …) wrap their bodies in
-  `async with self._db.atomic() as tx:` and are therefore atomic in both usage modes.
+- `atomic()` is a **closure runner**, not a context manager: `await self._db.atomic(body)` where
+  `body` is `async (txn) -> T`. On `Database` it opens a transaction, runs the closure, commits —
+  and on a replayable failure rolls back and re-invokes the closure (see retry semantics). On
+  `DatabaseTransaction` it joins: the closure runs once against the ambient transaction, and retry
+  is owned by whoever opened it. Multi-statement repository methods (`tasks.dequeue`,
+  `email.store_incoming`, `notes.add_or_update`, all of `schedule_automations`, …) put their
+  statements in the closure and are therefore atomic — and replayable — in both usage modes. The
+  closure-runner shape (rather than `async with`) exists precisely so the whole body *can* be
+  re-entered on retry; closures must confine their side effects to the transaction.
 - The audit found **no repository method that needs cross-method ambient state** —
   `delegation_runs`, `confirmation_requests`, `error_logs`, `push_subscriptions`, `taint_audit`,
   `vector`, and the conditional-UPDATE claims in `worker_tasks` are already
@@ -95,11 +100,15 @@ are rewritten against a small protocol implemented by both types (`execute`, `fe
 
 ### Retry semantics (a correctness win, not just a cleanup)
 
-- Handle-level operations retry the *whole* acquire-begin-execute-commit unit. This finally makes
+- Single-statement handle operations and `atomic()` closures retry the *whole*
+  acquire-begin-execute-commit unit (the closure is re-invoked after rollback). This finally makes
   PostgreSQL serialization failures (`40001`) and deadlocks (`40P01`) — currently listed in
   `context.py:23-25` as "for reference, not currently used" — genuinely retryable.
-- Inside a `DatabaseTransaction`, statement failure raises immediately (retrying inside an aborted
-  transaction is futile; the caller owns retry of the whole block if it wants it).
+- Inside a `DatabaseTransaction` (the explicit `async with db.transaction()` block), statement
+  failure raises immediately: an `async with` body cannot be re-entered, and retrying inside an
+  aborted transaction is futile. A caller-side sequence that wants automatic replay uses the closure
+  form (`await db.atomic(body)`) instead of the block form; the retry guarantee is explicitly scoped
+  to units that can actually be replayed.
 
 ### Dialect strategy
 
@@ -144,18 +153,21 @@ These are the semantic changes; each is intended and called out for review:
 From the atomicity audit, the sequences that must be wrapped in `db.transaction()` (everything not
 listed runs on the handle):
 
-| Site                                                                                                                       | Why                                                                                                                                                              |
-| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TasksRepository.dequeue` PG path (`repositories/tasks.py:186-233`)                                                        | `SELECT … FOR UPDATE SKIP LOCKED` + `UPDATE` — the lock *is* the claim                                                                                           |
-| `_process_task` terminal update + recurrence (`task_worker.py:3023-3037`; failure twin 3096-3128)                          | done/failed + next-instance enqueue must be atomic or recurring tasks stop/double-fire                                                                           |
-| Advance-outbox flush (`task_worker.py:2723-2752`)                                                                          | enqueue + payload-clear is the outbox contract                                                                                                                   |
-| `ConfirmationService._approve` (`confirmation_service.py:182-231`)                                                         | approve + enqueue execution ("atomically" is in the docstring)                                                                                                   |
-| `delegate_to_service_tool` (`tools/services.py:925-973`)                                                                   | create_run + enqueue; `IntegrityError` handler depends on block rollback                                                                                         |
-| Delegation notification family (`task_worker.py:2034-2097, 2130-2200, 2259-2345`)                                          | documented rollback-on-send-failure keeps `notified_at` NULL for retry                                                                                           |
-| `email.store_incoming` (`repositories/email.py:44-94`)                                                                     | insert + index-task enqueue + backfill update                                                                                                                    |
-| `spawn_worker_tool` DB pair (`tools/worker.py:431-463`)                                                                    | worker task row + completion event listener                                                                                                                      |
-| Indexing doc+embedding pairs (`message_history_indexer.py:110-129`, `notes_indexer.py:89-95`, `indexing/tasks.py:195-205`) | doc committed without embeddings = permanently unsearchable (upsert makes re-runs no-ops); embedding generation (network) happens *before* the transaction opens |
-| `a2a_tasks.create_task_if_absent` fallback + `email_indexer` attachment registration                                       | `begin_nested()` requires an enclosing transaction                                                                                                               |
+| Site                                                                                                       | Why                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TasksRepository.dequeue` PG path (`repositories/tasks.py:186-233`)                                        | `SELECT … FOR UPDATE SKIP LOCKED` + `UPDATE` — the lock *is* the claim                                                                                                                                                                                                                                                                                                                 |
+| `_process_task` terminal update + recurrence (`task_worker.py:3023-3037`; failure twin 3096-3128)          | done/failed + next-instance enqueue must be atomic or recurring tasks stop/double-fire                                                                                                                                                                                                                                                                                                 |
+| Advance-outbox flush (`task_worker.py:2723-2752`)                                                          | enqueue + payload-clear is the outbox contract                                                                                                                                                                                                                                                                                                                                         |
+| `ConfirmationService._approve` (`confirmation_service.py:182-231`)                                         | approve + enqueue execution ("atomically" is in the docstring)                                                                                                                                                                                                                                                                                                                         |
+| `delegate_to_service_tool` (`tools/services.py:925-973`)                                                   | create_run + enqueue; `IntegrityError` handler depends on block rollback                                                                                                                                                                                                                                                                                                               |
+| Delegation notification + response delivery (`task_worker.py:2034-2097, 2259-2345`)                        | explicit block spanning add_message → interface send → mark_notified; deliberately spans **one** interface send (bounded), preserving the documented rollback-on-send-failure that keeps `notified_at` NULL for retry                                                                                                                                                                  |
+| Delegation source-profile wake (`task_worker.py:2130-2205`) — **must be split, not wrapped**               | today's isolated context spans a full source-profile LLM turn (`handle_chat_interaction` at 2158-2188), which would violate the no-transaction-across-LLM invariant. Restructure: commit the wakeup-data message on the handle first, run the turn untransacted, then a short explicit block for response delivery + `mark_notified` (same shape as the row above)                     |
+| `email.store_incoming` (`repositories/email.py:44-94`)                                                     | insert + index-task enqueue + backfill update                                                                                                                                                                                                                                                                                                                                          |
+| `spawn_worker_tool` DB pair (`tools/worker.py:431-463`)                                                    | worker task row + completion event listener                                                                                                                                                                                                                                                                                                                                            |
+| `EventProcessor.process_event` per-listener sequence (`events/processor.py:155-196`)                       | rate-limit update + action enqueue + one-time-listener disable must be atomic per listener, or a failed disable re-fires a one-time action and a failed enqueue burns quota; the recent-event record can be its own write                                                                                                                                                              |
+| Indexing doc+embedding pairs (`message_history_indexer.py:110-129`, `indexing/tasks.py:195-205`)           | doc committed without embeddings = permanently unsearchable (upsert makes re-runs no-ops); embedding generation (network) happens *before* the transaction opens                                                                                                                                                                                                                       |
+| Notes re-indexing (`notes_indexer.py:88-95` + `dispatch_processors.py:133-150`) — **boundary restructure** | the embedding delete at :95 and the replacement-task enqueue live on opposite sides of the pipeline run (which may call LLMs). Upsert the document in its own transaction, run the pipeline untransacted to *prepare* the dispatch payload, then one short block for delete-old-embeddings + enqueue-replacement, so the deletion never commits without a durable replacement dispatch |
+| `a2a_tasks.create_task_if_absent` fallback + `email_indexer` attachment registration                       | `begin_nested()` requires an enclosing transaction                                                                                                                                                                                                                                                                                                                                     |
 
 Latent races the audit found that are *not* new (last-writer-wins RMW in `manually_retry`,
 `check_and_update_rate_limit`, `notes append`, `modify_pending_callback_tool`'s missing status
@@ -194,12 +206,16 @@ incremental migration enforceable: the old pattern can only shrink, and the mile
 land as separate reviewable PRs without the old world leaking back. When a counter hits zero, the
 symbol is deleted and the rule flips to a permanent `severity: error` conformance rule.
 
-Two more permanent rules land with the end state:
+Two more permanent rules:
 
-- ban `engine.begin()` / raw transaction management outside `storage/`
-- ban raw `create_async_engine` outside `storage/base.py` — today two test fixtures bypass the
-  factory (`tests/conftest.py:324`, `tests/functional/web/conftest.py:548`) and therefore don't test
-  production pool semantics at all
+- ban `engine.begin()` / raw transaction management outside `storage/` (lands with the end state)
+- ban raw `create_async_engine` outside `storage/base.py` — this one lands in **M0**, covering
+  `tests/` too, because bypassing fixtures are a moving target: the known offenders are
+  `tests/conftest.py:324` (PG engine, wrong pool class), `tests/functional/web/conftest.py:548`
+  (session engine, no factory at all), `tests/functional/storage/test_message_history.py:48-58` and
+  `tests/unit/storage/test_message_history_live_updates.py:19-28` (local in-memory fixtures). The
+  rule, not the inventory, is what guarantees every DB test actually exercises the factory's pool
+  configuration and instrumentation
 
 ### 3. Runtime invariants asserted by the test suite
 
@@ -227,17 +243,27 @@ Instrumentation lives in `create_engine_with_sqlite_optimizations` (opt-in), ena
 CI already runs the full non-Playwright suite against **both** SQLite and PostgreSQL
 (`test-backend-sqlite` / `test-backend-postgres`,
 `.github/workflows/ci-with-devcontainer.yml:353, 454`) plus both Playwright lanes — near-100%
-dual-backend coverage is the single most valuable existing asset. Two gaps to close first (Milestone
-0): the PG test engine bypasses the production factory (wrong pool class), and the Playwright
-session engine bypasses it entirely. Route all test engines through
-`create_engine_with_sqlite_optimizations` so the pool/serialization changes in this design are
+dual-backend coverage is the single most valuable existing asset. The gap to close first (Milestone
+0): several test engines bypass the production factory (see the fixture list under the ast-grep
+rules above). Route every test engine through `create_engine_with_sqlite_optimizations`, enforced by
+the M0 ban on raw `create_async_engine`, so the pool/serialization changes in this design are
 actually what CI exercises.
 
 ## Migration plan
 
-Milestones are separately land-able PRs, each green on full dual-backend CI. The old and new
-implementations coexist *only* between M1 and M3, with the ratchet guaranteeing monotone progress —
-this is a bounded migration with an enforced endpoint, not a compatibility layer.
+Milestones are separately land-able PRs, each green on full dual-backend CI.
+
+**On the no-backwards-compatibility rule** (`AGENTS.md`: "when migrating from X to Y, delete X
+immediately"): M1–M2 deliberately deviate — `DatabaseContext` and the new types coexist until M3.
+The rule's *purpose* is preserved: within each converted subsystem the old type is fully excised in
+that same PR (the type checker exposes every stale caller subsystem-by-subsystem), the coexistence
+window is time-boxed, and the ratchet makes it monotone — this is a bounded migration with an
+enforced endpoint, not a compatibility layer kept for callers' convenience. The alternative that
+satisfies the rule literally — new API + all ~130 call-site conversions + deletion as one cutover —
+forfeits reviewability and bisectability on the riskiest change this codebase has seen. If strict
+compliance is preferred, the same content can land as a stacked PR chain (M1 → M2a…M2e → M3) merged
+in one short window; the diffs are identical, only the merge cadence changes. **Decision needed**
+(open question 5).
 
 - **M0 — groundwork (no semantic change).** Unify test engine creation through the production
   factory; add engine instrumentation + leak/duration checks (observational); land the ast-grep
@@ -283,3 +309,6 @@ this is a bounded migration with an enforced endpoint, not a compatibility layer
    rather than tests only?
 4. Whether the M2 entry-point PRs flip the web dependency before or after the turn pipeline
    (proposed: web first — smaller blast radius, exercises the endpoint surface early).
+5. Milestone cadence vs the delete-immediately rule: independent milestone PRs with a ratcheted
+   coexistence window (proposed), or a stacked PR chain merged in one short window for strict
+   compliance. See "Migration plan".
