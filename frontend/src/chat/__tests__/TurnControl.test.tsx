@@ -1050,6 +1050,132 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'holds back the adopted turn output until it echoes the new prompt',
+    async () => {
+      // queued_after_seq marks when the steer was queued, not when the turn got
+      // to it: the turn keeps finishing the response already in flight. Those
+      // events answer the PREVIOUS message, so they must not land in the bubble
+      // the composer just opened for this one.
+      const { ready } = installConflictingTurn('running-turn-8', 2, 4);
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'what about the dentist');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      // Tail of the answer that was already streaming when we adopted the turn.
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-8', content: 'FROM THE OLD ANSWER', seq: 5 })
+      );
+      // The turn reaches our message, then answers it.
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: 'running-turn-8',
+          content: 'what about the dentist',
+          seq: 6,
+        })
+      );
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-8', content: 'Dentist is Thursday.', seq: 7 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Dentist is Thursday.')).toBeInTheDocument();
+      }, WAIT);
+      expect(screen.queryByText(/FROM THE OLD ANSWER/)).toBeNull();
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-8', status: 'complete', seq: 8 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'resends an unconsumed adopted message even when the turn fails',
+    async () => {
+      // A failed turn abandons ordinary steers — resending them just repeats the
+      // failure and the user still has them in the thread. The adopted prompt is
+      // different: the backend only persists a steer once the loop drains it, so
+      // an unconsumed one exists nowhere at all and dropping it loses the send.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+      let resolveAdopted: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const adoptedReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+        resolveAdopted = r;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          if (turnsPosts === 1) {
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-9',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_failed_adopt',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ accepted: true, queued_after_seq: 4 })
+        ),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              resolveAdopted(controller);
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'and the dentist too');
+      await user.keyboard('{Enter}');
+
+      const controller = await adoptedReady;
+      controller.enqueue(
+        sse('turn_ended', {
+          turn_id: 'running-turn-9',
+          status: 'failed',
+          error: 'The assistant stopped unexpectedly.',
+          seq: 5,
+        })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      expect(kickoffPrompts[1]).toBe('and the dentist too');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'refuses to adopt a running turn when the send carried attachments',
     async () => {
       // Steering carries text only. Adopting here would answer the prompt with

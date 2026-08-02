@@ -561,6 +561,43 @@ export const useStreamingResponse = ({
                 continue;
               }
 
+              // Everything below renders into the assistant bubble the composer
+              // opened for THIS message. While an adopted turn has not yet
+              // echoed our prompt it is still finishing the response that was
+              // already in flight — `queued_after_seq` marks when the steer was
+              // queued, not when the turn got to it — so those events belong to
+              // the previous answer and would appear beneath a message they do
+              // not answer. Skip them; the turn's real reply starts after the
+              // echo. If turn_ended arrives first the prompt was never consumed
+              // at all, and the caller resends it (see unconsumedAdoptedPrompt)
+              // and reconciles the old turn from persisted history.
+              if (pendingAdoptedEcho !== null) {
+                // Errors and tool confirmations still pass: a confirmation is a
+                // live prompt whose tool stalls without an answer, and an error
+                // is never silently dropped.
+                if (payload.request_id && payload.tool_name) {
+                  onToolConfirmationRequest({
+                    request_id: payload.request_id,
+                    tool_name: payload.tool_name,
+                    tool_call_id: payload.tool_call_id,
+                    confirmation_prompt: payload.confirmation_prompt,
+                    timeout_seconds: payload.timeout_seconds,
+                    args: payload.args,
+                    created_at: new Date().toISOString(),
+                  });
+                }
+                if (payload.request_id !== undefined && payload.approved !== undefined) {
+                  onToolConfirmationResult({
+                    request_id: payload.request_id,
+                    approved: payload.approved,
+                  });
+                }
+                if (payload.error) {
+                  onError(new Error(payload.error || 'Unknown error'));
+                }
+                continue;
+              }
+
               // Handle text content
               if (payload.content) {
                 currentMessage += payload.content;
@@ -887,18 +924,25 @@ export const useStreamingResponse = ({
   //                  running and the steer may even have been accepted, so the
   //                  caller must NOT auto-resend; surface it and keep the draft.
   const steerStream = useCallback(async ({ prompt }) => {
-    const active = activeTurnRef.current;
+    let active = activeTurnRef.current;
     if (!active) {
       return 'finished';
     }
-    const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
-    const body = JSON.stringify({ conversation_id: active.conversationId, prompt });
     // Retry 404 (the kickoff POST may not have registered the turn yet — same
     // race as Stop) and transient 5xx/network with a small backoff. A 404 that
     // persists means the turn really finished → 'finished' (resend as a normal
     // message); a persistent 5xx/network is 'error' (don't auto-resend).
     const attempts = 5;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      // Re-read the live identity every attempt, as Stop does: a kickoff still
+      // in flight can be refused (409) and adopt the conversation's running
+      // turn, repointing this ref. Retrying the id that kickoff was refused
+      // under would 404 to exhaustion and demote a steer the running turn could
+      // have taken into a post-turn follow-up. Keep the last known identity if
+      // the ref has been cleared (the stream settled mid-retry).
+      active = activeTurnRef.current ?? active;
+      const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
+      const body = JSON.stringify({ conversation_id: active.conversationId, prompt });
       let lastWas404 = false;
       try {
         const response = await fetch(url, {

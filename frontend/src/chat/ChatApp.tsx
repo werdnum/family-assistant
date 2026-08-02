@@ -446,6 +446,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const handleNewRef = useRef<((message: { content: { text: string }[] }) => Promise<void>) | null>(
     null
   );
+  // Same story for handleReloadHistory: the completion handler reconciles an
+  // adopted turn whose output it suppressed, and that callback is defined below.
+  const handleReloadHistoryRef = useRef<((conversationId: string) => void) | null>(null);
   // Set when the running turn ended because the user stopped it, so the
   // completion handler can render a "stopped" affordance instead of an empty
   // bubble (and never an error toast).
@@ -930,6 +933,29 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       //   an abandoned steer would restart the very interaction Stop was meant to
       //   end, so abandon any queued/awaiting steers instead.
       const cleanCompletion = completed && !wasStopped && !lastError;
+
+      // An adopted prompt the turn never consumed exists nowhere else: the
+      // backend only persists a steer when the LLM loop drains it, so unlike an
+      // ordinary steer there is no durable row and no draft to fall back on. It
+      // is therefore recovered on a FAILED turn too, not just a clean one —
+      // losing it is the very failure this whole path exists to prevent. A
+      // deliberate Stop still abandons it, like every other queued message.
+      const recoverAdopted = completed && !wasStopped && Boolean(unconsumedAdoptedPrompt);
+      if (recoverAdopted) {
+        // Drop the turn's optimistic bubbles. The resend renders the prompt
+        // again, and the assistant row holds nothing worth keeping: the stream
+        // suppresses the adopted turn's output until it echoes our prompt,
+        // which by definition never happened here.
+        if (turnId) {
+          setMessages((prev) => prev.filter((msg) => msg.turnId !== turnId));
+        }
+        // Reconcile what that turn actually produced from persisted history,
+        // rather than leaving the thread as though it had produced nothing.
+        if (conversationId) {
+          void handleReloadHistoryRef.current?.(conversationId);
+        }
+      }
+
       if (cleanCompletion) {
         // Recover messages the turn accepted but never drained (it finished a
         // final text-only iteration first), which would otherwise be lost, by
@@ -940,14 +966,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // queueing it after them would replay the user's messages out of order.
         // It is recovered separately because it isn't in the awaiting-echo list
         // — the hook sent that steer, not submitSteer.
-        if (unconsumedAdoptedPrompt) {
-          // Drop its optimistic user bubble: the resend renders the prompt
-          // again, and the turn it was attributed to answered something else.
-          if (turnId) {
-            setMessages((prev) =>
-              prev.filter((msg) => !(msg.turnId === turnId && msg.role === 'user'))
-            );
-          }
+        if (recoverAdopted && unconsumedAdoptedPrompt) {
           pendingFollowupsRef.current.push(unconsumedAdoptedPrompt);
         }
 
@@ -956,13 +975,25 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           awaitingEchoSteersRef.current = [];
           pendingFollowupsRef.current.push(...unEchoed);
         }
+      } else if (completed) {
+        // Terminal but not a clean success (stopped or failed): drop any
+        // queued/awaiting steers so Stop/failure doesn't auto-start a new turn.
+        // Resending a steer into a conversation that just failed only repeats
+        // the failure, and the user still has those messages in the thread. The
+        // adopted prompt is the exception above — nothing else holds it.
+        awaitingEchoSteersRef.current = [];
+        pendingFollowupsRef.current =
+          recoverAdopted && unconsumedAdoptedPrompt ? [unconsumedAdoptedPrompt] : [];
+      }
 
-        // Fire the next queued follow-up (a steer that hit an already-finished
-        // turn, or a recovered un-echoed steer). One at a time: each turn's own
-        // completion handler fires the next, so they don't start concurrent
-        // turns. Defer past this hook's cleanup (which clears abortControllerRef
-        // / activeTurnRef after onComplete returns) so the follow-up turn's refs
-        // aren't clobbered and Stop/Steer target it correctly.
+      // Fire the next queued follow-up (a steer that hit an already-finished
+      // turn, a recovered un-echoed steer, or a recovered adopted prompt). One
+      // at a time: each turn's own completion handler fires the next, so they
+      // don't start concurrent turns. Defer past this hook's cleanup (which
+      // clears abortControllerRef / activeTurnRef after onComplete returns) so
+      // the follow-up turn's refs aren't clobbered and Stop/Steer target it
+      // correctly.
+      if (cleanCompletion || recoverAdopted) {
         const followup = pendingFollowupsRef.current.shift();
         if (followup) {
           const convAtSchedule = conversationIdRef.current;
@@ -975,11 +1006,6 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             void handleNewRef.current?.({ content: [{ text: followup }] });
           }, 0);
         }
-      } else if (completed) {
-        // Terminal but not a clean success (stopped or failed): drop any
-        // queued/awaiting steers so Stop/failure doesn't auto-start a new turn.
-        awaitingEchoSteersRef.current = [];
-        pendingFollowupsRef.current = [];
       }
     },
     [conversationId, fetchConversations]
@@ -1969,6 +1995,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   useEffect(() => {
     handleNewRef.current = handleNew;
   }, [handleNew]);
+
+  // Same for handleReloadHistory, which that handler uses to reconcile an
+  // adopted turn whose output was suppressed pending an echo that never came.
+  useEffect(() => {
+    handleReloadHistoryRef.current = handleReloadHistory;
+  }, [handleReloadHistory]);
 
   const convertMessage = useCallback((message: Message) => {
     // Ensure content is always an array for assistant-ui compatibility
