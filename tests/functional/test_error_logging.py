@@ -188,3 +188,36 @@ async def test_error_log_cleanup(db_engine: AsyncEngine) -> None:
     assert all(e["logger_name"] != "old.error" for e in remaining_errors)
     assert any(e["logger_name"] == "recent.error" for e in remaining_errors)
     assert any(e["logger_name"] == "very.recent.error" for e in remaining_errors)
+
+
+@pytest.mark.asyncio
+async def test_error_logged_inside_a_transaction_still_reaches_the_database(
+    db_engine: AsyncEngine,
+) -> None:
+    """An ERROR raised inside a transaction must still be persisted.
+
+    The handler writes on its own handle, which the ambient-transaction guard
+    would refuse if the write inherited the caller's transaction. That failure
+    would be silent -- swallowed, and counted toward the circuit breaker that
+    disables database logging for the rest of the process.
+    """
+    db_context = Database(engine=db_engine)
+    await db_context.execute(delete(error_logs_table))
+
+    test_logger = logging.getLogger("test_error_logger_in_transaction")
+    test_logger.setLevel(logging.ERROR)
+    test_logger.propagate = False
+    test_logger.handlers.clear()
+    handler = SQLAlchemyErrorHandler(db_engine, min_level=logging.ERROR)
+    test_logger.addHandler(handler)
+
+    try:
+        async with db_context.transaction():
+            test_logger.error("Logged from inside a transaction")
+        await handler.wait_for_pending_logs()
+
+        rows = await db_context.fetch_all(select(error_logs_table))
+        assert [row["message"] for row in rows] == ["Logged from inside a transaction"]
+        assert handler.consecutive_failures == 0
+    finally:
+        test_logger.removeHandler(handler)

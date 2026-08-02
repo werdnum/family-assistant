@@ -175,14 +175,16 @@ async def test_direct_tool_api_failure_returns_accumulated_taint(
 
     assert response.status_code == 500
     assert response.json()["taint_metadata"]["max_tier"] == "unknown_external"
-    # The request was received, so its user message is durable; what a failed
-    # tool must not leave behind is an assistant reply.
+    # The request was received, so its user message is durable -- the manual
+    # rollback that used to discard it is gone by design.
     db_context = Database(db_engine)
     messages = await db_context.message_history.get_recent(
         interface_type="api",
         conversation_id="failed-direct-tool",
     )
-    assert [message for message in messages if message.role == "assistant"] == []
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "must roll back")
+    ]
 
 
 @pytest.mark.asyncio

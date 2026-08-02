@@ -182,7 +182,7 @@ class EventProcessor:
                 async def _process_listener(
                     txn: DatabaseTransaction,
                     listener: EventListenerDict = listener,
-                ) -> None:
+                ) -> bool:
                     allowed, reason = await check_and_update_rate_limit(
                         txn, listener["id"], listener["conversation_id"]
                     )
@@ -190,17 +190,21 @@ class EventProcessor:
                         logger.warning(
                             f"Listener {listener['id']} rate limited: {reason}"
                         )
-                        return
+                        return False
 
                     await self._execute_action_in_context(txn, listener, event_data)
-                    triggered_listener_ids.append(listener["id"])
 
                     # Handle one-time listeners
                     if listener.get("one_time"):
                         await self._disable_listener_in_context(txn, listener["id"])
+                    return True
 
                 try:
-                    await db_ctx.atomic(_process_listener)
+                    # Recorded outside the closure: atomic() replays its body on
+                    # a retryable failure, and a rolled-back listener must not
+                    # appear as triggered.
+                    if await db_ctx.atomic(_process_listener):
+                        triggered_listener_ids.append(listener["id"])
                 except Exception as e:
                     logger.exception(f"Error processing listener {listener['id']}: {e}")
 

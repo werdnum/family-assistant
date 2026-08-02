@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
-from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import (
     register_worker_wake_event,
@@ -55,39 +54,18 @@ async def _noop_handler(
     """A handler that does nothing (workers stay idle, polling)."""
 
 
-def _worker_engine_for(db_engine: AsyncEngine) -> AsyncEngine:
-    """Return a dedicated engine for a worker, mirroring Assistant._worker_engine.
-
-    A worker that parks inside a transaction must not hold a shared connection
-    and block its siblings; each worker therefore gets its own engine to the same
-    database. In-memory SQLite cannot be shared across engines, so the shared
-    engine is reused in that case (the ``db_engine`` fixture uses an on-disk file,
-    so dedicated engines are used in practice).
-    """
-    url = db_engine.url
-    is_memory_sqlite = url.get_backend_name() == "sqlite" and (
-        url.database is None or ":memory:" in url.database
-    )
-    if is_memory_sqlite:
-        return db_engine
-    return create_engine_with_sqlite_optimizations(
-        url.render_as_string(hide_password=False)
-    )
-
-
 def _make_worker(
     db_engine: AsyncEngine,
     shutdown_event: asyncio.Event,
-    *,
-    dedicated_engine: bool = True,
     **kwargs: Any,  # noqa: ANN401 - passthrough to TaskWorker constructor
 ) -> TaskWorker:
     """Build a TaskWorker with mock externals and a real (system) clock.
 
-    By default each worker gets its own engine (as the production pool does) so
-    that concurrent workers do not contend on a single shared SQLite connection.
+    Every worker shares the application engine, as the production pool does --
+    one database, one engine, one connection pool. That is what makes SQLite's
+    per-engine transaction lock able to serialize the pool at all.
     """
-    engine = _worker_engine_for(db_engine) if dedicated_engine else db_engine
+    engine = db_engine
     return TaskWorker(
         processing_service=MagicMock(),
         chat_interface=MagicMock(),

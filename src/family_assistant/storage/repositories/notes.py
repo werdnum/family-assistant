@@ -794,41 +794,48 @@ class NotesRepository(BaseRepository):
             # Detect skill metadata from frontmatter at write time
             is_skill, skill_name, skill_description = _detect_skill_metadata(content)
 
-            # Update the note in place, preserving the primary key
-            stmt = (
-                update(notes_table)
-                .where(notes_table.c.title == original_title)
-                .values(
-                    title=new_title,
-                    content=content,
-                    include_in_prompt=include_in_prompt,
-                    attachment_ids=attachment_ids_json,
-                    visibility_labels=visibility_labels_json,
-                    is_skill=is_skill,
-                    skill_name=skill_name,
-                    skill_description=skill_description,
-                    provenance_metadata_json=provenance_metadata_to_use,
-                    updated_at=func.now(),
-                )
-            )
+            async def _rename(txn: DatabaseTransaction) -> str:
+                """Update the note and enqueue its indexing task as one unit.
 
-            result = await self._db.execute(stmt)
-            if result.rowcount > 0:
+                A note renamed without its indexing task enqueued would never
+                become searchable under the new title.
+                """
+                # Update the note in place, preserving the primary key
+                stmt = (
+                    update(notes_table)
+                    .where(notes_table.c.title == original_title)
+                    .values(
+                        title=new_title,
+                        content=content,
+                        include_in_prompt=include_in_prompt,
+                        attachment_ids=attachment_ids_json,
+                        visibility_labels=visibility_labels_json,
+                        is_skill=is_skill,
+                        skill_name=skill_name,
+                        skill_description=skill_description,
+                        provenance_metadata_json=provenance_metadata_to_use,
+                        updated_at=func.now(),
+                    )
+                )
+
+                result = await txn.execute(stmt)
+                if result.rowcount == 0:
+                    raise NoteNotFoundError(
+                        f"Note '{original_title}' not found (may have been deleted)"
+                    )
+
                 self._logger.info(
                     f"Renamed note from '{original_title}' to '{new_title}'"
                 )
-                # Enqueue indexing task for the updated note
-                await self._enqueue_indexing_task(self._db, new_title)
-                return "Success"
-            else:
-                # This indicates the note was deleted between our check and update
-                self._logger.warning(
-                    f"No rows updated when renaming {original_title} - note may have been deleted"
-                )
-                raise NoteNotFoundError(
-                    f"Note '{original_title}' not found (may have been deleted)"
-                )
 
+                # Enqueue indexing task for the updated note
+                await self._enqueue_indexing_task(txn, new_title)
+                return "Success"
+
+            return await self._db.atomic(_rename)
+
+        except (NoteNotFoundError, DuplicateNoteError, NoteWritePolicyError):
+            raise
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Database error in rename_and_update({original_title} -> {new_title}): {e}"

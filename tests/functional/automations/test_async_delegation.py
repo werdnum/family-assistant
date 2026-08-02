@@ -940,14 +940,14 @@ async def test_source_wake_delivery_failure_falls_back_without_recording_deliver
     )
 
     # The wake turn happened, so its history is durable; what must not exist is
-    # a delivered-message id for a send that failed.
+    # a delivered-message id on the relay row, since that send failed.
     contents = [row["content"] for row in rows]
     assert "source wake persisted" in contents
-    assert all(
-        row["interface_message_id"] != "fallback_external_message_id"
-        or row["content"] != "source relayed delegated result"
-        for row in rows
-    )
+    relay_rows = [
+        row for row in rows if row["content"] == "source relayed delegated result"
+    ]
+    assert relay_rows, "the wake turn's own assistant row should be durable"
+    assert all(row["interface_message_id"] is None for row in relay_rows)
     assert any(
         row["role"] == "assistant"
         and row["content"]
@@ -1999,10 +1999,12 @@ async def test_api_delegation_completion_stored_in_history(
     assert run is not None
     assert run["notified_at"] is not None
     rows = await db_context.fetch_all(
-        select(message_history_table).where(
+        select(message_history_table)
+        .where(
             message_history_table.c.conversation_id == TEST_CONVERSATION_ID,
             message_history_table.c.interface_type == "api",
         )
+        .order_by(message_history_table.c.internal_id)
     )
     # The wakeup-data row is durable once written, so the completion notification
     # is the last row rather than the only one.

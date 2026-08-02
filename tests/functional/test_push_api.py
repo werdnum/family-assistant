@@ -79,6 +79,7 @@ async def test_subscribe_creates_subscription(
     assert "id" in data
 
     # Verify in database
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         result = await conn.execute(
             select(push_subscriptions_table).where(
@@ -118,6 +119,7 @@ async def test_unsubscribe_removes_subscription(
     assert data["status"] == "success"
 
     # Verify removed from database
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         result = await conn.execute(select(push_subscriptions_table))
         rows = result.fetchall()
@@ -161,6 +163,7 @@ async def test_multiple_subscriptions_per_user(
     assert resp2.status_code == 200
 
     # Verify both in database
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         result = await conn.execute(select(push_subscriptions_table))
         rows = result.fetchall()

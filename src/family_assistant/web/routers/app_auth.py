@@ -295,31 +295,40 @@ async def exchange_code(
             detail=str(exc),
         ) from exc
 
+    # Minted before the block: hashing is blocking bcrypt, and on SQLite it
+    # would hold the engine-wide transaction lock for its whole duration.
+    api_minted = api_tokens_storage.mint_api_token()
+    refresh_minted = api_tokens_storage.mint_api_token()
+    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+    refresh_expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
+
     async with db_context.transaction() as txn:
         # API-token insert + refresh-token insert must be atomic: a failed second
         # write commits a live credential whose secret was never returned.
-        api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
-        (
-            full_api_token,
-            api_token_id,
-            _,
-        ) = await api_tokens_storage.create_and_store_api_token(
+        api_token_id = await api_tokens_storage.add_api_token(
             db_context=txn,
             user_identifier=user_identifier,
             name="iOS App",
+            hashed_token=api_minted.hashed_secret,
+            prefix=api_minted.prefix,
+            created_at=api_minted.created_at,
             expires_at=api_token_expires,
             token_type="api",
         )
-
-        refresh_expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
-        full_refresh_token, _, _ = await api_tokens_storage.create_and_store_api_token(
+        await api_tokens_storage.add_api_token(
             db_context=txn,
             user_identifier=user_identifier,
             name="iOS App (refresh)",
+            hashed_token=refresh_minted.hashed_secret,
+            prefix=refresh_minted.prefix,
+            created_at=refresh_minted.created_at,
             expires_at=refresh_expires,
             token_type="refresh",
             parent_token_id=api_token_id,
         )
+
+    full_api_token = api_minted.full_token
+    full_refresh_token = refresh_minted.full_token
 
     logger.info(
         "App auth exchange: issued API token %s and refresh token for user %s",
@@ -351,19 +360,21 @@ async def refresh_token(
 
     user_identifier = token_row["user_identifier"]
 
+    # Minted before the block; see the exchange endpoint for why.
+    api_minted = api_tokens_storage.mint_api_token()
+    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+
     async with db_context.transaction() as txn:
         # Replacement insert + refresh-token relink must be atomic: a failed second
         # write commits a live credential that was never validated with the original
         # refresh token's identity.
-        api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
-        (
-            full_api_token,
-            api_token_id,
-            _,
-        ) = await api_tokens_storage.create_and_store_api_token(
+        api_token_id = await api_tokens_storage.add_api_token(
             db_context=txn,
             user_identifier=user_identifier,
             name="iOS App",
+            hashed_token=api_minted.hashed_secret,
+            prefix=api_minted.prefix,
+            created_at=api_minted.created_at,
             expires_at=api_token_expires,
             token_type="api",
         )
@@ -373,6 +384,8 @@ async def refresh_token(
             .where(api_tokens_table.c.id == token_row["id"])
             .values(parent_token_id=api_token_id)
         )
+
+    full_api_token = api_minted.full_token
 
     logger.info(
         "Token refresh: issued new API token %s for user %s",

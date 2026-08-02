@@ -14,7 +14,7 @@ from family_assistant.storage.vector import add_document, add_embedding
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from family_assistant.storage.database import Database
+    from family_assistant.storage.database import Database, DatabaseTransaction
     from family_assistant.storage.types import MessageHistoryRow
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -66,6 +66,44 @@ async def enqueue_message_history_backfill_task(
     )
 
 
+async def _index_message_turn_with_embedding(
+    db_context: Database,
+    document: MessageHistoryDocument,
+    embedding: list[float],
+    embedding_model: str,
+    text: str,
+    source_id: str,
+    first_row: MessageHistoryRow,
+    last_row: MessageHistoryRow,
+) -> None:
+    """Add document and embedding atomically.
+
+    Document and embedding must be committed together or the document is
+    permanently unsearchable.
+    """
+
+    async def _index(txn: DatabaseTransaction) -> None:
+        """Add document and embedding as one unit."""
+        doc_id = await add_document(txn, document)
+        await add_embedding(
+            db_context=txn,
+            document_id=doc_id,
+            chunk_index=0,
+            embedding_type=MESSAGE_TURN_EMBEDDING_TYPE,
+            embedding=embedding,
+            embedding_model=embedding_model,
+            content=text,
+            content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            embedding_doc_metadata={
+                "source_id": source_id,
+                "start_timestamp": first_row["timestamp"].isoformat(),
+                "end_timestamp": last_row["timestamp"].isoformat(),
+            },
+        )
+
+    await db_context.atomic(_index)
+
+
 async def handle_index_message_history_batch(
     exec_context: ToolExecutionContext,
     payload: MessageHistoryIndexBatchPayload,
@@ -107,25 +145,23 @@ async def handle_index_message_history_batch(
             file_path=None,
             visibility_labels=[],
         )
-        document_id = await add_document(db_context, document)
+
+        # Generate embeddings BEFORE the transaction block — this is a network
+        # call and must not hold a database transaction.
         embedding_result = await embedding_generator.generate_embeddings([text])
         if not embedding_result.embeddings:
             raise ValueError(f"Embedding generator returned no vector for {source_id}.")
 
-        await add_embedding(
-            db_context=db_context,
-            document_id=document_id,
-            chunk_index=0,
-            embedding_type=MESSAGE_TURN_EMBEDDING_TYPE,
-            embedding=embedding_result.embeddings[0],
-            embedding_model=embedding_result.model_name,
-            content=text,
-            content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
-            embedding_doc_metadata={
-                "source_id": source_id,
-                "start_timestamp": first_row["timestamp"].isoformat(),
-                "end_timestamp": last_row["timestamp"].isoformat(),
-            },
+        # Add document and embedding atomically
+        await _index_message_turn_with_embedding(
+            db_context,
+            document,
+            embedding_result.embeddings[0],
+            embedding_result.model_name,
+            text,
+            source_id,
+            first_row,
+            last_row,
         )
 
     if "turn_id" not in payload and "internal_id" not in payload:

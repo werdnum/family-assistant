@@ -24,6 +24,7 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
     engine = create_engine_with_sqlite_optimizations(TEST_DATABASE_URL, instrument=True)
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
 

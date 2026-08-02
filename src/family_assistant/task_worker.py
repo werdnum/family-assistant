@@ -2559,7 +2559,7 @@ class TaskWorker:
 
     async def _handle_recurrence(
         self,
-        db_context: Database,
+        db_context: DatabaseExecutor,
         task: TaskDict,
     ) -> None:
         """Handles scheduling the next instance of a recurring task."""
@@ -2727,7 +2727,7 @@ class TaskWorker:
 
     async def _enqueue_schedule_automation_advance(
         self,
-        db_context: Database,
+        db_context: DatabaseExecutor,
         request: ScheduleAutomationAdvanceRequest,
     ) -> None:
         """Persist retryable work to advance a terminal schedule automation task."""
@@ -2768,14 +2768,24 @@ class TaskWorker:
         if request is None:
             return False
 
-        await self._enqueue_schedule_automation_advance(db_context, request)
-        updated_payload = dict(payload)
-        updated_payload.pop(SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY, None)
-        await db_context.execute(
-            update(tasks_table)
-            .where(tasks_table.c.task_id == source_task_id)
-            .values(payload=updated_payload)
-        )
+        # Enqueue advance and clear outbox payload atomically
+        async def _flush(txn: DatabaseTransaction) -> None:
+            """Enqueue the advance and clear the outbox payload as one unit.
+
+            Both operations or neither: if enqueue succeeds but payload-clear
+            fails, the advance gets enqueued twice. If the payload-clear
+            succeeds but enqueue fails, the outbox entry is lost.
+            """
+            await self._enqueue_schedule_automation_advance(txn, request)
+            updated_payload = dict(payload)
+            updated_payload.pop(SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY, None)
+            await txn.execute(
+                update(tasks_table)
+                .where(tasks_table.c.task_id == source_task_id)
+                .values(payload=updated_payload)
+            )
+
+        await db_context.atomic(_flush)
         return True
 
     async def _drain_schedule_automation_advance_outbox(
@@ -3046,22 +3056,29 @@ class TaskWorker:
                     task
                 )
 
-                # Mark task as done
-                await db_context.tasks.update_status(
-                    task_id=task_id,
-                    status="done",
-                    payload=self._payload_with_schedule_automation_advance_outbox(
-                        task,
-                        advance_request,
-                    ),
-                )
+                # Mark task as done and handle recurrence atomically
+                async def _complete(txn: DatabaseTransaction) -> None:
+                    """Mark task done and schedule next instance as one unit.
+
+                    If either operation fails partway, both are rolled back. A
+                    recurring automation committed as done without a successor
+                    never fires again.
+                    """
+                    await txn.tasks.update_status(
+                        task_id=task_id,
+                        status="done",
+                        payload=self._payload_with_schedule_automation_advance_outbox(
+                            task,
+                            advance_request,
+                        ),
+                    )
+                    await self._handle_recurrence(txn, task)
+
+                await db_context.atomic(_complete)
                 span.set_attribute("task.status", "success")
                 logger.info(
                     f"PROCESS SUCCESS: Worker {self.worker_id} completed task {task_id} (Original: {original_task_id})"
                 )
-
-                # --- Handle Recurrence ---
-                await self._handle_recurrence(db_context, task)
                 return advance_request
 
             except Exception as handler_exc:
@@ -3142,17 +3159,27 @@ class TaskWorker:
                     f"Task {task['task_id']} reached max retries ({max_retries}). Marking as failed."
                 )
             advance_request = self._schedule_automation_advance_request_for_task(task)
-            await db_context.tasks.update_status(
-                task_id=task["task_id"],
-                status="failed",
-                error=error_str,
-                payload=self._payload_with_schedule_automation_advance_outbox(
-                    task,
-                    advance_request,
-                ),
-            )
-            # Handle recurrence even if task failed (after max retries)
-            await self._handle_recurrence(db_context, task)
+
+            # Mark task as failed and handle recurrence atomically
+            async def _fail(txn: DatabaseTransaction) -> None:
+                """Mark task failed and schedule next instance as one unit.
+
+                Same atomicity requirement as the success path: a recurring
+                automation marked failed without a successor never fires again.
+                """
+                await txn.tasks.update_status(
+                    task_id=task["task_id"],
+                    status="failed",
+                    error=error_str,
+                    payload=self._payload_with_schedule_automation_advance_outbox(
+                        task,
+                        advance_request,
+                    ),
+                )
+                # Handle recurrence even if task failed (after max retries)
+                await self._handle_recurrence(txn, task)
+
+            await db_context.atomic(_fail)
             # Notify user about script execution failures
             if task["task_type"] == "script_execution":
                 await self._enqueue_script_error_notification(
@@ -4755,26 +4782,34 @@ async def handle_reindex_document(
     if not db_context:
         raise ValueError("Missing Database dependency in context.")
 
-    # 1. Delete existing embeddings
-    await db_context.vector.delete_document_embeddings(document_id)
+    async def _reindex(txn: DatabaseTransaction) -> None:
+        """Delete embeddings, read document, and enqueue replacement task atomically.
 
-    # 2. Get the document record
-    doc_record = await db_context.vector.get_document_by_id(document_id)
-    if not doc_record:
-        raise ValueError(f"Document with ID {document_id} not found.")
+        A failure after delete but before enqueue strips the document's search
+        data with no replacement dispatched.
+        """
+        # 1. Delete existing embeddings
+        await txn.vector.delete_document_embeddings(document_id)
 
-    # 3. Enqueue a new processing task for the existing document
-    task_payload = {
-        "document_id": doc_record.id,
-        "url_to_scrape": doc_record.source_uri,
-        "doc_metadata": {"force_title_update": True},
-    }
+        # 2. Get the document record
+        doc_record = await txn.vector.get_document_by_id(document_id)
+        if not doc_record:
+            raise ValueError(f"Document with ID {document_id} not found.")
 
-    await db_context.tasks.enqueue(
-        task_id=f"reindex-doc-{doc_record.id}-{uuid.uuid4()}",
-        task_type="process_uploaded_document",
-        payload=task_payload,
-    )
+        # 3. Enqueue a new processing task for the existing document
+        task_payload = {
+            "document_id": doc_record.id,
+            "url_to_scrape": doc_record.source_uri,
+            "doc_metadata": {"force_title_update": True},
+        }
+
+        await txn.tasks.enqueue(
+            task_id=f"reindex-doc-{doc_record.id}-{uuid.uuid4()}",
+            task_type="process_uploaded_document",
+            payload=task_payload,
+        )
+
+    await db_context.atomic(_reindex)
 
 
 __all__ = [

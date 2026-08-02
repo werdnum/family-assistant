@@ -28,6 +28,7 @@ async def test_register_token_creates_row(
     assert data["status"] == "success"
     assert "id" in data
 
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         result = await conn.execute(
             select(ios_push_tokens_table).where(
@@ -50,6 +51,7 @@ async def test_register_token_defaults_to_production(
     response = await api_client.post("/api/ios/push-tokens", json={"token": "def456"})
 
     assert response.status_code == 200
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         result = await conn.execute(select(ios_push_tokens_table))
         row = result.fetchone()
@@ -72,6 +74,7 @@ async def test_register_token_is_idempotent(
         json={"token": "tok", "environment": "sandbox"},
     )
 
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         result = await conn.execute(select(ios_push_tokens_table))
         rows = result.fetchall()
@@ -94,6 +97,7 @@ async def test_unregister_token_removes_row(
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         result = await conn.execute(select(ios_push_tokens_table))
         assert result.fetchall() == []

@@ -7,6 +7,7 @@ import logging
 import secrets
 import string
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from sqlalchemy import insert, select, update  # Added select and update
 
@@ -115,6 +116,32 @@ async def add_api_token(
     return new_token_id
 
 
+class MintedApiToken(NamedTuple):
+    """Token material generated before any database work.
+
+    Hashing is deliberately separable: bcrypt is blocking and must not run
+    inside a transaction, where on SQLite it would hold the engine-wide
+    transaction lock for its whole duration.
+    """
+
+    full_token: str
+    hashed_secret: str
+    prefix: str
+    created_at: datetime
+
+
+def mint_api_token() -> MintedApiToken:
+    """Generate a new API token and hash its secret. Does no database work."""
+    prefix = generate_token_prefix()
+    secret = generate_token_secret()
+    return MintedApiToken(
+        full_token=f"{prefix}{secret}",
+        hashed_secret=pwd_context.hash(secret),
+        prefix=prefix,
+        created_at=datetime.now(UTC),
+    )
+
+
 async def create_and_store_api_token(
     db_context: DatabaseExecutor,
     user_identifier: str,
@@ -138,12 +165,9 @@ async def create_and_store_api_token(
             - The ID of the newly created token in the database.
             - The creation timestamp (UTC).
     """
-    prefix = generate_token_prefix()
-    secret = generate_token_secret()
-    full_token = f"{prefix}{secret}"
-
-    hashed_secret = pwd_context.hash(secret)
-    created_at_utc = datetime.now(UTC)
+    minted = mint_api_token()
+    full_token = minted.full_token
+    created_at_utc = minted.created_at
 
     # Note: The `api_tokens_table` uses `hashed_token` for the column name
     # that stores the hashed version of the *secret part* of the token.
@@ -152,8 +176,8 @@ async def create_and_store_api_token(
         db_context=db_context,
         user_identifier=user_identifier,
         name=name,
-        hashed_token=hashed_secret,
-        prefix=prefix,
+        hashed_token=minted.hashed_secret,
+        prefix=minted.prefix,
         created_at=created_at_utc,
         expires_at=expires_at,
         token_type=token_type,

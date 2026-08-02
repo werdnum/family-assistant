@@ -156,6 +156,23 @@ Admin engines that exist only to `CREATE`/`DROP` a test database (AUTOCOMMIT, ne
 application queries) are the legitimate exception and carry an inline exemption. The factory itself
 is exempted in `.ast-grep/exemptions.yml`.
 
+### `no-raw-transaction-management`
+
+**Pattern**: `engine.begin()` or `engine.begin_nested()` on anything named like an engine.
+
+**Why it's banned**: a raw transaction scope bypasses the per-engine SQLite lock in
+`storage/database.py`. Because SQLite's `StaticPool` hands the same DBAPI connection to every
+checkout, such a block reads another unit of work's uncommitted rows and commits them when it exits
+— silently turning that unit's rollback into a no-op. On PostgreSQL it escapes the pool bounds and
+the ambient-transaction guard.
+
+**Replacement**: a `Database` handle call, `async with db.transaction()`, or
+`await db.atomic(body)`. See
+[docs/design/db-commit-as-you-go.md](../../docs/design/db-commit-as-you-go.md).
+
+The storage layer implements these primitives and is exempt; test fixtures doing schema setup before
+any application code runs carry inline exemptions.
+
 ## Type Annotation Quality
 
 ### `no-dict-any`

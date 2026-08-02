@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, spawn_detached
 from family_assistant.storage.error_logs import error_logs_table
 
 
@@ -76,15 +76,18 @@ class SQLAlchemyErrorHandler(logging.Handler):
             return
 
         try:
-            # Get current event loop
-            loop = asyncio.get_running_loop()
+            # Detached spawning still needs a running loop.
+            asyncio.get_running_loop()
         except RuntimeError:
             # No event loop running - can't log to database
             # This might happen during shutdown or in sync contexts
             return
 
-        # Create task and track it
-        task = loop.create_task(self._async_emit(record))
+        # Detached: an ERROR logged from inside a transaction would otherwise
+        # inherit its ambient token, and the handle write would be refused --
+        # silently, since the failure is swallowed and counted toward the
+        # circuit breaker that disables database logging entirely.
+        task = spawn_detached(self._async_emit(record))
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
 

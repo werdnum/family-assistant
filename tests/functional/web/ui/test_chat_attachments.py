@@ -79,6 +79,7 @@ async def create_test_attachment(
     if db_engine is None:
         raise ValueError("Database engine not available")
 
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with db_engine.begin() as conn:
         await conn.execute(
             attachment_metadata_table.insert().values(

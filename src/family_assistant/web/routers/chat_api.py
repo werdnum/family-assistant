@@ -2082,12 +2082,9 @@ async def api_chat_send_message(
     # so a second device of the same user with an open follow-stream wouldn't
     # reload. Publish a content-free `message` event (the same nudge
     # WebChatInterface uses) so open follow-streams refetch history.
-    # Nudge other clients once this request's writes commit. ``get_db`` runs the
-    # whole request inside one ``engine.begin()`` transaction that commits at
-    # request end, so both nudges must be scheduled from ``on_commit`` — emitting
-    # them now would have a follower refetch /messages (and the activity stream
-    # refetch the list) before the reply is visible, leaving them stale with no
-    # later event. Two nudges: a per-conversation ``message`` event so a client
+    # Nudge other clients now that this request's writes are durable: the reply
+    # is committed by the time the persisting call returns, so a follower that
+    # refetches /messages sees it. Two nudges: a per-conversation ``message`` event so a client
     # already following THIS thread reloads its history, and an account-global
     # activity ping so the conversation surfaces/bumps in the owner's list on a
     # second tab/device (this non-streaming path has no start_turn/end_turn

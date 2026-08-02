@@ -358,6 +358,7 @@ async def db_engine(
         logger.info(f"Creating unique database: {unique_db_name}")
 
         # Create the unique database
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
         async with admin_engine.begin() as conn:
             # Check if database exists and drop it if so (cleanup from previous failed run)
             result = await conn.execute(
@@ -439,6 +440,7 @@ async def db_engine(
                 admin_url, echo=False, isolation_level="AUTOCOMMIT"
             )
             try:
+                # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
                 async with admin_engine.begin() as conn:
                     # Terminate any remaining connections to the test database
                     await conn.execute(
@@ -632,6 +634,7 @@ async def pg_vector_db_engine(
     logger.info(f"Creating unique database: {unique_db_name}")
 
     # Create the unique database
+    # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
     async with admin_engine.begin() as conn:
         # Check if database exists and drop it if so (cleanup from previous failed run)
         result = await conn.execute(
@@ -684,6 +687,7 @@ async def pg_vector_db_engine(
             admin_url, echo=False, isolation_level="AUTOCOMMIT"
         )
         try:
+            # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
             async with admin_engine.begin() as conn:
                 # Terminate any remaining connections to the test database
                 await conn.execute(
