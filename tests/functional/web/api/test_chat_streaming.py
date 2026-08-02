@@ -47,6 +47,7 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
+from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.functional.web.conftest import run_chat_turn_stream
 from tests.helpers import wait_for_condition
@@ -853,3 +854,94 @@ async def test_streaming_continues_and_notifies_after_client_disconnect(
         if m["role"] == "assistant" and llm_response in str(m.get("content") or "")
     ]
     assert assistant_messages, "Assistant reply should be persisted after disconnect"
+
+
+async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
+    app_fixture: FastAPI,
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure during pre-producer setup must not strand the prompt.
+
+    The prompt row is what the durable idempotency branch keys on, so a retry
+    carrying the same turn_id would return already_complete and never run the
+    turn -- leaving the user looking at a prompt that can never get a reply.
+    """
+    user_prompt = "Answer me even though setup failed once"
+    llm_response = "Here is your answer."
+    conversation_id = "setup-failure-conv-1"
+
+    mock_llm_client.rules.append((
+        lambda args: any(
+            msg.role == "user" and user_prompt in str(msg.content or "")
+            for msg in args.get("messages", [])
+        ),
+        LLMOutput(
+            content=llm_response,
+            tool_calls=None,
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    preparer = app_fixture.state.processing_service.context_preparer
+    real_aggregate = preparer.aggregate_context_taint_sources
+    calls = {"n": 0}
+
+    async def fail_once() -> object:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("context taint aggregation unavailable")
+        return await real_aggregate()
+
+    monkeypatch.setattr(preparer, "aggregate_context_taint_sources", fail_once)
+
+    turn_id = str(uuid.uuid4())
+    body = {
+        "turn_id": turn_id,
+        "prompt": user_prompt,
+        "interface_type": "web",
+        "conversation_id": conversation_id,
+    }
+
+    with pytest.raises(RuntimeError, match="context taint aggregation unavailable"):
+        await test_client.post("/api/v1/chat/turns", json=body)
+
+    # The retry carries the same turn_id and must actually run the turn.
+    # The prompt must not have survived the failed setup: it is what the
+    # durable idempotency branch keys on.
+    stranded = await Database(engine=db_engine).message_history.get_user_row_by_turn_id(
+        turn_id
+    )
+    assert stranded is None
+
+    # Simulate the restart that makes this reachable. Within one process the
+    # hub's own in-memory turn record short-circuits the retry first; after a
+    # restart only the durable row is left to decide, which is the case the
+    # ordering above exists for.
+    app_fixture.state.conversation_stream_hub = ConversationStreamHub()
+
+    retry = await test_client.post("/api/v1/chat/turns", json=body)
+    assert retry.status_code == 200
+    assert retry.json()["already_complete"] is False
+
+    hub = app_fixture.state.conversation_stream_hub
+    producer_tasks = hub.get_active_producer_tasks(conversation_id)
+    if producer_tasks:
+        await asyncio.gather(*producer_tasks, return_exceptions=True)
+
+    # The retry actually ran the turn, so the prompt has its reply.
+    messages = await Database(
+        engine=db_engine
+    ).message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
+    assert any(
+        msg["role"] == "assistant" and llm_response in str(msg["content"] or "")
+        for msg in messages
+    )

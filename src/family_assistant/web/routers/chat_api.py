@@ -1125,20 +1125,13 @@ async def api_chat_create_turn(
     # first text part of the trigger content).
     try:
         user_msg_db = Database(request.app.state.database_engine)
-        await user_msg_db.message_history.add_message(
-            UserMessage(
-                content=payload.prompt,
-                taint_metadata=TurnTaintState.empty().to_metadata(),
-            ),
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            interface_message_id=f"temp_{payload.turn_id}",
-            turn_id=payload.turn_id,
-            timestamp=datetime.now(UTC),
-            user_id=user_id,
-            attachments=trigger_attachments,
-            processing_profile_id=selected_processing_service.service_config.id,
-        )
+        # Read the pre-turn history and context taint BEFORE the prompt is
+        # committed. Anything failing after that write strands the prompt: the
+        # retry carries the same turn_id, matches the durable idempotency branch
+        # above, and returns already_complete instead of running the turn.
+        # Taint-wise this ordering is also the conservative one — the prompt
+        # carries empty taint, so including it could only push an older (and
+        # possibly tainted) row out of the history window.
         history_limit, history_max_age = (
             selected_processing_service.context_preparer.get_history_limits(
                 interface_type
@@ -1166,6 +1159,21 @@ async def api_chat_create_turn(
         for source in initial_context_taint_state.sources:
             initial_live_taint_state = initial_live_taint_state.add_source(source)
         initial_live_taint_metadata = initial_live_taint_state.to_metadata()
+
+        await user_msg_db.message_history.add_message(
+            UserMessage(
+                content=payload.prompt,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            ),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=f"temp_{payload.turn_id}",
+            turn_id=payload.turn_id,
+            timestamp=datetime.now(UTC),
+            user_id=user_id,
+            attachments=trigger_attachments,
+            processing_profile_id=selected_processing_service.service_config.id,
+        )
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
         # thus no done-callback safety net), so without ending it here the
