@@ -1479,6 +1479,103 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'replays a lost kickoff before the steer that was typed after it',
+    async () => {
+      // A steer submitted while the kickoff POST is still pending 404s (the turn
+      // is not registered) and queues as a follow-up. If the kickoff then adopts
+      // a turn that is already gone, its own prompt is recovered too — and it
+      // has to go out FIRST, since the user typed it first.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+      let releaseKickoff: () => void = () => {};
+      const kickoffGate = new Promise<void>((resolve) => {
+        releaseKickoff = resolve;
+      });
+      // Each recovery turn must end for the next queued one to fire, so the
+      // stream has to name the turn the client actually started.
+      let recoveredTurnId = 'recovered';
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          if (turnsPosts === 1) {
+            // Held open so the steer below is submitted against a turn the
+            // server has never heard of, then refused.
+            await kickoffGate;
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-15',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          recoveredTurnId = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_order',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', ({ params }) => {
+          // The steer typed during the kickoff targets the unregistered turn.
+          if (params.turnId !== 'running-turn-15') {
+            return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+          }
+          // The adoption steer finds the running turn already finished.
+          return HttpResponse.json(
+            { detail: 'Turn is not running; start a new turn instead.' },
+            { status: 409 }
+          );
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                sse('turn_ended', { turn_id: recoveredTurnId, status: 'complete', seq: 1 })
+              );
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'book the dentist');
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(turnsPosts).toBe(1), WAIT);
+
+      // Typed while the kickoff is still in flight; it queues as a follow-up.
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'make it a Friday');
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+      releaseKickoff();
+
+      // Both are resent, oldest first.
+      await waitFor(() => {
+        expect(kickoffPrompts).toHaveLength(3);
+      }, WAIT);
+      expect(kickoffPrompts).toEqual(['book the dentist', 'book the dentist', 'make it a Friday']);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'starts its own turn when the adopted turn is already gone by the steer',
     async () => {
       // The named turn can finish between the kickoff's 409 and the steer. Then

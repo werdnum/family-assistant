@@ -973,7 +973,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         if (turnId) {
           setMessages((prev) => prev.filter((msg) => msg.turnId !== turnId));
         }
-        pendingFollowupsRef.current.push(undeliveredPrompt);
+        // To the FRONT of the queue: this was the send that opened the stream,
+        // so it predates anything already queued — a steer submitted while the
+        // kickoff was still in flight lands here first, and appending would
+        // replay the user's messages in the wrong order.
+        pendingFollowupsRef.current.unshift(undeliveredPrompt);
       }
 
       // An adopted stream withheld the turn's output until it echoed our prompt,
@@ -1000,13 +1004,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       }
 
       if (recoverQueued) {
-        // The adopted prompt goes first: it was the send that opened this
-        // stream, so it predates every steer typed while the stream ran, and
-        // queueing it after them would replay the user's messages out of order.
-        // It is tracked separately because it isn't in the awaiting-echo list —
-        // the hook sent that steer, not submitSteer.
+        // The adopted prompt goes to the front: it was the send that opened this
+        // stream, so it predates every steer typed while the stream ran —
+        // whether that steer is already queued here or still awaiting an echo —
+        // and queueing it after them would replay the user's messages out of
+        // order. It is tracked separately because it isn't in the awaiting-echo
+        // list — the hook sent that steer, not submitSteer.
         if (unconsumedAdoptedPrompt) {
-          pendingFollowupsRef.current.push(unconsumedAdoptedPrompt);
+          pendingFollowupsRef.current.unshift(unconsumedAdoptedPrompt);
         }
 
         const unEchoed = awaitingEchoSteersRef.current;
