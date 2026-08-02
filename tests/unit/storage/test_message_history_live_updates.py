@@ -6,11 +6,15 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm.messages import AssistantMessage, UserMessage
-from family_assistant.storage.base import metadata
+from family_assistant.storage.base import (
+    create_engine_with_sqlite_optimizations,
+    metadata,
+)
 from family_assistant.storage.context import DatabaseContext, get_db_context
+from tests.conftest import check_db_engine_invariants
 
 # Use an in-memory SQLite database for unit tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -19,12 +23,13 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 @pytest_asyncio.fixture(scope="function")
 async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
-    engine = create_async_engine(TEST_DATABASE_URL)
+    engine = create_engine_with_sqlite_optimizations(TEST_DATABASE_URL, instrument=True)
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
 
     yield engine
 
+    check_db_engine_invariants(engine, "test_message_history_live_updates db_engine")
     await engine.dispose()
 
 

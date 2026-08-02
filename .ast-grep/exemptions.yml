@@ -108,3 +108,17 @@ exemptions:
       tools have different structures. Creating typed structures for this would be overly
       rigid and doesn't provide value since the hook only extracts specific fields.
     ticket: null
+
+  # ===========================================================================
+  # Raw create_async_engine() exemptions - the factory itself and its fixture
+  # ===========================================================================
+  - rule: no-raw-create-async-engine
+    files:
+      - src/family_assistant/storage/base.py
+      - .ast-grep/tests/conformance/no-raw-create-async-engine-positive.py
+    reason: |
+      storage/base.py defines create_engine_with_sqlite_optimizations, the one place
+      allowed to call SQLAlchemy's constructor. The positive rule fixture intentionally
+      contains raw calls so .ast-grep/test-rules.py can verify the rule catches them.
+    ticket: null
+

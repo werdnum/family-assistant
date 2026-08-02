@@ -29,6 +29,8 @@ from sqlalchemy.pool import NullPool, StaticPool
 from sqlalchemy.pool.base import _ConnectionRecord
 from sqlalchemy.sql import func
 
+from family_assistant.storage.instrumentation import attach_instrumentation
+
 logger = logging.getLogger(__name__)
 
 # Define shared metadata object
@@ -38,8 +40,20 @@ metadata = MetaData()
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db")
 
 
-def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
-    """Create engine with SQLite optimizations if applicable."""
+def create_engine_with_sqlite_optimizations(
+    database_url: str,
+    *,
+    instrument: bool = False,
+) -> AsyncEngine:
+    """Create engine with SQLite optimizations if applicable.
+
+    Args:
+        database_url: The database URL to connect to.
+        instrument: Attach transaction-duration and connection-leak
+            instrumentation (see ``storage.instrumentation``). Enabled by the
+            test fixtures; off in production, where the listeners would add
+            per-transaction stack capture for no benefit.
+    """
     # SQLAlchemy's async engine needs an async driver. A bare "postgresql://"
     # URL (e.g. Render's connectionString, or a standard libpq URL) resolves to
     # the sync psycopg2 dialect and fails. Normalize it to asyncpg, the driver
@@ -111,6 +125,9 @@ def create_engine_with_sqlite_optimizations(database_url: str) -> AsyncEngine:
                 pass
             finally:
                 cursor.close()
+
+    if instrument:
+        attach_instrumentation(engine)
 
     return engine
 

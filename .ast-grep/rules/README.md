@@ -135,6 +135,27 @@ The approved bypasses (the `NoteWritePolicy` definition itself, the web notes ad
 call-transcript writer) are listed in `.ast-grep/exemptions.yml`; a new admin surface that genuinely
 needs the bypass belongs there with a justification.
 
+## Database Engine Construction
+
+### `no-raw-create-async-engine`
+
+**Pattern**: any call to SQLAlchemy's `create_async_engine()`.
+
+**Why it's banned**: `create_engine_with_sqlite_optimizations()` in
+`src/family_assistant/storage/base.py` is what applies the pool class, the SQLite PRAGMAs and reset
+policy, the URL normalization, and (opt-in) the transaction-duration and connection-leak
+instrumentation. An engine built with the raw constructor silently gets SQLAlchemy's defaults, so a
+test using one is not exercising the configuration production runs — the pool and serialization
+behaviour the transactional design depends on is exactly what goes untested. See
+[docs/design/db-commit-as-you-go.md](../../docs/design/db-commit-as-you-go.md).
+
+**Replacement**: `create_engine_with_sqlite_optimizations(url)`, or
+`create_engine_with_sqlite_optimizations(url, instrument=True)` in tests.
+
+Admin engines that exist only to `CREATE`/`DROP` a test database (AUTOCOMMIT, never used for
+application queries) are the legitimate exception and carry an inline exemption. The factory itself
+is exempted in `.ast-grep/exemptions.yml`.
+
 ## Type Annotation Quality
 
 ### `no-dict-any`
