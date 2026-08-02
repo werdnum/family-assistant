@@ -142,6 +142,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.25.0",
     "cryptography>=44.0.1",
     "publicsuffix2>=2.20191221",
+    "greenlet>=3.2.3",
 ]
 
 [project.optional-dependencies]

@@ -31,9 +31,13 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 # A transaction that outlives this bound is holding a connection across
-# something it should not (an LLM call, a network request, a sleep). The bound
-# is deliberately generous: it catches parked transactions, not slow queries.
-DEFAULT_MAX_TRANSACTION_SECONDS = 10.0
+# something it should not (an LLM call, a network request, a sleep). This is
+# wall clock, and the test suite runs under xdist inside GNU Parallel, so a
+# legitimately short transaction can be starved for seconds on a loaded box.
+# The bound is therefore set far above any transaction this design permits
+# rather than close to one: it exists to catch parked transactions, not slow
+# ones.
+DEFAULT_MAX_TRANSACTION_SECONDS = 30.0
 
 # How many application frames to keep for a transaction's origin. Enough to
 # identify the opening call site and its caller chain without retaining
@@ -101,7 +105,9 @@ class EngineInstrumentation:
     monotonic: Callable[[], float] = time.monotonic
 
     long_transactions: list[LongTransaction] = field(default_factory=list)
-    _open: dict[int, _OpenTransaction] = field(default_factory=dict)
+    _open: weakref.WeakKeyDictionary[Connection, _OpenTransaction] = field(
+        default_factory=weakref.WeakKeyDictionary
+    )
     _checked_out: int = 0
 
     @property
@@ -115,22 +121,25 @@ class EngineInstrumentation:
         return len(self._open)
 
     def _on_begin(self, conn: Connection) -> None:
-        self._open[id(conn)] = _OpenTransaction(
+        self._open[conn] = _OpenTransaction(
             started_at=self.monotonic(),
             stack=_capture_origin(),
         )
 
     def _on_end(self, conn: Connection) -> None:
-        started = self._open.pop(id(conn), None)
+        started = self._open.pop(conn, None)
         if started is None:
             return
-        duration = self.monotonic() - started.started_at
-        if duration > self.max_transaction_seconds:
-            self.long_transactions.append(
-                LongTransaction(
-                    duration_seconds=duration, opened_at_stack=started.stack
-                )
-            )
+        long = self._as_long(started, self.monotonic() - started.started_at)
+        if long is not None:
+            self.long_transactions.append(long)
+
+    def _as_long(
+        self, started: _OpenTransaction, duration: float
+    ) -> LongTransaction | None:
+        if duration <= self.max_transaction_seconds:
+            return None
+        return LongTransaction(duration_seconds=duration, opened_at_stack=started.stack)
 
     def _on_checkout(self, *_args: object) -> None:
         self._checked_out += 1
@@ -139,8 +148,23 @@ class EngineInstrumentation:
         self._checked_out -= 1
 
     def violations(self) -> list[str]:
-        """Return descriptions of every invariant this engine has violated."""
-        problems = [txn.describe() for txn in self.long_transactions]
+        """Return descriptions of every invariant this engine has violated.
+
+        A transaction still open at inspection time is the parked-transaction
+        case this exists to catch, and it never fires an end event -- so it is
+        measured here rather than being silently absent from the report. It is
+        measured, not recorded: calling this twice must not count it twice.
+        """
+        now = self.monotonic()
+        still_open = [
+            long
+            for started in list(self._open.values())
+            if (long := self._as_long(started, now - started.started_at)) is not None
+        ]
+
+        problems = [txn.describe() for txn in [*self.long_transactions, *still_open]]
+        if self._open:
+            problems.append(f"{len(self._open)} transaction(s) still open")
         if self._checked_out != 0:
             problems.append(
                 f"{self._checked_out} connection(s) still checked out of the pool"

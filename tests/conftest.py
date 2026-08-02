@@ -234,8 +234,10 @@ DB_ENGINE_INVARIANTS_ENFORCED = False
 def check_db_engine_invariants(engine: AsyncEngine, test_name: str) -> None:
     """Report (or fail on) transaction-duration and connection-leak violations."""
     instrumentation = get_instrumentation(engine)
-    if instrumentation is None:
-        return
+    assert instrumentation is not None, (
+        f"{test_name} used an engine built without instrument=True, so the "
+        "transaction-duration and connection-leak checks did not run"
+    )
     violations = instrumentation.violations()
     if not violations:
         return

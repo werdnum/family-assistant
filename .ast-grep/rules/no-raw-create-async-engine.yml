@@ -24,5 +24,7 @@ note: |
   inline:
     # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE DATABASE
 rule:
-  pattern: create_async_engine($$$)
+  any:
+    - pattern: create_async_engine($$$)
+    - pattern: $MODULE.create_async_engine($$$)
 

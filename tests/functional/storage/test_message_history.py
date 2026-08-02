@@ -40,6 +40,7 @@ from family_assistant.storage.message_history import (
     get_recent_history,
     update_message_interface_id,
 )
+from tests.conftest import check_db_engine_invariants
 
 # Use an in-memory SQLite database for functional storage tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -55,6 +56,7 @@ async def db_engine() -> AsyncGenerator[AsyncEngine]:
 
     yield engine
 
+    check_db_engine_invariants(engine, "test_message_history db_engine")
     await engine.dispose()
 
 

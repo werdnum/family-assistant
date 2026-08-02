@@ -54,6 +54,7 @@ from family_assistant.tools import (
 )
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.web_chat_interface import WebChatInterface
+from tests.conftest import check_db_engine_invariants
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -555,6 +556,7 @@ async def session_db_engine() -> AsyncGenerator[AsyncEngine]:
 
     yield engine
 
+    check_db_engine_invariants(engine, "session_db_engine")
     await engine.dispose()
 
     # Clean up database file
