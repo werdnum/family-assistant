@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, DatabaseExecutor
 from family_assistant.storage.events import EventSourceType
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class EventStorage:
 
     async def store_event_in_context(
         self,
-        db_ctx: Database,
+        db_ctx: DatabaseExecutor,
         source_id: EventSourceType | str,
         # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources (Home Assistant, webhooks) with no fixed schema
         event_data: dict[str, Any],
@@ -116,7 +116,7 @@ class EventStorage:
 
     async def _write_event_in_context(
         self,
-        db_ctx: Database,
+        db_ctx: DatabaseExecutor,
         source_id: str,
         # ast-grep-ignore: no-dict-any - event_data is arbitrary JSON from external sources with no fixed schema
         event_data: dict[str, Any],

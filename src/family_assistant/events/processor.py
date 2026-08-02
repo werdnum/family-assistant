@@ -165,64 +165,58 @@ class EventProcessor:
                 "EventProcessor requires get_db_context_func to be provided"
             )
 
-        triggered_listener_ids = []
-        listener_failures: list[Exception] = []
-
-        # Check each listener and process matches. Match conditions may run
-        # a condition script, so this must happen outside any transaction.
-        for listener in listeners:
+        # Match conditions may run a condition script, so they are evaluated
+        # before the transaction opens rather than inside it.
+        matched = [
+            listener
+            for listener in listeners
             if await self._check_match_conditions(
                 event_data,
                 listener["match_conditions"],
                 listener.get("condition_script"),
-            ):
-                # Per-listener atomicity: rate-limit update + action enqueue +
-                # one-time-listener disable must be one unit, or a failed disable
-                # re-fires a one-time action and a failed enqueue burns quota.
-                # The closure runs before the next iteration rebinds `listener`.
-                async def _process_listener(
-                    txn: DatabaseTransaction,
-                    listener: EventListenerDict = listener,
-                ) -> bool:
-                    allowed, reason = await check_and_update_rate_limit(
-                        txn, listener["id"], listener["conversation_id"]
-                    )
-                    if not allowed:
-                        logger.warning(
-                            f"Listener {listener['id']} rate limited: {reason}"
-                        )
-                        return False
+            )
+        ]
 
-                    await self._execute_action_in_context(txn, listener, event_data)
+        async def _process_matched(txn: DatabaseTransaction) -> None:
+            """Every matched listener, and the event record, as one unit.
 
-                    # Handle one-time listeners
-                    if listener.get("one_time"):
-                        await self._disable_listener_in_context(txn, listener["id"])
-                    return True
+            Within a listener the rate-limit update, the action enqueue and the
+            one-time disable must not come apart, or a failed disable re-fires a
+            one-time action and a failed enqueue burns quota.
 
-                try:
-                    # Recorded outside the closure: atomic() replays its body on
-                    # a retryable failure, and a rolled-back listener must not
-                    # appear as triggered.
-                    if await db_ctx.atomic(_process_listener):
-                        triggered_listener_ids.append(listener["id"])
-                except Exception as e:
-                    # Held, not swallowed. Each listener commits on its own now,
-                    # so there is nothing to gain by abandoning the rest of them
-                    # -- but the caller has to learn that an action was dropped.
-                    # A webhook source that saw success here would acknowledge
-                    # the event, and the sender would never retry it.
-                    logger.exception(f"Error processing listener {listener['id']}: {e}")
-                    listener_failures.append(e)
+            Across listeners it matters just as much. A failure here reaches the
+            caller -- it has to, or a webhook source acknowledges an event whose
+            action was dropped and the sender never retries -- and the retry
+            replays the whole event. A listener that had committed on its own
+            would then fire a second time.
 
-        # Store event for debugging/testing in its own operation. Before the
-        # re-raise below, so the record of what did fire survives the failure.
-        await self.event_storage.store_event_in_context(
-            db_ctx, source_id, event_data, triggered_listener_ids
-        )
+            ``triggered`` is built inside the closure because ``atomic`` replays
+            this body after a rollback.
+            """
+            triggered: list[int] = []
+            for listener in matched:
+                allowed, reason = await check_and_update_rate_limit(
+                    txn, listener["id"], listener["conversation_id"]
+                )
+                if not allowed:
+                    logger.warning(f"Listener {listener['id']} rate limited: {reason}")
+                    continue
 
-        if listener_failures:
-            raise listener_failures[0]
+                await self._execute_action_in_context(txn, listener, event_data)
+
+                # Handle one-time listeners
+                if listener.get("one_time"):
+                    await self._disable_listener_in_context(txn, listener["id"])
+                triggered.append(listener["id"])
+
+            # Stored for debugging/testing. Its sampling bookkeeping is in
+            # memory and so is not undone by a rollback; the cost is at most a
+            # skipped sample row on a replay, never a skipped listener.
+            await self.event_storage.store_event_in_context(
+                txn, source_id, event_data, triggered
+            )
+
+        await db_ctx.atomic(_process_matched)
 
     async def _check_match_conditions(
         self,
