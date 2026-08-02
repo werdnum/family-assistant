@@ -177,8 +177,8 @@ class EventProcessor:
             )
         ]
 
-        async def _process_matched(txn: DatabaseTransaction) -> None:
-            """Every matched listener, and the event record, as one unit.
+        async def _process_matched(txn: DatabaseTransaction) -> list[int]:
+            """Every matched listener as one unit.
 
             Within a listener the rate-limit update, the action enqueue and the
             one-time disable must not come apart, or a failed disable re-fires a
@@ -209,14 +209,27 @@ class EventProcessor:
                     await self._disable_listener_in_context(txn, listener["id"])
                 triggered.append(listener["id"])
 
-            # Stored for debugging/testing. Its sampling bookkeeping is in
-            # memory and so is not undone by a rollback; the cost is at most a
-            # skipped sample row on a replay, never a skipped listener.
-            await self.event_storage.store_event_in_context(
-                txn, source_id, event_data, triggered
-            )
+            return triggered
 
-        await db_ctx.atomic(_process_matched)
+        triggered_listener_ids = await db_ctx.atomic(_process_matched)
+
+        # Deliberately after the commit, on the handle, and unable to fail the
+        # call. This row is a debug and sampling artifact: nothing derives from
+        # it, so losing one costs nothing, while letting it affect the listeners
+        # costs plenty. Inside the transaction a failed INSERT would poison it
+        # on PostgreSQL and roll back real listener work; raising here would
+        # make the caller retry an event whose actions are already committed,
+        # firing them twice.
+        try:
+            await self.event_storage.store_event_in_context(
+                db_ctx, source_id, event_data, triggered_listener_ids
+            )
+        except Exception:
+            logger.exception(
+                "Failed to record event from %s for debugging; its listener "
+                "actions are already committed and are unaffected.",
+                source_id,
+            )
 
     async def _check_match_conditions(
         self,

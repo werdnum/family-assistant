@@ -16,6 +16,7 @@ from family_assistant import actions as actions_module
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
+from family_assistant.events.storage import EventStorage
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import Database
@@ -461,6 +462,59 @@ async def test_failing_listener_undoes_the_ones_that_already_ran(
     )
     assert queued == [], "the succeeding listener's action must not survive"
     assert await db_ctx.fetch_all(select(recent_events_table)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_event_record_does_not_disturb_the_listeners(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The debug event row cannot cost an action.
+
+    Raising would make the caller retry an event whose actions are already
+    committed, firing them twice -- for a row nothing derives from.
+    """
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(
+        text("""INSERT INTO event_listeners
+                 (name, match_conditions, source_id, action_type, enabled,
+                  conversation_id, interface_type, one_time)
+                 VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                         :conversation_id, :interface_type, :one_time)"""),
+        {
+            "name": "Undisturbed alert",
+            "conditions": json.dumps({"entity_id": "binary_sensor.gate"}),
+            "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
+            "enabled": True,
+            "conversation_id": "test_chat_gate",
+            "interface_type": "telegram",
+            "one_time": False,
+        },
+    )
+
+    async def fail_store(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise RuntimeError("event store unavailable")
+
+    monkeypatch.setattr(EventStorage, "store_event_in_context", fail_store)
+
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: Database(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    await processor.process_event("home_assistant", {"entity_id": "binary_sensor.gate"})
+
+    monkeypatch.undo()
+    queued = await Database(db_engine).fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert len(queued) == 1
 
 
 @pytest.mark.asyncio
