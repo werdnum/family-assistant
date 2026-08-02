@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.embeddings import EmbeddingGenerator, MockEmbeddingGenerator
 from family_assistant.indexing.message_history_indexer import (
@@ -946,6 +947,35 @@ async def test_add_message_surfaces_index_enqueue_failures(
         )
     )
     assert rows == [], "the message must roll back with its unqueued indexing"
+
+
+@pytest.mark.asyncio
+async def test_add_message_raises_on_a_database_write_failure(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed write must not come back as None.
+
+    Callers that read None as merely "no id" would carry on -- continuing an
+    LLM turn whose prompt or assistant checkpoint was never committed.
+    """
+
+    async def fail_enqueue(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr(TasksRepository, "enqueue", fail_enqueue)
+
+    db = Database(engine=db_engine)
+    with pytest.raises(SQLAlchemyError, match="database unavailable"):
+        await db.message_history.add_message(
+            UserMessage(content="Never stored"),
+            interface_type="test",
+            conversation_id="write-failure",
+            timestamp=datetime.now(UTC),
+            user_id="user-a",
+            processing_profile_id="default",
+        )
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from sqlalchemy import String, and_, case, insert, or_, select, update
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import cast as sa_cast
 from sqlalchemy.sql import func as sql_func
 from sqlalchemy.sql import functions as func
@@ -970,7 +969,7 @@ class MessageHistoryRepository(BaseRepository):
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
         is_internal: bool = False,
-    ) -> int | None:
+    ) -> int:
         """
         Stores a typed LLMMessage in the history table.
 
@@ -1095,7 +1094,7 @@ class MessageHistoryRepository(BaseRepository):
         tool_name: str | None = None,
         provider_metadata: ProviderMetadataDict | GeminiProviderMetadata | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> int | None:
+    ) -> int:
         """
         Internal method that serializes and inserts a message into the database.
 
@@ -1206,11 +1205,11 @@ class MessageHistoryRepository(BaseRepository):
             )
             return internal_id
 
-        try:
-            return await self._db.atomic(_insert_and_enqueue)
-        except SQLAlchemyError as e:
-            self._logger.exception(f"Failed to add message to history: {e}")
-            return None
+        # Deliberately unguarded. A database write failure here used to become
+        # None, and callers that treat None as merely "no id" would carry on --
+        # continuing an LLM turn whose prompt or assistant checkpoint was never
+        # committed. Letting it propagate keeps a failed write looking like one.
+        return await self._db.atomic(_insert_and_enqueue)
 
     async def _enqueue_message_history_indexing_task(
         self,
