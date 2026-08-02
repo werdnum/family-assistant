@@ -32,9 +32,17 @@ That model is wrong for an agentic application, and the codebase demonstrates it
   locks across LLM calls (documented contention at `task_worker.py:1409-1414`), pin xmin, and defeat
   statement retry (a 25P02-aborted transaction cannot be retried,
   `storage/context.py:171-176, 334-337`).
-- **Unsafe concurrency**: parallel tool calls in a turn share the single turn connection
-  (`processing/llm_loop.py:773-823`) — concurrent use of one `AsyncConnection` from multiple asyncio
-  tasks.
+
+### A live correctness bug, independent of visibility semantics
+
+Parallel tool calls in a turn share the single turn connection: `processing/tool_execution.py`
+threads one `db_context` into every tool, and `llm_loop.py:798-801` dispatches them with
+`asyncio.create_task` + `as_completed`. SQLAlchemy's `AsyncConnection` is not safe for concurrent
+use, so two tools that both touch the DB in the same round are racing one connection today (on
+asyncpg this surfaces as `another operation is in progress`; interleaved statements on a shared
+transaction are the quieter failure mode). This motivates the migration even without agreeing about
+visibility: under the new model every operation acquires its own pooled connection, and parallel
+tool rounds become genuinely safe.
 
 ## Target architecture
 
@@ -77,6 +85,16 @@ async with db.transaction() as txn:
   existing savepoint users — `a2a_tasks.py:156`, `email_indexer.py:233` — keep using
   `conn.begin_nested()` on the transaction's connection, which now has a guaranteed enclosing
   transaction).
+- **Handle operations refuse to run under an ambient transaction.** The split stops a
+  `DatabaseTransaction` being passed where a handle belongs, but not the reverse capture: code
+  inside `async with db.transaction():` reaching the `db` handle (directly, or via a helper frames
+  down) would open a *second* transaction scope — a hard deadlock on SQLite's engine lock, and on
+  PostgreSQL a silent write on another connection that escapes the enclosing rollback. So opening a
+  transaction records (ContextVar token, owning task); a handle operation performed by the task that
+  currently holds an open transaction raises immediately, **in production, on both backends** —
+  turning a backend-dependent hang into an error at the offending call. Detached tasks are exempt by
+  task identity (e.g. the DB log handler's `create_task` writes, which merely queue on the SQLite
+  lock and proceed).
 
 ### Repository internals
 
@@ -109,6 +127,11 @@ are rewritten against a small protocol implemented by both types (`execute`, `fe
   aborted transaction is futile. A caller-side sequence that wants automatic replay uses the closure
   form (`await db.atomic(body)`) instead of the block form; the retry guarantee is explicitly scoped
   to units that can actually be replayed.
+- **Retry × `on_commit`**: callbacks are registered on the transaction object and discarded with it
+  on rollback, so a replayed closure re-registers them and they fire exactly once, after the final
+  successful commit. No attempt that rolled back ever fires its callbacks (relevant now that
+  `40001`/`40P01` widen the retry set — `repositories/tasks.py:124-135`'s worker wake-up would
+  tolerate a double-fire, but nothing should have to).
 
 ### Dialect strategy
 
@@ -146,7 +169,19 @@ These are the semantic changes; each is intended and called out for review:
    migration the nonce is consumed and the user restarts the flow. Rare failure, reasonable
    behaviour (behaviour-altitude principle) — not worth holding a transaction across a network call.
 5. **Mid-turn crash leaves a user message without an assistant reply** in history. Already true in
-   production (isolated history writes); now also true on SQLite.
+   production (isolated history writes); now also true on SQLite. More generally, a turn's partial
+   state being durable becomes the *design*: an assistant tool call persisted without its result is
+   the normal shape of any turn that dies mid-tool, so the orphan repair introduced by
+   [#1077](https://github.com/werdnum/family-assistant/pull/1077)
+   (`ProcessingService._repair_unmatched_tool_calls`) is **load-bearing** under this design, not
+   defensive belt-and-braces — it must not be simplified away.
+6. **Read consistency.** The audit and worklist above are entirely about write atomicity; reads
+   change too, differently per backend. On PostgreSQL: no change — READ COMMITTED means two reads in
+   one turn already saw other sessions' commits between them. On SQLite: a real change — the shared
+   turn transaction currently gives a turn a consistent snapshot for its whole duration, and that
+   goes away. This is the right trade (consistency only one backend provides, and that no code can
+   rely on, is not a feature), and it bounds the latent-races note below: those races are unchanged
+   on PostgreSQL and slightly widened on SQLite.
 
 ## Explicit-transaction worklist
 
@@ -265,9 +300,16 @@ compliance is preferred, the same content can land as a stacked PR chain (M1 →
 in one short window; the diffs are identical, only the merge cadence changes. **Decision needed**
 (open question 5).
 
+- **Immediately, ahead of M0 — tactical #1076 fix.** Register tool attachments via
+  `create_isolated_context`, mirroring `_save_history_message`, and fix the unactionable error
+  message. `media_analyst` is broken *today*, and M0→M2 is several PRs; the cost is one more
+  isolated-context site in a budget that only shrinks and that M3 empties anyway. Deleted when the
+  turn pipeline flips in M2.
 - **M0 — groundwork (no semantic change).** Unify test engine creation through the production
   factory; add engine instrumentation + leak/duration checks (observational); land the ast-grep
-  ratchet tooling with budgets at current counts; add the migration rules.
+  ratchet tooling with budgets **seeded from the counter's own measured counts at landing time**
+  (never from numbers in this doc — a stale prose count that seeded a budget too high would silently
+  permit a new legacy site); add the migration rules.
 - **M1 — new core + storage layer.** Introduce `Database` / `DatabaseTransaction` / executor
   protocol; rewrite repositories (adding `atomic()` to multi-statement methods); convert the task
   worker (already structured as four transaction phases at `task_worker.py:3351-3465`, it is the
@@ -278,20 +320,26 @@ in one short window; the diffs are identical, only the merge cadence changes. **
   `llm_loop`, `ToolExecutionContext`) → telegram handler → a2a → asterisk. As each flips, its lane
   of the LLM/tool-boundary invariant goes from observational to enforcing. **#1076 is structurally
   fixed** when the turn pipeline flips: tool-registered attachments are committed at registration
-  and visible to delegation validation.
+  and visible to delegation validation. The turn-pipeline PR specifically must include the parallel
+  tool-call test from verification layer 3 (that flip is what makes it pass) and is the point where
+  #1077's `_repair_unmatched_tool_calls` formally changes role from race mitigation to the
+  designed-for recovery path (behaviour change 5).
 - **M3 — excision.** Delete `DatabaseContext`, `get_db_context`, `create_isolated_context`,
   `supports_isolated_writes`, `_USE_ISOLATED_HISTORY_WRITES` and the `save_with_isolated_context`
   plumbing, the a2a pre-commit workaround (`a2a_api.py:310-347`), the deferred-confirmation FK
-  workaround (`deferred_tool_confirmation.py:150-158`), and `tools_api.py`'s manual rollback. Flip
-  migration rules to bans; update `AGENTS.md`'s Database Access Pattern section and the error
-  message that told the model to "try again once they are committed".
+  workaround (`deferred_tool_confirmation.py:150-158`), and `tools_api.py`'s manual rollback. Revert
+  SQLite's `pool_reset_on_return=None` (`storage/base.py:83`) to the default — it exists solely to
+  protect the cross-context clobbering the engine lock now makes impossible, and leaving it behind
+  would be a silent leftover of a removed hazard. Flip migration rules to bans; update `AGENTS.md`'s
+  Database Access Pattern section and the error message that told the model to "try again once they
+  are committed".
 
 ## Alternatives considered
 
-- **Tactical fix for #1076 only** (register tool attachments via isolated context, mirroring
-  `_save_history_message`): unbreaks `media_analyst`, but is workaround #22; every future
-  (turn-context write → other-connection read) pair is another incident. Superseded by M2, though it
-  can land independently if the migration stalls.
+- **Tactical fix for #1076 as the *only* response** (no migration): every future (turn-context write
+  → other-connection read) pair is another incident. Rejected as the endpoint — but the tactical fix
+  itself lands immediately (see the migration plan) rather than waiting on the migration, so the
+  user-visible break isn't carried across milestones.
 - **Big-bang rewrite in one PR**: ~130 sites + 50 endpoints; unreviewable, and a single regression
   blocks everything. The ratchet exists precisely to make incremental safe.
 - **Keep `DatabaseContext`'s name/shape, change semantics silently**: zero compile errors → no
@@ -302,13 +350,16 @@ in one short window; the diffs are identical, only the merge cadence changes. **
 
 ## Open questions
 
-1. PostgreSQL pool bounds (`pool_size` / `max_overflow`) — propose 5/10 for this deployment's scale.
-2. Naming: `Database` / `DatabaseTransaction` vs `Db` / `DbTransaction` vs keeping a `*Context`
-   suffix.
-3. Should the LLM/tool-boundary ContextVar assertion also run in production (as a logged warning)
-   rather than tests only?
-4. Whether the M2 entry-point PRs flip the web dependency before or after the turn pipeline
-   (proposed: web first — smaller blast radius, exercises the endpoint surface early).
-5. Milestone cadence vs the delete-immediately rule: independent milestone PRs with a ratcheted
+1. Milestone cadence vs the delete-immediately rule: independent milestone PRs with a ratcheted
    coexistence window (proposed), or a stacked PR chain merged in one short window for strict
    compliance. See "Migration plan".
+
+### Resolved in review
+
+- PostgreSQL pool bounds: **5/10** (`pool_size`/`max_overflow`) at this deployment's scale.
+- Naming: **`Database` / `DatabaseTransaction`** — the `*Context` suffix was part of what made the
+  current type easy to misuse.
+- M2 order: **web dependency first**, then the turn pipeline.
+- Production runtime checks: the **handle-under-ambient-transaction guard raises in production on
+  both backends** (it is the difference between an exception and a wedged turn); the LLM/tool
+  boundary assertion stays test-only, since its seams are the test fakes.
