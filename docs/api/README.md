@@ -274,6 +274,25 @@ the completed turn was pruned/evicted). The turn already finished and is **not**
 hub, so the client must **not** open `/stream`; it should reload conversation history to show the
 persisted reply instead.
 
+**409 Conflict — the conversation already has a running turn.** A conversation runs one turn at a
+time: two concurrent turns interleave their writes on one history, and the second replays tool calls
+the first has not answered yet. Retrying the *same* `turn_id` is still idempotent and returns 200 —
+only a different `turn_id` arriving while a turn is running is refused.
+
+```json
+{
+  "detail": {
+    "message": "This conversation already has a running turn. Steer that turn instead of starting a new one.",
+    "active_turn_id": "uuid-of-the-running-turn"
+  }
+}
+```
+
+Send the message to the running turn with [Steer a Turn](#steer-a-turn) rather than starting a new
+one; `active_turn_id` is the turn to target. A client that has lost track of the running turn (its
+stream dropped, or the app was suspended and resumed) reaches this case, and the returned id is
+enough to recover without a second round trip.
+
 ##### Subscribe to the Conversation Stream
 
 ```
@@ -355,6 +374,53 @@ fallback suppresses a redundant push for an already-delivered reply. Send this a
 
 ```json
 { "ok": true }
+```
+
+##### Steer a Turn
+
+```
+POST /api/v1/chat/turns/{turn_id}/steer
+```
+
+Delivers a user message to a turn that is already running, instead of starting a new one. The LLM
+loop drains it after the current tool round, so the model adapts mid-turn rather than finishing work
+the message has made irrelevant. The message surfaces as a `user_input` event on the conversation
+stream and is persisted to history as the raw text the user typed.
+
+**Request body:**
+
+```json
+{
+  "conversation_id": "uuid-of-conversation",
+  "prompt": "actually, focus on tomorrow"
+}
+```
+
+**Response:**
+
+```json
+{ "accepted": true }
+```
+
+| Status | Meaning                                                                         |
+| ------ | ------------------------------------------------------------------------------- |
+| 200    | Queued for injection into the running turn                                      |
+| 404    | No such turn — it may not have registered yet, so this is worth a bounded retry |
+| 409    | The turn has already finished; start a new turn with `POST /v1/chat/turns`      |
+
+##### Stop a Turn
+
+```
+POST /api/v1/chat/turns/{turn_id}/cancel
+```
+
+Requests a cooperative interrupt and then cancels the producer, ending the turn as `cancelled` — a
+terminal status distinct from `failed`. Any reply text produced before the stop is persisted.
+
+**Request body:**
+
+```json
+{ "conversation_id": "uuid-of-conversation" }
 ```
 
 **Example using curl:**

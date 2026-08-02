@@ -1140,6 +1140,121 @@ async def test_steer_unknown_turn_returns_404(
     assert response.status_code == 404, response.text
 
 
+async def test_second_turn_while_one_is_running_returns_409(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conversation runs one turn at a time; the rival turn is refused.
+
+    Two concurrent turns interleave their writes on one history, and the second
+    replays tool calls the first has not answered yet. The 409 hands back the
+    running turn's id so the client can steer it instead.
+    """
+    user_prompt = "Start something long"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_overlap_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        rival = await api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": str(uuid.uuid4()),
+                "conversation_id": conversation_id,
+                "prompt": "and another thing",
+                "interface_type": "web",
+            },
+        )
+    finally:
+        release.set()
+
+    assert rival.status_code == 409, rival.text
+    assert rival.json()["detail"]["active_turn_id"] == turn_id
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+
+async def test_retrying_the_running_turn_id_is_still_idempotent(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The overlap guard must not break the kickoff retry it sits next to.
+
+    A client that retries the SAME turn id (a dropped kickoff response) is
+    resending one turn, not starting a rival, so it gets that turn's identity
+    back rather than a 409.
+    """
+    user_prompt = "Retry my kickoff"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_retry_{uuid.uuid4().hex[:8]}"
+    body = {
+        "turn_id": turn_id,
+        "conversation_id": conversation_id,
+        "prompt": user_prompt,
+        "interface_type": "web",
+    }
+    post = await api_test_client.post("/api/v1/chat/turns", json=body)
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        retry = await api_test_client.post("/api/v1/chat/turns", json=body)
+    finally:
+        release.set()
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["turn_id"] == turn_id
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+
 async def test_steer_rejects_conversation_owned_by_another_user(
     api_test_client: AsyncClient,
     db_engine: AsyncEngine,

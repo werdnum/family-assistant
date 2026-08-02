@@ -1038,6 +1038,39 @@ async def api_chat_create_turn(
             incomplete=not turn_has_terminal_reply,
         )
 
+    # One turn at a time per conversation. A second turn started while the first
+    # is mid-tool overlaps two LLM loops on one history: they interleave their
+    # writes, and the new turn replays a tool call whose result the running turn
+    # has not written yet. Clients reach here by mistake, not by intent — the
+    # composer means to STEER a running turn, and falls back to a plain send only
+    # when it has lost track of the turn (e.g. across an app suspend). Hand back
+    # the turn id it lost so it can steer that instead of starting a rival turn.
+    running_turn = next(
+        (
+            turn
+            for turn in hub.active_turns(conversation_id)
+            if turn.status == "running" and turn.user_id == user_id
+        ),
+        None,
+    )
+    if running_turn is not None:
+        logger.info(
+            "Rejecting turn %s: conversation %s already has running turn %s.",
+            payload.turn_id,
+            conversation_id,
+            running_turn.turn_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "This conversation already has a running turn. Steer that "
+                    "turn instead of starting a new one."
+                ),
+                "active_turn_id": running_turn.turn_id,
+            },
+        )
+
     # Resolve processing service profile.
     selected_processing_service: ProcessingService = default_processing_service
     if payload.profile_id:
