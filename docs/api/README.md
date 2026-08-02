@@ -295,6 +295,10 @@ stream dropped, or the app was suspended and resumed) reaches this case, and the
 to recover without a second round trip: steer the prompt into `active_turn_id`, then subscribe from
 `active_turn_first_seq` to replay that turn's events without dragging in earlier turns'.
 
+Steering carries text only, so a refused request that had `attachments` cannot be recovered this way
+— the files would be dropped from a message the model still answered. Surface the refusal to the
+user and resend the whole message, attachments included, once the running turn ends.
+
 ##### Subscribe to the Conversation Stream
 
 ```
@@ -401,8 +405,19 @@ stream and is persisted to history as the raw text the user typed.
 **Response:**
 
 ```json
-{ "accepted": true }
+{
+  "turn_id": "uuid-of-the-running-turn",
+  "conversation_id": "uuid-of-conversation",
+  "accepted": true,
+  "queued_after_seq": 41
+}
 ```
+
+`queued_after_seq` is the `seq` of the conversation's most recent event when the message was queued
+(`-1` if it has none). The turn publishes the `user_input` echo later, so the echo's `seq` is always
+greater. A client replaying the turn from an earlier cursor uses this to tell that echo from an
+identical message the turn had already consumed — matching on text alone would consume the wrong
+event and render the new message twice.
 
 | Status | Meaning                                                                         |
 | ------ | ------------------------------------------------------------------------------- |

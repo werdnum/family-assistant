@@ -30,6 +30,11 @@ video — and 100 MB for other files. A recording over the limit is refused with
 accepted and then failed on, so trimming a long recording, or sending a lower-quality version of a
 video, gets it through.
 
+A conversation works on one message at a time, so a message with files attached won't send while the
+assistant is still busy with the previous one — it tells you so rather than sending your question
+without the files. Send it again once the reply arrives. Plain text sent mid-answer is different:
+that reaches the assistant straight away and it adapts to it.
+
 ## What you can do with them
 
 **Analyse an image:**

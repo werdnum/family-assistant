@@ -34,7 +34,7 @@ export const streamResumeTuning = {
  * @param {Function} options.onToolConfirmationRequest - Callback when tool confirmation is requested
  * @param {Function} options.onToolConfirmationResult - Callback when tool confirmation result is received
  * @param {Function} options.onError - Callback when an error occurs (receives Error object)
- * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls })
+ * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls, completed, turnId, streamedTurnId }). `turnId` is the id this send was kicked off with, so caller-side bookkeeping keyed at send time still matches; `streamedTurnId` is the turn actually followed, which differs only when a refused send adopted the conversation's running turn.
  * @param {Function} options.onUserInput - Callback when a mid-turn steering message is injected into the running turn (receives the message content). Lets the UI render the steering message as a user bubble while the turn continues.
  * @param {Function} options.onCancelled - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
  * @param {Function} options.onReloadHistory - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
@@ -98,11 +98,12 @@ export const useStreamingResponse = ({
       // second producer.
       // Reassigned only when the server refuses this turn because the
       // conversation already has one running and we adopt that turn instead.
-      let effectiveTurnId =
+      const kickoffTurnId =
         turnId ||
         (typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()
           : `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+      let effectiveTurnId = kickoffTurnId;
 
       // Record the live turn up front (the turn id and conversation id are
       // already known) so a Stop/Steer click during the kickoff POST — the
@@ -167,6 +168,18 @@ export const useStreamingResponse = ({
         if (startResponse.status === 409) {
           const conflict = await startResponse.json().catch(() => ({}));
           const runningTurnId = conflict?.detail?.active_turn_id;
+          // Steering carries text only, so a refused send that had files cannot
+          // be adopted: the running turn would answer a prompt whose
+          // attachments were never uploaded or associated with the history.
+          // Surface it as a failed send — which names the running turn as the
+          // reason and asks for a resend — rather than quietly delivering a
+          // message with its files stripped off.
+          if (runningTurnId && attachments?.length) {
+            throw new Error(
+              'This conversation is still working on the previous message, so the ' +
+                'attachments could not be sent. Wait for it to finish, then send them again.'
+            );
+          }
           if (runningTurnId) {
             adoptedSteer = {
               turnId: runningTurnId,
@@ -194,11 +207,14 @@ export const useStreamingResponse = ({
         let durableTurnState = null;
         // The one steer echo to swallow, because the caller already rendered
         // this prompt optimistically as a normal send (see the user_input
-        // branch in the stream loop).
+        // branch in the stream loop). `{ prompt, afterSeq }`: replay starts at
+        // the running turn's first event, so an identical earlier input in the
+        // same turn (the user said "continue" twice) would match on content
+        // alone. afterSeq is the stream head when the steer was queued, and the
+        // echo is published after that, so anything at or below it is history.
         let pendingAdoptedEcho = null;
         if (adoptedSteer) {
           effectiveTurnId = adoptedSteer.turnId;
-          pendingAdoptedEcho = adoptedSteer.prompt;
           resolvedConversationId = conversationId;
           firstSeq = adoptedSteer.fromSeq;
           activeTurnRef.current = {
@@ -227,6 +243,16 @@ export const useStreamingResponse = ({
               `Could not deliver the message to the running turn (HTTP ${steerResponse.status})`
             );
           }
+          const steerBody = await steerResponse.json().catch(() => ({}));
+          pendingAdoptedEcho = {
+            prompt: adoptedSteer.prompt,
+            // Absent (an older backend): fall back to the turn's start, which
+            // only risks the duplicate-content case this floor exists to fix.
+            afterSeq:
+              typeof steerBody.queued_after_seq === 'number'
+                ? steerBody.queued_after_seq
+                : adoptedSteer.fromSeq - 1,
+          };
         } else {
           const {
             conversation_id: streamConversationId,
@@ -500,10 +526,14 @@ export const useStreamingResponse = ({
                   // the running turn echoes back here, but the caller already
                   // rendered it optimistically when the send began. Swallow that
                   // one echo so it doesn't appear twice; later steers on the
-                  // same turn (which the caller did not render) still show.
+                  // same turn (which the caller did not render) still show, and
+                  // so does an identical input the turn had already consumed
+                  // before we adopted it (seq at or below the floor).
                   if (
                     pendingAdoptedEcho !== null &&
-                    payload.content.trim() === pendingAdoptedEcho.trim()
+                    payload.content.trim() === pendingAdoptedEcho.prompt.trim() &&
+                    typeof payload.seq === 'number' &&
+                    payload.seq > pendingAdoptedEcho.afterSeq
                   ) {
                     pendingAdoptedEcho = null;
                   } else {
@@ -723,7 +753,13 @@ export const useStreamingResponse = ({
           content: currentMessage,
           toolCalls,
           completed: turnEnded,
-          turnId: effectiveTurnId,
+          // The KICKOFF id, not the streamed one: the caller keyed this send's
+          // optimistic conversation row by the id it passed in (or, for a
+          // generated id, tracks nothing), so adopting a running turn must not
+          // move the key out from under it and strand the row for the session.
+          // The turn actually followed is reported separately.
+          turnId: kickoffTurnId,
+          streamedTurnId: effectiveTurnId,
         });
         abortControllerRef.current = null;
         activeTurnRef.current = null;
@@ -764,12 +800,10 @@ export const useStreamingResponse = ({
   // after retries. The caller should surface a false so the user knows a pending
   // approval may still be live.
   const stopTurn = useCallback(async () => {
-    const active = activeTurnRef.current;
+    let active = activeTurnRef.current;
     if (!active) {
       return true;
     }
-    const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
-    const body = JSON.stringify({ conversation_id: active.conversationId });
     // Stop must fully secure the turn (the server also rejects the turn's
     // pending tool confirmations, returning 503 if it can't). Retry with a small
     // backoff on transient 5xx/network failures AND on 404: clicking Stop right
@@ -778,6 +812,15 @@ export const useStreamingResponse = ({
     // idempotent.
     const attempts = 5;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      // Re-read the live identity every attempt rather than capturing it once:
+      // a kickoff still in flight when Stop was clicked can be refused (409)
+      // and adopt the conversation's running turn, which repoints this ref.
+      // Cancelling the client-generated id we started with would then 404
+      // forever while the real turn kept running. Keep the last known identity
+      // when the ref has been cleared (the stream settled mid-retry).
+      active = activeTurnRef.current ?? active;
+      const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
+      const body = JSON.stringify({ conversation_id: active.conversationId });
       let retryable = false;
       try {
         const response = await fetch(url, {

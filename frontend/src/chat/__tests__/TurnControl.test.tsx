@@ -1,10 +1,11 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
+import { useStreamingResponse } from '../useStreamingResponse.js';
 
 // A controllable SSE stream: the handler emits turn_started and then parks,
 // handing its controller to the test so it can drive cancelled / user_input
@@ -772,7 +773,10 @@ describe('Web turn control (Stop / Steer)', () => {
   // steer it meant to send — it must reach the running turn, not raise an error.
   function installConflictingTurn(
     runningTurnId: string,
-    runningTurnFirstSeq: number
+    runningTurnFirstSeq: number,
+    // Stream head when the steer is queued, as the real endpoint reports it.
+    // The turn's echo of the adopted prompt is published after this seq.
+    queuedAfterSeq = runningTurnFirstSeq
   ): {
     ready: Promise<ReadableStreamDefaultController<Uint8Array>>;
     steerBodies: Array<{ conversation_id: string; prompt: string }>;
@@ -804,7 +808,7 @@ describe('Web turn control (Stop / Steer)', () => {
       http.post('/api/v1/chat/turns/:turnId/steer', async ({ request, params }) => {
         steeredTurnIds.push(String(params.turnId));
         steerBodies.push((await request.json()) as { conversation_id: string; prompt: string });
-        return HttpResponse.json({ accepted: true });
+        return HttpResponse.json({ accepted: true, queued_after_seq: queuedAfterSeq });
       }),
       http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
         streamFromSeqs.push(new URL(request.url).searchParams.get('from_seq'));
@@ -916,6 +920,184 @@ describe('Web turn control (Stop / Steer)', () => {
         sse('turn_ended', { turn_id: 'running-turn-2', status: 'complete', seq: 6 })
       );
       controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'swallows the adopted echo, not an identical input the turn already consumed',
+    async () => {
+      // Replay starts at the running turn's first event, so a message the turn
+      // consumed BEFORE we adopted it can carry the same text as the one we
+      // just steered in ("continue" twice). Matching on text alone would treat
+      // that older event as our echo and then render the real echo as a second
+      // bubble beside the optimistic one. The steer's queued_after_seq is the
+      // floor that separates them.
+      const { ready } = installConflictingTurn('running-turn-3', 3, 5);
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'continue');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      // Replay of what the turn consumed BEFORE we adopted it: identical text,
+      // at or below the floor. Our own echo has not been published yet.
+      controller.enqueue(
+        sse('user_input', { turn_id: 'running-turn-3', content: 'continue', seq: 4 })
+      );
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-3', content: 'Carrying on.', seq: 5 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Carrying on.')).toBeInTheDocument();
+      }, WAIT);
+      // Two bubbles: this replayed input, plus the optimistic render of what we
+      // sent. One would mean the dedupe ate the history and is still holding
+      // its match open for the echo — which then renders as the duplicate.
+      const bubbles = screen
+        .getAllByTestId('user-message-content')
+        .filter((el) => el.textContent?.includes('continue'));
+      expect(bubbles).toHaveLength(2);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-3', status: 'complete', seq: 8 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'refuses to adopt a running turn when the send carried attachments',
+    async () => {
+      // Steering carries text only. Adopting here would answer the prompt with
+      // its files silently missing, so the send fails and the user keeps them.
+      let steers = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', () =>
+          HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-4',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          )
+        ),
+        http.post('/api/v1/chat/turns/:turnId/steer', () => {
+          steers += 1;
+          return HttpResponse.json({ accepted: true, queued_after_seq: 2 });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          throw new Error('must not subscribe: the send was never delivered');
+        })
+      );
+
+      const errors: Error[] = [];
+      const { result } = renderHook(() =>
+        useStreamingResponse({ onError: (e: Error) => errors.push(e) })
+      );
+      await result.current.sendStreamingMessage({
+        prompt: 'what is in this scan?',
+        conversationId: 'web_conv_attach',
+        attachments: [{ attachment_id: 'att-1' }],
+      });
+
+      expect(steers).toBe(0);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toMatch(/attachments could not be sent/);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'retargets an in-flight Stop at the turn the refused send adopted',
+    async () => {
+      // Stop clicked while the kickoff POST is still pending: the POST is then
+      // refused and adopts the conversation's running turn, so the cancel must
+      // follow. Cancelling the client-generated id we started with would 404
+      // forever while the real turn kept running.
+      const cancelledTurnIds: string[] = [];
+      let releaseKickoff: () => void = () => {};
+      const kickoffGate = new Promise<void>((resolve) => {
+        releaseKickoff = resolve;
+      });
+      let resolveStreamController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const streamReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
+        resolveStreamController = resolve;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', async () => {
+          await kickoffGate;
+          return HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-5',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          );
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ accepted: true, queued_after_seq: 2 })
+        ),
+        http.post('/api/v1/chat/turns/:turnId/cancel', ({ params }) => {
+          cancelledTurnIds.push(String(params.turnId));
+          // Only the adopted turn exists server-side; the rejected kickoff id
+          // is the 404 the retry loop is meant to grow out of.
+          if (params.turnId !== 'running-turn-5') {
+            return new HttpResponse(null, { status: 404 });
+          }
+          return HttpResponse.json({
+            turn_id: 'running-turn-5',
+            conversation_id: 'web_conv_stopadopt',
+            status: 'cancelling',
+          });
+        }),
+        // The adopted turn stays open, as it would while the cancel is still
+        // being retried: a turn that ended first would clear the live identity
+        // and leave nothing to retarget.
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(sse('turn_started', { turn_id: 'running-turn-5', seq: 2 }));
+              resolveStreamController(controller);
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const { result } = renderHook(() => useStreamingResponse({}));
+      const sending = result.current.sendStreamingMessage({
+        prompt: 'stop that',
+        conversationId: 'web_conv_stopadopt',
+      });
+      // Stop while the kickoff is still in flight, then let the 409 land.
+      const stopping = result.current.stopTurn();
+      releaseKickoff();
+
+      await expect(stopping).resolves.toBe(true);
+      // The first attempt targeted the id the kickoff was rejected under; the
+      // retry followed the adoption instead of 404ing until it gave up.
+      expect(cancelledTurnIds[0]).not.toBe('running-turn-5');
+      expect(cancelledTurnIds.at(-1)).toBe('running-turn-5');
+
+      const controller = await streamReady;
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-5', status: 'cancelled', seq: 3 })
+      );
+      controller.close();
+      await sending;
     },
     { timeout: 30000 }
   );

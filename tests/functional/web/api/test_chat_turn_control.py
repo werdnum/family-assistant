@@ -32,9 +32,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
+    ContentPartDict,
     MessageReasoningInfo,
     ToolMessage,
     UserMessage,
+    text_content,
 )
 from family_assistant.security.taint import (
     SourceTrustTier,
@@ -49,6 +51,8 @@ from family_assistant.storage.repositories.message_history import (
     MessageHistoryRepository,
 )
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.models import ChatPromptRequest
+from family_assistant.web.routers import chat_api
 from family_assistant.web.turn_producer import persist_stopped_reply
 from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 from tests.helpers import wait_for_condition
@@ -1259,6 +1263,173 @@ async def test_retrying_the_running_turn_id_is_still_idempotent(
     await wait_for_condition(
         _turn_complete(hub, conversation_id, turn_id), description="turn complete"
     )
+
+
+async def test_turn_admitted_during_attachment_setup_is_still_refused(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The overlap guard holds across the setup this endpoint awaits.
+
+    A request carrying attachments checks for a running turn, then uploads them
+    — and a rival turn can be admitted while it does. Rechecking would only
+    narrow the window, so registration itself refuses under the hub's lock: the
+    request that parked in setup loses even though it checked first.
+    """
+    user_prompt = "The rival that got in first"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    llm_started = asyncio.Event()
+    llm_release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(
+            api_mock_llm_client.generate_response, llm_started, llm_release
+        ),
+    )
+
+    upload_started = asyncio.Event()
+    upload_release = asyncio.Event()
+
+    async def gated_process_attachments(
+        payload: ChatPromptRequest,
+        _conversation_id: str,
+        _attachment_registry: object,
+        _db_context: object,
+        _user_id: str,
+    ) -> tuple[list[ContentPartDict], None]:
+        upload_started.set()
+        await upload_release.wait()
+        return [text_content(payload.prompt)], None
+
+    monkeypatch.setattr(
+        chat_api, "_process_user_attachments", gated_process_attachments
+    )
+
+    conversation_id = f"conv_setup_race_{uuid.uuid4().hex[:8]}"
+    parked_turn_id = str(uuid.uuid4())
+    rival_turn_id = str(uuid.uuid4())
+
+    # Parks inside attachment setup, having already passed the early check.
+    parked = asyncio.ensure_future(
+        api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": parked_turn_id,
+                "conversation_id": conversation_id,
+                "prompt": "look at this scan",
+                "interface_type": "web",
+                "attachments": [
+                    {
+                        "type": "image",
+                        "content": "eA==",
+                        "mime_type": "image/png",
+                        "filename": "scan.png",
+                    }
+                ],
+            },
+        )
+    )
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(upload_started.wait(), timeout=5.0)
+
+        # No turn is registered yet, so this one is admitted and starts running.
+        rival = await api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": rival_turn_id,
+                "conversation_id": conversation_id,
+                "prompt": user_prompt,
+                "interface_type": "web",
+            },
+        )
+        assert rival.status_code == 200, rival.text
+        await asyncio.wait_for(llm_started.wait(), timeout=5.0)
+    finally:
+        upload_release.set()
+
+    try:
+        parked_response = await asyncio.wait_for(parked, timeout=5.0)
+    finally:
+        llm_release.set()
+
+    assert parked_response.status_code == 409, parked_response.text
+    assert parked_response.json()["detail"]["active_turn_id"] == rival_turn_id
+    assert hub.get_turn(conversation_id, parked_turn_id) is None
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, rival_turn_id),
+        description="rival turn complete",
+    )
+
+
+async def test_steer_reports_the_stream_head_it_was_queued_after(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``queued_after_seq`` is a floor: the steer's echo is published above it.
+
+    A client replaying a turn it has just adopted uses this to tell its own
+    echo from identical text the turn consumed earlier.
+    """
+    user_prompt = "Tell me about seqs"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerseq_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        steer = await api_test_client.post(
+            f"/api/v1/chat/turns/{turn_id}/steer",
+            json={"conversation_id": conversation_id, "prompt": "actually, hurry"},
+        )
+    finally:
+        release.set()
+
+    assert steer.status_code == 200, steer.text
+    queued_after_seq = steer.json()["queued_after_seq"]
+    assert queued_after_seq == hub.latest_seq(conversation_id)
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+    # Everything the turn published after the steer — including its echo — sits
+    # above the floor the client was handed.
+    turn = hub.get_turn(conversation_id, turn_id)
+    assert turn is not None
+    assert turn.latest_seq > queued_after_seq
 
 
 async def test_steer_rejects_conversation_owned_by_another_user(

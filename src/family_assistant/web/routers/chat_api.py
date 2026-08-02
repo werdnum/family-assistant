@@ -56,6 +56,7 @@ from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionConte
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
+    ConversationTurnRunningError,
     OutOfBufferError,
     StreamEvent,
     TurnAlreadyExistsError,
@@ -678,6 +679,15 @@ class ChatTurnSteerResponse(BaseModel):
     accepted: bool = Field(
         ..., description="True once the steering message was queued for injection"
     )
+    queued_after_seq: int = Field(
+        ...,
+        description=(
+            "Seq of the conversation's most recent event when the steer was "
+            "queued (-1 if none). The turn's echo of this message is published "
+            "later, so it carries a strictly greater seq — a client replaying "
+            "the turn uses this to tell the echo from identical earlier input."
+        ),
+    )
 
 
 # ----------------------------------------------------------------------- #
@@ -697,6 +707,37 @@ def _get_hub(request: Request) -> ConversationStreamHub:
     hub = ConversationStreamHub()
     request.app.state.conversation_stream_hub = hub
     return hub
+
+
+def _running_turn_conflict(
+    conversation_id: str, rejected_turn_id: str, running_turn: TurnRecord
+) -> HTTPException:
+    """Build the 409 that refuses a rival turn and names the running one.
+
+    Raised from two places — the early check in ``POST /turns`` and the
+    authoritative one inside ``start_turn`` — so the client sees one shape
+    regardless of where the rival lost.
+    """
+    logger.info(
+        "Rejecting turn %s: conversation %s already has running turn %s.",
+        rejected_turn_id,
+        conversation_id,
+        running_turn.turn_id,
+    )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": (
+                "This conversation already has a running turn. Steer that "
+                "turn instead of starting a new one."
+            ),
+            "active_turn_id": running_turn.turn_id,
+            # Where that turn's events start in the hub buffer, so a client
+            # that lost its stream resubscribes to the running turn alone
+            # rather than replaying the whole conversation from seq 0.
+            "active_turn_first_seq": running_turn.first_seq,
+        },
+    )
 
 
 # Lifecycle/control frames that an ``event_types`` allow-list must never filter
@@ -1045,6 +1086,12 @@ async def api_chat_create_turn(
     # composer means to STEER a running turn, and falls back to a plain send only
     # when it has lost track of the turn (e.g. across an app suspend). Hand back
     # the turn id it lost so it can steer that instead of starting a rival turn.
+    #
+    # This is the early, cheap rejection: it spares the attachment upload work
+    # below in the common case. It is NOT the guarantee — the setup between here
+    # and ``start_turn`` awaits, so a rival POST can pass this check too. The
+    # authoritative check is ``reject_if_running`` on ``start_turn``, which runs
+    # under the same lock as the registration; both raise the same 409.
     running_turn = next(
         (
             turn
@@ -1054,26 +1101,7 @@ async def api_chat_create_turn(
         None,
     )
     if running_turn is not None:
-        logger.info(
-            "Rejecting turn %s: conversation %s already has running turn %s.",
-            payload.turn_id,
-            conversation_id,
-            running_turn.turn_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": (
-                    "This conversation already has a running turn. Steer that "
-                    "turn instead of starting a new one."
-                ),
-                "active_turn_id": running_turn.turn_id,
-                # Where that turn's events start in the hub buffer, so a client
-                # that lost its stream resubscribes to the running turn alone
-                # rather than replaying the whole conversation from seq 0.
-                "active_turn_first_seq": running_turn.first_seq,
-            },
-        )
+        raise _running_turn_conflict(conversation_id, payload.turn_id, running_turn)
 
     # Resolve processing service profile.
     selected_processing_service: ProcessingService = default_processing_service
@@ -1140,7 +1168,15 @@ async def api_chat_create_turn(
             user_id=user_id,
             started_at=datetime.now(UTC),
             mid_turn_controller=mid_turn_controller,
+            reject_if_running=True,
         )
+    except ConversationTurnRunningError as exc:
+        # A rival turn was admitted while this request did its setup (attachment
+        # processing awaits above). The hub refused registration under its lock,
+        # so exactly one of the two racing kickoffs proceeds.
+        raise _running_turn_conflict(
+            conversation_id, payload.turn_id, exc.turn
+        ) from exc
     except TurnAlreadyExistsError as exc:
         # Lost a race with another concurrent POST: treat it as idempotent. The
         # loser returns here WITHOUT inserting the user message (the winner does
@@ -1763,6 +1799,10 @@ async def api_chat_steer_turn(
             detail="Turn is not running; start a new turn instead.",
         )
 
+    # Read the stream head BEFORE queueing, so the floor is conservative: the
+    # echo of this message is published strictly after it, while every event
+    # already on the stream sits at or below it.
+    queued_after_seq = hub.latest_seq(payload.conversation_id)
     await controller.add_input(
         MidTurnUserInput(
             content=payload.prompt,
@@ -1773,6 +1813,7 @@ async def api_chat_steer_turn(
         turn_id=turn_id,
         conversation_id=payload.conversation_id,
         accepted=True,
+        queued_after_seq=queued_after_seq,
     )
 
 
