@@ -1473,35 +1473,36 @@ final class ChatViewModel {
     }
 
     func sendDraft() async {
-        await sendDraft(fallbackFromSteer: false)
+        _ = await sendDraft(fallbackFromSteer: false)
     }
 
-    private func sendDraft(fallbackFromSteer: Bool) async {
+    @discardableResult
+    private func sendDraft(fallbackFromSteer: Bool) async -> Bool {
         let submittedDraftText = draftText
         let submittedDraftAttachments = draftAttachments
         let prompt = submittedDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let hadActiveTurnAtSubmission = activeTurnIdentity != nil
         guard !prompt.isEmpty || !draftAttachments.isEmpty else {
-            return
+            return false
         }
         // Defensive: the send button is disabled while a conversation loads, but
         // never post a turn before its profile is adopted (see `canSendDraft`).
         guard !isLoadingMessages else {
-            return
+            return false
         }
         guard draftAttachments.allSatisfy({ $0.uploadState != .uploading }) else {
             presentErrorAlert(
                 "Wait for attachments to finish uploading before sending.",
                 reason: .sendAttachmentsUploading
             )
-            return
+            return false
         }
         guard draftAttachments.allSatisfy({ $0.uploadState == .uploaded }) else {
             presentErrorAlert(
                 "Remove failed attachments before sending.",
                 reason: .sendAttachmentFailed
             )
-            return
+            return false
         }
         guard let id = conversationID else {
             startNewConversation()
@@ -1524,7 +1525,7 @@ final class ChatViewModel {
                     limit: 1
                 )
                 guard conversationID == id else {
-                    return
+                    return false
                 }
                 // The preflight introduced an await into submission. Never send
                 // the captured text if the user edited the composer meanwhile;
@@ -1532,7 +1533,7 @@ final class ChatViewModel {
                 guard draftText == submittedDraftText,
                       draftAttachments == submittedDraftAttachments
                 else {
-                    return
+                    return false
                 }
                 if let runningTurn = response.activeTurns
                     .filter({ $0.status == "running" })
@@ -1541,11 +1542,10 @@ final class ChatViewModel {
                         source: "active_turns_preflight",
                         turnID: runningTurn.turnID
                     )
-                    await adoptRunningTurnAndSteer(
+                    return await adoptRunningTurnAndSteer(
                         turnID: runningTurn.turnID,
                         conversationID: id
                     )
-                    return
                 }
                 if fallbackFromSteer {
                     reportSteerDegradedToSend(reason: "no_running_server_turn")
@@ -1556,7 +1556,7 @@ final class ChatViewModel {
                       draftText == submittedDraftText,
                       draftAttachments == submittedDraftAttachments
                 else {
-                    return
+                    return false
                 }
                 if fallbackFromSteer {
                     reportSteerDegradedToSend(reason: "active_turn_lookup_failed")
@@ -1568,8 +1568,7 @@ final class ChatViewModel {
         // the preflight was suspended. Prefer that identity over cancelling it
         // and starting a new turn from a stale idle snapshot.
         if !hadActiveTurnAtSubmission, activeTurnIdentity != nil {
-            await sendSteerDraft()
-            return
+            return await sendSteerDraftWithResult()
         }
 
         cancelStream()
@@ -1647,6 +1646,7 @@ final class ChatViewModel {
             guard let self else { return }
             await runSendTurn(session)
         }
+        return true
     }
 
     /// Outcome of consuming (or attempting to consume) a turn subscription.
@@ -2111,22 +2111,34 @@ final class ChatViewModel {
                 $0.id.hasPrefix("local_user_") && $0.turnID == turnID
             }
             registeredTurnIDs.remove(turnID)
-            pendingStopTurnIDs.remove(turnID)
-            stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
-            stopRequestedTurnIDs.remove(turnID)
-            pendingSteersByTurnID[turnID] = nil
+            let pendingSteers = pendingSteersByTurnID.removeValue(forKey: turnID) ?? []
+            let wasPendingStop = pendingStopTurnIDs.remove(turnID) != nil
+            let hadStopAfterRegistration = stopAfterRegistrationByTurnID.removeValue(forKey: turnID) != nil
+            let wasStopRequested = stopRequestedTurnIDs.remove(turnID) != nil
+            let hadPendingStop = wasPendingStop || hadStopAfterRegistration || wasStopRequested
             activeTurnSession = nil
             currentStreamToken = nil
             streamTask = nil
-            let currentAttachmentIDs = Set(draftAttachments.map(\.id))
-            draftAttachments = attachments.filter { !currentAttachmentIDs.contains($0.id) }
-                + draftAttachments
+            prependMissingDraftAttachments(attachments)
             reportTurnHandleRecovery(source: "start_turn_conflict", turnID: activeTurnID)
-            await adoptRunningTurnAndSteer(
-                turnID: activeTurnID,
-                conversationID: id,
-                recoveredPrompt: prompt
-            )
+            guard let activeTurn = adoptRunningTurn(turnID: activeTurnID, conversationID: id) else {
+                return
+            }
+            if hadPendingStop {
+                detachPendingSteers(pendingSteers, requeue: false)
+                await stopTurn()
+                return
+            }
+            for pendingSteer in pendingSteers {
+                removeInFlightSteer(pendingSteer)
+                removeAwaitingEchoSteer(pendingSteer)
+            }
+            if !(await submitSteerPrompt(prompt, activeTurn: activeTurn)) {
+                recoverSteerAsDraft(prompt)
+            }
+            for pendingSteer in pendingSteers {
+                _ = await submitSteerPrompt(pendingSteer, activeTurn: activeTurn)
+            }
             return
         } catch is CancellationError {
             // A suspend-cancel (real background) must preserve the turn for
@@ -2504,19 +2516,23 @@ final class ChatViewModel {
     }
 
     func sendSteerDraft() async {
+        _ = await sendSteerDraftWithResult()
+    }
+
+    @discardableResult
+    private func sendSteerDraftWithResult() async -> Bool {
         let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else {
-            return
+            return false
         }
         steerErrorMessage = nil
         // No turn is running, so there is nothing to steer: the composer text is
         // just a normal message. Send it as one (sendDraft consumes and clears
         // the composer).
         guard let activeTurn = activeTurnIdentity else {
-            await sendDraft(fallbackFromSteer: true)
-            return
+            return await sendDraft(fallbackFromSteer: true)
         }
-        _ = await submitSteerPrompt(prompt, activeTurn: activeTurn)
+        return await submitSteerPrompt(prompt, activeTurn: activeTurn)
     }
 
     @discardableResult
@@ -2550,13 +2566,36 @@ final class ChatViewModel {
     /// deliver either a recovered prompt or the current composer text as a steer.
     /// Attachments remain in the composer because steering is text-only; they
     /// become visible again when the recovered turn ends.
+    @discardableResult
     private func adoptRunningTurnAndSteer(
         turnID: String,
         conversationID: String,
         recoveredPrompt: String? = nil
-    ) async {
+    ) async -> Bool {
+        guard let activeTurn = adoptRunningTurn(
+            turnID: turnID,
+            conversationID: conversationID
+        ) else {
+            return false
+        }
+        let prompt = (recoveredPrompt ?? draftText).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else {
+            steerErrorMessage = "Wait for the running reply to finish before sending attachments."
+            return false
+        }
+        let submitted = await submitSteerPrompt(prompt, activeTurn: activeTurn)
+        if recoveredPrompt != nil, !submitted {
+            recoverSteerAsDraft(prompt)
+        }
+        return submitted
+    }
+
+    private func adoptRunningTurn(
+        turnID: String,
+        conversationID: String
+    ) -> ActiveChatTurn? {
         guard self.conversationID == conversationID else {
-            return
+            return nil
         }
         endedTurnIDs.remove(turnID)
         reattachedRunningTurnID = turnID
@@ -2566,18 +2605,7 @@ final class ChatViewModel {
             _ = makeLiveFollowBubble(for: turnID)
         }
         startLiveEvents(reason: .manualReconnect)
-        let prompt = (recoveredPrompt ?? draftText).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty else {
-            steerErrorMessage = "Wait for the running reply to finish before sending attachments."
-            return
-        }
-        let submitted = await submitSteerPrompt(
-            prompt,
-            activeTurn: ActiveChatTurn(turnID: turnID, conversationID: conversationID)
-        )
-        if recoveredPrompt != nil, !submitted {
-            recoverSteerAsDraft(prompt)
-        }
+        return ActiveChatTurn(turnID: turnID, conversationID: conversationID)
     }
 
     private func reportTurnHandleRecovery(source: String, turnID: String) {
@@ -2948,10 +2976,26 @@ final class ChatViewModel {
         let preservedDraftAttachments = draftAttachments
         draftText = followUp
         draftAttachments = []
-        await sendDraft()
-        draftText = preservedDraftText
-        draftAttachments = preservedDraftAttachments
-        queuedFollowUpSteers = remainingQueuedFollowUps + queuedFollowUpSteers
+        let submitted = await sendDraft(fallbackFromSteer: false)
+        if submitted, draftText.isEmpty, draftAttachments.isEmpty {
+            draftText = preservedDraftText
+            draftAttachments = preservedDraftAttachments
+        } else if !submitted,
+                  draftText.trimmingCharacters(in: .whitespacesAndNewlines) == followUp,
+                  draftAttachments.isEmpty {
+            draftText = preservedDraftText
+            draftAttachments = preservedDraftAttachments
+        } else {
+            prependMissingDraftAttachments(preservedDraftAttachments)
+        }
+        let unsentFollowUps = submitted ? remainingQueuedFollowUps : [followUp] + remainingQueuedFollowUps
+        queuedFollowUpSteers = unsentFollowUps + queuedFollowUpSteers
+    }
+
+    private func prependMissingDraftAttachments(_ attachments: [ChatAttachment]) {
+        let currentAttachmentIDs = Set(draftAttachments.map(\.id))
+        draftAttachments = attachments.filter { !currentAttachmentIDs.contains($0.id) }
+            + draftAttachments
     }
 
     /// Tear down the in-flight send's transport task for a real background
