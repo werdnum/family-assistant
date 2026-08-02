@@ -2224,6 +2224,13 @@ class TaskWorker:
         # never delivered", so resume at phase 3 instead. Re-sending is the
         # accepted cost: a duplicate message at worst, never repeated tool
         # side effects.
+        #
+        # Accepted residual: if the wake turn errored, the row it left behind is
+        # resumed and delivered as the reply rather than falling back to the
+        # standard completion notice. That needs the wake delivery AND the
+        # fallback to have failed first, and the row carries the turn's own
+        # user-facing text, so it is degraded rather than wrong -- and the
+        # alternative is re-running the tools.
         undelivered = await (
             exec_context.db_context.message_history.get_undelivered_terminal_reply(
                 wake_turn_id
