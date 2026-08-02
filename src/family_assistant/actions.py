@@ -4,6 +4,7 @@ Shared action execution logic for both event listeners and scheduled tasks.
 
 import logging
 import time
+import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -117,7 +118,10 @@ async def execute_action(
         if "context" in action_config:
             callback_context["message"] = action_config["context"]
 
-        task_id = f"action_{int(time.time() * 1000)}"
+        # The uuid suffix, not just the millisecond stamp: one event can
+        # match several listeners, and their enqueues land well inside the
+        # same millisecond. task_id is unique, so a bare stamp collides.
+        task_id = f"action_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
 
         payload: LlmCallbackPayload = {
             "interface_type": interface_type,
@@ -144,7 +148,7 @@ async def execute_action(
         )
 
     elif action_type == ActionType.SCRIPT:
-        task_id = f"script_{int(time.time() * 1000)}"
+        task_id = f"script_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
 
         script_payload: dict[str, object] = {
             "config": action_config,

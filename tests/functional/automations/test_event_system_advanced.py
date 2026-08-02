@@ -12,13 +12,17 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant import actions as actions_module
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import Database
+from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.events import EventSourceType, recent_events_table
+from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.types import EventListenerDict
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
 from family_assistant.tools import (
     CompositeToolsProvider,
@@ -390,40 +394,51 @@ async def test_end_to_end_event_listener_wakes_llm(
 
 
 @pytest.mark.asyncio
-async def test_failing_listener_surfaces_to_the_event_caller(
+async def test_failing_listener_undoes_the_ones_that_already_ran(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A dropped listener action fails the event instead of reporting success.
+    """One event, two matched listeners: a failure in the second undoes the first.
 
-    A webhook source that saw success here would acknowledge the event, and the
-    sender would never retry the action that was lost. The event is still
-    recorded first, so the record of what happened survives the failure.
+    The failure has to reach the caller, or a webhook source acknowledges an
+    event whose action was dropped and the sender never retries. That retry
+    replays the whole event, so a listener that had committed on its own would
+    fire a second time.
     """
     db_ctx = Database(db_engine)
-    await db_ctx.execute(
-        text("""INSERT INTO event_listeners
-                 (name, match_conditions, source_id, action_type, enabled,
-                  conversation_id, interface_type, one_time)
-                 VALUES (:name, :conditions, :source_id, :action_type, :enabled,
-                         :conversation_id, :interface_type, :one_time)"""),
-        {
-            "name": "Failing alert",
-            "conditions": json.dumps({"entity_id": "binary_sensor.back_door"}),
-            "source_id": EventSourceType.home_assistant.value,
-            "action_type": "wake_llm",
-            "enabled": True,
-            "conversation_id": "test_chat_789",
-            "interface_type": "telegram",
-            "one_time": False,
-        },
-    )
+    for name in ("Succeeding alert", "Failing alert"):
+        await db_ctx.execute(
+            text("""INSERT INTO event_listeners
+                     (name, match_conditions, source_id, action_type, enabled,
+                      conversation_id, interface_type, one_time)
+                     VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                             :conversation_id, :interface_type, :one_time)"""),
+            {
+                "name": name,
+                "conditions": json.dumps({"entity_id": "binary_sensor.back_door"}),
+                "source_id": EventSourceType.home_assistant.value,
+                "action_type": "wake_llm",
+                "enabled": True,
+                "conversation_id": "test_chat_789",
+                "interface_type": "telegram",
+                "one_time": False,
+            },
+        )
 
-    async def fail_action(*args: object, **kwargs: object) -> None:
-        _ = args, kwargs
-        raise RuntimeError("action enqueue unavailable")
+    real_execute = EventProcessor._execute_action_in_context
 
-    monkeypatch.setattr(EventProcessor, "_execute_action_in_context", fail_action)
+    async def fail_the_second(
+        self: EventProcessor,
+        db_ctx: DatabaseTransaction,
+        listener: EventListenerDict,
+        # ast-grep-ignore: no-dict-any - mirrors the patched method's own signature for arbitrary event payloads
+        event_data: dict[str, Any],
+    ) -> None:
+        if listener["name"] == "Failing alert":
+            raise RuntimeError("action enqueue unavailable")
+        await real_execute(self, db_ctx, listener, event_data)
+
+    monkeypatch.setattr(EventProcessor, "_execute_action_in_context", fail_the_second)
 
     processor = EventProcessor(
         sources={},
@@ -440,8 +455,67 @@ async def test_failing_listener_surfaces_to_the_event_caller(
         )
 
     monkeypatch.undo()
-    stored = await Database(db_engine).fetch_all(select(recent_events_table))
-    assert stored, "the event should be recorded before the failure is raised"
+    db_ctx = Database(db_engine)
+    queued = await db_ctx.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert queued == [], "the succeeding listener's action must not survive"
+    assert await db_ctx.fetch_all(select(recent_events_table)) == []
+
+
+@pytest.mark.asyncio
+async def test_two_listeners_on_one_event_both_enqueue_their_action(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Actions from the same event get distinct task ids.
+
+    The clock is frozen because that is the case worth pinning: task ids built
+    from a millisecond stamp alone collide on the unique constraint when two
+    enqueues land in the same millisecond, which measurably happens across a
+    round trip -- and now that the listeners share a transaction, the collision
+    would lose the whole event rather than one listener's action.
+    """
+    monkeypatch.setattr(actions_module.time, "time", lambda: 1_700_000_000.0)
+
+    db_ctx = Database(db_engine)
+    for name in ("First alert", "Second alert"):
+        await db_ctx.execute(
+            text("""INSERT INTO event_listeners
+                     (name, match_conditions, source_id, action_type, enabled,
+                      conversation_id, interface_type, one_time)
+                     VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                             :conversation_id, :interface_type, :one_time)"""),
+            {
+                "name": name,
+                "conditions": json.dumps({"entity_id": "binary_sensor.side_door"}),
+                "source_id": EventSourceType.home_assistant.value,
+                "action_type": "wake_llm",
+                "enabled": True,
+                "conversation_id": "test_chat_two",
+                "interface_type": "telegram",
+                "one_time": False,
+            },
+        )
+
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: Database(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    await processor.process_event(
+        "home_assistant", {"entity_id": "binary_sensor.side_door"}
+    )
+
+    queued = await Database(db_engine).fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert len(queued) == 2
+    assert len({row["task_id"] for row in queued}) == 2
 
 
 @pytest.mark.asyncio
