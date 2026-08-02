@@ -1068,6 +1068,10 @@ async def api_chat_create_turn(
                     "turn instead of starting a new one."
                 ),
                 "active_turn_id": running_turn.turn_id,
+                # Where that turn's events start in the hub buffer, so a client
+                # that lost its stream resubscribes to the running turn alone
+                # rather than replaying the whole conversation from seq 0.
+                "active_turn_first_seq": running_turn.first_seq,
             },
         )
 

@@ -283,15 +283,17 @@ only a different `turn_id` arriving while a turn is running is refused.
 {
   "detail": {
     "message": "This conversation already has a running turn. Steer that turn instead of starting a new one.",
-    "active_turn_id": "uuid-of-the-running-turn"
+    "active_turn_id": "uuid-of-the-running-turn",
+    "active_turn_first_seq": 12
   }
 }
 ```
 
 Send the message to the running turn with [Steer a Turn](#steer-a-turn) rather than starting a new
 one; `active_turn_id` is the turn to target. A client that has lost track of the running turn (its
-stream dropped, or the app was suspended and resumed) reaches this case, and the returned id is
-enough to recover without a second round trip.
+stream dropped, or the app was suspended and resumed) reaches this case, and the payload is enough
+to recover without a second round trip: steer the prompt into `active_turn_id`, then subscribe from
+`active_turn_first_seq` to replay that turn's events without dragging in earlier turns'.
 
 ##### Subscribe to the Conversation Stream
 

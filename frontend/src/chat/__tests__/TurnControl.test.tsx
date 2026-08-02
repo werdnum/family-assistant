@@ -765,4 +765,158 @@ describe('Web turn control (Stop / Steer)', () => {
     },
     { timeout: 30000 }
   );
+
+  // A send that arrives while the conversation already has a running turn is
+  // refused with 409. The client only gets there having lost track of that turn
+  // (its stream dropped, the tab was hidden and resumed), so the message is the
+  // steer it meant to send — it must reach the running turn, not raise an error.
+  function installConflictingTurn(
+    runningTurnId: string,
+    runningTurnFirstSeq: number
+  ): {
+    ready: Promise<ReadableStreamDefaultController<Uint8Array>>;
+    steerBodies: Array<{ conversation_id: string; prompt: string }>;
+    steeredTurnIds: string[];
+    streamFromSeqs: Array<string | null>;
+  } {
+    const encoder = new TextEncoder();
+    const steerBodies: Array<{ conversation_id: string; prompt: string }> = [];
+    const steeredTurnIds: string[] = [];
+    const streamFromSeqs: Array<string | null> = [];
+    let resolveController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+    const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
+      resolveController = resolve;
+    });
+
+    server.use(
+      http.post('/api/v1/chat/turns', () =>
+        HttpResponse.json(
+          {
+            detail: {
+              message: 'This conversation already has a running turn.',
+              active_turn_id: runningTurnId,
+              active_turn_first_seq: runningTurnFirstSeq,
+            },
+          },
+          { status: 409 }
+        )
+      ),
+      http.post('/api/v1/chat/turns/:turnId/steer', async ({ request, params }) => {
+        steeredTurnIds.push(String(params.turnId));
+        steerBodies.push((await request.json()) as { conversation_id: string; prompt: string });
+        return HttpResponse.json({ accepted: true });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+        streamFromSeqs.push(new URL(request.url).searchParams.get('from_seq'));
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_started\ndata: ${JSON.stringify({
+                  turn_id: runningTurnId,
+                  seq: runningTurnFirstSeq,
+                })}\n\n`
+              )
+            );
+            resolveController(controller);
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      })
+    );
+
+    return { ready, steerBodies, steeredTurnIds, streamFromSeqs };
+  }
+
+  it(
+    'a send refused by a running turn is delivered to that turn and follows it',
+    async () => {
+      const { ready, steerBodies, steeredTurnIds, streamFromSeqs } = installConflictingTurn(
+        'running-turn-1',
+        7
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Ah it was a dental x-ray');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(steerBodies).toHaveLength(1);
+      }, WAIT);
+      expect(steerBodies[0].prompt).toBe('Ah it was a dental x-ray');
+      expect(steeredTurnIds[0]).toBe('running-turn-1');
+
+      // Followed from where the running turn began, so its own events replay
+      // without dragging in earlier turns'.
+      const controller = await ready;
+      expect(streamFromSeqs[0]).toBe('7');
+
+      // The running turn echoes the steer back. The composer already rendered
+      // this prompt optimistically when it was sent, so the echo must not
+      // produce a second copy of it.
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: 'running-turn-1',
+          content: 'Ah it was a dental x-ray',
+          seq: 8,
+        })
+      );
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-1', content: 'Got it, dental.', seq: 9 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Got it, dental.')).toBeInTheDocument();
+      }, WAIT);
+      // Scoped to the message bubbles: the prompt also appears in the sidebar
+      // as the conversation's last-message preview.
+      const promptBubbles = screen
+        .getAllByTestId('user-message-content')
+        .filter((el) => el.textContent?.includes('Ah it was a dental x-ray'));
+      expect(promptBubbles).toHaveLength(1);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-1', status: 'complete', seq: 10 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'a later steer on an adopted turn still renders its own bubble',
+    async () => {
+      // Only the adopted send's own echo is swallowed; the dedupe must not eat
+      // every subsequent user_input on that turn.
+      const { ready } = installConflictingTurn('running-turn-2', 3);
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'adopted prompt');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      controller.enqueue(
+        sse('user_input', { turn_id: 'running-turn-2', content: 'adopted prompt', seq: 4 })
+      );
+      controller.enqueue(
+        sse('user_input', { turn_id: 'running-turn-2', content: 'and one more thing', seq: 5 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('and one more thing')).toBeInTheDocument();
+      }, WAIT);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-2', status: 'complete', seq: 6 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
 });

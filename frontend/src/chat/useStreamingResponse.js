@@ -96,7 +96,9 @@ export const useStreamingResponse = ({
       // Client-generated turn id makes the kickoff idempotent: a retried POST
       // with the same id returns the existing turn instead of starting a
       // second producer.
-      const effectiveTurnId =
+      // Reassigned only when the server refuses this turn because the
+      // conversation already has one running and we adopt that turn instead.
+      let effectiveTurnId =
         turnId ||
         (typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()
@@ -154,7 +156,29 @@ export const useStreamingResponse = ({
           signal: abortControllerRef.current.signal,
         });
 
-        if (!startResponse.ok) {
+        // A conversation runs one turn at a time, so the server refuses this one
+        // if it already has a running turn (409) and names the turn instead. We
+        // only get here having believed nothing was running — the composer falls
+        // back to a plain send when it has lost its turn handle (its stream
+        // dropped, the tab was hidden and resumed) — so this is that same
+        // message arriving at the wrong door. Deliver it to the running turn as
+        // a steer and follow that turn, rather than failing in front of the user.
+        let adoptedSteer = null;
+        if (startResponse.status === 409) {
+          const conflict = await startResponse.json().catch(() => ({}));
+          const runningTurnId = conflict?.detail?.active_turn_id;
+          if (runningTurnId) {
+            adoptedSteer = {
+              turnId: runningTurnId,
+              // Subscribe from where the running turn began, not seq 0, so its
+              // own events replay without dragging in earlier turns'.
+              fromSeq: conflict.detail.active_turn_first_seq ?? 0,
+              prompt,
+            };
+          }
+        }
+
+        if (!startResponse.ok && !adoptedSteer) {
           if (startResponse.status === 401) {
             redirectToLogin();
             return;
@@ -163,19 +187,63 @@ export const useStreamingResponse = ({
           throw new Error(errorData.detail || `HTTP error! status: ${startResponse.status}`);
         }
 
-        const {
-          conversation_id: streamConversationId,
-          first_seq: firstSeq,
-          already_complete: alreadyComplete,
-          incomplete: durableIncomplete,
-        } = await startResponse.json();
-        const resolvedConversationId = streamConversationId || conversationId;
-        // Refine the live-turn record now that the server has resolved the
-        // conversation id (it generates one when the client omits it).
-        activeTurnRef.current = {
-          turnId: effectiveTurnId,
-          conversationId: resolvedConversationId,
-        };
+        let resolvedConversationId;
+        let firstSeq;
+        // Set only on the normal kickoff path; an adopted turn is live in the
+        // hub by definition, so it is never resolved from the durable record.
+        let durableTurnState = null;
+        // The one steer echo to swallow, because the caller already rendered
+        // this prompt optimistically as a normal send (see the user_input
+        // branch in the stream loop).
+        let pendingAdoptedEcho = null;
+        if (adoptedSteer) {
+          effectiveTurnId = adoptedSteer.turnId;
+          pendingAdoptedEcho = adoptedSteer.prompt;
+          resolvedConversationId = conversationId;
+          firstSeq = adoptedSteer.fromSeq;
+          activeTurnRef.current = {
+            turnId: effectiveTurnId,
+            conversationId: resolvedConversationId,
+          };
+          const steerUrl = `/api/v1/chat/turns/${encodeURIComponent(effectiveTurnId)}/steer`;
+          const steerResponse = await fetch(steerUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              conversation_id: resolvedConversationId,
+              prompt: adoptedSteer.prompt,
+            }),
+            signal: abortControllerRef.current.signal,
+          });
+          if (!steerResponse.ok) {
+            if (steerResponse.status === 401) {
+              redirectToLogin();
+              return;
+            }
+            // The turn ended between the 409 and the steer, or the steer failed
+            // outright. Either way the prompt was not delivered and must not be
+            // silently dropped; the caller surfaces this and keeps the text.
+            throw new Error(
+              `Could not deliver the message to the running turn (HTTP ${steerResponse.status})`
+            );
+          }
+        } else {
+          const {
+            conversation_id: streamConversationId,
+            first_seq: startFirstSeq,
+            already_complete: alreadyComplete,
+            incomplete: durableIncomplete,
+          } = await startResponse.json();
+          resolvedConversationId = streamConversationId || conversationId;
+          firstSeq = startFirstSeq;
+          durableTurnState = { alreadyComplete, durableIncomplete };
+          // Refine the live-turn record now that the server has resolved the
+          // conversation id (it generates one when the client omits it).
+          activeTurnRef.current = {
+            turnId: effectiveTurnId,
+            conversationId: resolvedConversationId,
+          };
+        }
 
         // The turn was resolved from the durable record (turn_id found in the
         // DB but not in the in-memory hub: restart / pruned / evicted). It is
@@ -183,8 +251,8 @@ export const useStreamingResponse = ({
         // history. If the durable record has no reply (incomplete: the turn was
         // interrupted by a crash/restart mid-turn), surface a recovery error
         // instead of silently showing the prompt alone.
-        if (alreadyComplete) {
-          if (durableIncomplete) {
+        if (durableTurnState?.alreadyComplete) {
+          if (durableTurnState.durableIncomplete) {
             onReloadHistory(resolvedConversationId, {
               errorIfNoReply: true,
               turnId: effectiveTurnId,
@@ -428,7 +496,19 @@ export const useStreamingResponse = ({
               // isn't appended to the assistant's streamed reply.
               if (eventType === 'user_input' || payload.type === 'user_input') {
                 if (payload.content) {
-                  onUserInput(payload.content);
+                  // A prompt we sent as a plain message and then re-routed into
+                  // the running turn echoes back here, but the caller already
+                  // rendered it optimistically when the send began. Swallow that
+                  // one echo so it doesn't appear twice; later steers on the
+                  // same turn (which the caller did not render) still show.
+                  if (
+                    pendingAdoptedEcho !== null &&
+                    payload.content.trim() === pendingAdoptedEcho.trim()
+                  ) {
+                    pendingAdoptedEcho = null;
+                  } else {
+                    onUserInput(payload.content);
+                  }
                 }
                 continue;
               }

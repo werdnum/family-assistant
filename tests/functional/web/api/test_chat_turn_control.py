@@ -1196,7 +1196,13 @@ async def test_second_turn_while_one_is_running_returns_409(
         release.set()
 
     assert rival.status_code == 409, rival.text
-    assert rival.json()["detail"]["active_turn_id"] == turn_id
+    detail = rival.json()["detail"]
+    assert detail["active_turn_id"] == turn_id
+    # The client resubscribes from here, so it follows the running turn alone
+    # instead of replaying the conversation from seq 0.
+    running = hub.get_turn(conversation_id, turn_id)
+    assert running is not None
+    assert detail["active_turn_first_seq"] == running.first_seq
 
     await wait_for_condition(
         _turn_complete(hub, conversation_id, turn_id), description="turn complete"
