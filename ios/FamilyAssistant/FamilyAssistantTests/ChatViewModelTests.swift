@@ -1809,6 +1809,67 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testTurnStartConflictPreservesDraftTypedWhileRequestIsInFlight() async throws {
+        let startResponse = HangingStream()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_edit/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_conflict_edit",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":[]
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .hangingStream(
+                    """
+                    {
+                      "detail": {
+                        "message": "This conversation already has a running turn.",
+                        "active_turn_id": "turn-won-edit-race"
+                      }
+                    }
+                    """,
+                    statusCode: 409,
+                    controller: startResponse
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-edit-race/steer"):
+                steerRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "original prompt")
+                return .json(
+                    #"{"turn_id":"turn-won-edit-race","conversation_id":"web_conv_conflict_edit","accepted":true}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_edit/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_edit")
+        model.draftText = "original prompt"
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        model.draftText = "typed while the send was pending"
+        startResponse.finish()
+        try await waitUntil { steerRequests.value == 1 }
+
+        XCTAssertEqual(model.draftText, "typed while the send was pending")
+    }
+
     func testSteerWithNoRunningTurnSendsComposerAsNormalMessage() async throws {
         // The main composer doubles as the steer input. When no turn is running,
         // tapping the action with composer text simply sends it as a normal new

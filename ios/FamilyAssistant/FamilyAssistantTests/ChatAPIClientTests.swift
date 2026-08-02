@@ -1043,9 +1043,13 @@ struct ChatMockResponse {
     /// An SSE response that delivers `initial` and then stays open until
     /// `controller` is finished or the request is cancelled, so a turn can be
     /// held in flight while the test drives other interactions.
-    static func hangingStream(_ initial: String, controller: HangingStream) -> ChatMockResponse {
+    static func hangingStream(
+        _ initial: String,
+        statusCode: Int = 200,
+        controller: HangingStream
+    ) -> ChatMockResponse {
         ChatMockResponse(
-            statusCode: 200,
+            statusCode: statusCode,
             data: Data(initial.utf8),
             headers: ["Content-Type": "text/event-stream"],
             hangingStream: controller
