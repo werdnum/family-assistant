@@ -971,6 +971,85 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'resends an adopted message the turn ended without ever consuming',
+    async () => {
+      // The adopted turn can already be streaming its final, tool-free response
+      // when the steer lands, in which case the LLM loop breaks before its
+      // drain and the message is never seen. Nothing else tracks it — the
+      // awaiting-echo list only covers steers the composer sent — so the turn
+      // has to end by resending it, or the send is silently lost.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+      let resolveAdopted: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const adoptedReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+        resolveAdopted = r;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          // Only the first send collides with the running turn; the recovery
+          // kickoff finds the conversation free.
+          if (turnsPosts === 1) {
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-7',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_unconsumed',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ accepted: true, queued_after_seq: 4 })
+        ),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              resolveAdopted(controller);
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'and the dentist too');
+      await user.keyboard('{Enter}');
+
+      // The adopted turn finishes without ever echoing the steered prompt.
+      const controller = await adoptedReady;
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-7', status: 'complete', seq: 5 })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      expect(kickoffPrompts[1]).toBe('and the dentist too');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'refuses to adopt a running turn when the send carried attachments',
     async () => {
       // Steering carries text only. Adopting here would answer the prompt with

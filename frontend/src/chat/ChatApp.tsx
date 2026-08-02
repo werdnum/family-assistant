@@ -751,11 +751,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       toolCalls: _toolCalls,
       completed = true,
       turnId,
+      unconsumedAdoptedPrompt = null,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
       completed?: boolean;
       turnId?: string;
+      unconsumedAdoptedPrompt?: string | null;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
@@ -936,6 +938,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         if (unEchoed.length > 0) {
           awaitingEchoSteersRef.current = [];
           pendingFollowupsRef.current.push(...unEchoed);
+        }
+
+        // Same recovery for a message that was refused (409), delivered to the
+        // running turn as a steer, and then never drained because that turn was
+        // already finishing. It isn't in the awaiting-echo list — the hook sent
+        // that steer, not submitSteer — so without this the send is silently
+        // lost. Drop its optimistic user bubble first: the resend renders the
+        // prompt again, and the turn it was attributed to answered something
+        // else entirely.
+        if (unconsumedAdoptedPrompt) {
+          if (turnId) {
+            setMessages((prev) =>
+              prev.filter((msg) => !(msg.turnId === turnId && msg.role === 'user'))
+            );
+          }
+          pendingFollowupsRef.current.push(unconsumedAdoptedPrompt);
         }
 
         // Fire the next queued follow-up (a steer that hit an already-finished

@@ -93,6 +93,14 @@ export const useStreamingResponse = ({
       // attach_to_response tool call so queued attachments render in the UI.
       const autoAttachments = [];
 
+      // The echo of a prompt delivered to an adopted turn, cleared once that
+      // echo arrives. Declared out here so the completion report below can see
+      // whether it ever did: a turn that was already streaming its final,
+      // tool-free response never drains what the steer queued, and an adopted
+      // prompt left unconsumed at turn_ended has to be resent or it is simply
+      // lost. `{ prompt, afterSeq }` — see the adoption branch.
+      let pendingAdoptedEcho = null;
+
       // Client-generated turn id makes the kickoff idempotent: a retried POST
       // with the same id returns the existing turn instead of starting a
       // second producer.
@@ -211,12 +219,10 @@ export const useStreamingResponse = ({
         // Set only on the normal kickoff path; an adopted turn is live in the
         // hub by definition, so it is never resolved from the durable record.
         let durableTurnState = null;
-        // The one steer echo to swallow, because the caller already rendered
-        // this prompt optimistically as a normal send (see the user_input
-        // branch in the stream loop). `{ prompt, afterSeq }` — afterSeq is the
-        // stream head when the steer was queued, so the echo is published above
-        // it and anything at or below is the turn's earlier work.
-        let pendingAdoptedEcho = null;
+        // `pendingAdoptedEcho` (declared above the try) is the one steer echo to
+        // swallow, because the caller already rendered this prompt optimistically
+        // as a normal send. afterSeq is the stream head when the steer was
+        // queued, so the echo is published above it.
         if (adoptedSteer) {
           effectiveTurnId = adoptedSteer.turnId;
           resolvedConversationId = conversationId;
@@ -772,6 +778,13 @@ export const useStreamingResponse = ({
           // The turn actually followed is reported separately.
           turnId: kickoffTurnId,
           streamedTurnId: effectiveTurnId,
+          // Still set means the adopted turn ended without ever consuming this
+          // prompt — it was already streaming a final, tool-free response when
+          // the steer landed, so the loop broke before its drain. Nothing else
+          // tracks it (the caller's awaiting-echo list only covers steers it
+          // sent itself), so the caller must resend it as a new turn or the
+          // message is lost — the exact failure this whole change is about.
+          unconsumedAdoptedPrompt: pendingAdoptedEcho?.prompt ?? null,
         });
         abortControllerRef.current = null;
         activeTurnRef.current = null;
