@@ -957,6 +957,82 @@ async def test_source_wake_delivery_failure_falls_back_without_recording_deliver
 
 
 @pytest.mark.asyncio
+async def test_source_wake_retry_resumes_at_delivery_without_rerunning_the_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    """A retried wake delivers the reply it already generated, and does not re-wake.
+
+    The wake turn's tools commit as they run, so re-running generation would
+    repeat their side effects. Both the wake delivery and the fallback fail on
+    the first attempt, which is what leaves the task to be retried with
+    notified_at still NULL.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = FakeWakeCapableSourceService(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = [None, None, "delivered_on_retry"]
+
+    clock = SystemClock()
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_source_wake_retry")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_source_wake_retry", clock.now()
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_source_wake_retry",
+        result_text="done, eventually delivered",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
+
+    worker = _build_worker(
+        db_engine,
+        cast("ProcessingService", processing_service),
+        chat_interface,
+    )
+    with pytest.raises(Exception, match="delegation_source_wake_retry"):
+        await worker.handle_delegated_profile_run(
+            _tool_context(
+                Database(engine=db_engine),
+                cast("ProcessingService", processing_service),
+                chat_interface,
+            ),
+            _payload("delegation_source_wake_retry"),
+        )
+
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            Database(engine=db_engine),
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_source_wake_retry"),
+    )
+
+    # The retry resumed at delivery: the source profile was woken exactly once,
+    # so none of its tools ran twice.
+    assert processing_service.wake_call_count == 1
+
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_source_wake_retry"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+
+    rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .order_by(message_history_table.c.internal_id)
+    )
+    relay_rows = [
+        row for row in rows if row["content"] == "source relayed delegated result"
+    ]
+    assert len(relay_rows) == 1
+    assert relay_rows[0]["interface_message_id"] == "delivered_on_retry"
+
+
+@pytest.mark.asyncio
 async def test_source_wake_error_result_falls_back_to_direct_notification(
     db_engine: AsyncEngine,
 ) -> None:

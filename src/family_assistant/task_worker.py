@@ -37,6 +37,7 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import (
     PENDING,
+    ChatInteractionResult,
     DelegationPermanentError,
     DelegationTaskNotFoundError,
     DelegationTransientError,
@@ -74,7 +75,6 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.processing.types import (
-        ChatInteractionResult,
         RequestConfirmationCallback,
     )
     from family_assistant.scripting.monty_engine import WakeRequest
@@ -253,6 +253,21 @@ _TASK_TURN_NAMESPACE = uuid.UUID("6f2f1d4e-6a3f-4f2a-9d1e-9c1b2a3d4e5f")
 def _turn_id_for_task(task_id: str) -> str:
     """The turn id every attempt of ``task_id`` shares."""
     return str(uuid.uuid5(_TASK_TURN_NAMESPACE, task_id))
+
+
+# Separate namespace so a delegation's wake turn can never collide with the
+# turn of the task that happens to be driving the notification.
+_DELEGATION_WAKE_TURN_NAMESPACE = uuid.UUID("2b6b7f52-0f8a-4a6f-9b3d-7c5e1a0d8f24")
+
+
+def _turn_id_for_delegation_wake(delegation_id: str) -> str:
+    """The turn id every attempt at waking the source profile shares.
+
+    A run notifies at most once (``notified_at``), so the delegation id is the
+    identity of the wake turn, and every retry of the notification lands on the
+    same turn rather than generating a fresh one.
+    """
+    return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, delegation_id))
 
 
 class LlmCallbackPayload(TypedDict, total=False):
@@ -2199,7 +2214,40 @@ class TaskWorker:
         )
         trigger_text = self._delegation_wakeup_text(run)
         source_subconversation_id = run["source_subconversation_id"]
-        wake_turn_id = str(uuid.uuid4())
+        wake_turn_id = _turn_id_for_delegation_wake(run["delegation_id"])
+
+        # --- Delivery checkpoint ---
+        # Under commit-as-you-go this turn's messages and its tools' writes are
+        # durable as soon as they happen, so a retry that re-ran phase 2 would
+        # repeat every stateful tool the source profile used. An assistant reply
+        # on this turn with no interface_message_id is exactly "generated but
+        # never delivered", so resume at phase 3 instead. Re-sending is the
+        # accepted cost: a duplicate message at worst, never repeated tool
+        # side effects.
+        undelivered = await (
+            exec_context.db_context.message_history.get_undelivered_terminal_reply(
+                wake_turn_id
+            )
+        )
+        if undelivered is not None:
+            logger.info(
+                "Resuming delegation wake turn %s at delivery; the source profile "
+                "already generated its response on an earlier attempt.",
+                wake_turn_id,
+            )
+            return await self._deliver_delegation_wake_response(
+                exec_context,
+                run,
+                ChatInteractionResult.success(
+                    text_reply=undelivered["content"] or "",
+                    assistant_message_internal_id=undelivered["internal_id"],
+                    attachment_ids=_attachment_ids_from_row(undelivered) or None,
+                ),
+                chat_interface,
+                clock,
+                wake_turn_id,
+                undelivered["thread_root_id"],
+            )
 
         # Phase 1: Commit the wakeup message before the LLM turn.
         wakeup_data_taint_metadata = await _delegation_result_taint_metadata(
@@ -2260,6 +2308,32 @@ class TaskWorker:
         )
 
         # Phase 3: deliver, then record the delivery and mark notified atomically.
+        return await self._deliver_delegation_wake_response(
+            exec_context,
+            run,
+            result,
+            chat_interface,
+            clock,
+            wake_turn_id,
+            data_message_internal_id,
+        )
+
+    async def _deliver_delegation_wake_response(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        result: ChatInteractionResult,
+        chat_interface: ChatInterface | None,
+        clock: Clock,
+        wake_turn_id: str,
+        thread_root_id: int | None,
+    ) -> int | None:
+        """Deliver a wake turn's response, then record it and mark notified.
+
+        Split out from generation so a retry can re-enter here with the reply a
+        previous attempt already persisted, rather than waking the source
+        profile a second time.
+        """
         sent_message_id = await self._send_source_profile_delegation_response(
             run, result, chat_interface
         )
@@ -2273,7 +2347,7 @@ class TaskWorker:
                     chat_interface,
                     clock,
                     wake_turn_id,
-                    data_message_internal_id,
+                    thread_root_id,
                     sent_message_id,
                 )
             )
@@ -2306,7 +2380,7 @@ class TaskWorker:
         chat_interface: ChatInterface | None,
         clock: Clock,
         wake_turn_id: str,
-        thread_root_id: int,
+        thread_root_id: int | None,
         sent_message_id: str | None,
     ) -> int | None:
         """Record the source profile's response to a terminal delegation wakeup."""
