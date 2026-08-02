@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.web.routers.asterisk_live_api import AsteriskLiveHandler
 
@@ -367,8 +367,8 @@ class TestCallTranscriptSaving:
 
         await handler._save_call_transcript()
 
-        async with get_db_context(db_engine) as db:
-            notes = await db.notes.get_all(visibility_grants=None)
+        db = Database(db_engine)
+        notes = await db.notes.get_all(visibility_grants=None)
         assert len(notes) == 1
         note = notes[0]
 
@@ -394,8 +394,8 @@ class TestCallTranscriptSaving:
 
         await handler._save_call_transcript()
 
-        async with get_db_context(db_engine) as db:
-            notes = await db.notes.get_all(visibility_grants=None)
+        db = Database(db_engine)
+        notes = await db.notes.get_all(visibility_grants=None)
         assert len(notes) == 1
         note = notes[0]
 
@@ -420,18 +420,18 @@ class TestCallTranscriptSaving:
 
         call_time = datetime.fromtimestamp(handler._call_start_time, tz=ZoneInfo("UTC"))
         title = f"Call Transcript: 100 - {call_time.strftime('%Y-%m-%d %H:%M')}"
-        async with get_db_context(db_engine) as db:
-            await db.notes.add_or_update(
-                title=title,
-                content="pre-fix transcript",
-                visibility_labels=[],
-                write_policy=NoteWritePolicy.UNCONSTRAINED,
-            )
+        db = Database(db_engine)
+        await db.notes.add_or_update(
+            title=title,
+            content="pre-fix transcript",
+            visibility_labels=[],
+            write_policy=NoteWritePolicy.UNCONSTRAINED,
+        )
 
         await handler._save_call_transcript()
 
-        async with get_db_context(db_engine) as db:
-            note = await db.notes.get_by_title(title, visibility_grants=None)
+        db = Database(db_engine)
+        note = await db.notes.get_by_title(title, visibility_grants=None)
         assert note is not None
         assert "[00:00] Caller: Hello" in note.content
         assert note.visibility_labels == ["telephone_logs"]
@@ -445,8 +445,8 @@ class TestCallTranscriptSaving:
 
         await handler._save_call_transcript()
 
-        async with get_db_context(db_engine) as db:
-            notes = await db.notes.get_all(visibility_grants=None)
+        db = Database(db_engine)
+        notes = await db.notes.get_all(visibility_grants=None)
         assert len(notes) == 1
         note = notes[0]
 

@@ -48,7 +48,7 @@ from family_assistant.services.confirmation_waiters import (
 from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
@@ -146,9 +146,8 @@ def _get_confirmation_service(request: Request) -> ConfirmationService:
     service = getattr(request.app.state, "confirmation_service", None)
     if isinstance(service, ConfirmationService):
         return service
-    service = ConfirmationService(
-        db_context_factory=lambda: get_db_context(request.app.state.database_engine)
-    )
+    engine = request.app.state.database_engine
+    service = ConfirmationService(db=Database(engine))
     request.app.state.confirmation_service = service
     return service
 
@@ -167,7 +166,7 @@ def _get_confirmation_result_waiters(
 async def _enrich_persisted_attachments(
     messages: list[MessageHistoryRow],
     *,
-    db_context: DatabaseContext,
+    db_context: Database,
     attachment_registry: "AttachmentRegistry",
     acting_user_id: str | None,
 ) -> None:
@@ -231,7 +230,7 @@ async def _process_user_attachments(
     payload: ChatPromptRequest,
     conversation_id: str,
     attachment_registry: "AttachmentRegistry",
-    db_context: DatabaseContext,
+    db_context: Database,
     user_id: str,
 ) -> tuple[list[ContentPartDict], list[MessageAttachmentMetadata] | None]:
     """
@@ -727,7 +726,7 @@ def _should_emit(event_type: str, allowed_event_types: frozenset[str] | None) ->
 
 
 async def _existing_send_message_response(
-    db_context: DatabaseContext,
+    db_context: Database,
     conversation_id: str,
     turn_id: str,
 ) -> ChatMessageResponse | None:
@@ -933,10 +932,10 @@ async def _ensure_user_owns_conversation(
         return raw_user_id
 
     # Persisted owners across ALL interface types.
-    async with get_db_context(request.app.state.database_engine) as db_context:
-        owners = await db_context.message_history.get_conversation_owner_ids(
-            conversation_id
-        )
+    db_context = Database(request.app.state.database_engine)
+    owners = await db_context.message_history.get_conversation_owner_ids(
+        conversation_id
+    )
     if not owners:
         # Brand-new / empty conversation: allowed for everyone, including the
         # subscribe path. The always-on live-update stream attaches to the
@@ -1008,23 +1007,23 @@ async def api_chat_create_turn(
     # the database — the user message is the durable record of "this turn was
     # already started" — and return the existing identity instead of starting a
     # duplicate producer.
-    async with get_db_context(request.app.state.database_engine) as idem_db:
-        existing_user_row = await idem_db.message_history.get_user_row_by_turn_id(
-            payload.turn_id
-        )
-        # The user row is now written before the producer runs (so a pre-start
-        # Stop keeps the prompt durable), so its mere existence no longer implies
-        # the turn produced a reply. Check for a TERMINAL assistant row to tell a
-        # finished turn (reload shows the reply) from one interrupted by a
-        # crash/restart mid-turn — including one that crashed after an
-        # intermediate tool-calling row but before its final reply (those rows
-        # carry tool_calls and are not terminal). The client surfaces a recovery
-        # path for an interrupted turn instead of silently showing the prompt.
-        turn_has_terminal_reply = (
-            await idem_db.message_history.has_terminal_reply_for_turn(payload.turn_id)
-            if existing_user_row is not None
-            else False
-        )
+    idem_db = Database(request.app.state.database_engine)
+    existing_user_row = await idem_db.message_history.get_user_row_by_turn_id(
+        payload.turn_id
+    )
+    # The user row is now written before the producer runs (so a pre-start
+    # Stop keeps the prompt durable), so its mere existence no longer implies
+    # the turn produced a reply. Check for a TERMINAL assistant row to tell a
+    # finished turn (reload shows the reply) from one interrupted by a
+    # crash/restart mid-turn — including one that crashed after an
+    # intermediate tool-calling row but before its final reply (those rows
+    # carry tool_calls and are not terminal). The client surfaces a recovery
+    # path for an interrupted turn instead of silently showing the prompt.
+    turn_has_terminal_reply = (
+        await idem_db.message_history.has_terminal_reply_for_turn(payload.turn_id)
+        if existing_user_row is not None
+        else False
+    )
     if existing_user_row is not None:
         if (
             existing_user_row.get("conversation_id") != conversation_id
@@ -1061,26 +1060,26 @@ async def api_chat_create_turn(
     trigger_attachments: list[MessageAttachmentMetadata] | None = None
     if payload.attachments:
         attachment_registry = await get_attachment_registry(request)
-        async with get_db_context(request.app.state.database_engine) as setup_db:
-            # Reuse the existing helper from this module; it expects a
-            # ChatPromptRequest-shaped payload.
-            shim_payload = ChatPromptRequest(
-                prompt=payload.prompt,
-                conversation_id=conversation_id,
-                profile_id=payload.profile_id,
-                interface_type=interface_type,
-                attachments=payload.attachments,
-            )
-            (
-                trigger_content_parts,
-                trigger_attachments,
-            ) = await _process_user_attachments(
-                shim_payload,
-                conversation_id,
-                attachment_registry,
-                setup_db,
-                user_id,
-            )
+        setup_db = Database(request.app.state.database_engine)
+        # Reuse the existing helper from this module; it expects a
+        # ChatPromptRequest-shaped payload.
+        shim_payload = ChatPromptRequest(
+            prompt=payload.prompt,
+            conversation_id=conversation_id,
+            profile_id=payload.profile_id,
+            interface_type=interface_type,
+            attachments=payload.attachments,
+        )
+        (
+            trigger_content_parts,
+            trigger_attachments,
+        ) = await _process_user_attachments(
+            shim_payload,
+            conversation_id,
+            attachment_registry,
+            setup_db,
+            user_id,
+        )
 
     # Fetch the attachment registry without raising: the producer only needs
     # it to resolve attachment metadata for attach_to_response tool calls, so
@@ -1125,50 +1124,48 @@ async def api_chat_create_turn(
     # duplicate. ``payload.prompt`` matches what the producer would store (the
     # first text part of the trigger content).
     try:
-        async with get_db_context(request.app.state.database_engine) as user_msg_db:
-            await user_msg_db.message_history.add_message(
-                UserMessage(
-                    content=payload.prompt,
-                    taint_metadata=TurnTaintState.empty().to_metadata(),
-                ),
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                interface_message_id=f"temp_{payload.turn_id}",
-                turn_id=payload.turn_id,
-                timestamp=datetime.now(UTC),
-                user_id=user_id,
-                attachments=trigger_attachments,
-                processing_profile_id=selected_processing_service.service_config.id,
+        user_msg_db = Database(request.app.state.database_engine)
+        await user_msg_db.message_history.add_message(
+            UserMessage(
+                content=payload.prompt,
+                taint_metadata=TurnTaintState.empty().to_metadata(),
+            ),
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=f"temp_{payload.turn_id}",
+            turn_id=payload.turn_id,
+            timestamp=datetime.now(UTC),
+            user_id=user_id,
+            attachments=trigger_attachments,
+            processing_profile_id=selected_processing_service.service_config.id,
+        )
+        history_limit, history_max_age = (
+            selected_processing_service.context_preparer.get_history_limits(
+                interface_type
             )
-            history_limit, history_max_age = (
-                selected_processing_service.context_preparer.get_history_limits(
-                    interface_type
-                )
-            )
-            initial_history_messages = await user_msg_db.message_history.get_recent(
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                limit=history_limit,
-                max_age=history_max_age,
-                processing_profile_id=(selected_processing_service.service_config.id),
-                subconversation_id=None,
-                current_time=selected_processing_service.clock.now(),
-            )
-            initial_history_taint_metadata = merge_history_taint(
-                initial_history_messages
-            ).to_metadata()
-            initial_context_taint_state = TurnTaintState.empty()
-            for source in await selected_processing_service.context_preparer.aggregate_context_taint_sources():
-                initial_context_taint_state = initial_context_taint_state.add_source(
-                    source
-                )
-            initial_context_taint_metadata = initial_context_taint_state.to_metadata()
-            initial_live_taint_state = TurnTaintState.from_metadata(
-                initial_history_taint_metadata
-            )
-            for source in initial_context_taint_state.sources:
-                initial_live_taint_state = initial_live_taint_state.add_source(source)
-            initial_live_taint_metadata = initial_live_taint_state.to_metadata()
+        )
+        initial_history_messages = await user_msg_db.message_history.get_recent(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            limit=history_limit,
+            max_age=history_max_age,
+            processing_profile_id=(selected_processing_service.service_config.id),
+            subconversation_id=None,
+            current_time=selected_processing_service.clock.now(),
+        )
+        initial_history_taint_metadata = merge_history_taint(
+            initial_history_messages
+        ).to_metadata()
+        initial_context_taint_state = TurnTaintState.empty()
+        for source in await selected_processing_service.context_preparer.aggregate_context_taint_sources():
+            initial_context_taint_state = initial_context_taint_state.add_source(source)
+        initial_context_taint_metadata = initial_context_taint_state.to_metadata()
+        initial_live_taint_state = TurnTaintState.from_metadata(
+            initial_history_taint_metadata
+        )
+        for source in initial_context_taint_state.sources:
+            initial_live_taint_state = initial_live_taint_state.add_source(source)
+        initial_live_taint_metadata = initial_live_taint_state.to_metadata()
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
         # thus no done-callback safety net), so without ending it here the
@@ -1640,8 +1637,8 @@ async def _reject_pending_confirmations_for_turn(
     """
     confirmation_service = _get_confirmation_service(request)
     try:
-        async with get_db_context(request.app.state.database_engine) as db:
-            user_row = await db.message_history.get_user_row_by_turn_id(turn_id)
+        db = Database(request.app.state.database_engine)
+        user_row = await db.message_history.get_user_row_by_turn_id(turn_id)
         if user_row is None:
             return
         source_internal_id = user_row["internal_id"]
@@ -1846,7 +1843,7 @@ async def api_chat_send_message(
     default_processing_service: Annotated[
         ProcessingService, Depends(get_processing_service)
     ],  # Renamed for clarity
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     web_chat_interface: Annotated["WebChatInterface", Depends(get_web_chat_interface)],
 ) -> ChatMessageResponse:
     """
@@ -2118,7 +2115,7 @@ async def api_chat_send_message(
         _ACTIVITY_PUBLISH_TASKS.add(activity_task)
         activity_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
 
-    db_context.on_commit(_publish_send_nudges)
+    _publish_send_nudges()
 
     return ChatMessageResponse(
         reply=final_reply_content,  # Back to original field name
@@ -2133,7 +2130,7 @@ async def api_chat_send_message(
 async def get_conversations(
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     limit: int = 20,
     offset: int = 0,
     interface_type: str | None = None,
@@ -2249,7 +2246,7 @@ async def get_conversation_messages(
     conversation_id: str,
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     attachment_registry: Annotated[
         "AttachmentRegistry", Depends(get_attachment_registry)
     ],
@@ -2457,7 +2454,7 @@ async def api_chat_save_voice_session(
     payload: VoiceSessionRequest,
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> VoiceSessionResponse:
     """Persist a completed native-voice conversation as its own chat conversation.
 

@@ -7,7 +7,7 @@ import logging
 from pywebpush import WebPushException, webpush
 
 from family_assistant.services.notifier import NotificationMetadata
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.push_subscription import (
     PushSubscription as PushSubscriptionModel,
 )
@@ -46,7 +46,7 @@ class PushNotificationService:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:

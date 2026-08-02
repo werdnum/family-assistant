@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
+from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import notify_workers, tasks_table
 from family_assistant.storage.types import TaskDict
@@ -75,13 +76,19 @@ class TasksRepository(BaseRepository):
             if v is not None or k in {"payload", "error"}
         }
 
-        try:
-            # Check if this is a system task (starts with "system_")
-            is_system_task = task_id.startswith("system_")
+        # Check if this is a system task (starts with "system_")
+        is_system_task = task_id.startswith("system_")
 
+        async def _enqueue(txn: DatabaseTransaction) -> None:
+            """Write the row and arm the worker wake, as one unit.
+
+            The SQLite branch reads before it writes, and the wake must not fire
+            before the row is visible -- an idle sibling would poll an empty
+            queue, clear its event, and miss the row until the next 5s poll.
+            """
             if is_system_task:
                 # For system tasks, do an upsert to handle re-scheduling
-                if self._db.engine.dialect.name == "postgresql":
+                if txn.dialect_name == "postgresql":
                     # PostgreSQL: Use ON CONFLICT DO UPDATE
                     stmt = pg_insert(tasks_table).values(**values_to_insert)
                     # Only update fields that might change for system tasks
@@ -107,8 +114,8 @@ class TasksRepository(BaseRepository):
                             recurrence_rule=recurrence_rule,
                         )
                     )
-                    result = await self._db.execute_with_retry(update_stmt)
-                    if result.rowcount == 0:  # type: ignore[attr-defined]
+                    result = await txn.execute(update_stmt)
+                    if result.rowcount == 0:
                         # Task doesn't exist, do INSERT
                         stmt = insert(tasks_table).values(**values_to_insert)
                     else:
@@ -119,7 +126,7 @@ class TasksRepository(BaseRepository):
                 stmt = insert(tasks_table).values(**values_to_insert)
 
             if stmt is not None:
-                await self._db.execute_with_retry(stmt)
+                await txn.execute(stmt)
 
             # If task is immediate, wake all workers in the pool. Fanning out to
             # every registered per-worker wake event (plus the legacy global event)
@@ -132,12 +139,14 @@ class TasksRepository(BaseRepository):
             if not processed_scheduled_at or processed_scheduled_at <= datetime.now(
                 UTC
             ):
-                self._db.on_commit(notify_workers)
+                txn.on_commit(notify_workers)
 
             logger.info(
                 f"Successfully enqueued task: {task_id} (type: {task_type}, scheduled: {processed_scheduled_at})"
             )
 
+        try:
+            await self._db.atomic(_enqueue)
         except IntegrityError as e:
             # For non-system tasks, this is an error
             if not is_system_task:
@@ -183,83 +192,12 @@ class TasksRepository(BaseRepository):
         task_timeout_minutes = 15
         stale_task_cutoff = current_time - timedelta(minutes=task_timeout_minutes)
 
-        if self._db.engine.dialect.name == "postgresql":
-            # PostgreSQL: Use SELECT FOR UPDATE SKIP LOCKED for true atomic dequeue
-            stmt = (
-                select(tasks_table)
-                .where(
-                    or_(
-                        # Normal pending tasks
-                        tasks_table.c.status == "pending",
-                        # Stalled processing tasks (worker likely crashed)
-                        and_(
-                            tasks_table.c.status == "processing",
-                            tasks_table.c.locked_at <= stale_task_cutoff,
-                        ),
-                    ),
-                    tasks_table.c.task_type.in_(task_types),
-                    or_(
-                        tasks_table.c.scheduled_at.is_(None),
-                        tasks_table.c.scheduled_at <= current_time,
-                    ),
-                    tasks_table.c.retry_count <= tasks_table.c.max_retries,
-                )
-                .order_by(
-                    tasks_table.c.scheduled_at.asc().nullsfirst(),
-                    tasks_table.c.retry_count.asc(),
-                    tasks_table.c.created_at.asc(),
-                )
-                .limit(1)
-                .with_for_update(skip_locked=True)
-            )
-
-            row = await self._db.fetch_one(stmt)
-            if row:
-                logger.info(
-                    f"DEQUEUE SUCCESS (PostgreSQL): Worker {worker_id} dequeued task {row['task_id']} (type: {row['task_type']})"
-                )
-                # Update the task to mark it as locked
-                update_stmt = (
-                    update(tasks_table)
-                    .where(tasks_table.c.id == row["id"])
-                    .values(
-                        status="processing", locked_by=worker_id, locked_at=current_time
-                    )
-                )
-                await self._db.execute_with_retry(update_stmt)
-                logger.debug(
-                    f"DEQUEUE LOCKED: Worker {worker_id} marked task {row['task_id']} as processing"
-                )
-                return cast("TaskDict", dict(row))
-            else:
-                logger.debug(
-                    f"DEQUEUE EMPTY (PostgreSQL): Worker {worker_id} found no available tasks"
-                )
-                return None
-        else:
-            # SQLite: Use atomic UPDATE to claim the first available task
-            # This ensures only one worker can claim each task
-            update_stmt = (
-                update(tasks_table)
-                .where(
-                    or_(
-                        # Normal pending tasks
-                        tasks_table.c.status == "pending",
-                        # Stalled processing tasks (worker likely crashed)
-                        and_(
-                            tasks_table.c.status == "processing",
-                            tasks_table.c.locked_at <= stale_task_cutoff,
-                        ),
-                    ),
-                    tasks_table.c.task_type.in_(task_types),
-                    or_(
-                        tasks_table.c.scheduled_at.is_(None),
-                        tasks_table.c.scheduled_at <= current_time,
-                    ),
-                    tasks_table.c.retry_count <= tasks_table.c.max_retries,
-                    # Use a subquery to enforce ordering and limit to first task
-                    tasks_table.c.id
-                    == select(tasks_table.c.id)
+        async def _claim(txn: DatabaseTransaction) -> TaskDict | None:
+            """Select a task and lock it, atomically -- the lock *is* the claim."""
+            if txn.dialect_name == "postgresql":
+                # PostgreSQL: SELECT FOR UPDATE SKIP LOCKED for true atomic dequeue
+                stmt = (
+                    select(tasks_table)
                     .where(
                         or_(
                             # Normal pending tasks
@@ -283,31 +221,108 @@ class TasksRepository(BaseRepository):
                         tasks_table.c.created_at.asc(),
                     )
                     .limit(1)
-                    .scalar_subquery(),
+                    .with_for_update(skip_locked=True)
                 )
-                .values(
-                    status="processing", locked_by=worker_id, locked_at=current_time
-                )
-            )
 
-            result = await self._db.execute_with_retry(update_stmt)
-            if result.rowcount > 0:  # type: ignore[attr-defined]
-                # Successfully claimed a task, now fetch it
-                fetch_stmt = (
-                    select(tasks_table)
-                    .where(
-                        tasks_table.c.locked_by == worker_id,
-                        tasks_table.c.status == "processing",
-                        tasks_table.c.task_type.in_(task_types),
+                row = await txn.fetch_one(stmt)
+                if row:
+                    logger.info(
+                        f"DEQUEUE SUCCESS (PostgreSQL): Worker {worker_id} dequeued task {row['task_id']} (type: {row['task_type']})"
                     )
-                    .order_by(tasks_table.c.locked_at.desc())
-                    .limit(1)
+                    # Update the task to mark it as locked
+                    update_stmt = (
+                        update(tasks_table)
+                        .where(tasks_table.c.id == row["id"])
+                        .values(
+                            status="processing",
+                            locked_by=worker_id,
+                            locked_at=current_time,
+                        )
+                    )
+                    await txn.execute(update_stmt)
+                    logger.debug(
+                        f"DEQUEUE LOCKED: Worker {worker_id} marked task {row['task_id']} as processing"
+                    )
+                    return cast("TaskDict", dict(row))
+                else:
+                    logger.debug(
+                        f"DEQUEUE EMPTY (PostgreSQL): Worker {worker_id} found no available tasks"
+                    )
+                    return None
+            else:
+                # SQLite: Use atomic UPDATE to claim the first available task
+                # This ensures only one worker can claim each task
+                update_stmt = (
+                    update(tasks_table)
+                    .where(
+                        or_(
+                            # Normal pending tasks
+                            tasks_table.c.status == "pending",
+                            # Stalled processing tasks (worker likely crashed)
+                            and_(
+                                tasks_table.c.status == "processing",
+                                tasks_table.c.locked_at <= stale_task_cutoff,
+                            ),
+                        ),
+                        tasks_table.c.task_type.in_(task_types),
+                        or_(
+                            tasks_table.c.scheduled_at.is_(None),
+                            tasks_table.c.scheduled_at <= current_time,
+                        ),
+                        tasks_table.c.retry_count <= tasks_table.c.max_retries,
+                        # Use a subquery to enforce ordering and limit to first task
+                        tasks_table.c.id
+                        == select(tasks_table.c.id)
+                        .where(
+                            or_(
+                                # Normal pending tasks
+                                tasks_table.c.status == "pending",
+                                # Stalled processing tasks (worker likely crashed)
+                                and_(
+                                    tasks_table.c.status == "processing",
+                                    tasks_table.c.locked_at <= stale_task_cutoff,
+                                ),
+                            ),
+                            tasks_table.c.task_type.in_(task_types),
+                            or_(
+                                tasks_table.c.scheduled_at.is_(None),
+                                tasks_table.c.scheduled_at <= current_time,
+                            ),
+                            tasks_table.c.retry_count <= tasks_table.c.max_retries,
+                        )
+                        .order_by(
+                            tasks_table.c.scheduled_at.asc().nullsfirst(),
+                            tasks_table.c.retry_count.asc(),
+                            tasks_table.c.created_at.asc(),
+                        )
+                        .limit(1)
+                        .scalar_subquery(),
+                    )
+                    .values(
+                        status="processing", locked_by=worker_id, locked_at=current_time
+                    )
                 )
-                task_row = await self._db.fetch_one(fetch_stmt)
-                if task_row:
-                    return cast("TaskDict", dict(task_row))
 
-            return None
+                result = await txn.execute(update_stmt)
+                if result.rowcount > 0:
+                    # Successfully claimed a task, now fetch it
+                    fetch_stmt = (
+                        select(tasks_table)
+                        .where(
+                            tasks_table.c.locked_by == worker_id,
+                            tasks_table.c.status == "processing",
+                            tasks_table.c.task_type.in_(task_types),
+                        )
+                        .order_by(tasks_table.c.locked_at.desc())
+                        .limit(1)
+                    )
+                    task_row = await txn.fetch_one(fetch_stmt)
+                    if task_row:
+                        return cast("TaskDict", dict(task_row))
+
+                return None
+
+        return await self._db.atomic(_claim)
 
     async def update_status(
         self,
@@ -335,8 +350,8 @@ class TasksRepository(BaseRepository):
             update(tasks_table).where(tasks_table.c.task_id == task_id).values(**values)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        if result.rowcount == 0:
             logger.warning(f"Task {task_id} not found for status update to {status}")
         else:
             error_msg = f" (error: {error})" if error else ""
@@ -378,8 +393,8 @@ class TasksRepository(BaseRepository):
             )
         )
 
-        result = await self._db.execute_with_retry(update_stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(update_stmt)
+        if result.rowcount == 0:
             logger.error(
                 f"RESCHEDULE FAILED: Task {task_id} not found for retry scheduling"
             )
@@ -527,9 +542,9 @@ class TasksRepository(BaseRepository):
             )
         )
 
-        result = await self._db.execute_with_retry(update_stmt)
+        result = await self._db.execute(update_stmt)
 
-        if result.rowcount > 0:  # type: ignore[attr-defined]
+        if result.rowcount > 0:
             logger.info(
                 f"Successfully queued task {task['task_id']} for manual retry. "
                 f"Max retries increased to {new_max_retries}."
@@ -582,9 +597,9 @@ class TasksRepository(BaseRepository):
             .values(status="cancelled")
         )
 
-        result = await self._db.execute_with_retry(update_stmt)
+        result = await self._db.execute(update_stmt)
 
-        if result.rowcount > 0:  # type: ignore[attr-defined]
+        if result.rowcount > 0:
             logger.info(f"Successfully cancelled task {task['task_id']}.")
             return True
         else:

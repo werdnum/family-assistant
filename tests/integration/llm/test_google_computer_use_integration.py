@@ -15,7 +15,7 @@ from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.computer_use import (
     BrowserSession,
     close_browser_session,
@@ -476,46 +476,46 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
         processing_service = assistant.default_processing_service
 
         # Create a database context for the test
-        async with get_db_context(engine=db_engine) as db_context:
-            # Process the user's request through the full stack
-            # The ProcessingService will handle the LLM → tool → result loop
-            (
-                turn_messages,
-                reasoning_info,
-                attachment_ids,
-            ) = await processing_service.process_message(
-                db_context=db_context,
-                messages=[
-                    UserMessage(
-                        content=(
-                            "Navigate to https://example.com and tell me what the "
-                            "main heading (h1) on the page says. "
-                            "Use the browser tools to navigate there."
-                        ),
-                    )
-                ],
-                interface_type="test",
-                conversation_id="e2e-browser-test",
-                user_name="TestUser",
-                turn_id="turn-1",
-                chat_interface=None,
-            )
+        db_context = Database(engine=db_engine)
+        # Process the user's request through the full stack
+        # The ProcessingService will handle the LLM → tool → result loop
+        (
+            turn_messages,
+            reasoning_info,
+            attachment_ids,
+        ) = await processing_service.process_message(
+            db_context=db_context,
+            messages=[
+                UserMessage(
+                    content=(
+                        "Navigate to https://example.com and tell me what the "
+                        "main heading (h1) on the page says. "
+                        "Use the browser tools to navigate there."
+                    ),
+                )
+            ],
+            interface_type="test",
+            conversation_id="e2e-browser-test",
+            user_name="TestUser",
+            turn_id="turn-1",
+            chat_interface=None,
+        )
 
-            # Find the final assistant response
-            final_response = None
-            for msg in reversed(turn_messages):
-                if isinstance(msg, AssistantMessage) and msg.content:
-                    final_response = msg.content
-                    break
+        # Find the final assistant response
+        final_response = None
+        for msg in reversed(turn_messages):
+            if isinstance(msg, AssistantMessage) and msg.content:
+                final_response = msg.content
+                break
 
-            logger.info(f"Final response: {final_response}")
-            logger.info(f"Total messages in turn: {len(turn_messages)}")
+        logger.info(f"Final response: {final_response}")
+        logger.info(f"Total messages in turn: {len(turn_messages)}")
 
-            # Verify the task was completed - response should mention "Example Domain"
-            assert final_response is not None, "No final assistant response received"
-            assert "Example Domain" in final_response, (
-                f"Expected 'Example Domain' in response, got: {final_response}"
-            )
+        # Verify the task was completed - response should mention "Example Domain"
+        assert final_response is not None, "No final assistant response received"
+        assert "Example Domain" in final_response, (
+            f"Expected 'Example Domain' in response, got: {final_response}"
+        )
 
     finally:
         # Cleanup: close any browser sessions
@@ -637,54 +637,54 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
         assert assistant.default_processing_service is not None
         processing_service = assistant.default_processing_service
 
-        async with get_db_context(engine=db_engine) as db_context:
-            # User asks to take a screenshot of a website
-            (
-                turn_messages,
-                reasoning_info,
-                attachment_ids,
-            ) = await processing_service.process_message(
-                db_context=db_context,
-                messages=[
-                    UserMessage(
-                        content=(
-                            "Please take a screenshot of https://example.com. "
-                            "Navigate to the website and capture what you see."
-                        ),
-                    )
-                ],
-                interface_type="test",
-                conversation_id="screenshot-test",
-                user_name="TestUser",
-                turn_id="turn-1",
-                chat_interface=None,
-            )
+        db_context = Database(engine=db_engine)
+        # User asks to take a screenshot of a website
+        (
+            turn_messages,
+            reasoning_info,
+            attachment_ids,
+        ) = await processing_service.process_message(
+            db_context=db_context,
+            messages=[
+                UserMessage(
+                    content=(
+                        "Please take a screenshot of https://example.com. "
+                        "Navigate to the website and capture what you see."
+                    ),
+                )
+            ],
+            interface_type="test",
+            conversation_id="screenshot-test",
+            user_name="TestUser",
+            turn_id="turn-1",
+            chat_interface=None,
+        )
 
-            # Find the final assistant response
-            final_response = None
-            for msg in reversed(turn_messages):
-                if isinstance(msg, AssistantMessage) and msg.content:
-                    final_response = msg.content
-                    break
+        # Find the final assistant response
+        final_response = None
+        for msg in reversed(turn_messages):
+            if isinstance(msg, AssistantMessage) and msg.content:
+                final_response = msg.content
+                break
 
-            logger.info(f"Final response: {final_response}")
-            logger.info(f"Attachment IDs: {attachment_ids}")
-            logger.info(f"Total messages in turn: {len(turn_messages)}")
+        logger.info(f"Final response: {final_response}")
+        logger.info(f"Attachment IDs: {attachment_ids}")
+        logger.info(f"Total messages in turn: {len(turn_messages)}")
 
-            # Verify screenshot was taken
-            # The attachment_ids list should contain the screenshot attachment
-            assert final_response is not None, "No final assistant response received"
+        # Verify screenshot was taken
+        # The attachment_ids list should contain the screenshot attachment
+        assert final_response is not None, "No final assistant response received"
 
-            # The response should indicate the screenshot was taken
-            # and there should be at least one attachment (the screenshot)
-            assert attachment_ids is not None and len(attachment_ids) > 0, (
-                f"Expected screenshot attachment(s), got: {attachment_ids}. "
-                f"Response: {final_response}"
-            )
+        # The response should indicate the screenshot was taken
+        # and there should be at least one attachment (the screenshot)
+        assert attachment_ids is not None and len(attachment_ids) > 0, (
+            f"Expected screenshot attachment(s), got: {attachment_ids}. "
+            f"Response: {final_response}"
+        )
 
-            logger.info(
-                f"Screenshot test passed: {len(attachment_ids)} attachment(s) captured"
-            )
+        logger.info(
+            f"Screenshot test passed: {len(attachment_ids)} attachment(s) captured"
+        )
 
     finally:
         cleanup_context = MagicMock(

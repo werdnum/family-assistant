@@ -875,7 +875,7 @@ class MessageHistoryRepository(BaseRepository):
             conditions.append(subconversation_condition)
 
         if include_text_query and query.query:
-            if self._db.engine.dialect.name == "postgresql":
+            if self._db.dialect_name == "postgresql":
                 postgres_text_query = sql_func.plainto_tsquery("english", query.query)
                 like_pattern = f"%{query.query.lower()}%"
                 conditions.append(
@@ -1183,9 +1183,8 @@ class MessageHistoryRepository(BaseRepository):
                 .values(**values)
                 .returning(message_history_table.c.internal_id)
             )
-            result = await self._db.execute_with_retry(stmt)
-            row = result.one()  # type: ignore[attr-defined]
-            internal_id = row[0]
+            result = await self._db.execute(stmt)
+            internal_id = result.scalar_one()
 
             self._logger.info(
                 f"Added message to history: role={role}, "
@@ -1910,8 +1909,8 @@ class MessageHistoryRepository(BaseRepository):
             .values(interface_message_id=interface_message_id)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        if result.rowcount == 0:
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update interface ID"
             )
@@ -1934,7 +1933,7 @@ class MessageHistoryRepository(BaseRepository):
             .values(attachments=attachments)
         )
 
-        result = await self._db.execute_with_retry(stmt)
+        result = await self._db.execute(stmt)
         if result.rowcount == 0:  # type: ignore[attr-defined]  # SQLAlchemy runtime API.
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update attachments"
@@ -1956,8 +1955,8 @@ class MessageHistoryRepository(BaseRepository):
             .values(error_traceback=error_traceback)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        if result.rowcount == 0:  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        if result.rowcount == 0:
             self._logger.warning(
                 f"No message found with internal_id {internal_id} to update error traceback"
             )

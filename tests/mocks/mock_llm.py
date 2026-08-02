@@ -27,6 +27,7 @@ from family_assistant.llm import (
     UserMessageDict,
 )
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
+from family_assistant.storage.database import in_transaction
 from family_assistant.tools.types import ToolDefinition
 
 T = TypeVar("T", bound=BaseModel)
@@ -118,6 +119,12 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
     # ast-grep-ignore: no-dict-any - LLM kwargs contain mixed provider-specific fields
     def _record_call(self, method_name: str, actual_kwargs: dict[str, Any]) -> None:
         """Helper to store call data."""
+        # No transaction may span an LLM call: it would hold a connection (and,
+        # on SQLite, the engine lock) for the length of a model round trip.
+        # Asserting it here makes the architectural rule a failing test.
+        assert not in_transaction(), (
+            f"LLM call '{method_name}' was made with a database transaction open"
+        )
         call_data = {
             "method_name": method_name,
             "kwargs": actual_kwargs,

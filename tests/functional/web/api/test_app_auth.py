@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 from family_assistant.storage.base import api_tokens_table
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.web.routers.app_auth import (
     auth_codes,
     cleanup_expired_codes,
@@ -188,12 +188,12 @@ class TestRefreshToken:
     ) -> None:
         """Revoked refresh tokens should be rejected."""
         refresh_prefix = token_pair["refresh_token"][:8]
-        async with get_db_context(db_engine) as db:
-            await db.execute_with_retry(
-                update(api_tokens_table)
-                .where(api_tokens_table.c.prefix == refresh_prefix)
-                .values(is_revoked=True)
-            )
+        db = Database(db_engine)
+        await db.execute(
+            update(api_tokens_table)
+            .where(api_tokens_table.c.prefix == refresh_prefix)
+            .values(is_revoked=True)
+        )
 
         response = await api_test_client.post(
             "/api/auth/refresh",
@@ -212,19 +212,17 @@ class TestRefreshToken:
         api_prefix = token_pair["api_token"][:8]
 
         # Find the API token ID and revoke it
-        async with get_db_context(db_engine) as db:
-            row = await db.fetch_one(
-                select(api_tokens_table.c.id).where(
-                    api_tokens_table.c.prefix == api_prefix
-                )
-            )
-            assert row is not None
-            api_token_id = row["id"]
+        db = Database(db_engine)
+        row = await db.fetch_one(
+            select(api_tokens_table.c.id).where(api_tokens_table.c.prefix == api_prefix)
+        )
+        assert row is not None
+        api_token_id = row["id"]
 
-            success = await api_tokens_storage.revoke_api_token(
-                db, api_token_id, "testuser@example.com"
-            )
-            assert success
+        success = await api_tokens_storage.revoke_api_token(
+            db, api_token_id, "testuser@example.com"
+        )
+        assert success
 
         # Refresh token should now be rejected
         response = await api_test_client.post(

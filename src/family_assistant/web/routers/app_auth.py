@@ -28,7 +28,7 @@ from sqlalchemy import update as sa_update
 from family_assistant.services.user_identity import UserIdentityResolutionError
 from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.base import api_tokens_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import (
     get_current_user,
     get_db,
@@ -250,7 +250,7 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
 async def exchange_code(
     request: Request,
     payload: CodeExchangeRequest,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> CodeExchangeResponse:
     """Exchange an authorization code + PKCE verifier for API and refresh tokens."""
     cleanup_expired_codes()
@@ -295,30 +295,31 @@ async def exchange_code(
             detail=str(exc),
         ) from exc
 
-    # Create API token (30-day expiry)
-    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
-    (
-        full_api_token,
-        api_token_id,
-        _,
-    ) = await api_tokens_storage.create_and_store_api_token(
-        db_context=db_context,
-        user_identifier=user_identifier,
-        name="iOS App",
-        expires_at=api_token_expires,
-        token_type="api",
-    )
+    async with db_context.transaction() as txn:
+        # API-token insert + refresh-token insert must be atomic: a failed second
+        # write commits a live credential whose secret was never returned.
+        api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+        (
+            full_api_token,
+            api_token_id,
+            _,
+        ) = await api_tokens_storage.create_and_store_api_token(
+            db_context=txn,
+            user_identifier=user_identifier,
+            name="iOS App",
+            expires_at=api_token_expires,
+            token_type="api",
+        )
 
-    # Create refresh token (90-day expiry), linked to API token
-    refresh_expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
-    full_refresh_token, _, _ = await api_tokens_storage.create_and_store_api_token(
-        db_context=db_context,
-        user_identifier=user_identifier,
-        name="iOS App (refresh)",
-        expires_at=refresh_expires,
-        token_type="refresh",
-        parent_token_id=api_token_id,
-    )
+        refresh_expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
+        full_refresh_token, _, _ = await api_tokens_storage.create_and_store_api_token(
+            db_context=txn,
+            user_identifier=user_identifier,
+            name="iOS App (refresh)",
+            expires_at=refresh_expires,
+            token_type="refresh",
+            parent_token_id=api_token_id,
+        )
 
     logger.info(
         "App auth exchange: issued API token %s and refresh token for user %s",
@@ -336,7 +337,7 @@ async def exchange_code(
 @api_auth_router.post("/refresh")
 async def refresh_token(
     payload: RefreshTokenRequest,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> RefreshTokenResponse:
     """Exchange a valid refresh token for a new API token."""
     token_row = await api_tokens_storage.validate_token_by_value(
@@ -350,26 +351,28 @@ async def refresh_token(
 
     user_identifier = token_row["user_identifier"]
 
-    # Create a new API token
-    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
-    (
-        full_api_token,
-        api_token_id,
-        _,
-    ) = await api_tokens_storage.create_and_store_api_token(
-        db_context=db_context,
-        user_identifier=user_identifier,
-        name="iOS App",
-        expires_at=api_token_expires,
-        token_type="api",
-    )
+    async with db_context.transaction() as txn:
+        # Replacement insert + refresh-token relink must be atomic: a failed second
+        # write commits a live credential that was never validated with the original
+        # refresh token's identity.
+        api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+        (
+            full_api_token,
+            api_token_id,
+            _,
+        ) = await api_tokens_storage.create_and_store_api_token(
+            db_context=txn,
+            user_identifier=user_identifier,
+            name="iOS App",
+            expires_at=api_token_expires,
+            token_type="api",
+        )
 
-    # Re-link the refresh token to the new API token so cascade revocation works
-    await db_context.execute_with_retry(
-        sa_update(api_tokens_table)
-        .where(api_tokens_table.c.id == token_row["id"])
-        .values(parent_token_id=api_token_id)
-    )
+        await txn.execute(
+            sa_update(api_tokens_table)
+            .where(api_tokens_table.c.id == token_row["id"])
+            .values(parent_token_id=api_token_id)
+        )
 
     logger.info(
         "Token refresh: issued new API token %s for user %s",

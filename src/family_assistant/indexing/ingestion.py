@@ -13,9 +13,9 @@ import filetype  # type: ignore[import-untyped]
 
 from family_assistant.indexing.types import IngestionResult
 
-# storage functions now accessed via DatabaseContext
+# storage functions now accessed via Database
 if TYPE_CHECKING:
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class IngestedDocument:
 
 
 async def process_document_ingestion_request(
-    db_context: "DatabaseContext",
+    db_context: "Database",
     document_storage_path: pathlib.Path | None,
     source_type: str,
     source_id: str,

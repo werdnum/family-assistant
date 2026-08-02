@@ -1109,12 +1109,12 @@ async def get_system_info(
     """
     logger.info("get_system_info: gathering runtime environment info")
 
-    db_dialect = "unknown"
     db_context = exec_context.db_context
-    engine = getattr(db_context, "engine", None)
-    if engine is not None:
-        dialect = getattr(engine, "dialect", None)
-        db_dialect = getattr(dialect, "name", "unknown")
+    db_dialect = (
+        "unknown"
+        if db_context is None
+        else getattr(db_context, "dialect_name", "unknown")
+    )
 
     return ToolResult(
         data={

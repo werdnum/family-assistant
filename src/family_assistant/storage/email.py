@@ -19,7 +19,7 @@ from sqlalchemy.sql import functions, insert, update  # Consolidate and add upda
 from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
-from family_assistant.storage.context import DatabaseContext  # Import DatabaseContext
+from family_assistant.storage.database import DatabaseExecutor
 
 
 # --- Pydantic Models for Parsed Email Data ---
@@ -196,14 +196,14 @@ received_emails_table = sa.Table(
 
 
 async def store_incoming_email(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     parsed_email: ParsedEmailData,  # Changed from form_data
 ) -> None:
     """
     Stores parsed email data in the `received_emails` table and enqueues an indexing task.
 
     Args:
-        db_context: The DatabaseContext to use for the operation.
+        db_context: The Database to use for the operation.
         parsed_email: A Pydantic model instance containing the parsed email data.
         notify_event: An optional asyncio.Event to notify upon task enqueueing.
     """
@@ -251,7 +251,7 @@ async def store_incoming_email(
             .values(**email_data_for_db)
             .returning(received_emails_table.c.id)
         )
-        result = await db_context.execute_with_retry(insert_stmt)
+        result = await db_context.execute(insert_stmt)
         email_db_id = result.scalar_one_or_none()
 
         if not email_db_id:
@@ -280,7 +280,7 @@ async def store_incoming_email(
             .where(received_emails_table.c.id == email_db_id)
             .values(indexing_task_id=task_id)
         )
-        await db_context.execute_with_retry(update_stmt)
+        await db_context.execute(update_stmt)
         logger.info(f"Updated email {email_db_id} with indexing task ID {task_id}")
 
     except SQLAlchemyError as e:

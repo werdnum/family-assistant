@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
 from family_assistant.web.frontend_telemetry import (
     FrontendTelemetryRecord,
@@ -157,7 +157,7 @@ async def report_frontend_error(
 
 @errors_api_router.get("/")
 async def get_errors(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     _: Annotated[dict, Depends(get_diagnostics_reader)],
     page: Annotated[int, Query(ge=1)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -221,7 +221,7 @@ async def get_frontend_telemetry(
 @errors_api_router.get("/{error_id}")
 async def get_error_by_id(
     error_id: int,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     _: Annotated[dict, Depends(get_diagnostics_reader)],
 ) -> ErrorLogResponse:
     """Get a specific error log by ID."""

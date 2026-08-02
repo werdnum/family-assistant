@@ -116,7 +116,7 @@ class DelegationRunsRepository(BaseRepository):
             .returning(delegation_runs_table)
         )
         result = await self._execute_with_logging("create_delegation_run", stmt)
-        row = result.mappings().one()
+        row = result.one()
         return self._row_to_dict(dict(row))
 
     async def get_by_delegation_id(
@@ -234,7 +234,7 @@ class DelegationRunsRepository(BaseRepository):
             .returning(delegation_runs_table)
         )
         result = await self._execute_with_logging("mark_delegation_run_running", stmt)
-        row = result.mappings().one_or_none()
+        row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
     async def mark_awaiting_remote(
@@ -274,7 +274,7 @@ class DelegationRunsRepository(BaseRepository):
         result = await self._execute_with_logging(
             "mark_delegation_run_awaiting_remote", stmt
         )
-        row = result.mappings().one_or_none()
+        row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
     async def update_remote_task(
@@ -311,8 +311,8 @@ class DelegationRunsRepository(BaseRepository):
             .returning(delegation_runs_table.c.poll_attempts)
         )
         result = await self._execute_with_logging("bump_delegation_poll_attempt", stmt)
-        row = result.one_or_none()
-        return int(row[0]) if row is not None else None
+        attempts = result.scalar_one_or_none()
+        return int(attempts) if attempts is not None else None
 
     async def list_awaiting_remote(
         self, *, limit: int = 100
@@ -413,7 +413,7 @@ class DelegationRunsRepository(BaseRepository):
             .returning(delegation_runs_table)
         )
         result = await self._execute_with_logging("terminate_delegation_run", stmt)
-        row = result.mappings().one_or_none()
+        row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
     async def mark_notified(
@@ -457,7 +457,7 @@ class DelegationRunsRepository(BaseRepository):
             .returning(delegation_runs_table)
         )
         result = await self._execute_with_logging("reap_stale_delegation_runs", stmt)
-        return [self._row_to_dict(dict(row)) for row in result.mappings().all()]
+        return [self._row_to_dict(dict(row)) for row in result.all()]
 
     async def find_terminal_unnotified(
         self, *, completed_before: datetime
@@ -494,7 +494,7 @@ class DelegationRunsRepository(BaseRepository):
             .returning(delegation_runs_table)
         )
         result = await self._execute_with_logging("update_delegation_run", stmt)
-        row = result.mappings().one_or_none()
+        row = result.one_or_none()
         return self._row_to_dict(dict(row)) if row is not None else None
 
     def summarize_run(self, run: DelegationRunDict) -> DelegationRunSummary:

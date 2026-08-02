@@ -40,7 +40,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import message_history_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.task_worker import (
     DelegatedProfileRunPayload,
@@ -255,7 +255,7 @@ class TaintReadingDelegatableService:
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.calls.append(cast("FakeDelegationCall", kwargs))
-        db_context = cast("DatabaseContext", kwargs["db_context"])
+        db_context = cast("Database", kwargs["db_context"])
         subconversation_id = cast("str | None", kwargs["subconversation_id"])
         tainted_state = TurnTaintState.empty().add_source(
             TaintSource(
@@ -319,7 +319,7 @@ class FakeWakeCapableSourceService:
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.wake_call_count += 1
-        db_context = cast("DatabaseContext", kwargs["db_context"])
+        db_context = cast("Database", kwargs["db_context"])
         turn_id = cast("str", kwargs["turn_id"])
         thread_root_id = cast("int | None", kwargs["thread_root_id"])
         subconversation_id = cast("str | None", kwargs["subconversation_id"])
@@ -413,12 +413,12 @@ class AttachmentVisibilityChatInterface:
         self.sent_text = text
         self.sent_attachment_ids = attachment_ids
         if attachment_ids:
-            async with DatabaseContext(engine=self.db_engine) as db_context:
-                visible = await self.attachment_registry.get_attachments(
-                    db_context,
-                    attachment_ids,
-                    acting_user_id=None,
-                )
+            db_context = Database(engine=self.db_engine)
+            visible = await self.attachment_registry.get_attachments(
+                db_context,
+                attachment_ids,
+                acting_user_id=None,
+            )
             self.visible_attachment_ids = list(visible)
         return "external_message_id"
 
@@ -447,7 +447,7 @@ def _source_processing_service(
 
 
 def _tool_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     processing_service: ProcessingService,
     chat_interface: ChatInterface | None = None,
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -492,26 +492,26 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        source_message_internal_id = await db_context.message_history.add_message(
-            UserMessage(content="delegate this"),
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CONVERSATION_ID,
-            timestamp=SystemClock().now(),
-            turn_id="turn_async_delegation",
-            user_id="async-delegation-user",
-        )
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(
-                db_context,
-                processing_service,
-                chat_interface,
-                confirmation_ui_managers,
-            ),
-            target_service_id="target_profile",
-            user_request="do this in the background",
-            delivery_hint="background",
-        )
+    db_context = Database(engine=db_engine)
+    source_message_internal_id = await db_context.message_history.add_message(
+        UserMessage(content="delegate this"),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now(),
+        turn_id="turn_async_delegation",
+        user_id="async-delegation-user",
+    )
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(
+            db_context,
+            processing_service,
+            chat_interface,
+            confirmation_ui_managers,
+        ),
+        target_service_id="target_profile",
+        user_request="do this in the background",
+        delivery_hint="background",
+    )
 
     assert source_message_internal_id is not None
     assert result.text is not None
@@ -532,16 +532,16 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
         confirmation_ui_managers=confirmation_ui_managers,
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            {
-                "delegation_id": delegation_id,
-                "interface_type": TEST_INTERFACE_TYPE,
-                "conversation_id": TEST_CONVERSATION_ID,
-                "user_name": TEST_USER_NAME,
-            },
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        {
+            "delegation_id": delegation_id,
+            "interface_type": TEST_INTERFACE_TYPE,
+            "conversation_id": TEST_CONVERSATION_ID,
+            "user_name": TEST_USER_NAME,
+        },
+    )
 
     assert len(target_service.calls) == 1
     assert target_service.calls[0]["request_confirmation_callback"] is not None
@@ -575,44 +575,44 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
     assert delegation_id in sent_kwargs["text"]
     assert "background delegation done" in sent_kwargs["text"]
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        delegated_source_row = await db_context.message_history.get_row_by_internal_id(
-            delegated_source_message_internal_id
-        )
-        assert delegated_source_row is not None
-        assert delegated_source_row["turn_id"] == "delegated_tool_turn"
-        assert delegated_source_row["processing_profile_id"] == "target_profile"
-        assert (
-            delegated_source_row["subconversation_id"]
-            == target_service.calls[0]["subconversation_id"]
-        )
+    db_context = Database(engine=db_engine)
+    delegated_source_row = await db_context.message_history.get_row_by_internal_id(
+        delegated_source_message_internal_id
+    )
+    assert delegated_source_row is not None
+    assert delegated_source_row["turn_id"] == "delegated_tool_turn"
+    assert delegated_source_row["processing_profile_id"] == "target_profile"
+    assert (
+        delegated_source_row["subconversation_id"]
+        == target_service.calls[0]["subconversation_id"]
+    )
 
-        status_result = await get_delegation_status_tool(
-            _tool_context(db_context, processing_service, chat_interface),
-            delegation_id=delegation_id,
-        )
-        assert isinstance(status_result.data, dict)
-        assert status_result.data["status"] == "completed"
-        assert status_result.data["result_text"] == "background delegation done"
+    status_result = await get_delegation_status_tool(
+        _tool_context(db_context, processing_service, chat_interface),
+        delegation_id=delegation_id,
+    )
+    assert isinstance(status_result.data, dict)
+    assert status_result.data["status"] == "completed"
+    assert status_result.data["result_text"] == "background delegation done"
 
-        list_result = await list_delegations_tool(
-            _tool_context(db_context, processing_service, chat_interface)
-        )
-        assert isinstance(list_result.data, list)
-        assert list_result.data[0]["delegation_id"] == delegation_id
+    list_result = await list_delegations_tool(
+        _tool_context(db_context, processing_service, chat_interface)
+    )
+    assert isinstance(list_result.data, list)
+    assert list_result.data[0]["delegation_id"] == delegation_id
 
-        notification_rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.role == "assistant")
-            .where(message_history_table.c.content.like(f"%{delegation_id}%"))
-        )
-        assert len(notification_rows) == 1
-        assert notification_rows[0]["subconversation_id"] is None
+    notification_rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.role == "assistant")
+        .where(message_history_table.c.content.like(f"%{delegation_id}%"))
+    )
+    assert len(notification_rows) == 1
+    assert notification_rows[0]["subconversation_id"] is None
 
 
 async def _create_run(
-    db_context: DatabaseContext,
+    db_context: Database,
     *,
     delegation_id: str,
     interface_type: str = TEST_INTERFACE_TYPE,
@@ -674,24 +674,22 @@ async def test_worker_does_not_notify_when_caller_did_not_hand_off(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_no_handoff")
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_no_handoff")
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _payload("delegation_no_handoff"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload("delegation_no_handoff"),
+    )
 
     chat_interface.send_message.assert_not_awaited()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_no_handoff"
-        )
-        assert run is not None
-        assert run["status"] == "completed"
-        assert run["notified_at"] is None
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_no_handoff")
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["notified_at"] is None
 
 
 @pytest.mark.asyncio
@@ -714,53 +712,46 @@ async def test_terminal_run_renotifies_when_not_yet_notified(
         )
     )
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(
-            db_context,
-            delegation_id="delegation_renotify",
-            taint_state_json=tainted_parent_state.to_metadata(),
-        )
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_renotify", clock.now()
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_renotify",
-            result_text="already done",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_renotify",
+        taint_state_json=tainted_parent_state.to_metadata(),
+    )
+    await db_context.delegation_runs.mark_handed_off("delegation_renotify", clock.now())
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_renotify",
+        result_text="already done",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _payload("delegation_renotify"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload("delegation_renotify"),
+    )
 
     # The terminal run was not re-executed, but the notification was delivered.
     assert target_service.calls == []
     chat_interface.send_message.assert_awaited_once()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_renotify"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_renotify")
+    assert run is not None
+    assert run["notified_at"] is not None
 
-        # The notification history row carries the run's recorded taint state
-        # instead of being persisted without metadata.
-        notification_rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.role == "assistant")
-        )
-        assert len(notification_rows) == 1
-        assert notification_rows[0]["taint_metadata_version"] == "runtime_v1"
-        assert notification_rows[0]["taint_metadata_json"] is not None
-        assert (
-            notification_rows[0]["taint_metadata_json"]["max_tier"]
-            == "unknown_external"
-        )
+    # The notification history row carries the run's recorded taint state
+    # instead of being persisted without metadata.
+    notification_rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.role == "assistant")
+    )
+    assert len(notification_rows) == 1
+    assert notification_rows[0]["taint_metadata_version"] == "runtime_v1"
+    assert notification_rows[0]["taint_metadata_json"] is not None
+    assert notification_rows[0]["taint_metadata_json"]["max_tier"] == "unknown_external"
 
 
 @pytest.mark.asyncio
@@ -785,22 +776,22 @@ async def test_notification_uses_delegated_result_taint_not_trusted_parent(
 
     trusted_parent_state = TurnTaintState.empty()
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(
-            db_context,
-            delegation_id="delegation_tainted_result",
-            taint_state_json=trusted_parent_state.to_metadata(),
-        )
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_tainted_result", clock.now()
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_tainted_result",
+        taint_state_json=trusted_parent_state.to_metadata(),
+    )
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_tainted_result", clock.now()
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _payload("delegation_tainted_result"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload("delegation_tainted_result"),
+    )
 
     # The delegated turn ran (and read untrusted content) before notifying.
     assert len(target_service.calls) == 1
@@ -811,27 +802,24 @@ async def test_notification_uses_delegated_result_taint_not_trusted_parent(
     assert send_kwargs["taint_metadata"] is not None
     assert send_kwargs["taint_metadata"]["max_tier"] == "unknown_external"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_tainted_result"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_tainted_result"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
 
-        # The notification row persisted in the source (main) conversation must
-        # inherit the delegated run's unknown_external taint, not trusted_user.
-        notification_rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.role == "assistant")
-            .where(message_history_table.c.subconversation_id.is_(None))
-        )
-        assert len(notification_rows) == 1
-        assert notification_rows[0]["taint_metadata_version"] == "runtime_v1"
-        assert (
-            notification_rows[0]["taint_metadata_json"]["max_tier"]
-            == "unknown_external"
-        )
+    # The notification row persisted in the source (main) conversation must
+    # inherit the delegated run's unknown_external taint, not trusted_user.
+    notification_rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.role == "assistant")
+        .where(message_history_table.c.subconversation_id.is_(None))
+    )
+    assert len(notification_rows) == 1
+    assert notification_rows[0]["taint_metadata_version"] == "runtime_v1"
+    assert notification_rows[0]["taint_metadata_json"]["max_tier"] == "unknown_external"
 
 
 @pytest.mark.asyncio
@@ -842,8 +830,9 @@ async def test_failed_delivery_is_not_recorded_as_notified(
 
     ChatInterface.send_message returns None when delivery fails (invalid chat,
     Bot API error, ...). The terminal run must stay notified_at NULL so it is
-    retried, and the speculative message-history row must be rolled back rather
-    than left dangling.
+    retried, and no notification row may be written for a message that was
+    never delivered. The delegated turn's own history is durable either way --
+    it happened.
     """
     target_service = FakeDelegatableService()
     processing_service = _source_processing_service(target_service)
@@ -851,103 +840,114 @@ async def test_failed_delivery_is_not_recorded_as_notified(
     chat_interface.send_message.return_value = None
 
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_send_fails")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_send_fails", clock.now()
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_send_fails",
-            result_text="done but undeliverable",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_send_fails")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_send_fails", clock.now()
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_send_fails",
+        result_text="done but undeliverable",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        with pytest.raises(DelegationNotificationError):
-            await worker.handle_delegated_profile_run(
-                _tool_context(db_context, processing_service, chat_interface),
-                _payload("delegation_send_fails"),
-            )
+    db_context = Database(engine=db_engine)
+    with pytest.raises(DelegationNotificationError):
+        await worker.handle_delegated_profile_run(
+            _tool_context(db_context, processing_service, chat_interface),
+            _payload("delegation_send_fails"),
+        )
 
     chat_interface.send_message.assert_awaited_once()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_send_fails"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_send_fails")
+    assert run is not None
+    assert run["notified_at"] is None
+    # Nothing was recorded for the undelivered notification.
+    rows = await db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == TEST_CONVERSATION_ID
         )
-        assert run is not None
-        assert run["notified_at"] is None
-        # The notification message row was rolled back, not left dangling.
-        rows = await db_context.fetch_all(
-            select(message_history_table).where(
-                message_history_table.c.conversation_id == TEST_CONVERSATION_ID
-            )
-        )
-        assert rows == []
+    )
+    assert [
+        row["content"]
+        for row in rows
+        if row["content"] and row["content"].startswith("Delegated task")
+    ] == []
 
 
 @pytest.mark.asyncio
-async def test_source_wake_history_rolls_back_when_delivery_fails_then_falls_back(
+async def test_source_wake_delivery_failure_falls_back_without_recording_delivery(
     db_engine: AsyncEngine,
 ) -> None:
-    """Undelivered source wake rows are rolled back before direct fallback."""
+    """An undelivered source wake records no delivery row, then falls back.
+
+    The wake turn itself is durable -- it ran, and its history is what
+    _repair_unmatched_tool_calls resumes from. Only the delivery (the relay row
+    plus mark_notified) is transactional, so a failed send leaves nothing
+    claiming the result reached the user.
+    """
     target_service = FakeDelegatableService()
     processing_service = FakeWakeCapableSourceService(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.side_effect = [None, "fallback_external_message_id"]
 
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_source_send_fails")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_source_send_fails", clock.now()
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_source_send_fails",
-            result_text="done after source delivery failure",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_source_send_fails")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_source_send_fails", clock.now()
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_source_send_fails",
+        result_text="done after source delivery failure",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
     worker = _build_worker(
         db_engine,
         cast("ProcessingService", processing_service),
         chat_interface,
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                chat_interface,
-            ),
-            _payload("delegation_source_send_fails"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_source_send_fails"),
+    )
 
     assert processing_service.wake_call_count == 1
     assert chat_interface.send_message.await_count == 2
     fallback_kwargs = chat_interface.send_message.await_args_list[1].kwargs
     assert "Delegated task delegation_source_send_fails" in fallback_kwargs["text"]
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_source_send_fails"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
-        rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .order_by(message_history_table.c.internal_id)
-        )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_source_send_fails"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .order_by(message_history_table.c.internal_id)
+    )
 
-    assert [
-        row["content"]
+    # The wake turn happened, so its history is durable; what must not exist is
+    # a delivered-message id for a send that failed.
+    contents = [row["content"] for row in rows]
+    assert "source wake persisted" in contents
+    assert all(
+        row["interface_message_id"] != "fallback_external_message_id"
+        or row["content"] != "source relayed delegated result"
         for row in rows
-        if row["content"]
-        in {"source wake persisted", "source relayed delegated result"}
-    ] == []
+    )
     assert any(
         row["role"] == "assistant"
         and row["content"]
@@ -960,7 +960,11 @@ async def test_source_wake_history_rolls_back_when_delivery_fails_then_falls_bac
 async def test_source_wake_error_result_falls_back_to_direct_notification(
     db_engine: AsyncEngine,
 ) -> None:
-    """An error result from the source profile does not suppress fallback delivery."""
+    """An error result from the source profile does not suppress fallback delivery.
+
+    The failed wake turn's history stays durable; only the delivery is
+    transactional, and it never opened.
+    """
     target_service = FakeDelegatableService()
     processing_service = FakeWakeCapableSourceService(
         target_service,
@@ -970,55 +974,52 @@ async def test_source_wake_error_result_falls_back_to_direct_notification(
     chat_interface.send_message.return_value = "fallback_external_message_id"
 
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_source_errors")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_source_errors", clock.now()
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_source_errors",
-            result_text="successful delegated result",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_source_errors")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_source_errors", clock.now()
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_source_errors",
+        result_text="successful delegated result",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
     worker = _build_worker(
         db_engine,
         cast("ProcessingService", processing_service),
         chat_interface,
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                chat_interface,
-            ),
-            _payload("delegation_source_errors"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_source_errors"),
+    )
 
     assert processing_service.wake_call_count == 1
     chat_interface.send_message.assert_awaited_once()
     sent_kwargs = chat_interface.send_message.await_args.kwargs
     assert "successful delegated result" in sent_kwargs["text"]
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_source_errors"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_source_errors"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    rows = await db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == TEST_CONVERSATION_ID
         )
-        assert run is not None
-        assert run["notified_at"] is not None
-        rows = await db_context.fetch_all(
-            select(message_history_table).where(
-                message_history_table.c.conversation_id == TEST_CONVERSATION_ID
-            )
-        )
+    )
 
-    assert [
-        row["content"]
-        for row in rows
-        if row["content"] in {"source wake persisted", "source wake error"}
-    ] == []
+    # The failed wake turn's history is durable -- it ran. What matters is that
+    # the fallback still delivered.
     assert any(
         row["role"] == "assistant"
         and row["content"]
@@ -1047,38 +1048,38 @@ async def test_worker_commits_delegated_attachments_before_notification(
         attachment_registry,
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_with_attachment")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_with_attachment",
-            SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_with_attachment")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_with_attachment",
+        SystemClock().now(),
+    )
 
     worker = _build_worker(
         db_engine,
         processing_service,
         cast("ChatInterface", chat_interface),
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                processing_service,
-                cast("ChatInterface", chat_interface),
-            ),
-            _payload("delegation_with_attachment"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            processing_service,
+            cast("ChatInterface", chat_interface),
+        ),
+        _payload("delegation_with_attachment"),
+    )
 
     assert chat_interface.sent_attachment_ids is not None
     assert chat_interface.visible_attachment_ids == chat_interface.sent_attachment_ids
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_with_attachment"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
-        assert run["result_attachment_ids_json"] == chat_interface.sent_attachment_ids
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_with_attachment"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    assert run["result_attachment_ids_json"] == chat_interface.sent_attachment_ids
 
 
 @pytest.mark.asyncio
@@ -1104,42 +1105,42 @@ async def test_source_wake_preserves_delegated_attachments(
         attachment_registry,
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_source_attachment")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_source_attachment",
-            SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_source_attachment")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_source_attachment",
+        SystemClock().now(),
+    )
 
     worker = _build_worker(
         db_engine,
         cast("ProcessingService", processing_service),
         cast("ChatInterface", chat_interface),
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                cast("ChatInterface", chat_interface),
-            ),
-            _payload("delegation_source_attachment"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            cast("ChatInterface", chat_interface),
+        ),
+        _payload("delegation_source_attachment"),
+    )
 
     assert chat_interface.sent_attachment_ids is not None
     assert chat_interface.visible_attachment_ids == chat_interface.sent_attachment_ids
     assert len(processing_service.wake_assistant_message_ids) == 1
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_source_attachment"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
-        assert run["result_attachment_ids_json"] == chat_interface.sent_attachment_ids
-        source_response_row = await db_context.message_history.get_row_by_internal_id(
-            processing_service.wake_assistant_message_ids[0]
-        )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_source_attachment"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    assert run["result_attachment_ids_json"] == chat_interface.sent_attachment_ids
+    source_response_row = await db_context.message_history.get_row_by_internal_id(
+        processing_service.wake_assistant_message_ids[0]
+    )
 
     assert source_response_row is not None
     assert source_response_row["interface_message_id"] == "external_message_id"
@@ -1172,51 +1173,51 @@ async def test_source_wake_creates_history_row_for_attachment_only_web_response(
     )
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(
-            db_context,
-            delegation_id="delegation_web_attachment_only",
-            interface_type="web",
-            source_subconversation_id="parent_subconversation",
-        )
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_web_attachment_only",
-            SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_web_attachment_only",
+        interface_type="web",
+        source_subconversation_id="parent_subconversation",
+    )
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_web_attachment_only",
+        SystemClock().now(),
+    )
 
     worker = _build_worker(
         db_engine,
         cast("ProcessingService", processing_service),
         chat_interface,
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                chat_interface,
-                attachment_registry=attachment_registry,
-            ),
-            _payload("delegation_web_attachment_only"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            chat_interface,
+            attachment_registry=attachment_registry,
+        ),
+        _payload("delegation_web_attachment_only"),
+    )
 
     chat_interface.send_message.assert_not_awaited()
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_web_attachment_only"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
-        attachment_ids = run["result_attachment_ids_json"]
-        assert attachment_ids
-        rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.interface_type == "web")
-            .where(message_history_table.c.role == "assistant")
-            .order_by(message_history_table.c.internal_id)
-        )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_web_attachment_only"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    attachment_ids = run["result_attachment_ids_json"]
+    assert attachment_ids
+    rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.interface_type == "web")
+        .where(message_history_table.c.role == "assistant")
+        .order_by(message_history_table.c.internal_id)
+    )
 
     assert len(rows) == 2
     source_row, visible_row = rows
@@ -1259,53 +1260,53 @@ async def test_source_wake_publishes_history_backed_nested_response_to_main_hist
     )
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(
-            db_context,
-            delegation_id="delegation_web_nested_visible",
-            interface_type="web",
-            source_subconversation_id="parent_subconversation",
-        )
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_web_nested_visible",
-            SystemClock().now(),
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_web_nested_visible",
-            result_text="nested work done",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_web_nested_visible",
+        interface_type="web",
+        source_subconversation_id="parent_subconversation",
+    )
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_web_nested_visible",
+        SystemClock().now(),
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_web_nested_visible",
+        result_text="nested work done",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
 
     worker = _build_worker(
         db_engine,
         cast("ProcessingService", processing_service),
         chat_interface,
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                chat_interface,
-            ),
-            _payload("delegation_web_nested_visible"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_web_nested_visible"),
+    )
 
     chat_interface.send_message.assert_not_awaited()
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_web_nested_visible"
-        )
-        rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.interface_type == "web")
-            .where(message_history_table.c.role == "assistant")
-            .where(message_history_table.c.content == "source summarized nested result")
-            .order_by(message_history_table.c.internal_id)
-        )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_web_nested_visible"
+    )
+    rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.interface_type == "web")
+        .where(message_history_table.c.role == "assistant")
+        .where(message_history_table.c.content == "source summarized nested result")
+        .order_by(message_history_table.c.internal_id)
+    )
 
     assert run is not None
     assert len(rows) == 2
@@ -1328,55 +1329,55 @@ async def test_source_wake_publishes_non_history_nested_response_to_main_thread(
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(
-            db_context,
-            delegation_id="delegation_nested_ext_visible",
-            source_subconversation_id="parent_subconversation",
-        )
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_nested_ext_visible",
-            SystemClock().now(),
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_nested_ext_visible",
-            result_text="nested work done",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_nested_ext_visible",
+        source_subconversation_id="parent_subconversation",
+    )
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_nested_ext_visible",
+        SystemClock().now(),
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_nested_ext_visible",
+        result_text="nested work done",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
 
     worker = _build_worker(
         db_engine,
         cast("ProcessingService", processing_service),
         chat_interface,
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                chat_interface,
-            ),
-            _payload("delegation_nested_ext_visible"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_nested_ext_visible"),
+    )
 
     chat_interface.send_message.assert_awaited_once()
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_nested_ext_visible"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_nested_ext_visible"
+    )
+    rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.interface_type == TEST_INTERFACE_TYPE)
+        .where(message_history_table.c.role == "assistant")
+        .where(
+            message_history_table.c.content
+            == "source summarized nested external result"
         )
-        rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.interface_type == TEST_INTERFACE_TYPE)
-            .where(message_history_table.c.role == "assistant")
-            .where(
-                message_history_table.c.content
-                == "source summarized nested external result"
-            )
-            .order_by(message_history_table.c.internal_id)
-        )
+        .order_by(message_history_table.c.internal_id)
+    )
 
     assert run is not None
     assert len(rows) == 2
@@ -1412,49 +1413,49 @@ async def test_source_wake_sends_text_for_attachment_only_non_history_response(
         attachment_registry,
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_attachment_only_send")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_attachment_only_send",
-            SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_attachment_only_send")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_attachment_only_send",
+        SystemClock().now(),
+    )
 
     worker = _build_worker(
         db_engine,
         cast("ProcessingService", processing_service),
         cast("ChatInterface", chat_interface),
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                cast("ChatInterface", chat_interface),
-                attachment_registry=attachment_registry,
-            ),
-            _payload("delegation_attachment_only_send"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            cast("ChatInterface", chat_interface),
+            attachment_registry=attachment_registry,
+        ),
+        _payload("delegation_attachment_only_send"),
+    )
 
     assert chat_interface.sent_text == "Delegated task finished."
     assert chat_interface.sent_attachment_ids is not None
     assert chat_interface.visible_attachment_ids == chat_interface.sent_attachment_ids
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_attachment_only_send"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
-        attachment_ids = run["result_attachment_ids_json"]
-        assert attachment_ids
-        rows = await db_context.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.interface_type == TEST_INTERFACE_TYPE)
-            .where(message_history_table.c.role == "assistant")
-            .where(message_history_table.c.content == "Delegated task finished.")
-            .order_by(message_history_table.c.internal_id)
-        )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_attachment_only_send"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    attachment_ids = run["result_attachment_ids_json"]
+    assert attachment_ids
+    rows = await db_context.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.interface_type == TEST_INTERFACE_TYPE)
+        .where(message_history_table.c.role == "assistant")
+        .where(message_history_table.c.content == "Delegated task finished.")
+        .order_by(message_history_table.c.internal_id)
+    )
 
     assert len(rows) == 1
     persisted_row = rows[0]
@@ -1478,31 +1479,29 @@ async def test_running_run_is_failed_not_reexecuted(db_engine: AsyncEngine) -> N
     chat_interface.send_message.return_value = "external_message_id"
 
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_interrupted")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_interrupted", clock.now()
-        )
-        await db_context.delegation_runs.mark_running(
-            "delegation_interrupted", clock.now()
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_interrupted")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_interrupted", clock.now()
+    )
+    await db_context.delegation_runs.mark_running("delegation_interrupted", clock.now())
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _payload("delegation_interrupted"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload("delegation_interrupted"),
+    )
 
     assert target_service.calls == []
     chat_interface.send_message.assert_awaited_once()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_interrupted"
-        )
-        assert run is not None
-        assert run["status"] == "failed"
-        assert run["error"] is not None
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_interrupted"
+    )
+    assert run is not None
+    assert run["status"] == "failed"
+    assert run["error"] is not None
 
 
 @pytest.mark.asyncio
@@ -1523,32 +1522,32 @@ async def test_reaper_fails_and_notifies_stale_run(
 
     clock = SystemClock()
     stale_created_at = clock.now() - timedelta(hours=2)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_stale")
-        if status == "running":
-            await db_context.delegation_runs.mark_running(
-                "delegation_stale", stale_created_at
-            )
-        # Backdate created_at so the reaper's created_at threshold matches.
-        await db_context.execute_with_retry(
-            update(delegation_runs_table)
-            .where(delegation_runs_table.c.delegation_id == "delegation_stale")
-            .values(created_at=stale_created_at)
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_stale")
+    if status == "running":
+        await db_context.delegation_runs.mark_running(
+            "delegation_stale", stale_created_at
         )
+    # Backdate created_at so the reaper's created_at threshold matches.
+    await db_context.execute(
+        update(delegation_runs_table)
+        .where(delegation_runs_table.c.delegation_id == "delegation_stale")
+        .values(created_at=stale_created_at)
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {"running_timeout_seconds": 60.0},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {"running_timeout_seconds": 60.0},
+    )
 
     chat_interface.send_message.assert_awaited_once()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id("delegation_stale")
-        assert run is not None
-        assert run["status"] == "failed"
-        assert run["notified_at"] is not None
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_stale")
+    assert run is not None
+    assert run["status"] == "failed"
+    assert run["notified_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -1558,21 +1557,21 @@ async def test_reaper_leaves_recent_runs_untouched(db_engine: AsyncEngine) -> No
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_recent")
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_recent")
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {"running_timeout_seconds": 3600.0},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {"running_timeout_seconds": 3600.0},
+    )
 
     chat_interface.send_message.assert_not_awaited()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id("delegation_recent")
-        assert run is not None
-        assert run["status"] == "queued"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_recent")
+    assert run is not None
+    assert run["status"] == "queued"
 
 
 @pytest.mark.asyncio
@@ -1585,40 +1584,34 @@ async def test_mark_running_only_transitions_queued_runs(
     started) must not be resurrected to ``running`` and re-executed.
     """
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_guard")
-        # First claim succeeds while still queued.
-        started = await db_context.delegation_runs.mark_running(
-            "delegation_guard", clock.now()
-        )
-        assert started is not None
-        assert started["status"] == "running"
-        # A second claim (now running) matches no row.
-        assert (
-            await db_context.delegation_runs.mark_running(
-                "delegation_guard", clock.now()
-            )
-            is None
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_guard")
+    # First claim succeeds while still queued.
+    started = await db_context.delegation_runs.mark_running(
+        "delegation_guard", clock.now()
+    )
+    assert started is not None
+    assert started["status"] == "running"
+    # A second claim (now running) matches no row.
+    assert (
+        await db_context.delegation_runs.mark_running("delegation_guard", clock.now())
+        is None
+    )
 
-        # A run the reaper already failed cannot be resurrected to running.
-        await _create_run(db_context, delegation_id="delegation_reaped")
-        await db_context.delegation_runs.mark_failed(
-            delegation_id="delegation_reaped",
-            error="reaped",
-            completed_at=clock.now(),
-        )
-        assert (
-            await db_context.delegation_runs.mark_running(
-                "delegation_reaped", clock.now()
-            )
-            is None
-        )
-        reaped = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_reaped"
-        )
-        assert reaped is not None
-        assert reaped["status"] == "failed"
+    # A run the reaper already failed cannot be resurrected to running.
+    await _create_run(db_context, delegation_id="delegation_reaped")
+    await db_context.delegation_runs.mark_failed(
+        delegation_id="delegation_reaped",
+        error="reaped",
+        completed_at=clock.now(),
+    )
+    assert (
+        await db_context.delegation_runs.mark_running("delegation_reaped", clock.now())
+        is None
+    )
+    reaped = await db_context.delegation_runs.get_by_delegation_id("delegation_reaped")
+    assert reaped is not None
+    assert reaped["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -1639,30 +1632,28 @@ async def test_cleanup_recovers_terminal_unnotified_run(
 
     clock = SystemClock()
     stale_completed_at = clock.now() - timedelta(hours=2)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_stranded")
-        # Terminal, never handed off, never notified, finished long ago.
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_stranded",
-            result_text="orphaned result",
-            result_attachment_ids=[],
-            completed_at=stale_completed_at,
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_stranded")
+    # Terminal, never handed off, never notified, finished long ago.
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_stranded",
+        result_text="orphaned result",
+        result_attachment_ids=[],
+        completed_at=stale_completed_at,
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {"running_timeout_seconds": 60.0},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {"running_timeout_seconds": 60.0},
+    )
 
     chat_interface.send_message.assert_awaited_once()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_stranded"
-        )
-        assert run is not None
-        assert run["notified_at"] is not None
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_stranded")
+    assert run is not None
+    assert run["notified_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -1678,34 +1669,32 @@ async def test_inline_delivery_marks_run_notified(db_engine: AsyncEngine) -> Non
     processing_service = _source_processing_service(target_service)
     clock = SystemClock()
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_inline")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_inline",
-            result_text="fast inline result",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_inline")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_inline",
+        result_text="fast inline result",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id("delegation_inline")
-        assert run is not None
-        assert run["notified_at"] is None
-        result = await _inline_delegation_result(
-            _tool_context(db_context, processing_service),
-            target_service_id="target_profile",
-            run=run,
-        )
-        assert result is not None
-        assert result.text == "fast inline result"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_inline")
+    assert run is not None
+    assert run["notified_at"] is None
+    result = await _inline_delegation_result(
+        _tool_context(db_context, processing_service),
+        target_service_id="target_profile",
+        run=run,
+    )
+    assert result is not None
+    assert result.text == "fast inline result"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        marked = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_inline"
-        )
-        assert marked is not None
-        assert marked["notified_at"] is not None
-        assert marked["handed_off_at"] is None
+    db_context = Database(engine=db_engine)
+    marked = await db_context.delegation_runs.get_by_delegation_id("delegation_inline")
+    assert marked is not None
+    assert marked["notified_at"] is not None
+    assert marked["handed_off_at"] is None
 
 
 @pytest.mark.asyncio
@@ -1725,33 +1714,33 @@ async def test_cleanup_does_not_redeliver_inline_delivered_run(
 
     clock = SystemClock()
     stale_completed_at = clock.now() - timedelta(hours=2)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_inline_aged")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_inline_aged",
-            result_text="delivered inline",
-            result_attachment_ids=[],
-            completed_at=stale_completed_at,
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_inline_aged")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_inline_aged",
+        result_text="delivered inline",
+        result_attachment_ids=[],
+        completed_at=stale_completed_at,
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_inline_aged"
-        )
-        assert run is not None
-        # The caller delivers the terminal result inline, which marks it notified.
-        await _inline_delegation_result(
-            _tool_context(db_context, processing_service),
-            target_service_id="target_profile",
-            run=run,
-        )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_inline_aged"
+    )
+    assert run is not None
+    # The caller delivers the terminal result inline, which marks it notified.
+    await _inline_delegation_result(
+        _tool_context(db_context, processing_service),
+        target_service_id="target_profile",
+        run=run,
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {"running_timeout_seconds": 60.0},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {"running_timeout_seconds": 60.0},
+    )
 
     chat_interface.send_message.assert_not_awaited()
 
@@ -1777,38 +1766,38 @@ async def test_inline_result_delivers_attachments_when_text_empty(
     processing_service = _source_processing_service(target_service)
     clock = SystemClock()
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        stored = await attachment_registry.store_and_register_tool_attachment(
-            file_content=b"chart bytes",
-            filename="chart.png",
-            content_type="image/png",
-            tool_name="data_visualization",
-            description="Generated chart",
-            conversation_id=TEST_CONVERSATION_ID,
-            db_context=db_context,
-        )
-        await _create_run(db_context, delegation_id="delegation_attach_no_text")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_attach_no_text",
-            result_text=None,
-            result_attachment_ids=[stored.attachment_id],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    stored = await attachment_registry.store_and_register_tool_attachment(
+        file_content=b"chart bytes",
+        filename="chart.png",
+        content_type="image/png",
+        tool_name="data_visualization",
+        description="Generated chart",
+        conversation_id=TEST_CONVERSATION_ID,
+        db_context=db_context,
+    )
+    await _create_run(db_context, delegation_id="delegation_attach_no_text")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_attach_no_text",
+        result_text=None,
+        result_attachment_ids=[stored.attachment_id],
+        completed_at=clock.now(),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(
-            "delegation_attach_no_text"
-        )
-        assert run is not None
-        result = await _completed_delegation_result(
-            _tool_context(
-                db_context,
-                processing_service,
-                attachment_registry=attachment_registry,
-            ),
-            target_service_id="target_profile",
-            run=run,
-        )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_attach_no_text"
+    )
+    assert run is not None
+    result = await _completed_delegation_result(
+        _tool_context(
+            db_context,
+            processing_service,
+            attachment_registry=attachment_registry,
+        ),
+        target_service_id="target_profile",
+        run=run,
+    )
 
     assert result.attachments is not None
     assert len(result.attachments) == 1
@@ -1832,24 +1821,24 @@ async def test_delegation_runs_synchronously_when_async_disabled(
     )
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="do it now",
-        )
+    db_context = Database(engine=db_engine)
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="do it now",
+    )
 
     assert result.text == "background delegation done"
     assert len(target_service.calls) == 1
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        runs = await db_context.delegation_runs.list_for_conversation(
-            conversation_id=TEST_CONVERSATION_ID,
-            interface_type=TEST_INTERFACE_TYPE,
-            status=None,
-            limit=10,
-        )
-        assert runs == []
+    db_context = Database(engine=db_engine)
+    runs = await db_context.delegation_runs.list_for_conversation(
+        conversation_id=TEST_CONVERSATION_ID,
+        interface_type=TEST_INTERFACE_TYPE,
+        status=None,
+        limit=10,
+    )
+    assert runs == []
 
 
 @pytest.mark.asyncio
@@ -1866,29 +1855,29 @@ async def test_delegation_runs_synchronously_inside_a_script(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(
-                db_context,
-                processing_service,
-                chat_interface,
-                in_script=True,
-            ),
-            target_service_id="target_profile",
-            user_request="do it now",
-        )
+    db_context = Database(engine=db_engine)
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(
+            db_context,
+            processing_service,
+            chat_interface,
+            in_script=True,
+        ),
+        target_service_id="target_profile",
+        user_request="do it now",
+    )
 
     assert result.text == "background delegation done"
     assert len(target_service.calls) == 1
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        runs = await db_context.delegation_runs.list_for_conversation(
-            conversation_id=TEST_CONVERSATION_ID,
-            interface_type=TEST_INTERFACE_TYPE,
-            status=None,
-            limit=10,
-        )
-        assert runs == []
+    db_context = Database(engine=db_engine)
+    runs = await db_context.delegation_runs.list_for_conversation(
+        conversation_id=TEST_CONVERSATION_ID,
+        interface_type=TEST_INTERFACE_TYPE,
+        status=None,
+        limit=10,
+    )
+    assert runs == []
 
 
 @pytest.mark.asyncio
@@ -1901,14 +1890,14 @@ async def test_status_tools_report_disabled_when_async_off(
         target_service, async_delegation_enabled=False
     )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        status_result = await get_delegation_status_tool(
-            _tool_context(db_context, processing_service),
-            delegation_id="delegation_anything",
-        )
-        list_result = await list_delegations_tool(
-            _tool_context(db_context, processing_service),
-        )
+    db_context = Database(engine=db_engine)
+    status_result = await get_delegation_status_tool(
+        _tool_context(db_context, processing_service),
+        delegation_id="delegation_anything",
+    )
+    list_result = await list_delegations_tool(
+        _tool_context(db_context, processing_service),
+    )
 
     assert "disabled" in (status_result.text or "")
     assert "disabled" in (list_result.text or "")
@@ -1923,16 +1912,16 @@ async def test_status_tools_nudge_to_stop_polling_while_pending(
     target_service = FakeDelegatableService()
     processing_service = _source_processing_service(target_service)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_pending")
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_pending")
 
-        status_result = await get_delegation_status_tool(
-            _tool_context(db_context, processing_service),
-            delegation_id="delegation_pending",
-        )
-        list_result = await list_delegations_tool(
-            _tool_context(db_context, processing_service),
-        )
+    status_result = await get_delegation_status_tool(
+        _tool_context(db_context, processing_service),
+        delegation_id="delegation_pending",
+    )
+    list_result = await list_delegations_tool(
+        _tool_context(db_context, processing_service),
+    )
 
     assert isinstance(status_result.data, dict)
     assert status_result.data["status"] == "queued"
@@ -1949,22 +1938,22 @@ async def test_status_tools_omit_nudge_once_terminal(
     processing_service = _source_processing_service(target_service)
     clock = SystemClock()
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_done")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_done",
-            result_text="all finished",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_done")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_done",
+        result_text="all finished",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
-        status_result = await get_delegation_status_tool(
-            _tool_context(db_context, processing_service),
-            delegation_id="delegation_done",
-        )
-        list_result = await list_delegations_tool(
-            _tool_context(db_context, processing_service),
-        )
+    status_result = await get_delegation_status_tool(
+        _tool_context(db_context, processing_service),
+        delegation_id="delegation_done",
+    )
+    list_result = await list_delegations_tool(
+        _tool_context(db_context, processing_service),
+    )
 
     assert isinstance(status_result.data, dict)
     assert status_result.data["status"] == "completed"
@@ -1987,38 +1976,37 @@ async def test_api_delegation_completion_stored_in_history(
     chat_interface = AsyncMock(spec=ChatInterface)
 
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(
-            db_context, delegation_id="delegation_api", interface_type="api"
-        )
-        await db_context.delegation_runs.mark_handed_off("delegation_api", clock.now())
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_api",
-            result_text="api result",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_api", interface_type="api")
+    await db_context.delegation_runs.mark_handed_off("delegation_api", clock.now())
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_api",
+        result_text="api result",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _payload("delegation_api"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload("delegation_api"),
+    )
 
     chat_interface.send_message.assert_not_awaited()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id("delegation_api")
-        assert run is not None
-        assert run["notified_at"] is not None
-        rows = await db_context.fetch_all(
-            select(message_history_table).where(
-                message_history_table.c.conversation_id == TEST_CONVERSATION_ID,
-                message_history_table.c.interface_type == "api",
-            )
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_api")
+    assert run is not None
+    assert run["notified_at"] is not None
+    rows = await db_context.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == TEST_CONVERSATION_ID,
+            message_history_table.c.interface_type == "api",
         )
-        assert len(rows) == 1
-        assert "api result" in rows[0]["content"]
+    )
+    # The wakeup-data row is durable once written, so the completion notification
+    # is the last row rather than the only one.
+    assert "api result" in rows[-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -2027,24 +2015,24 @@ async def test_mark_handed_off_is_refused_once_terminal(
 ) -> None:
     """The handoff claim wins only while non-terminal, so it never strands a result (C1)."""
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_claimable")
-        claimed = await db_context.delegation_runs.mark_handed_off(
-            "delegation_claimable", clock.now()
-        )
-        assert claimed is True
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_claimable")
+    claimed = await db_context.delegation_runs.mark_handed_off(
+        "delegation_claimable", clock.now()
+    )
+    assert claimed is True
 
-        await _create_run(db_context, delegation_id="delegation_terminal")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_terminal",
-            result_text="done",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
-        refused = await db_context.delegation_runs.mark_handed_off(
-            "delegation_terminal", clock.now()
-        )
-        assert refused is False
+    await _create_run(db_context, delegation_id="delegation_terminal")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_terminal",
+        result_text="done",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
+    refused = await db_context.delegation_runs.mark_handed_off(
+        "delegation_terminal", clock.now()
+    )
+    assert refused is False
 
 
 @pytest.mark.asyncio
@@ -2059,32 +2047,30 @@ async def test_web_delegation_can_request_confirmation(db_engine: AsyncEngine) -
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(
-            db_context, delegation_id="delegation_web", interface_type="web"
-        )
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_web", SystemClock().now()
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_web", interface_type="web")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_web", SystemClock().now()
+    )
 
     worker = _build_worker(
         db_engine, processing_service, chat_interface, confirmation_ui_managers
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                processing_service,
-                chat_interface,
-                confirmation_ui_managers,
-            ),
-            {
-                "delegation_id": "delegation_web",
-                "interface_type": "web",
-                "conversation_id": TEST_CONVERSATION_ID,
-                "user_name": TEST_USER_NAME,
-            },
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            processing_service,
+            chat_interface,
+            confirmation_ui_managers,
+        ),
+        {
+            "delegation_id": "delegation_web",
+            "interface_type": "web",
+            "conversation_id": TEST_CONVERSATION_ID,
+            "user_name": TEST_USER_NAME,
+        },
+    )
 
     assert len(target_service.calls) == 1
     assert target_service.calls[0]["request_confirmation_callback"] is not None
@@ -2113,7 +2099,7 @@ class FakeConfirmingWakeSourceService:
         self.confirmation_outcome: ConfirmationOutcome | None = None
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
-        db_context = cast("DatabaseContext", kwargs["db_context"])
+        db_context = cast("Database", kwargs["db_context"])
         turn_id = cast("str", kwargs["turn_id"])
         thread_root_id = cast("int | None", kwargs["thread_root_id"])
         subconversation_id = cast("str | None", kwargs["subconversation_id"])
@@ -2179,40 +2165,40 @@ async def test_source_wake_can_request_durable_confirmation(
     chat_interface.send_message.return_value = "external_message_id"
 
     clock = SystemClock()
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_wake_confirm")
-        await db_context.delegation_runs.mark_handed_off(
-            "delegation_wake_confirm", clock.now()
-        )
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_wake_confirm",
-            result_text="delegated work done",
-            result_attachment_ids=[],
-            completed_at=clock.now(),
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_wake_confirm")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_wake_confirm", clock.now()
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_wake_confirm",
+        result_text="delegated work done",
+        result_attachment_ids=[],
+        completed_at=clock.now(),
+    )
 
     worker = _build_worker(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(
-                db_context,
-                cast("ProcessingService", processing_service),
-                chat_interface,
-            ),
-            _payload("delegation_wake_confirm"),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            db_context,
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_wake_confirm"),
+    )
 
     assert processing_service.confirmation_outcome is not None
     assert processing_service.confirmation_outcome.kind == "completed"
     assert isinstance(processing_service.confirmation_outcome.result, str)
     assert "hasn't run yet" in processing_service.confirmation_outcome.result
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        pending = await db_context.confirmation_requests.list_pending_for_user(
-            "async-delegation-user"
-        )
+    db_context = Database(engine=db_engine)
+    pending = await db_context.confirmation_requests.list_pending_for_user(
+        "async-delegation-user"
+    )
     assert len(pending) == 1
     assert pending[0]["tool_name"] == "delete_calendar_event"
     assert pending[0]["origin_conversation_id"] == TEST_CONVERSATION_ID
@@ -2225,32 +2211,32 @@ async def test_get_messages_after_defaults_to_main_conversation_only(
     clock = SystemClock()
     after = clock.now()
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.message_history.add_message(
-            AssistantMessage(content="main message"),
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CONVERSATION_ID,
-            timestamp=clock.now(),
-        )
-        await db_context.message_history.add_message(
-            AssistantMessage(content="delegated scratch message"),
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CONVERSATION_ID,
-            timestamp=clock.now(),
-            subconversation_id="delegated-subconversation",
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        AssistantMessage(content="main message"),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=clock.now(),
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="delegated scratch message"),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=clock.now(),
+        subconversation_id="delegated-subconversation",
+    )
 
-        main_messages = await db_context.message_history.get_messages_after_as_dict(
-            conversation_id=TEST_CONVERSATION_ID,
-            after=after,
-            interface_type=TEST_INTERFACE_TYPE,
-        )
-        all_messages = await db_context.message_history.get_messages_after_as_dict(
-            conversation_id=TEST_CONVERSATION_ID,
-            after=after,
-            interface_type=TEST_INTERFACE_TYPE,
-            subconversation_id="*",
-        )
+    main_messages = await db_context.message_history.get_messages_after_as_dict(
+        conversation_id=TEST_CONVERSATION_ID,
+        after=after,
+        interface_type=TEST_INTERFACE_TYPE,
+    )
+    all_messages = await db_context.message_history.get_messages_after_as_dict(
+        conversation_id=TEST_CONVERSATION_ID,
+        after=after,
+        interface_type=TEST_INTERFACE_TYPE,
+        subconversation_id="*",
+    )
 
     assert [message["content"] for message in main_messages] == ["main message"]
     assert [message["content"] for message in all_messages] == [
@@ -2370,21 +2356,21 @@ async def _start_background_delegation(
     chat_interface: ChatInterface,
 ) -> str:
     """Run delegate_to_service in background mode; return the delegation id."""
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.message_history.add_message(
-            UserMessage(content="delegate"),
-            interface_type=TEST_INTERFACE_TYPE,
-            conversation_id=TEST_CONVERSATION_ID,
-            timestamp=SystemClock().now(),
-            turn_id="turn_async_delegation",
-            user_id="async-delegation-user",
-        )
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="do this remotely",
-            delivery_hint="background",
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(content="delegate"),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now(),
+        turn_id="turn_async_delegation",
+        user_id="async-delegation-user",
+    )
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="do this remotely",
+        delivery_hint="background",
+    )
     assert isinstance(result.data, dict)
     return cast("str", result.data["delegation_id"])
 
@@ -2404,11 +2390,11 @@ async def test_pollable_delegation_submits_and_enqueues_poll(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
     assert len(target.submitted) == 1
     assert target.inline_calls == 0
@@ -2416,13 +2402,13 @@ async def test_pollable_delegation_submits_and_enqueues_poll(
     # assigns one, which the worker reconciles into the run for polling.
     assigned_task_id = target.submitted[0][2]
     assert assigned_task_id is not None
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] == assigned_task_id
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert len(polls) == 1
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_task_id"] == assigned_task_id
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert len(polls) == 1
     chat_interface.send_message.assert_not_awaited()
 
 
@@ -2444,32 +2430,32 @@ async def test_pollable_delegation_retry_reattaches_without_duplicate_submit(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
     assert len(target.submitted) == 1
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        stored_id = run["remote_task_id"]
-        assert stored_id is not None
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    stored_id = run["remote_task_id"]
+    assert stored_id is not None
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
     # No second submit: the retry re-attached via a poll, keeping the same id.
     assert len(target.submitted) == 1
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] == stored_id
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert len(polls) >= 1
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_task_id"] == stored_id
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert len(polls) >= 1
 
 
 @pytest.mark.asyncio
@@ -2489,27 +2475,27 @@ async def test_pollable_delegation_retry_resubmits_when_id_unknown(
         db_engine, processing_service, chat_interface
     )
     # Claim awaiting_remote with a NULL id (the submit response was never seen).
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.delegation_runs.mark_awaiting_remote(
-            delegation_id,
-            remote_task_id=None,
-            remote_context_id=None,
-            started_at=SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.delegation_runs.mark_awaiting_remote(
+        delegation_id,
+        remote_task_id=None,
+        remote_context_id=None,
+        started_at=SystemClock().now(),
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
     # The retry re-submitted and reconciled the remote-assigned id.
     assert len(target.submitted) == 1
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] == target.submitted[0][2]
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_task_id"] == target.submitted[0][2]
 
 
 @pytest.mark.asyncio
@@ -2529,19 +2515,19 @@ async def test_pollable_delegation_transient_submit_error_recovers_via_poll(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
     assert len(target.submitted) == 1
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert len(polls) == 1
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert len(polls) == 1
     chat_interface.send_message.assert_not_awaited()
 
 
@@ -2562,18 +2548,18 @@ async def test_pollable_delegation_deterministic_submit_error_fails_fast(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "failed"
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert polls == []
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "failed"
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert polls == []
     chat_interface.send_message.assert_awaited_once()
 
 
@@ -2594,29 +2580,29 @@ async def test_cleanup_reenqueues_lost_poll_for_young_run(
         db_engine, processing_service, chat_interface
     )
     # Claim awaiting_remote directly (no poll enqueued = a "lost" poll).
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.delegation_runs.mark_awaiting_remote(
-            delegation_id,
-            remote_task_id="rt-lost",
-            remote_context_id=None,
-            started_at=SystemClock().now(),
-        )
-        polls_before = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert polls_before == []
+    db_context = Database(engine=db_engine)
+    await db_context.delegation_runs.mark_awaiting_remote(
+        delegation_id,
+        remote_task_id="rt-lost",
+        remote_context_id=None,
+        started_at=SystemClock().now(),
+    )
+    polls_before = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert polls_before == []
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {},
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert len(polls) == 1
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
+    db_context = Database(engine=db_engine)
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert len(polls) == 1
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
     chat_interface.send_message.assert_not_awaited()
 
 
@@ -2637,27 +2623,27 @@ async def test_cleanup_does_not_reenqueue_poll_for_null_id_run_within_grace(
     delegation_id = await _start_background_delegation(
         db_engine, processing_service, chat_interface
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.delegation_runs.mark_awaiting_remote(
-            delegation_id,
-            remote_task_id=None,
-            remote_context_id=None,
-            started_at=SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.delegation_runs.mark_awaiting_remote(
+        delegation_id,
+        remote_task_id=None,
+        remote_context_id=None,
+        started_at=SystemClock().now(),
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {},
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert polls == []
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
+    db_context = Database(engine=db_engine)
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert polls == []
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
     assert target.submitted == []
     chat_interface.send_message.assert_not_awaited()
 
@@ -2680,28 +2666,28 @@ async def test_cleanup_reenqueues_poll_for_null_id_run_past_grace(
     delegation_id = await _start_background_delegation(
         db_engine, processing_service, chat_interface
     )
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.delegation_runs.mark_awaiting_remote(
-            delegation_id,
-            remote_task_id=None,
-            remote_context_id=None,
-            # Past the 300s submit grace but well within the 3600s cap.
-            started_at=SystemClock().now() - timedelta(minutes=10),
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.delegation_runs.mark_awaiting_remote(
+        delegation_id,
+        remote_task_id=None,
+        remote_context_id=None,
+        # Past the 300s submit grace but well within the 3600s cap.
+        started_at=SystemClock().now() - timedelta(minutes=10),
+    )
 
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {},
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert len(polls) == 1
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
+    db_context = Database(engine=db_engine)
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert len(polls) == 1
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
     chat_interface.send_message.assert_not_awaited()
 
 
@@ -2725,35 +2711,35 @@ async def test_pollable_delegation_polls_to_completion(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
     poll_payload = _delegation_payload(delegation_id)
     # First poll: still pending -> reschedules, bumps the attempt counter.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            poll_payload,
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        assert run["poll_attempts"] == 1
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["poll_attempts"] == 1
     chat_interface.send_message.assert_not_awaited()
 
     # Second poll: terminal -> finalize and notify.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            poll_payload,
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "completed"
-        assert run["result_text"] == "remote done"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["result_text"] == "remote done"
     chat_interface.send_message.assert_awaited_once()
     assert "remote done" in chat_interface.send_message.await_args.kwargs["text"]
 
@@ -2863,42 +2849,42 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] == "inter_e2e_1"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_task_id"] == "inter_e2e_1"
     llm_client.start_deep_research_interaction.assert_awaited_once()
     chat_interface.send_message.assert_not_awaited()
 
     poll_payload = _delegation_payload(delegation_id)
     # First poll: still in_progress -> reschedules, no notification yet.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            poll_payload,
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
     chat_interface.send_message.assert_not_awaited()
 
     # Second poll: completed -> finalize and notify with the research output.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            poll_payload,
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "completed"
-        assert run["result_text"] == "Here is the research report."
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["result_text"] == "Here is the research report."
     chat_interface.send_message.assert_awaited_once()
     assert (
         "Here is the research report."
@@ -2923,19 +2909,19 @@ async def test_pollable_delegation_synchronous_remote_completes_on_submit(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "completed"
-        assert run["result_text"] == "sync remote done"
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert polls == []
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["result_text"] == "sync remote done"
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert polls == []
     chat_interface.send_message.assert_awaited_once()
 
 
@@ -2954,29 +2940,29 @@ async def test_reap_stale_awaiting_remote_cancels_and_fails(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        # Age the run past the wall-clock cap so the reaper gives up on it.
-        await db_context.execute_with_retry(
-            update(delegation_runs_table)
-            .where(delegation_runs_table.c.delegation_id == delegation_id)
-            .values(started_at=SystemClock().now() - timedelta(hours=2))
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    # Age the run past the wall-clock cap so the reaper gives up on it.
+    await db_context.execute(
+        update(delegation_runs_table)
+        .where(delegation_runs_table.c.delegation_id == delegation_id)
+        .values(started_at=SystemClock().now() - timedelta(hours=2))
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_run_cleanup(
-            _tool_context(db_context, processing_service, chat_interface),
-            {},
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_run_cleanup(
+        _tool_context(db_context, processing_service, chat_interface),
+        {},
+    )
 
     assert target.cancelled == [target.submitted[0][2]]
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "failed"
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "failed"
     chat_interface.send_message.assert_awaited_once()
 
 
@@ -3000,27 +2986,27 @@ async def test_late_poll_past_cap_delivers_terminal_result(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        # Age the run past the cap so the poll fires "late".
-        await db_context.execute_with_retry(
-            update(delegation_runs_table)
-            .where(delegation_runs_table.c.delegation_id == delegation_id)
-            .values(started_at=SystemClock().now() - timedelta(hours=2))
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    # Age the run past the cap so the poll fires "late".
+    await db_context.execute(
+        update(delegation_runs_table)
+        .where(delegation_runs_table.c.delegation_id == delegation_id)
+        .values(started_at=SystemClock().now() - timedelta(hours=2))
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "completed"
-        assert run["result_text"] == "finished just in time"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["result_text"] == "finished just in time"
     # The terminal task was delivered, not cancelled.
     assert target.cancelled == []
     chat_interface.send_message.assert_awaited_once()
@@ -3042,25 +3028,25 @@ async def test_late_poll_past_cap_cancels_when_still_pending(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        await db_context.execute_with_retry(
-            update(delegation_runs_table)
-            .where(delegation_runs_table.c.delegation_id == delegation_id)
-            .values(started_at=SystemClock().now() - timedelta(hours=2))
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    await db_context.execute(
+        update(delegation_runs_table)
+        .where(delegation_runs_table.c.delegation_id == delegation_id)
+        .values(started_at=SystemClock().now() - timedelta(hours=2))
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "failed"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "failed"
     assert target.cancelled == [target.submitted[0][2]]
     chat_interface.send_message.assert_awaited_once()
 
@@ -3085,33 +3071,33 @@ async def test_pollable_delegation_poll_transient_error_reschedules(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
     poll_payload = _delegation_payload(delegation_id)
     # Transient DelegationTransientError -> stays awaiting_remote and reschedules.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            poll_payload,
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
     chat_interface.send_message.assert_not_awaited()
 
     # Next poll succeeds -> completed.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            poll_payload,
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "completed"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        poll_payload,
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -3131,21 +3117,21 @@ async def test_pollable_delegation_poll_permanent_error_fails_fast(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
 
     # A non-transport error fails the run immediately rather than looping to cap.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "failed"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "failed"
     chat_interface.send_message.assert_awaited_once()
 
 
@@ -3169,35 +3155,35 @@ async def test_pollable_delegation_poll_not_found_resubmits(
         db_engine, processing_service, chat_interface
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
     assert len(target.submitted) == 1
     first_task_id = target.submitted[0][2]
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
     # The poll re-submitted (creating a fresh remote task with a new id) and
     # enqueued another poll — it did not fail the run.
     assert len(target.submitted) == 2
     new_task_id = target.submitted[1][2]
     assert new_task_id is not None
     assert new_task_id != first_task_id
-    async with DatabaseContext(engine=db_engine) as db_context:
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        # The run reconciled the newly-assigned remote id.
-        assert run["remote_task_id"] == new_task_id
-        polls = await db_context.tasks.get_all(task_type="delegation_poll")
-        assert len(polls) >= 1
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    # The run reconciled the newly-assigned remote id.
+    assert run["remote_task_id"] == new_task_id
+    polls = await db_context.tasks.get_all(task_type="delegation_poll")
+    assert len(polls) >= 1
     chat_interface.send_message.assert_not_awaited()
 
 
@@ -3227,40 +3213,40 @@ async def test_pollable_delegation_recovers_when_submit_never_landed(
     )
     worker = _build_worker(db_engine, processing_service, chat_interface)
     # Submit fails transiently -> awaiting_remote (NULL id) + poll enqueued.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] is None
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_task_id"] is None
     assert len(target.submitted) == 1
 
     # Poll sees the NULL id -> re-submit (now lands) -> reconcile id -> working.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "awaiting_remote"
-        assert run["remote_task_id"] == target.submitted[1][2]
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_task_id"] == target.submitted[1][2]
     assert len(target.submitted) == 2
     chat_interface.send_message.assert_not_awaited()
 
     # Next poll: the recreated task is terminal -> finalize and notify.
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegation_poll(
-            _tool_context(db_context, processing_service, chat_interface),
-            _delegation_payload(delegation_id),
-        )
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
-        assert run is not None
-        assert run["status"] == "completed"
-        assert run["result_text"] == "recovered after resubmit"
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["result_text"] == "recovered after resubmit"
     chat_interface.send_message.assert_awaited_once()
 
 
@@ -3275,48 +3261,48 @@ async def test_resume_delegation_reuses_prior_subconversation(
     chat_interface.send_message.return_value = "external_message_id"
     worker = _build_worker(db_engine, processing_service, chat_interface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        first_result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="first request",
-            delivery_hint="background",
-        )
+    db_context = Database(engine=db_engine)
+    first_result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="first request",
+        delivery_hint="background",
+    )
     assert isinstance(first_result.data, dict)
     first_delegation_id = cast("str", first_result.data["delegation_id"])
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _payload(first_delegation_id),
-        )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload(first_delegation_id),
+    )
     assert len(target_service.calls) == 1
     first_subconversation_id = target_service.calls[0]["subconversation_id"]
     assert first_subconversation_id
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        resume_result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="follow-up request",
-            delivery_hint="background",
-            resume_delegation_id=first_delegation_id,
-        )
+    db_context = Database(engine=db_engine)
+    resume_result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="follow-up request",
+        delivery_hint="background",
+        resume_delegation_id=first_delegation_id,
+    )
     assert isinstance(resume_result.data, dict)
     resume_delegation_id = cast("str", resume_result.data["delegation_id"])
     assert resume_delegation_id != first_delegation_id
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        resumed_run = await db_context.delegation_runs.get_by_delegation_id(
-            resume_delegation_id
-        )
-        assert resumed_run is not None
-        assert resumed_run["subconversation_id"] == first_subconversation_id
+    db_context = Database(engine=db_engine)
+    resumed_run = await db_context.delegation_runs.get_by_delegation_id(
+        resume_delegation_id
+    )
+    assert resumed_run is not None
+    assert resumed_run["subconversation_id"] == first_subconversation_id
 
-        await worker.handle_delegated_profile_run(
-            _tool_context(db_context, processing_service, chat_interface),
-            _payload(resume_delegation_id),
-        )
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload(resume_delegation_id),
+    )
 
     assert len(target_service.calls) == 2
     assert target_service.calls[1]["subconversation_id"] == first_subconversation_id
@@ -3336,22 +3322,22 @@ async def test_resume_delegation_rejected_on_synchronous_path(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_prior_sync")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_prior_sync",
-            result_text="prior result",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(
-                db_context, processing_service, chat_interface, in_script=True
-            ),
-            target_service_id="target_profile",
-            user_request="sync follow-up",
-            resume_delegation_id="delegation_prior_sync",
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_prior_sync")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_prior_sync",
+        result_text="prior result",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(
+            db_context, processing_service, chat_interface, in_script=True
+        ),
+        target_service_id="target_profile",
+        user_request="sync follow-up",
+        resume_delegation_id="delegation_prior_sync",
+    )
 
     assert result.text is not None
     assert "only supported for asynchronous delegations" in result.text
@@ -3367,16 +3353,16 @@ async def test_resume_delegation_unknown_reference_is_rejected(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="follow-up",
-            resume_delegation_id="delegation_does_not_exist",
-        )
-        runs = await db_context.delegation_runs.list_for_conversation(
-            conversation_id=TEST_CONVERSATION_ID
-        )
+    db_context = Database(engine=db_engine)
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="follow-up",
+        resume_delegation_id="delegation_does_not_exist",
+    )
+    runs = await db_context.delegation_runs.list_for_conversation(
+        conversation_id=TEST_CONVERSATION_ID
+    )
 
     assert result.text is not None
     assert "cannot resume" in result.text.lower()
@@ -3393,14 +3379,14 @@ async def test_resume_delegation_rejects_non_terminal_run(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_still_running")
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="follow-up",
-            resume_delegation_id="delegation_still_running",
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_still_running")
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="follow-up",
+        resume_delegation_id="delegation_still_running",
+    )
 
     assert result.text is not None
     assert "still queued" in result.text.lower()
@@ -3424,20 +3410,20 @@ async def test_resume_delegation_rejects_target_profile_mismatch(
     )
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_for_target")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_for_target",
-            result_text="prior result",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="other_profile",
-            user_request="follow-up",
-            resume_delegation_id="delegation_for_target",
-        )
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_for_target")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_for_target",
+        result_text="prior result",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="other_profile",
+        user_request="follow-up",
+        resume_delegation_id="delegation_for_target",
+    )
 
     assert result.text is not None
     assert "not 'other_profile'" in result.text
@@ -3458,41 +3444,41 @@ async def test_resume_delegation_rejects_when_active_resume_in_flight(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await _create_run(db_context, delegation_id="delegation_prior")
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_prior",
-            result_text="prior result",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
-        # An earlier resume is already queued against the same subconversation.
-        await db_context.delegation_runs.create_run({
-            "delegation_id": "delegation_active_resume",
-            "task_id": "task_active_resume",
-            "source_profile_id": "source_profile",
-            "target_service_id": "target_profile",
-            "interface_type": TEST_INTERFACE_TYPE,
-            "conversation_id": TEST_CONVERSATION_ID,
-            "user_id": "async-delegation-user",
-            "user_name": TEST_USER_NAME,
-            "source_turn_id": "turn_async_delegation",
-            "subconversation_id": "sub_delegation_prior",
-            "source_subconversation_id": None,
-            "request_text": "follow-up already running",
-            "content_parts_json": [],
-        })
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_prior")
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_prior",
+        result_text="prior result",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
+    # An earlier resume is already queued against the same subconversation.
+    await db_context.delegation_runs.create_run({
+        "delegation_id": "delegation_active_resume",
+        "task_id": "task_active_resume",
+        "source_profile_id": "source_profile",
+        "target_service_id": "target_profile",
+        "interface_type": TEST_INTERFACE_TYPE,
+        "conversation_id": TEST_CONVERSATION_ID,
+        "user_id": "async-delegation-user",
+        "user_name": TEST_USER_NAME,
+        "source_turn_id": "turn_async_delegation",
+        "subconversation_id": "sub_delegation_prior",
+        "source_subconversation_id": None,
+        "request_text": "follow-up already running",
+        "content_parts_json": [],
+    })
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="second follow-up",
-            resume_delegation_id="delegation_prior",
-        )
-        runs = await db_context.delegation_runs.list_for_conversation(
-            conversation_id=TEST_CONVERSATION_ID, limit=50
-        )
+    db_context = Database(engine=db_engine)
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="second follow-up",
+        resume_delegation_id="delegation_prior",
+    )
+    runs = await db_context.delegation_runs.list_for_conversation(
+        conversation_id=TEST_CONVERSATION_ID, limit=50
+    )
 
     assert result.text is not None
     assert "already in progress" in result.text.lower()
@@ -3518,38 +3504,38 @@ async def test_resume_delegation_rejects_other_users_delegation(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # A finished delegation owned by a different user in the same conversation.
-        await db_context.delegation_runs.create_run({
-            "delegation_id": "delegation_owned_by_alice",
-            "task_id": "task_owned_by_alice",
-            "source_profile_id": "source_profile",
-            "target_service_id": "target_profile",
-            "interface_type": TEST_INTERFACE_TYPE,
-            "conversation_id": TEST_CONVERSATION_ID,
-            "user_id": "alice",
-            "user_name": "Alice",
-            "source_turn_id": "turn_alice",
-            "subconversation_id": "sub_delegation_owned_by_alice",
-            "source_subconversation_id": None,
-            "request_text": "alice's private request",
-            "content_parts_json": [],
-        })
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_owned_by_alice",
-            result_text="alice's private result",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    # A finished delegation owned by a different user in the same conversation.
+    await db_context.delegation_runs.create_run({
+        "delegation_id": "delegation_owned_by_alice",
+        "task_id": "task_owned_by_alice",
+        "source_profile_id": "source_profile",
+        "target_service_id": "target_profile",
+        "interface_type": TEST_INTERFACE_TYPE,
+        "conversation_id": TEST_CONVERSATION_ID,
+        "user_id": "alice",
+        "user_name": "Alice",
+        "source_turn_id": "turn_alice",
+        "subconversation_id": "sub_delegation_owned_by_alice",
+        "source_subconversation_id": None,
+        "request_text": "alice's private request",
+        "content_parts_json": [],
+    })
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_owned_by_alice",
+        result_text="alice's private result",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # The default tool context runs as "async-delegation-user" (i.e. Bob).
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="continue alice's delegation",
-            resume_delegation_id="delegation_owned_by_alice",
-        )
+    db_context = Database(engine=db_engine)
+    # The default tool context runs as "async-delegation-user" (i.e. Bob).
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="continue alice's delegation",
+        resume_delegation_id="delegation_owned_by_alice",
+    )
 
     assert result.text is not None
     assert "no such delegation reference" in result.text.lower()
@@ -3571,14 +3557,14 @@ async def test_delegate_treats_blank_resume_id_as_fresh_delegation(
     chat_interface = AsyncMock(spec=ChatInterface)
     chat_interface.send_message.return_value = "external_message_id"
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="fresh delegation",
-            delivery_hint="background",
-            resume_delegation_id="   ",
-        )
+    db_context = Database(engine=db_engine)
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="fresh delegation",
+        delivery_hint="background",
+        resume_delegation_id="   ",
+    )
 
     assert result.text is not None
     assert "cannot resume" not in result.text.lower()
@@ -3600,37 +3586,37 @@ async def test_resume_delegation_rejects_other_source_profile(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.delegation_runs.create_run({
-            "delegation_id": "delegation_from_engineer",
-            "task_id": "task_from_engineer",
-            "source_profile_id": "engineer",
-            "target_service_id": "target_profile",
-            "interface_type": TEST_INTERFACE_TYPE,
-            "conversation_id": TEST_CONVERSATION_ID,
-            "user_id": "async-delegation-user",
-            "user_name": TEST_USER_NAME,
-            "source_turn_id": "turn_engineer",
-            "subconversation_id": "sub_delegation_from_engineer",
-            "source_subconversation_id": None,
-            "request_text": "engineer-seeded request",
-            "content_parts_json": [],
-        })
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_from_engineer",
-            result_text="engineer result",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.delegation_runs.create_run({
+        "delegation_id": "delegation_from_engineer",
+        "task_id": "task_from_engineer",
+        "source_profile_id": "engineer",
+        "target_service_id": "target_profile",
+        "interface_type": TEST_INTERFACE_TYPE,
+        "conversation_id": TEST_CONVERSATION_ID,
+        "user_id": "async-delegation-user",
+        "user_name": TEST_USER_NAME,
+        "source_turn_id": "turn_engineer",
+        "subconversation_id": "sub_delegation_from_engineer",
+        "source_subconversation_id": None,
+        "request_text": "engineer-seeded request",
+        "content_parts_json": [],
+    })
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_from_engineer",
+        result_text="engineer result",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # The default tool context runs as source profile "source_profile".
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="continue from a different profile",
-            resume_delegation_id="delegation_from_engineer",
-        )
+    db_context = Database(engine=db_engine)
+    # The default tool context runs as source profile "source_profile".
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="continue from a different profile",
+        resume_delegation_id="delegation_from_engineer",
+    )
 
     assert result.text is not None
     assert "no such delegation reference" in result.text.lower()
@@ -3651,38 +3637,38 @@ async def test_resume_delegation_rejects_other_source_subconversation(
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await db_context.delegation_runs.create_run({
-            "delegation_id": "delegation_from_sibling_task",
-            "task_id": "task_from_sibling_task",
-            "source_profile_id": "source_profile",
-            "target_service_id": "target_profile",
-            "interface_type": TEST_INTERFACE_TYPE,
-            "conversation_id": TEST_CONVERSATION_ID,
-            "user_id": "async-delegation-user",
-            "user_name": TEST_USER_NAME,
-            "source_turn_id": "turn_sibling",
-            "subconversation_id": "sub_delegation_from_sibling_task",
-            # Seeded from a different parent subconversation than the caller's.
-            "source_subconversation_id": "parent_subconversation_A",
-            "request_text": "sibling task request",
-            "content_parts_json": [],
-        })
-        await db_context.delegation_runs.mark_completed(
-            delegation_id="delegation_from_sibling_task",
-            result_text="sibling result",
-            result_attachment_ids=[],
-            completed_at=SystemClock().now(),
-        )
+    db_context = Database(engine=db_engine)
+    await db_context.delegation_runs.create_run({
+        "delegation_id": "delegation_from_sibling_task",
+        "task_id": "task_from_sibling_task",
+        "source_profile_id": "source_profile",
+        "target_service_id": "target_profile",
+        "interface_type": TEST_INTERFACE_TYPE,
+        "conversation_id": TEST_CONVERSATION_ID,
+        "user_id": "async-delegation-user",
+        "user_name": TEST_USER_NAME,
+        "source_turn_id": "turn_sibling",
+        "subconversation_id": "sub_delegation_from_sibling_task",
+        # Seeded from a different parent subconversation than the caller's.
+        "source_subconversation_id": "parent_subconversation_A",
+        "request_text": "sibling task request",
+        "content_parts_json": [],
+    })
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_from_sibling_task",
+        result_text="sibling result",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # The default tool context has no subconversation_id (a different parent).
-        result = await delegate_to_service_tool(
-            exec_context=_tool_context(db_context, processing_service, chat_interface),
-            target_service_id="target_profile",
-            user_request="continue a sibling task's delegation",
-            resume_delegation_id="delegation_from_sibling_task",
-        )
+    db_context = Database(engine=db_engine)
+    # The default tool context has no subconversation_id (a different parent).
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="continue a sibling task's delegation",
+        resume_delegation_id="delegation_from_sibling_task",
+    )
 
     assert result.text is not None
     assert "no such delegation reference" in result.text.lower()

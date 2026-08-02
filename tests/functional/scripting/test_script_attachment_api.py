@@ -17,7 +17,7 @@ from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import ScriptExecutionError
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     ATTACHMENT_TOOLS_DEFINITION,
     CompositeToolsProvider,
@@ -54,18 +54,18 @@ async def sample_attachment(
     db_engine: AsyncEngine, attachment_registry: AttachmentRegistry
 ) -> str:
     """Create a real attachment in the database and return its ID."""
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Register a user attachment
-        attachment_record = await attachment_registry.register_user_attachment(
-            db_context=db_context,
-            content=b"Test attachment content",
-            mime_type="text/plain",
-            filename="test.txt",
-            conversation_id="test_conversation",
-            user_id="test_user",
-            description="Test attachment",
-        )
-        return attachment_record.attachment_id
+    db_context = Database(engine=db_engine)
+    # Register a user attachment
+    attachment_record = await attachment_registry.register_user_attachment(
+        db_context=db_context,
+        content=b"Test attachment content",
+        mime_type="text/plain",
+        filename="test.txt",
+        conversation_id="test_conversation",
+        user_id="test_user",
+        description="Test attachment",
+    )
+    return attachment_record.attachment_id
 
 
 class TestAttachmentAPI:
@@ -268,21 +268,21 @@ class TestAttachmentAPI:
         assert len(metadata.attachment_id) == 36  # UUID format
 
         # Verify we can retrieve it
-        async with DatabaseContext(engine=db_engine) as db_context:
-            retrieved_metadata = await attachment_registry.get_attachment(
-                db_context, metadata.attachment_id, acting_user_id=None
-            )
-            assert retrieved_metadata is not None
-            assert retrieved_metadata.source_type == "script"
-            assert retrieved_metadata.mime_type == "text/plain"
-            assert retrieved_metadata.description == "Test text file"
-            assert retrieved_metadata.conversation_id == "test_conversation"
+        db_context = Database(engine=db_engine)
+        retrieved_metadata = await attachment_registry.get_attachment(
+            db_context, metadata.attachment_id, acting_user_id=None
+        )
+        assert retrieved_metadata is not None
+        assert retrieved_metadata.source_type == "script"
+        assert retrieved_metadata.mime_type == "text/plain"
+        assert retrieved_metadata.description == "Test text file"
+        assert retrieved_metadata.conversation_id == "test_conversation"
 
-            # Verify content
-            retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id, acting_user_id=None
-            )
-            assert retrieved_content == content.encode("utf-8")
+        # Verify content
+        retrieved_content = await attachment_registry.get_attachment_content(
+            db_context, metadata.attachment_id, acting_user_id=None
+        )
+        assert retrieved_content == content.encode("utf-8")
 
     async def test_create_attachment_with_bytes_content(
         self,
@@ -309,11 +309,11 @@ class TestAttachmentAPI:
         assert metadata.attachment_id is not None
 
         # Verify content
-        async with DatabaseContext(engine=db_engine) as db_context:
-            retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id, acting_user_id=None
-            )
-            assert retrieved_content == content
+        db_context = Database(engine=db_engine)
+        retrieved_content = await attachment_registry.get_attachment_content(
+            db_context, metadata.attachment_id, acting_user_id=None
+        )
+        assert retrieved_content == content
 
     async def test_create_attachment_with_json_content(
         self,
@@ -338,13 +338,13 @@ class TestAttachmentAPI:
         )
 
         # Verify attachment was created and content is correct
-        async with DatabaseContext(engine=db_engine) as db_context:
-            retrieved_content = await attachment_registry.get_attachment_content(
-                db_context, metadata.attachment_id, acting_user_id=None
-            )
-            assert retrieved_content is not None
-            retrieved_data = json.loads(retrieved_content.decode("utf-8"))
-            assert retrieved_data == json_data
+        db_context = Database(engine=db_engine)
+        retrieved_content = await attachment_registry.get_attachment_content(
+            db_context, metadata.attachment_id, acting_user_id=None
+        )
+        assert retrieved_content is not None
+        retrieved_data = json.loads(retrieved_content.decode("utf-8"))
+        assert retrieved_data == json_data
 
     async def test_create_attachment_cross_conversation_accessible(
         self,
@@ -411,17 +411,17 @@ class TestAttachmentAPI:
         """Test reading binary attachment content as raw bytes without decoding."""
         # Create an attachment with non-UTF-8 binary content
         binary_content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
-        async with DatabaseContext(engine=db_engine) as db_context:
-            attachment_record = await attachment_registry.register_user_attachment(
-                db_context=db_context,
-                content=binary_content,
-                mime_type="image/png",
-                filename="test.png",
-                conversation_id="test_conversation",
-                user_id="test_user",
-                description="Binary test attachment",
-            )
-            attachment_id = attachment_record.attachment_id
+        db_context = Database(engine=db_engine)
+        attachment_record = await attachment_registry.register_user_attachment(
+            db_context=db_context,
+            content=binary_content,
+            mime_type="image/png",
+            filename="test.png",
+            conversation_id="test_conversation",
+            user_id="test_user",
+            description="Binary test attachment",
+        )
+        attachment_id = attachment_record.attachment_id
 
         api = AttachmentAPI(
             attachment_registry=attachment_registry,
@@ -462,57 +462,57 @@ class TestCreateAttachmentAPI:
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test creating AttachmentAPI from execution context."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            api = create_attachment_api(execution_context)
+        api = create_attachment_api(execution_context)
 
-            assert isinstance(api, AttachmentAPI)
-            assert api.conversation_id == "test_conversation"
+        assert isinstance(api, AttachmentAPI)
+        assert api.conversation_id == "test_conversation"
 
     async def test_create_api_without_attachment_registry(
         self,
         db_engine: AsyncEngine,
     ) -> None:
         """Test creating AttachmentAPI fails without attachment registry."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,  # No attachment registry
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,  # No attachment registry
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            with pytest.raises(
-                RuntimeError,
-                match="AttachmentRegistry not available in execution context",
-            ):
-                create_attachment_api(execution_context)
+        with pytest.raises(
+            RuntimeError,
+            match="AttachmentRegistry not available in execution context",
+        ):
+            create_attachment_api(execution_context)
 
 
 class TestScriptIntegration:
@@ -523,41 +523,41 @@ class TestScriptIntegration:
         db_engine: AsyncEngine,
     ) -> None:
         """Test that scripts work without attachment registry (functions not available)."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,  # No attachment registry
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,  # No attachment registry
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            # Simple script that doesn't use attachment functions
-            script = """
+        # Simple script that doesn't use attachment functions
+        script = """
 print("Hello world")
 "success"
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            assert result == "success"
+        assert result == "success"
 
     async def test_script_with_attachment_functions(
         self,
@@ -566,46 +566,44 @@ print("Hello world")
         sample_attachment: str,
     ) -> None:
         """Test that attachment functions are available in scripts."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Create tools provider with attachment tools
-            local_provider = LocalToolsProvider(
-                definitions=ATTACHMENT_TOOLS_DEFINITION,
-                implementations={
-                    "attach_to_response": local_tool_implementations[
-                        "attach_to_response"
-                    ],
-                },
-            )
-            tools_provider = CompositeToolsProvider(providers=[local_provider])
-            await tools_provider.get_tool_definitions()
+        # Create tools provider with attachment tools
+        local_provider = LocalToolsProvider(
+            definitions=ATTACHMENT_TOOLS_DEFINITION,
+            implementations={
+                "attach_to_response": local_tool_implementations["attach_to_response"],
+            },
+        )
+        tools_provider = CompositeToolsProvider(providers=[local_provider])
+        await tools_provider.get_tool_definitions()
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                tools_provider=tools_provider,
-                config=config,
-                default_timezone=ZoneInfo("Australia/Sydney"),
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            tools_provider=tools_provider,
+            config=config,
+            default_timezone=ZoneInfo("Australia/Sydney"),
+        )
 
-            # Test script that uses attachment functions
-            # Note: attachment_list is not available for security, so we test with known attachment ID
-            script = f"""
+        # Test script that uses attachment functions
+        # Note: attachment_list is not available for security, so we test with known attachment ID
+        script = f"""
 # Test attachment_get with known ID from test setup
 attachment_id = "{sample_attachment}"
 metadata = attachment_get(attachment_id)
@@ -624,13 +622,13 @@ else:
 result
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            # Should return True since we found attachment
-            assert result is True
+        # Should return True since we found attachment
+        assert result is True
 
     async def test_script_attachment_error_handling(
         self,
@@ -638,43 +636,43 @@ result
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test that attachment function errors are handled gracefully."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            # Script that tries to get non-existent attachment
-            script = """
+        # Script that tries to get non-existent attachment
+        script = """
 fake_id = "00000000-0000-0000-0000-000000000000"
 result = attachment_get(fake_id)
 result == None
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            # Should return True (result is None)
-            assert result is True
+        # Should return True (result is None)
+        assert result is True
 
     async def test_attachment_list_not_available(
         self,
@@ -682,43 +680,41 @@ result == None
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test that attachment_list function is not available in scripts for security."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            # Script that tries to call attachment_list (should fail)
-            script = """
+        # Script that tries to call attachment_list (should fail)
+        script = """
 # This should raise a NameError since attachment_list is not available
 attachment_list()
 """
 
-            # Expect ScriptExecutionError due to NameError
-            with pytest.raises(
-                ScriptExecutionError, match="attachment_list.*not defined"
-            ):
-                await engine.evaluate_async(
-                    script=script,
-                    execution_context=execution_context,
-                )
+        # Expect ScriptExecutionError due to NameError
+        with pytest.raises(ScriptExecutionError, match="attachment_list.*not defined"):
+            await engine.evaluate_async(
+                script=script,
+                execution_context=execution_context,
+            )
 
     async def test_script_create_text_attachment(
         self,
@@ -726,31 +722,31 @@ attachment_list()
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test creating a text attachment from within a script."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            # Script that creates a text attachment
-            script = """
+        # Script that creates a text attachment
+        script = """
 content = "Hello from script!"
 attachment_id = attachment_create(
     content=content,
@@ -762,39 +758,39 @@ print("Created attachment:", attachment_id)
 attachment_id
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            # Verify result is a dict with metadata
-            assert isinstance(result, dict)
-            assert "id" in result
-            assert "filename" in result
-            assert "mime_type" in result
-            assert result["filename"] == "script-output.txt"
-            assert result["mime_type"] == "text/plain"
+        # Verify result is a dict with metadata
+        assert isinstance(result, dict)
+        assert "id" in result
+        assert "filename" in result
+        assert "mime_type" in result
+        assert result["filename"] == "script-output.txt"
+        assert result["mime_type"] == "text/plain"
 
-            # Extract the attachment ID
-            attachment_id = result["id"]
-            assert len(attachment_id) == 36  # UUID format
+        # Extract the attachment ID
+        attachment_id = result["id"]
+        assert len(attachment_id) == 36  # UUID format
 
         # Verify the attachment exists and has correct metadata
-        async with DatabaseContext(engine=db_engine) as verify_context:
-            metadata = await attachment_registry.get_attachment(
-                verify_context, attachment_id, acting_user_id=None
-            )
-            assert metadata is not None
-            assert metadata.source_type == "script"
-            assert metadata.mime_type == "text/plain"
-            assert metadata.description == "Script-generated text file"
-            assert metadata.conversation_id == "test_conversation"
+        verify_context = Database(engine=db_engine)
+        metadata = await attachment_registry.get_attachment(
+            verify_context, attachment_id, acting_user_id=None
+        )
+        assert metadata is not None
+        assert metadata.source_type == "script"
+        assert metadata.mime_type == "text/plain"
+        assert metadata.description == "Script-generated text file"
+        assert metadata.conversation_id == "test_conversation"
 
-            # Verify content
-            content = await attachment_registry.get_attachment_content(
-                verify_context, attachment_id, acting_user_id=None
-            )
-            assert content == b"Hello from script!"
+        # Verify content
+        content = await attachment_registry.get_attachment_content(
+            verify_context, attachment_id, acting_user_id=None
+        )
+        assert content == b"Hello from script!"
 
     async def test_script_create_json_attachment(
         self,
@@ -802,31 +798,31 @@ attachment_id
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test creating a JSON attachment from within a script."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            # Script that creates a JSON attachment (stored as text/plain)
-            script = """
+        # Script that creates a JSON attachment (stored as text/plain)
+        script = """
 # Create a data structure
 data = {
     "name": "Test",
@@ -849,31 +845,31 @@ attachment_id = attachment_create(
 attachment_id
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            # Verify result is a dict with metadata
-            assert isinstance(result, dict)
-            assert "id" in result
-            assert "filename" in result
-            assert result["filename"] == "data.json"
+        # Verify result is a dict with metadata
+        assert isinstance(result, dict)
+        assert "id" in result
+        assert "filename" in result
+        assert result["filename"] == "data.json"
 
-            # Extract the attachment ID
-            attachment_id = result["id"]
-            assert len(attachment_id) == 36  # UUID format
+        # Extract the attachment ID
+        attachment_id = result["id"]
+        assert len(attachment_id) == 36  # UUID format
 
         # Verify the attachment content is valid JSON
-        async with DatabaseContext(engine=db_engine) as verify_context:
-            content = await attachment_registry.get_attachment_content(
-                verify_context, attachment_id, acting_user_id=None
-            )
-            assert content is not None
-            data = json.loads(content.decode("utf-8"))
-            assert data["name"] == "Test"
-            assert data["count"] == 42
-            assert data["items"] == ["a", "b", "c"]
+        verify_context = Database(engine=db_engine)
+        content = await attachment_registry.get_attachment_content(
+            verify_context, attachment_id, acting_user_id=None
+        )
+        assert content is not None
+        data = json.loads(content.decode("utf-8"))
+        assert data["name"] == "Test"
+        assert data["count"] == 42
+        assert data["items"] == ["a", "b", "c"]
 
     async def test_script_create_and_retrieve_attachment(
         self,
@@ -881,31 +877,31 @@ attachment_id
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test creating an attachment and then retrieving it in the same script."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            # Script that creates an attachment and retrieves it
-            script = """
+        # Script that creates an attachment and retrieves it
+        script = """
 # Create attachment (returns dict with metadata)
 attachment_dict = attachment_create(
     content="Test content",
@@ -927,15 +923,15 @@ metadata = attachment_get(attachment_id)
 }
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            # Verify result
-            assert isinstance(result, dict)
-            assert "id" in result
-            assert result["description"] == "Test file"
+        # Verify result
+        assert isinstance(result, dict)
+        assert "id" in result
+        assert result["description"] == "Test file"
 
     async def test_script_read_bytes_text_attachment(
         self,
@@ -944,41 +940,41 @@ metadata = attachment_get(attachment_id)
         sample_attachment: str,
     ) -> None:
         """Test reading attachment bytes from within a script."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            script = f"""
+        script = f"""
 raw = attachment_read_bytes("{sample_attachment}")
 raw
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            assert isinstance(result, bytes)
-            assert result == b"Test attachment content"
+        assert isinstance(result, bytes)
+        assert result == b"Test attachment content"
 
     async def test_script_read_bytes_binary_attachment(
         self,
@@ -989,52 +985,52 @@ raw
         # PNG header followed by bytes that are invalid UTF-8
         binary_payload = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\x80\x81"
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            attachment_record = await attachment_registry.register_user_attachment(
-                db_context=db_context,
-                content=binary_payload,
-                mime_type="image/png",
-                filename="test.png",
-                conversation_id="test_conversation",
-                user_id="test_user",
-                description="Binary PNG attachment",
-            )
-            attachment_id = attachment_record.attachment_id
+        db_context = Database(engine=db_engine)
+        attachment_record = await attachment_registry.register_user_attachment(
+            db_context=db_context,
+            content=binary_payload,
+            mime_type="image/png",
+            filename="test.png",
+            conversation_id="test_conversation",
+            user_id="test_user",
+            description="Binary PNG attachment",
+        )
+        attachment_id = attachment_record.attachment_id
 
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            script = f"""
+        script = f"""
 raw = attachment_read_bytes("{attachment_id}")
 raw
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            assert isinstance(result, bytes)
-            assert result == binary_payload
+        assert isinstance(result, bytes)
+        assert result == binary_payload
 
     async def test_script_read_bytes_returns_none_for_missing(
         self,
@@ -1042,38 +1038,38 @@ raw
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test that attachment_read_bytes returns None for non-existent attachment."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            execution_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        execution_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            config = ScriptConfig(enable_print=True)
-            engine = MontyEngine(
-                config=config, default_timezone=ZoneInfo("Australia/Sydney")
-            )
+        config = ScriptConfig(enable_print=True)
+        engine = MontyEngine(
+            config=config, default_timezone=ZoneInfo("Australia/Sydney")
+        )
 
-            script = """
+        script = """
 fake_id = "00000000-0000-0000-0000-000000000000"
 result = attachment_read_bytes(fake_id)
 result == None
 """
 
-            result = await engine.evaluate_async(
-                script=script,
-                execution_context=execution_context,
-            )
+        result = await engine.evaluate_async(
+            script=script,
+            execution_context=execution_context,
+        )
 
-            assert result is True
+        assert result is True

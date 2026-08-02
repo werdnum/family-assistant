@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 # Set up logging
@@ -113,32 +113,32 @@ async def main() -> None:
     tools_provider = SimpleToolsProvider()
 
     # Create execution context
-    async with DatabaseContext(engine=engine) as db:
-        context = ToolExecutionContext(
-            interface_type="demo",
-            conversation_id="demo-123",
-            user_name="Demo User",
-            turn_id="demo-turn-1",
-            db_context=db,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db = Database(engine=engine)
+    context = ToolExecutionContext(
+        interface_type="demo",
+        conversation_id="demo-123",
+        user_name="Demo User",
+        turn_id="demo-turn-1",
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Create engine
-        engine = MontyEngine(
-            tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
-        )
+    # Create engine
+    engine = MontyEngine(
+        tools_provider=tools_provider, default_timezone=ZoneInfo("Australia/Sydney")
+    )
 
-        # Example 1: Direct tool calls
-        print("\n=== Example 1: Direct Tool Calls ===")
-        script1 = """
+    # Example 1: Direct tool calls
+    print("\n=== Example 1: Direct Tool Calls ===")
+    script1 = """
 # Call tools directly by name
 greeting1 = greet(name="Alice")
 greeting2 = greet(name="Bob", greeting="Howdy")
@@ -153,12 +153,12 @@ product_result = calculate(operation="multiply", a=7, b=8)
     "calculations": [sum_result, product_result]
 }
 """
-        result1 = await engine.evaluate_async(script1, execution_context=context)
-        print(f"Result: {result1}")
+    result1 = await engine.evaluate_async(script1, execution_context=context)
+    print(f"Result: {result1}")
 
-        # Example 2: Using both old and new APIs
-        print("\n=== Example 2: Mixed API Usage ===")
-        script2 = """
+    # Example 2: Using both old and new APIs
+    print("\n=== Example 2: Mixed API Usage ===")
+    script2 = """
 # List available tools using old API
 available_tools = tools_list()
 tool_names = [tool["name"] for tool in available_tools]
@@ -175,12 +175,12 @@ old_result = tools_execute("greet", name="David", greeting="Greetings")
     "old_api_call": old_result
 }
 """
-        result2 = await engine.evaluate_async(script2, execution_context=context)
-        print(f"Result: {result2}")
+    result2 = await engine.evaluate_async(script2, execution_context=context)
+    print(f"Result: {result2}")
 
-        # Example 3: Tool with fallback prefix
-        print("\n=== Example 3: Tool Prefix Fallback ===")
-        script3 = """
+    # Example 3: Tool with fallback prefix
+    print("\n=== Example 3: Tool Prefix Fallback ===")
+    script3 = """
 # Tools can also be called with tool_ prefix
 # This is useful if tool names conflict with built-in functions
 
@@ -189,8 +189,8 @@ result2 = tool_calculate(operation="divide", a=20, b=4)
 
 [result1, result2]
 """
-        result3 = await engine.evaluate_async(script3, execution_context=context)
-        print(f"Result: {result3}")
+    result3 = await engine.evaluate_async(script3, execution_context=context)
+    print(f"Result: {result3}")
 
 
 if __name__ == "__main__":

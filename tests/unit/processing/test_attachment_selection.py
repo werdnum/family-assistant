@@ -93,7 +93,7 @@ class TestAttachmentSelectionThreshold:
                 created_at=datetime.now(UTC),
             )
         )
-        processing_service.llm_client.generate_response = AsyncMock(  # type: ignore[attr-defined]
+        processing_service.llm_client.generate_response = AsyncMock(
             return_value=LLMOutput(
                 content="",
                 tool_calls=[

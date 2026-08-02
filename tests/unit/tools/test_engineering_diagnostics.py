@@ -46,7 +46,7 @@ def exec_context_with_db() -> ToolExecutionContext:
     db = Mock()
     db.engine = Mock()
     db.engine.dialect = Mock()
-    db.engine.dialect.name = "sqlite"
+    db.dialect_name = "sqlite"
     return ToolExecutionContext(
         interface_type="test",
         conversation_id="conv-1",

@@ -18,7 +18,7 @@ from family_assistant.services.notifier import (
     MESSAGE_CATEGORY,
     NotificationMetadata,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.utils.clock import SystemClock
 from family_assistant.web.app_creator import app as fastapi_app
 
@@ -36,7 +36,7 @@ class _RecordingNotifier:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:
@@ -47,14 +47,14 @@ class _RecordingNotifier:
 async def _add_user_message(
     db_engine: AsyncEngine, *, interface_type: str, conversation_id: str, user_id: str
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.message_history.add_message(
-            message=UserMessage(content="please do the thing"),
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            timestamp=SystemClock().now(),
-            user_id=user_id,
-        )
+    db = Database(engine=db_engine)
+    await db.message_history.add_message(
+        message=UserMessage(content="please do the thing"),
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        timestamp=SystemClock().now(),
+        user_id=user_id,
+    )
 
 
 @pytest.mark.asyncio
@@ -67,15 +67,15 @@ async def test_notify_conversation_resolves_and_dispatches(
     )
     notifier = _RecordingNotifier()
 
-    async with DatabaseContext(engine=db_engine) as db:
-        dispatched = await notify_conversation(
-            notifier,
-            db,
-            interface_type="web",
-            conversation_id="conv-1",
-            title="Title",
-            body="Body",
-        )
+    db = Database(engine=db_engine)
+    dispatched = await notify_conversation(
+        notifier,
+        db,
+        interface_type="web",
+        conversation_id="conv-1",
+        title="Title",
+        body="Body",
+    )
 
     assert dispatched is True
     assert notifier.calls == [("owner-1", "Title", "Body")]
@@ -85,15 +85,15 @@ async def test_notify_conversation_resolves_and_dispatches(
 async def test_notify_conversation_no_owner_is_noop(db_engine: AsyncEngine) -> None:
     """No notification is dispatched when the owner cannot be resolved."""
     notifier = _RecordingNotifier()
-    async with DatabaseContext(engine=db_engine) as db:
-        dispatched = await notify_conversation(
-            notifier,
-            db,
-            interface_type="web",
-            conversation_id="conv-unknown",
-            title="Title",
-            body="Body",
-        )
+    db = Database(engine=db_engine)
+    dispatched = await notify_conversation(
+        notifier,
+        db,
+        interface_type="web",
+        conversation_id="conv-unknown",
+        title="Title",
+        body="Body",
+    )
 
     assert dispatched is False
     assert notifier.calls == []
@@ -103,15 +103,15 @@ async def test_notify_conversation_no_owner_is_noop(db_engine: AsyncEngine) -> N
 async def test_notify_conversation_disabled_is_noop(db_engine: AsyncEngine) -> None:
     """A disabled notifier is never invoked."""
     notifier = _RecordingNotifier(enabled=False)
-    async with DatabaseContext(engine=db_engine) as db:
-        dispatched = await notify_conversation(
-            notifier,
-            db,
-            interface_type="web",
-            conversation_id="conv-1",
-            title="Title",
-            body="Body",
-        )
+    db = Database(engine=db_engine)
+    dispatched = await notify_conversation(
+        notifier,
+        db,
+        interface_type="web",
+        conversation_id="conv-1",
+        title="Title",
+        body="Body",
+    )
 
     assert dispatched is False
     assert notifier.calls == []
@@ -124,7 +124,7 @@ async def test_pending_confirmation_notifies_target_user(
     """Creating a pending confirmation dispatches a notification to the target user."""
     notifier = _RecordingNotifier()
     service = ConfirmationService(
-        db_context_factory=lambda: DatabaseContext(engine=db_engine),
+        db=Database(engine=db_engine),
         notifier=notifier,
     )
 
@@ -155,18 +155,18 @@ async def test_worker_completion_webhook_notifies_owner(
     await _add_user_message(
         db_engine, interface_type="web", conversation_id="conv-9", user_id="owner-9"
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.worker_tasks.create_task(
-            task_id="wt-1",
-            conversation_id="conv-9",
-            interface_type="web",
-            task_description="do the thing",
-            model="claude",
-            context_files=[],
-            timeout_minutes=30,
-            user_name="Owner",
-            callback_token=None,
-        )
+    db = Database(engine=db_engine)
+    await db.worker_tasks.create_task(
+        task_id="wt-1",
+        conversation_id="conv-9",
+        interface_type="web",
+        task_description="do the thing",
+        model="claude",
+        context_files=[],
+        timeout_minutes=30,
+        user_name="Owner",
+        callback_token=None,
+    )
 
     notifier = _RecordingNotifier()
     fastapi_app.state.database_engine = db_engine

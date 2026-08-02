@@ -29,7 +29,7 @@ from family_assistant.indexing.processors.file_processors import PDFTextExtracto
 from family_assistant.indexing.processors.metadata_processors import TitleExtractor
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import (
     Document as DocumentProtocol,
@@ -207,12 +207,10 @@ async def test_indexing_pipeline_e2e(
     4. Verifies the content can be retrieved via vector search.
     """
     # Clean up any leftover tasks from previous tests to ensure isolation
-    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(
-            tasks_table.delete().where(
-                tasks_table.c.task_type == "embed_and_store_batch"
-            )
-        )
+    db_ctx = Database(engine=pg_vector_db_engine)
+    await db_ctx.execute(
+        tasks_table.delete().where(tasks_table.c.task_type == "embed_and_store_batch")
+    )
 
     # --- Arrange ---
     doc_content = "Apples are red. Bananas are yellow. Oranges are orange and tasty."
@@ -229,83 +227,81 @@ async def test_indexing_pipeline_e2e(
     # ToolExecutionContext for the pipeline run (uses real enqueue_task)
     # This db_context is for the pipeline's direct DB operations (like add_document)
     # and for the enqueue_task call within EmbeddingDispatchProcessor.
-    db_context_for_pipeline_cm = get_db_context(engine=pg_vector_db_engine)
+    db_context_for_pipeline_cm = Database(engine=pg_vector_db_engine)
 
     # Initialize indexing_task_ids as an empty set
     indexing_task_ids: set[str] = set()
 
     try:
-        async with (
-            db_context_for_pipeline_cm as db_context_for_pipeline
-        ):  # This acquires the connection
-            tool_exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test-indexing-conv",
-                user_name="IndexingTestUser",  # Added
-                turn_id=str(uuid.uuid4()),  # ADDED turn_id
-                db_context=db_context_for_pipeline,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                chat_interface=MagicMock(),  # Provide a mock ChatInterface
-                embedding_generator=mock_pipeline_embedding_generator,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context_for_pipeline = db_context_for_pipeline_cm
+        tool_exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-indexing-conv",
+            user_name="IndexingTestUser",  # Added
+            turn_id=str(uuid.uuid4()),  # ADDED turn_id
+            db_context=db_context_for_pipeline,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            chat_interface=MagicMock(),  # Provide a mock ChatInterface
+            embedding_generator=mock_pipeline_embedding_generator,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Create and store the document
-            test_document_protocol = MockDocumentImpl(
-                source_type="test", source_id=doc_source_id, title=doc_title
-            )
-            doc_db_id = await add_document(
-                db_context_for_pipeline, test_document_protocol
-            )
-            # Set the ID on the protocol object so the pipeline can use it
-            test_document_protocol._id = doc_db_id  # type: ignore[attr-defined]
+        # Create and store the document
+        test_document_protocol = MockDocumentImpl(
+            source_type="test", source_id=doc_source_id, title=doc_title
+        )
+        doc_db_id = await add_document(db_context_for_pipeline, test_document_protocol)
+        # Set the ID on the protocol object so the pipeline can use it
+        test_document_protocol._id = doc_db_id
 
-            original_doc_record = await get_document_by_source_id(
-                db_context_for_pipeline, doc_source_id
-            )
-            assert_that(original_doc_record).is_not_none()
-            assert original_doc_record is not None  # For type checker
-            assert_that(original_doc_record.id).is_equal_to(doc_db_id)
+        original_doc_record = await get_document_by_source_id(
+            db_context_for_pipeline, doc_source_id
+        )
+        assert_that(original_doc_record).is_not_none()
+        assert original_doc_record is not None  # For type checker
+        assert_that(original_doc_record.id).is_equal_to(doc_db_id)
 
-            # Initial IndexableContent
-            initial_content = IndexableContent(
-                embedding_type="raw_text",
-                source_processor="test_setup",
-                content=doc_content,
-                mime_type="text/plain",
-                metadata={"original_filename": "test_doc.txt"},
-            )
+        # Initial IndexableContent
+        initial_content = IndexableContent(
+            embedding_type="raw_text",
+            source_processor="test_setup",
+            content=doc_content,
+            mime_type="text/plain",
+            metadata={"original_filename": "test_doc.txt"},
+        )
 
-            # Setup Pipeline
-            title_extractor = TitleExtractor()
-            text_chunker = TextChunker(
-                chunk_size=30, chunk_overlap=5
-            )  # Small for predictable chunks
-            # Ensure the dispatch processor handles the types generated by previous stages
-            embedding_dispatcher = EmbeddingDispatchProcessor(  # Dispatch types produced by preceding stages
+        # Setup Pipeline
+        title_extractor = TitleExtractor()
+        text_chunker = TextChunker(
+            chunk_size=30, chunk_overlap=5
+        )  # Small for predictable chunks
+        # Ensure the dispatch processor handles the types generated by previous stages
+        embedding_dispatcher = (
+            EmbeddingDispatchProcessor(  # Dispatch types produced by preceding stages
                 embedding_types_to_dispatch=["title_chunk", "raw_text_chunk"]
             )
-            pipeline = IndexingPipeline(
-                processors=[title_extractor, text_chunker, embedding_dispatcher],
-                config={},
-            )
+        )
+        pipeline = IndexingPipeline(
+            processors=[title_extractor, text_chunker, embedding_dispatcher],
+            config={},
+        )
 
-            # --- Act ---
-            logger.info(
-                f"Running indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
-            )
-            await pipeline.run(
-                [initial_content],
-                test_document_protocol,
-                tool_exec_context,  # Pass protocol object
-            )
+        # --- Act ---
+        logger.info(
+            f"Running indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
+        )
+        await pipeline.run(
+            [initial_content],
+            test_document_protocol,
+            tool_exec_context,  # Pass protocol object
+        )
 
         # Signal worker and wait for task completion
         test_new_task_event.set()
@@ -322,88 +318,82 @@ async def test_indexing_pipeline_e2e(
         # --- Assert ---
         # Verify embeddings in DB
         # Use a new context for assertions as the previous one is closed
-        async with get_db_context(  # Removed await
-            engine=pg_vector_db_engine
-        ) as db_context_for_asserts:
-            stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(
-                DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id
+        db_context_for_asserts = Database(engine=pg_vector_db_engine)  # Removed await
+        stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(
+            DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id
+        )
+        stored_embeddings_rows = await db_context_for_asserts.fetch_all(
+            stmt_verify_embeddings
+        )
+
+        assert_that(len(stored_embeddings_rows)).described_as(
+            "Expected at least title and one chunk embedding"
+        ).is_greater_than_or_equal_to(2)
+
+        # Log stored content for debugging
+        logger.info(f"Stored Embeddings (doc_id={doc_db_id}):")
+        for i, row_proxy_log in enumerate(stored_embeddings_rows):
+            row_dict_log = dict(row_proxy_log)
+            logger.info(
+                f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{row_dict_log.get('content')}'"
             )
-            stored_embeddings_rows = await db_context_for_asserts.fetch_all(
-                stmt_verify_embeddings
-            )
 
-            assert_that(len(stored_embeddings_rows)).described_as(
-                "Expected at least title and one chunk embedding"
-            ).is_greater_than_or_equal_to(2)
+        title_embedding_found = False
+        chunk_embeddings_found = 0
+        expected_chunk_texts = [
+            "Apples are red Bananas are yel",  # Chunk 1
+            "e yellow Oranges are orange an",  # Chunk 2 - updated based on test failure
+            "ge and tasty.",  # Chunk 3 - updated based on test failure
+        ]
 
-            # Log stored content for debugging
-            logger.info(f"Stored Embeddings (doc_id={doc_db_id}):")
-            for i, row_proxy_log in enumerate(stored_embeddings_rows):
-                row_dict_log = dict(row_proxy_log)
-                logger.info(
-                    f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{row_dict_log.get('content')}'"
-                )
+        for row_proxy in stored_embeddings_rows:
+            row = dict(row_proxy)  # Convert RowProxy to dict for easier access
+            assert_that(row["embedding_model"]).is_equal_to(TEST_EMBEDDING_MODEL_NAME)
+            # Check for the chunked title type
+            if row["embedding_type"] == "title_chunk":
+                assert_that(row["content"]).is_equal_to("Fruit Facts")  # Check content
+                title_embedding_found = True
+            elif row["embedding_type"] == "raw_text_chunk":
+                assert_that(expected_chunk_texts).contains(row["content"])
+                chunk_embeddings_found += 1
 
-            title_embedding_found = False
-            chunk_embeddings_found = 0
-            expected_chunk_texts = [
-                "Apples are red Bananas are yel",  # Chunk 1
-                "e yellow Oranges are orange an",  # Chunk 2 - updated based on test failure
-                "ge and tasty.",  # Chunk 3 - updated based on test failure
-            ]
+        assert_that(title_embedding_found).described_as(
+            "Title embedding (title_chunk) not found"
+        ).is_true()
+        assert_that(chunk_embeddings_found).described_as(
+            f"Expected {len(expected_chunk_texts)} chunk embeddings"
+        ).is_equal_to(len(expected_chunk_texts))
 
-            for row_proxy in stored_embeddings_rows:
-                row = dict(row_proxy)  # Convert RowProxy to dict for easier access
-                assert_that(row["embedding_model"]).is_equal_to(
-                    TEST_EMBEDDING_MODEL_NAME
-                )
-                # Check for the chunked title type
-                if row["embedding_type"] == "title_chunk":
-                    assert_that(row["content"]).is_equal_to(
-                        "Fruit Facts"
-                    )  # Check content
-                    title_embedding_found = True
-                elif row["embedding_type"] == "raw_text_chunk":
-                    assert_that(expected_chunk_texts).contains(row["content"])
-                    chunk_embeddings_found += 1
+        # Verify search
+        query_text_for_chunk = "yellow and orange"  # Should match the second chunk
+        query_vector_result = (
+            await mock_pipeline_embedding_generator.generate_embeddings([
+                query_text_for_chunk
+            ])
+        )
+        query_embedding = query_vector_result.embeddings[0]
 
-            assert_that(title_embedding_found).described_as(
-                "Title embedding (title_chunk) not found"
-            ).is_true()
-            assert_that(chunk_embeddings_found).described_as(
-                f"Expected {len(expected_chunk_texts)} chunk embeddings"
-            ).is_equal_to(len(expected_chunk_texts))
+        search_results = await query_vectors(
+            db_context_for_asserts,
+            query_embedding,
+            TEST_EMBEDDING_MODEL_NAME,
+            limit=5,
+        )
+        assert_that(search_results).described_as(
+            f"Vector search results for query '{query_text_for_chunk}'"
+        ).is_not_empty()
 
-            # Verify search
-            query_text_for_chunk = "yellow and orange"  # Should match the second chunk
-            query_vector_result = (
-                await mock_pipeline_embedding_generator.generate_embeddings([
-                    query_text_for_chunk
-                ])
-            )
-            query_embedding = query_vector_result.embeddings[0]
-
-            search_results = await query_vectors(
-                db_context_for_asserts,
-                query_embedding,
-                TEST_EMBEDDING_MODEL_NAME,
-                limit=5,
-            )
-            assert_that(search_results).described_as(
-                f"Vector search results for query '{query_text_for_chunk}'"
-            ).is_not_empty()
-
-            found_matching_chunk_in_search = False
-            for res in search_results:
-                if (
-                    res["document_id"] == doc_db_id
-                    and res["embedding_source_content"] == expected_chunk_texts[1]
-                ):  # "low Oranges are orange and tas"
-                    found_matching_chunk_in_search = True
-                    break
-            assert_that(found_matching_chunk_in_search).described_as(
-                "Relevant chunk not found via vector search"
-            ).is_true()
+        found_matching_chunk_in_search = False
+        for res in search_results:
+            if (
+                res["document_id"] == doc_db_id
+                and res["embedding_source_content"] == expected_chunk_texts[1]
+            ):  # "low Oranges are orange and tas"
+                found_matching_chunk_in_search = True
+                break
+        assert_that(found_matching_chunk_in_search).described_as(
+            "Relevant chunk not found via vector search"
+        ).is_true()
 
         logger.info("Indexing pipeline E2E test passed.")
 
@@ -434,12 +424,10 @@ async def test_indexing_pipeline_pdf_processing(
     3. Verifies that text is extracted and embedding tasks are created for the extracted content.
     """
     # Clean up any leftover tasks from previous tests to ensure isolation
-    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(
-            tasks_table.delete().where(
-                tasks_table.c.task_type == "embed_and_store_batch"
-            )
-        )
+    db_ctx = Database(engine=pg_vector_db_engine)
+    await db_ctx.execute(
+        tasks_table.delete().where(tasks_table.c.task_type == "embed_and_store_batch")
+    )
 
     # --- Arrange ---
     # Create a dummy PDF file for testing (or copy a test PDF)
@@ -460,80 +448,78 @@ async def test_indexing_pipeline_pdf_processing(
 
     _worker, test_new_task_event, _test_shutdown_event = indexing_task_worker
 
-    db_context_for_pipeline_cm = get_db_context(engine=pg_vector_db_engine)
+    db_context_for_pipeline_cm = Database(engine=pg_vector_db_engine)
 
     try:
-        async with db_context_for_pipeline_cm as db_context_for_pipeline:
-            tool_exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test-pdf-pipeline-conv",
-                user_name="PDFIndexingTestUser",  # Added
-                turn_id=str(uuid.uuid4()),  # ADDED turn_id
-                db_context=db_context_for_pipeline,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=None,
-                camera_backend=None,
-                chat_interface=MagicMock(),  # Provide a mock ChatInterface
-                embedding_generator=mock_pipeline_embedding_generator,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context_for_pipeline = db_context_for_pipeline_cm
+        tool_exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test-pdf-pipeline-conv",
+            user_name="PDFIndexingTestUser",  # Added
+            turn_id=str(uuid.uuid4()),  # ADDED turn_id
+            db_context=db_context_for_pipeline,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=None,
+            camera_backend=None,
+            chat_interface=MagicMock(),  # Provide a mock ChatInterface
+            embedding_generator=mock_pipeline_embedding_generator,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            test_document_protocol = MockDocumentImpl(
-                source_type="test_pdf", source_id=doc_source_id, title=doc_title
-            )
-            doc_db_id = await add_document(
-                db_context_for_pipeline, test_document_protocol
-            )
-            # Set the ID on the protocol object so the pipeline can use it
-            test_document_protocol._id = doc_db_id  # type: ignore[attr-defined]
+        test_document_protocol = MockDocumentImpl(
+            source_type="test_pdf", source_id=doc_source_id, title=doc_title
+        )
+        doc_db_id = await add_document(db_context_for_pipeline, test_document_protocol)
+        # Set the ID on the protocol object so the pipeline can use it
+        test_document_protocol._id = doc_db_id
 
-            original_doc_record = await get_document_by_source_id(
-                db_context_for_pipeline, doc_source_id
-            )
-            assert_that(original_doc_record).is_not_none()
-            assert original_doc_record is not None  # For type checker
+        original_doc_record = await get_document_by_source_id(
+            db_context_for_pipeline, doc_source_id
+        )
+        assert_that(original_doc_record).is_not_none()
+        assert original_doc_record is not None  # For type checker
 
-            # Initial IndexableContent for the PDF file
-            initial_pdf_content = IndexableContent(
-                embedding_type="original_document_file",
-                source_processor="test_pdf_setup",
-                mime_type="application/pdf",
-                ref=str(temp_pdf_path),  # Path to the test PDF
-                metadata={"original_filename": test_pdf_filename},
-            )
+        # Initial IndexableContent for the PDF file
+        initial_pdf_content = IndexableContent(
+            embedding_type="original_document_file",
+            source_processor="test_pdf_setup",
+            mime_type="application/pdf",
+            ref=str(temp_pdf_path),  # Path to the test PDF
+            metadata={"original_filename": test_pdf_filename},
+        )
 
-            # Setup Pipeline with PDFTextExtractor
+        # Setup Pipeline with PDFTextExtractor
 
-            pdf_extractor = PDFTextExtractor()
-            # TextChunker to process the markdown output of PDFTextExtractor
-            text_chunker = TextChunker(
-                chunk_size=500,  # Adjust as needed for test_doc.pdf content
-                chunk_overlap=50,
-            )
-            embedding_dispatcher = EmbeddingDispatchProcessor(
-                embedding_types_to_dispatch=[
-                    "extracted_markdown_content_chunk"
-                ]  # Expecting chunks from markdown
-            )
-            pipeline = IndexingPipeline(
-                processors=[pdf_extractor, text_chunker, embedding_dispatcher],
-                config={},
-            )
+        pdf_extractor = PDFTextExtractor()
+        # TextChunker to process the markdown output of PDFTextExtractor
+        text_chunker = TextChunker(
+            chunk_size=500,  # Adjust as needed for test_doc.pdf content
+            chunk_overlap=50,
+        )
+        embedding_dispatcher = EmbeddingDispatchProcessor(
+            embedding_types_to_dispatch=[
+                "extracted_markdown_content_chunk"
+            ]  # Expecting chunks from markdown
+        )
+        pipeline = IndexingPipeline(
+            processors=[pdf_extractor, text_chunker, embedding_dispatcher],
+            config={},
+        )
 
-            # --- Act ---
-            logger.info(
-                f"Running PDF indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
-            )
-            await pipeline.run(
-                [initial_pdf_content],
-                test_document_protocol,
-                tool_exec_context,  # Pass protocol object
-            )
+        # --- Act ---
+        logger.info(
+            f"Running PDF indexing pipeline for document ID {doc_db_id} ({doc_source_id})..."
+        )
+        await pipeline.run(
+            [initial_pdf_content],
+            test_document_protocol,
+            tool_exec_context,  # Pass protocol object
+        )
 
         test_new_task_event.set()
         logger.info(
@@ -548,48 +534,45 @@ async def test_indexing_pipeline_pdf_processing(
         )
 
         # --- Assert ---
-        async with get_db_context(  # Removed await
-            engine=pg_vector_db_engine
-        ) as db_context_for_asserts:
-            stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(
-                DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id
+        db_context_for_asserts = Database(engine=pg_vector_db_engine)  # Removed await
+        stmt_verify_embeddings = DocumentEmbeddingRecord.__table__.select().where(
+            DocumentEmbeddingRecord.__table__.c.document_id == doc_db_id
+        )
+        stored_embeddings_rows = await db_context_for_asserts.fetch_all(
+            stmt_verify_embeddings
+        )
+
+        assert_that(len(stored_embeddings_rows)).described_as(
+            "Expected embeddings from PDF extracted content"
+        ).is_greater_than_or_equal_to(1)
+
+        logger.info(f"Stored Embeddings from PDF (doc_id={doc_db_id}):")
+        found_expected_content = False
+        # Known phrase from test_doc.md (which test_doc.pdf is generated from)
+        # This phrase should be specific enough and likely to survive chunking.
+        # From "Software updates are a common and crucial aspect of using digital devices"
+        known_phrase_in_pdf = "crucial aspect of using digital devices"
+
+        for i, row_proxy_log in enumerate(stored_embeddings_rows):
+            row_dict_log = dict(row_proxy_log)
+            logger.info(
+                f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{str(row_dict_log.get('content'))[:100]}...'"
             )
-            stored_embeddings_rows = await db_context_for_asserts.fetch_all(
-                stmt_verify_embeddings
-            )
+            if (
+                row_dict_log.get("embedding_type") == "extracted_markdown_content_chunk"
+                and row_dict_log.get("content")
+                and known_phrase_in_pdf in str(row_dict_log.get("content"))
+            ):
+                found_expected_content = True
 
-            assert_that(len(stored_embeddings_rows)).described_as(
-                "Expected embeddings from PDF extracted content"
-            ).is_greater_than_or_equal_to(1)
+        assert_that(found_expected_content).described_as(
+            f"Known phrase '{known_phrase_in_pdf}' not found in any extracted PDF content chunks."
+        ).is_true()
 
-            logger.info(f"Stored Embeddings from PDF (doc_id={doc_db_id}):")
-            found_expected_content = False
-            # Known phrase from test_doc.md (which test_doc.pdf is generated from)
-            # This phrase should be specific enough and likely to survive chunking.
-            # From "Software updates are a common and crucial aspect of using digital devices"
-            known_phrase_in_pdf = "crucial aspect of using digital devices"
-
-            for i, row_proxy_log in enumerate(stored_embeddings_rows):
-                row_dict_log = dict(row_proxy_log)
-                logger.info(
-                    f"  Row {i}: Type='{row_dict_log.get('embedding_type')}', ChunkIdx='{row_dict_log.get('chunk_index')}', Content='{str(row_dict_log.get('content'))[:100]}...'"
-                )
-                if (
-                    row_dict_log.get("embedding_type")
-                    == "extracted_markdown_content_chunk"
-                    and row_dict_log.get("content")
-                    and known_phrase_in_pdf in str(row_dict_log.get("content"))
-                ):
-                    found_expected_content = True
-
-            assert_that(found_expected_content).described_as(
-                f"Known phrase '{known_phrase_in_pdf}' not found in any extracted PDF content chunks."
-            ).is_true()
-
-            # Verify search (optional, but good for E2E feel)
-            # This requires knowing/mocking the embedding for the known phrase
-            # For simplicity, we'll skip vector search for this specific pipeline unit test
-            # and focus on the presence of processed content.
+        # Verify search (optional, but good for E2E feel)
+        # This requires knowing/mocking the embedding for the known phrase
+        # For simplicity, we'll skip vector search for this specific pipeline unit test
+        # and focus on the presence of processed content.
 
         logger.info("PDF indexing pipeline test passed.")
 

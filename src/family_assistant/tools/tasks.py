@@ -619,7 +619,7 @@ async def modify_pending_callback_tool(
             .where(storage.tasks_table.c.task_id == task_id)
             .values(**updates)
         )
-        result = await db_context.execute_with_retry(update_stmt)
+        result = await db_context.execute(update_stmt)
 
         if result and result.rowcount > 0:  # type: ignore
             # Notification happens automatically in enqueue_task when tasks are updated

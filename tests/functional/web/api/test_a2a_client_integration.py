@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from family_assistant.processing import ProcessingService
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 
@@ -151,7 +151,7 @@ class _CapturingA2AClient:
 
 @pytest.mark.asyncio
 async def test_remote_a2a_preserves_runtime_taint_metadata(
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
 ) -> None:
     source = TaintSource(
         source_type=TaintSourceType.EMAIL,
@@ -213,7 +213,7 @@ def test_inbound_a2a_without_taint_metadata_defaults_to_peer_floor() -> None:
 
 @pytest.mark.asyncio
 async def test_remote_a2a_async_submit_preserves_runtime_taint_metadata(
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
 ) -> None:
     source = TaintSource(
         source_type=TaintSourceType.EMAIL,
@@ -386,7 +386,7 @@ class TestRemoteA2AServiceIntegration:
         self,
         remote_service: RemoteA2AService,
         api_mock_llm_client: RuleBasedMockLLMClient,
-        api_db_context: DatabaseContext,
+        api_db_context: Database,
     ) -> None:
         """RemoteA2AService produces a successful ChatInteractionResult."""
         api_mock_llm_client.default_response = MockLLMOutput(
@@ -411,7 +411,7 @@ class TestRemoteA2AServiceIntegration:
         self,
         remote_service: RemoteA2AService,
         api_mock_llm_client: RuleBasedMockLLMClient,
-        api_db_context: DatabaseContext,
+        api_db_context: Database,
     ) -> None:
         """Subconversation ID is used in the A2A context_id for isolation."""
         api_mock_llm_client.default_response = MockLLMOutput(content="OK")
@@ -434,7 +434,7 @@ class TestRemoteA2AServiceIntegration:
         self,
         remote_service: RemoteA2AService,
         api_mock_llm_client: RuleBasedMockLLMClient,
-        api_db_context: DatabaseContext,
+        api_db_context: Database,
     ) -> None:
         """When no subconversation_id, conversation_id is used for context."""
         api_mock_llm_client.default_response = MockLLMOutput(content="No sub")
@@ -477,7 +477,7 @@ class TestRemoteA2AServiceAsync:
         remote_service: RemoteA2AService,
         app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
-        api_db_context: DatabaseContext,
+        api_db_context: Database,
     ) -> None:
         api_mock_llm_client.default_response = MockLLMOutput(content="remote async")
 
@@ -512,7 +512,7 @@ class TestRemoteA2AServiceAsync:
         remote_service: RemoteA2AService,
         app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
-        api_db_context: DatabaseContext,
+        api_db_context: Database,
     ) -> None:
         # Gate the LLM so the remote task stays non-terminal across the poll.
         # No cancellation here, so this is safe on SQLite (the parked background
@@ -562,7 +562,7 @@ class TestRemoteA2AServiceAsync:
         remote_service: RemoteA2AService,
         app_fixture: FastAPI,
         api_mock_llm_client: RuleBasedMockLLMClient,
-        api_db_context: DatabaseContext,
+        api_db_context: Database,
     ) -> None:
         # Postgres-only: cancellation tears down the background task's DB
         # connection (see the server-side cancel test).

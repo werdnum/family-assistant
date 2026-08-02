@@ -608,7 +608,7 @@ class TestTelegramProcessBatchSpan:
         handler.debug_mode = False
         handler.processing_service = AsyncMock()
         handler.telegram_service = MagicMock()
-        handler.get_db_context = MagicMock()
+        handler.Database = MagicMock()
         handler.developer_chat_id = None
         handler.confirmation_manager = MagicMock()
 

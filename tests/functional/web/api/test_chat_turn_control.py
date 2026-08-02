@@ -44,7 +44,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.message_history import (
     MessageHistoryRepository,
 )
@@ -150,12 +150,12 @@ async def _cancel_turn(
 
 
 async def _confirmation_status(db_engine: AsyncEngine, request_id: str) -> str | None:
-    async with get_db_context(engine=db_engine) as db:
-        row = await db.fetch_one(
-            select(confirmation_requests_table.c.status).where(
-                confirmation_requests_table.c.id == request_id
-            )
+    db = Database(engine=db_engine)
+    row = await db.fetch_one(
+        select(confirmation_requests_table.c.status).where(
+            confirmation_requests_table.c.id == request_id
         )
+    )
     return row["status"] if row else None
 
 
@@ -240,43 +240,43 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
     """
     turn_id = str(uuid.uuid4())
     conversation_id = f"conv_persist_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="plan my week"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="prof-x",
-        )
-        # A tool result committed before the stop taints the turn; the stopped
-        # marker must inherit that state rather than being written untainted.
-        await ctx.message_history.add_message(
-            ToolMessage(
-                tool_call_id="call_email",
-                content="email body",
-                name="get_email",
-                taint_metadata=TurnTaintState
-                .empty()
-                .add_source(
-                    TaintSource(
-                        source_type=TaintSourceType.EMAIL,
-                        source_id="email-9",
-                        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-                        labels=frozenset(),
-                        reason="test email source",
-                    )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="plan my week"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="prof-x",
+    )
+    # A tool result committed before the stop taints the turn; the stopped
+    # marker must inherit that state rather than being written untainted.
+    await ctx.message_history.add_message(
+        ToolMessage(
+            tool_call_id="call_email",
+            content="email body",
+            name="get_email",
+            taint_metadata=TurnTaintState
+            .empty()
+            .add_source(
+                TaintSource(
+                    source_type=TaintSourceType.EMAIL,
+                    source_id="email-9",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="test email source",
                 )
-                .to_metadata(),
-            ),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="prof-x",
-        )
+            )
+            .to_metadata(),
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="prof-x",
+    )
 
     # No partial reply -> a Stopped marker.
     await persist_stopped_reply(
@@ -305,10 +305,10 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
         live_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web", conversation_id=conversation_id, limit=50
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web", conversation_id=conversation_id, limit=50
+    )
     assistant_rows = [row for row in rows if row["role"] == "assistant"]
     assert all(row["processing_profile_id"] == "prof-x" for row in assistant_rows)
     assert any("Stopped" in str(row["content"]) for row in assistant_rows)
@@ -336,16 +336,16 @@ async def test_stopped_reply_inherits_initial_history_taint(
             reason="prior conversation history",
         )
     )
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="continue"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="prof-x",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="continue"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="prof-x",
+    )
 
     await persist_stopped_reply(
         db_engine,
@@ -360,10 +360,10 @@ async def test_stopped_reply_inherits_initial_history_taint(
         live_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web", conversation_id=conversation_id, limit=50
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web", conversation_id=conversation_id, limit=50
+    )
     assistant_rows = [row for row in rows if row["role"] == "assistant"]
     assert len(assistant_rows) == 1
     assert assistant_rows[0]["taint_metadata_json"] is not None
@@ -387,16 +387,16 @@ async def test_stopped_reply_inherits_initial_context_taint(
             reason="tainted system-prompt context",
         )
     )
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="continue"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="prof-x",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="continue"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="prof-x",
+    )
 
     await persist_stopped_reply(
         db_engine,
@@ -411,10 +411,10 @@ async def test_stopped_reply_inherits_initial_context_taint(
         live_taint_metadata=TurnTaintState.empty().to_metadata(),
     )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web", conversation_id=conversation_id, limit=50
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web", conversation_id=conversation_id, limit=50
+    )
     assistant_rows = [row for row in rows if row["role"] == "assistant"]
     assert len(assistant_rows) == 1
     assert assistant_rows[0]["taint_metadata_json"] is not None
@@ -438,16 +438,16 @@ async def test_stopped_reply_inherits_uncommitted_live_taint(
             reason="tool result observed before transaction cancellation",
         )
     )
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="continue"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="prof-x",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="continue"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="prof-x",
+    )
 
     await persist_stopped_reply(
         db_engine,
@@ -462,10 +462,10 @@ async def test_stopped_reply_inherits_uncommitted_live_taint(
         live_taint_metadata=live_taint.to_metadata(),
     )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web", conversation_id=conversation_id, limit=50
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web", conversation_id=conversation_id, limit=50
+    )
     assistant_rows = [row for row in rows if row["role"] == "assistant"]
     assert len(assistant_rows) == 1
     assert assistant_rows[0]["taint_metadata_json"] is not None
@@ -506,10 +506,10 @@ async def test_completed_web_turn_persists_single_user_row(
         _turn_complete(hub, conversation_id, turn_id), description="turn complete"
     )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web", conversation_id=conversation_id, limit=50
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web", conversation_id=conversation_id, limit=50
+    )
     user_rows = [row for row in rows if row["role"] == "user"]
     assert len(user_rows) == 1, f"Expected one user row, got {user_rows}"
     assert user_rows[0]["processing_profile_id"] is not None
@@ -518,16 +518,16 @@ async def test_completed_web_turn_persists_single_user_row(
 async def _seed_user_row(
     db_engine: AsyncEngine, conversation_id: str, turn_id: str
 ) -> None:
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="hi"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="default_assistant",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="hi"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="default_assistant",
+    )
 
 
 async def test_retry_of_interrupted_turn_reports_incomplete(
@@ -565,16 +565,16 @@ async def test_retry_of_finished_turn_not_incomplete(
     turn_id = str(uuid.uuid4())
     conversation_id = f"conv_finished_{uuid.uuid4().hex[:8]}"
     await _seed_user_row(db_engine, conversation_id, turn_id)
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            AssistantMessage(content="here is your reply"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="default_assistant",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        AssistantMessage(content="here is your reply"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="default_assistant",
+    )
 
     resp = await api_test_client.post(
         "/api/v1/chat/turns",
@@ -601,25 +601,25 @@ async def test_retry_with_only_intermediate_tool_row_is_incomplete(
     turn_id = str(uuid.uuid4())
     conversation_id = f"conv_intermediate_{uuid.uuid4().hex[:8]}"
     await _seed_user_row(db_engine, conversation_id, turn_id)
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            AssistantMessage(
-                content="let me check",
-                tool_calls=[
-                    ToolCallItem(
-                        id="call_1",
-                        type="function",
-                        function=ToolCallFunction(name="list_notes", arguments="{}"),
-                    )
-                ],
-            ),
-            interface_type="web",
-            conversation_id=conversation_id,
-            turn_id=turn_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-            processing_profile_id="default_assistant",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        AssistantMessage(
+            content="let me check",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_1",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+        ),
+        interface_type="web",
+        conversation_id=conversation_id,
+        turn_id=turn_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        processing_profile_id="default_assistant",
+    )
 
     resp = await api_test_client.post(
         "/api/v1/chat/turns",
@@ -855,9 +855,9 @@ async def test_cancel_rejects_pending_confirmations_for_turn(
 
     # A confirmation tied to this turn (same source message the producer would
     # set) plus an unrelated one (no source message) that must survive.
-    service = ConfirmationService(db_context_factory=lambda: get_db_context(db_engine))
-    async with get_db_context(engine=db_engine) as ctx:
-        user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
+    service = ConfirmationService(db=Database(db_engine))
+    ctx = Database(engine=db_engine)
+    user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
     assert user_row is not None
     expires_at = datetime.now(UTC) + timedelta(minutes=30)
     turn_conf = await service.create_request(
@@ -913,7 +913,7 @@ async def test_cancel_returns_503_when_confirmation_rejection_fails(
 
     # Pin a confirmation service on app state whose reject() always fails, so the
     # cancel endpoint resolves it via _get_confirmation_service.
-    service = ConfirmationService(db_context_factory=lambda: get_db_context(db_engine))
+    service = ConfirmationService(db=Database(db_engine))
 
     async def failing_reject(**_kwargs: object) -> None:
         raise RuntimeError("reject exploded")
@@ -939,8 +939,8 @@ async def test_cancel_returns_503_when_confirmation_rejection_fails(
         _turn_complete(hub, conversation_id, turn_id), description="turn complete"
     )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
+    ctx = Database(engine=db_engine)
+    user_row = await ctx.message_history.get_user_row_by_turn_id(turn_id)
     assert user_row is not None
     conf = await service.create_request(
         target_user_id="test_user",
@@ -968,14 +968,14 @@ async def test_cancel_rejects_conversation_owned_by_another_user(
 ) -> None:
     """Cancel enforces ownership before touching turn state (404, not 403)."""
     conversation_id = f"conv_owned_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="victim's private message"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=datetime.now(UTC),
-            user_id="someone_else",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="victim's private message"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
 
     response = await api_test_client.post(
         f"/api/v1/chat/turns/{uuid.uuid4()}/cancel",
@@ -1074,12 +1074,12 @@ async def test_steer_running_turn_injects_user_input(
     # The injected mid-turn message is persisted as the RAW user text, not the
     # internal [MID-TURN USER UPDATE] wrapper the model saw, so a later history
     # reload shows what the user actually typed.
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=50,
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=50,
+    )
     steer_rows = [
         row
         for row in rows
@@ -1146,14 +1146,14 @@ async def test_steer_rejects_conversation_owned_by_another_user(
 ) -> None:
     """Steer enforces ownership before touching turn state (404, not 403)."""
     conversation_id = f"conv_steerowned_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="victim's private message"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=datetime.now(UTC),
-            user_id="someone_else",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="victim's private message"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
 
     response = await api_test_client.post(
         f"/api/v1/chat/turns/{uuid.uuid4()}/steer",

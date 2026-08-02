@@ -37,7 +37,7 @@ from family_assistant.services.credential_encryption import (
     CredentialEncryptionError,
 )
 from family_assistant.services.oauth_integration_state import OAuthIntegrationState
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_session_user, get_db
 
 if TYPE_CHECKING:
@@ -87,7 +87,7 @@ def get_oauth_http_client(request: Request) -> httpx.AsyncClient:
 
 
 CurrentUser = Annotated[dict, Depends(get_current_session_user)]
-Db = Annotated[DatabaseContext, Depends(get_db)]
+Db = Annotated[Database, Depends(get_db)]
 OAuthClient = Annotated[httpx.AsyncClient, Depends(get_oauth_http_client)]
 
 

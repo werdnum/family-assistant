@@ -32,7 +32,7 @@ from family_assistant.llm import (
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -118,9 +118,9 @@ def processing_service(
     processing_service_config: ProcessingServiceConfig,
     db_engine: AsyncEngine,
 ) -> ProcessingService:
-    async def get_db() -> DatabaseContext:
-        async with get_db_context(engine=db_engine) as ctx:
-            return ctx
+    def get_db() -> Database:
+        ctx = Database(engine=db_engine)
+        return ctx
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_db,
@@ -154,9 +154,9 @@ async def app_fixture(
     app.state.llm_client = mock_llm_client
     app.state.debug_mode = False
     app.state.web_chat_interface = WebChatInterface(db_engine)
-    async with get_db_context(engine=db_engine) as temp:
-        await init_db(db_engine)
-        await temp.init_vector_db()
+    temp = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp.init_vector_db()
     return app
 
 
@@ -213,13 +213,13 @@ async def test_confirm_policy_tool_records_durable_confirmation(
     assert response.json()["reply"] == "I've asked for your approval to save that note."
 
     # A durable pending confirmation was recorded for later approval.
-    async with get_db_context(engine=db_engine) as db:
-        rows = await db.fetch_all(
-            select(
-                confirmation_requests_table.c.tool_name,
-                confirmation_requests_table.c.status,
-            )
+    db = Database(engine=db_engine)
+    rows = await db.fetch_all(
+        select(
+            confirmation_requests_table.c.tool_name,
+            confirmation_requests_table.c.status,
         )
+    )
     assert [(row["tool_name"], row["status"]) for row in rows] == [
         ("add_or_update_note", "pending")
     ]

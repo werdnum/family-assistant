@@ -16,7 +16,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.task_worker import TaskWorker, handle_script_execution
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -162,20 +162,20 @@ print("Script executed - note created: " + str(result))
 
     try:
         # Act - Schedule the script
-        async with DatabaseContext(engine=db_engine) as db_context:
-            result = await processing_service.handle_chat_interaction(
-                db_context=db_context,
-                chat_interface=mock_chat_interface,
-                interface_type="test",
-                conversation_id=str(TEST_CHAT_ID),
-                trigger_content_parts=[
-                    {"type": "text", "text": "Please schedule a script to run later"}
-                ],
-                trigger_interface_message_id="501",
-                user_name=TEST_USER_NAME,
-            )
-            resp = result.text_reply
-            error = result.error_traceback
+        db_context = Database(engine=db_engine)
+        result = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=mock_chat_interface,
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),
+            trigger_content_parts=[
+                {"type": "text", "text": "Please schedule a script to run later"}
+            ],
+            trigger_interface_message_id="501",
+            user_name=TEST_USER_NAME,
+        )
+        resp = result.text_reply
+        error = result.error_traceback
 
         # Assert - Script was scheduled
         assert error is None
@@ -197,22 +197,22 @@ print("Script executed - note created: " + str(result))
         await asyncio.sleep(0.1)
 
         # Verify the script created the note
-        async with DatabaseContext(engine=db_engine) as db_context:
-            # First, let's check all notes to debug
-            all_notes = await db_context.notes.get_all(visibility_grants=None)
-            logger.info(f"All notes after script execution: {len(all_notes)}")
-            for n in all_notes:
-                logger.info(f"  Note title: '{n.title}'")
+        db_context = Database(engine=db_engine)
+        # First, let's check all notes to debug
+        all_notes = await db_context.notes.get_all(visibility_grants=None)
+        logger.info(f"All notes after script execution: {len(all_notes)}")
+        for n in all_notes:
+            logger.info(f"  Note title: '{n.title}'")
 
-            # Now look for our specific note
-            note = await db_context.notes.get_by_title(
-                test_note_title, visibility_grants=None
-            )
-            assert note is not None, (
-                f"Expected to find note with title '{test_note_title}'. Found notes: {[n.title for n in all_notes]}"
-            )
-            assert note.title == test_note_title
-            assert "scheduled script" in note.content
+        # Now look for our specific note
+        note = await db_context.notes.get_by_title(
+            test_note_title, visibility_grants=None
+        )
+        assert note is not None, (
+            f"Expected to find note with title '{test_note_title}'. Found notes: {[n.title for n in all_notes]}"
+        )
+        assert note.title == test_note_title
+        assert "scheduled script" in note.content
     finally:
         # Cleanup is handled by the task_worker_manager fixture
         pass
@@ -328,19 +328,19 @@ if True  # Missing colon
         # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for task worker to start
         await asyncio.sleep(0.1)  # Give worker time to start
         # Act - Schedule the invalid script
-        async with DatabaseContext(engine=db_engine) as db_context:
-            result = await processing_service.handle_chat_interaction(
-                db_context=db_context,
-                chat_interface=mock_chat_interface,
-                interface_type="test",
-                conversation_id=str(TEST_CHAT_ID),
-                trigger_content_parts=[
-                    {"type": "text", "text": "Schedule an invalid script"}
-                ],
-                trigger_interface_message_id="701",
-                user_name=TEST_USER_NAME,
-            )
-            error = result.error_traceback
+        db_context = Database(engine=db_engine)
+        result = await processing_service.handle_chat_interaction(
+            db_context=db_context,
+            chat_interface=mock_chat_interface,
+            interface_type="test",
+            conversation_id=str(TEST_CHAT_ID),
+            trigger_content_parts=[
+                {"type": "text", "text": "Schedule an invalid script"}
+            ],
+            trigger_interface_message_id="701",
+            user_name=TEST_USER_NAME,
+        )
+        error = result.error_traceback
 
         # Assert - Script was scheduled (tool doesn't validate syntax)
         assert error is None

@@ -9,7 +9,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 
 @pytest.mark.asyncio
@@ -96,7 +96,7 @@ class TestEventAutomationsAPI:
         assert "validation failed" in response.json()["detail"].lower()
 
     async def test_create_event_automation_records_creator_provenance(
-        self, api_test_client: AsyncClient, api_db_context: DatabaseContext
+        self, api_test_client: AsyncClient, api_db_context: Database
     ) -> None:
         """Web-created automations record the acting profile and user, so their
         scripts execute under the same authority."""
@@ -185,13 +185,13 @@ class TestEventAutomationsAPI:
     ) -> None:
         """Test creating an event automation that references a stored script by name."""
         # First save a stored script that the automation can reference.
-        # Use a fresh DatabaseContext so the transaction commits before the API call.
-        async with DatabaseContext(engine=db_engine) as db:
-            await db.scripts.save(
-                name="api_stored_script",
-                description="A stored script for API testing",
-                script_code='print("hello")',
-            )
+        # Use a fresh Database so the transaction commits before the API call.
+        db = Database(engine=db_engine)
+        await db.scripts.save(
+            name="api_stored_script",
+            description="A stored script for API testing",
+            script_code='print("hello")',
+        )
 
         automation_data = {
             "name": "Stored Script Event Automation",
@@ -491,12 +491,12 @@ class TestScheduleAutomationsAPI:
     ) -> None:
         """Test creating a schedule automation that references a stored script by name."""
         # Save the stored script in a fresh context so the transaction commits.
-        async with DatabaseContext(engine=db_engine) as db:
-            await db.scripts.save(
-                name="daily_log_script",
-                description="Daily logging script",
-                script_code='print("daily")',
-            )
+        db = Database(engine=db_engine)
+        await db.scripts.save(
+            name="daily_log_script",
+            description="Daily logging script",
+            script_code='print("daily")',
+        )
 
         automation_data = {
             "name": "Stored Script Schedule",

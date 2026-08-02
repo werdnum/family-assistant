@@ -67,7 +67,7 @@ class ScriptsRepository(BaseRepository):
             json.dumps(parameters_schema) if parameters_schema is not None else None
         )
 
-        if self._db.engine.dialect.name == "postgresql":
+        if self._db.dialect_name == "postgresql":
             stmt = pg_insert(scripts_table).values(
                 name=name,
                 description=description,
@@ -85,7 +85,7 @@ class ScriptsRepository(BaseRepository):
                     "updated_at": stmt.excluded.updated_at,
                 },
             )
-            await self._db.execute_with_retry(stmt)
+            await self._db.execute(stmt)
         else:
             # SQLite: try insert, then update on conflict
             try:
@@ -97,7 +97,7 @@ class ScriptsRepository(BaseRepository):
                     created_at=now,
                     updated_at=now,
                 )
-                await self._db.execute_with_retry(stmt)
+                await self._db.execute(stmt)
             except IntegrityError:
                 stmt = (
                     update(scripts_table)
@@ -109,7 +109,7 @@ class ScriptsRepository(BaseRepository):
                         updated_at=now,
                     )
                 )
-                await self._db.execute_with_retry(stmt)
+                await self._db.execute(stmt)
 
         # Fetch and return the saved script
         return await self.get_by_name(name)  # type: ignore[return-value] # After save, script always exists
@@ -189,7 +189,7 @@ class ScriptsRepository(BaseRepository):
         """
         try:
             stmt = delete(scripts_table).where(scripts_table.c.name == name)
-            result = await self._db.execute_with_retry(stmt)
+            result = await self._db.execute(stmt)
             deleted = result.rowcount > 0  # type: ignore[union-attr] # rowcount is available on CursorResult
             if deleted:
                 self._logger.info(f"Deleted script: {name}")
@@ -225,7 +225,7 @@ def _parse_parameters_schema(
         return None
 
 
-# ast-grep-ignore: no-dict-any - dict[str, Any] from DatabaseContext.fetch_one
+# ast-grep-ignore: no-dict-any - dict[str, Any] from Database.fetch_one
 def _row_to_script_row(row: dict[str, Any]) -> ScriptRow:
     """Convert a database row dict to a ScriptRow.
 

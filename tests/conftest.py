@@ -49,7 +49,7 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 # Import the metadata and the original engine object from your storage base
 from family_assistant.storage import init_db  # Import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.instrumentation import get_instrumentation
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
@@ -222,13 +222,10 @@ def reset_task_event() -> Generator[None]:
 # This fixture has been removed - tests should use db_engine directly
 
 
-# The engine-level invariants (no transaction parked open, no leaked pooled
-# connection) only hold once the commit-as-you-go cutover lands: today's
-# turn-spanning DatabaseContext violates the duration bound by design. Until
-# then the fixtures report violations without failing, which validates the
-# instrumentation against the real suite. Flipping this to True is part of the
-# cutover -- see docs/design/db-commit-as-you-go.md.
-DB_ENGINE_INVARIANTS_ENFORCED = False
+# Under commit-as-you-go no transaction is parked open and no unit of work
+# leaks a pooled connection, so these are hard invariants rather than
+# observations. See docs/design/db-commit-as-you-go.md.
+DB_ENGINE_INVARIANTS_ENFORCED = True
 
 
 def check_db_engine_invariants(engine: AsyncEngine, test_name: str) -> None:
@@ -354,8 +351,8 @@ async def db_engine(
         logger.info(f"Created PostgreSQL test engine for database: {unique_db_name}")
 
         # Initialize vector extension first for PostgreSQL
-        async with DatabaseContext(engine=engine) as db_context:
-            await init_vector_db(db_context)
+        db_context = Database(engine=engine)
+        await init_vector_db(db_context)
         logger.info("PostgreSQL vector database components initialized.")
 
     if not engine:
@@ -632,8 +629,8 @@ async def pg_vector_db_engine(
 
     try:
         # Initialize vector extension first for PostgreSQL
-        async with DatabaseContext(engine=engine) as db_context:
-            await init_vector_db(db_context)
+        db_context = Database(engine=engine)
+        await init_vector_db(db_context)
         logger.info("PostgreSQL vector database components initialized.")
 
         # Initialize the database schema
@@ -669,11 +666,11 @@ async def pg_vector_db_engine(
             await admin_engine.dispose()
 
 
-# Note: We don't provide a DatabaseContext fixture directly.
+# Note: We don't provide a Database fixture directly.
 # Tests should create their own context using the pg_vector_db_engine fixture:
 #
 # async def test_something(pg_vector_db_engine):
-#     async with DatabaseContext(engine=pg_vector_db_engine) as db:
+#     async with Database(engine=pg_vector_db_engine) as db:
 #         # Use db.fetch_all, db.execute_with_retry, etc.
 #         ...
 

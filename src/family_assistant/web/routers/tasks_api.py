@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_db
 
 tasks_api_router = APIRouter()
@@ -33,7 +33,7 @@ class TaskListResponse(BaseModel):
 
 @tasks_api_router.get("/")
 async def list_tasks(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     task_type: str | None = None,
     date_from: datetime | None = None,
@@ -63,7 +63,7 @@ async def list_tasks(
 )
 async def retry_task(
     internal_task_id: int,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Manually retry a task."""
     success = await db_context.tasks.manually_retry(internal_task_id)
@@ -79,7 +79,7 @@ async def retry_task(
 )
 async def cancel_task(
     internal_task_id: int,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Cancel a pending task."""
     success = await db_context.tasks.cancel_task(internal_task_id)

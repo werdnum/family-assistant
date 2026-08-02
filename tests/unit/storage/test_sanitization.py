@@ -1,6 +1,6 @@
 """Tests for PostgreSQL text sanitization utilities."""
 
-from family_assistant.storage.context import (
+from family_assistant.storage.database import (
     _is_non_retryable_postgres_error,  # noqa: PLC2701 - testing private function behavior
     sanitize_text_for_postgres,
 )

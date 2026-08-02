@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import (
     register_worker_wake_event,
     tasks_table,
@@ -102,9 +102,9 @@ def _make_worker(
 
 async def _task_status(db_engine: AsyncEngine, task_id: str) -> str | None:
     """Return the status of a task row, or None if it does not exist."""
-    async with DatabaseContext(engine=db_engine) as db_context:
-        stmt = select(tasks_table).where(tasks_table.c.task_id == task_id)
-        rows = await db_context.fetch_all(stmt)
+    db_context = Database(engine=db_engine)
+    stmt = select(tasks_table).where(tasks_table.c.task_id == task_id)
+    rows = await db_context.fetch_all(stmt)
     return rows[0]["status"] if rows else None
 
 
@@ -173,13 +173,13 @@ async def test_two_workers_process_tasks_concurrently(
     pool = _Pool(workers, shutdown_event, db_engine)
 
     try:
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await db_context.tasks.enqueue(
-                task_id="slow-1", task_type="slow", payload={}, max_retries_override=0
-            )
-            await db_context.tasks.enqueue(
-                task_id="slow-2", task_type="slow", payload={}, max_retries_override=0
-            )
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="slow-1", task_type="slow", payload={}, max_retries_override=0
+        )
+        await db_context.tasks.enqueue(
+            task_id="slow-2", task_type="slow", payload={}, max_retries_override=0
+        )
 
         # Both handlers must be in-flight simultaneously: if the pool serialized
         # tasks the second handler could not start until the first released.
@@ -232,24 +232,24 @@ async def test_parked_worker_unblocked_by_sibling(
     pool = _Pool(workers, shutdown_event, db_engine)
 
     try:
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await db_context.tasks.enqueue(
-                task_id="waiter",
-                task_type="waiter",
-                payload={},
-                max_retries_override=0,
-            )
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="waiter",
+            task_type="waiter",
+            payload={},
+            max_retries_override=0,
+        )
 
         # Let one worker pick up and park on the waiter task.
         await asyncio.wait_for(waiter_started.wait(), timeout=10.0)
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await db_context.tasks.enqueue(
-                task_id="resolver",
-                task_type="resolver",
-                payload={},
-                max_retries_override=0,
-            )
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="resolver",
+            task_type="resolver",
+            payload={},
+            max_retries_override=0,
+        )
 
         # If only one worker existed, the resolver could never run and the future
         # would never resolve. With a pool, the sibling runs it and unblocks the
@@ -291,13 +291,13 @@ async def test_per_task_type_timeout_override_applied(
     worker_task = asyncio.create_task(worker.run())
 
     try:
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await db_context.tasks.enqueue(
-                task_id="long-task",
-                task_type="long",
-                payload={},
-                max_retries_override=0,
-            )
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="long-task",
+            task_type="long",
+            payload={},
+            max_retries_override=0,
+        )
 
         await wait_for_tasks_to_complete(
             engine=db_engine,
@@ -335,13 +335,13 @@ async def test_default_timeout_still_applies_without_override(
     worker_task = asyncio.create_task(worker.run())
 
     try:
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await db_context.tasks.enqueue(
-                task_id="hang-task",
-                task_type="hang",
-                payload={},
-                max_retries_override=0,
-            )
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="hang-task",
+            task_type="hang",
+            payload={},
+            max_retries_override=0,
+        )
 
         await wait_for_tasks_to_complete(
             engine=db_engine,
@@ -386,13 +386,13 @@ async def test_enqueue_wakes_idle_sibling_promptly(
             description="workers to start",
         )
 
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await db_context.tasks.enqueue(
-                task_id="quick-task",
-                task_type="quick",
-                payload={},
-                max_retries_override=0,
-            )
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="quick-task",
+            task_type="quick",
+            payload={},
+            max_retries_override=0,
+        )
 
         # Much shorter than the 5s poll interval: must be the wake event firing.
         await asyncio.wait_for(processed.wait(), timeout=3.0)
@@ -401,30 +401,35 @@ async def test_enqueue_wakes_idle_sibling_promptly(
 
 
 @pytest.mark.asyncio
-async def test_enqueue_defers_worker_wake_until_commit(
+async def test_enqueue_wakes_workers_only_once_the_row_is_visible(
     db_engine: AsyncEngine,
 ) -> None:
-    """The worker wake fires on commit, not before the inserted row is visible.
+    """The worker wake never precedes the enqueued row becoming visible.
 
-    Waking before the enqueue transaction commits lets an idle sibling poll an
-    empty queue, clear its event, and miss the not-yet-visible task row until
-    the next 5s poll. The wake must be deferred to the commit hook.
+    Waking first would let an idle sibling poll an empty queue, clear its
+    event, and miss the row until the next 5s poll. The wake is registered on
+    the enqueue's own transaction, so by the time enqueue returns the row is
+    committed and the wake has fired.
     """
     wake_event = asyncio.Event()
     register_worker_wake_event(wake_event)
     try:
-        async with DatabaseContext(engine=db_engine) as db_context:
-            await db_context.tasks.enqueue(
-                task_id="commit-visibility-task",
-                task_type="quick",
-                payload={},
-                max_retries_override=0,
-            )
-            # Still inside the transaction: the row is not committed/visible yet,
-            # so no worker may have been woken.
-            assert not wake_event.is_set()
-        # The transaction committed on context exit; the wake fires now.
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="commit-visibility-task",
+            task_type="quick",
+            payload={},
+            max_retries_override=0,
+        )
+
         assert wake_event.is_set()
+        # A woken worker reads on its own connection, so the row must be
+        # visible there too.
+        observer = Database(engine=db_engine)
+        row = await observer.fetch_one(
+            select(tasks_table).where(tasks_table.c.task_id == "commit-visibility-task")
+        )
+        assert row is not None
     finally:
         unregister_worker_wake_event(wake_event)
 

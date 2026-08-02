@@ -18,14 +18,14 @@ from family_assistant.storage.vector import (
 )
 
 if TYPE_CHECKING:
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
 
 async def check_document_completion(
-    db_context: "DatabaseContext",
+    db_context: "Database",
     document_id: int,
 ) -> int:
     """
@@ -84,7 +84,7 @@ async def handle_embed_and_store_batch(
     Args:
         db_context: The ToolExecutionContext object. This parameter name matches
                     the keyword argument likely used by the calling TaskWorker,
-                    and this object provides access to the actual DatabaseContext and EmbeddingGenerator.
+                    and this object provides access to the actual Database and EmbeddingGenerator.
         payload: The task payload containing data for embedding.
 
     Raises:
@@ -94,15 +94,15 @@ async def handle_embed_and_store_batch(
         Exception: If embedding generation fails.
     """
 
-    # Extract the actual DatabaseContext and EmbeddingGenerator from the ToolExecutionContext.
+    # Extract the actual Database and EmbeddingGenerator from the ToolExecutionContext.
     db_context = exec_context.db_context
     embedding_generator_instance = exec_context.embedding_generator
 
     if not db_context:
         logger.error(
-            "DatabaseContext not found in ToolExecutionContext for handle_embed_and_store_batch."
+            "Database not found in ToolExecutionContext for handle_embed_and_store_batch."
         )
-        raise ValueError("Missing DatabaseContext in execution context.")
+        raise ValueError("Missing Database in execution context.")
     if not embedding_generator_instance:
         logger.error(
             "Embedding generator not found in ToolExecutionContext for handle_embed_and_store_batch."

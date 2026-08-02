@@ -17,7 +17,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage import get_db_context
+from family_assistant.storage import Database
 from family_assistant.storage.events import EventSourceType
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
 from family_assistant.tools import (
@@ -51,75 +51,75 @@ def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can
 async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     """Test that event type matching works correctly."""
     # Arrange - store different event types
-    async with get_db_context(db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(text("DELETE FROM recent_events"))
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(text("DELETE FROM recent_events"))
 
-        now = datetime.now(UTC)
+    now = datetime.now(UTC)
 
-        # Store a state_changed event
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO recent_events
+    # Store a state_changed event
+    await db_ctx.execute(
+        text("""INSERT INTO recent_events
                    (event_id, source_id, event_data, timestamp)
                    VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
-            {
-                "event_id": "test_state_1",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "event_type": "state_changed",
-                    "entity_id": "light.living_room",
-                    "old_state": {"state": "off"},
-                    "new_state": {"state": "on"},
-                }),
-                "timestamp": now,
-            },
-        )
-
-        # Store a call_service event
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO recent_events
-                   (event_id, source_id, event_data, timestamp)
-                   VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
-            {
-                "event_id": "test_service_1",
-                "source_id": EventSourceType.home_assistant.value,
-                "event_data": json.dumps({
-                    "event_type": "call_service",
-                    "domain": "light",
-                    "service": "turn_on",
-                    "service_data": {"entity_id": "light.living_room"},
-                }),
-                "timestamp": now,
-            },
-        )
-
-    # Act - test matching state_changed events only
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
-
-        result = await event_listener_test_tool(
-            exec_context,
-            source=EventSourceType.home_assistant.value,
-            match_conditions={
+        {
+            "event_id": "test_state_1",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
                 "event_type": "state_changed",
                 "entity_id": "light.living_room",
-            },
-            hours=1,
-        )
+                "old_state": {"state": "off"},
+                "new_state": {"state": "on"},
+            }),
+            "timestamp": now,
+        },
+    )
+
+    # Store a call_service event
+    await db_ctx.execute(
+        text("""INSERT INTO recent_events
+                   (event_id, source_id, event_data, timestamp)
+                   VALUES (:event_id, :source_id, :event_data, :timestamp)"""),
+        {
+            "event_id": "test_service_1",
+            "source_id": EventSourceType.home_assistant.value,
+            "event_data": json.dumps({
+                "event_type": "call_service",
+                "domain": "light",
+                "service": "turn_on",
+                "service_data": {"entity_id": "light.living_room"},
+            }),
+            "timestamp": now,
+        },
+    )
+
+    # Act - test matching state_changed events only
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await event_listener_test_tool(
+        exec_context,
+        source=EventSourceType.home_assistant.value,
+        match_conditions={
+            "event_type": "state_changed",
+            "entity_id": "light.living_room",
+        },
+        hours=1,
+    )
 
     # Assert
     data = json.loads(result)
@@ -129,33 +129,33 @@ async def test_event_type_matching(db_engine: AsyncEngine) -> None:
     assert data["matched_events"][0]["event_data"]["event_type"] == "state_changed"
 
     # Act - test matching call_service events only
-    async with get_db_context(db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test_conversation",
-            user_name="test_user",
-            turn_id="test_turn",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test_conversation",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await event_listener_test_tool(
-            exec_context,
-            source=EventSourceType.home_assistant.value,
-            match_conditions={
-                "event_type": "call_service",
-                "domain": "light",
-            },
-            hours=1,
-        )
+    result = await event_listener_test_tool(
+        exec_context,
+        source=EventSourceType.home_assistant.value,
+        match_conditions={
+            "event_type": "call_service",
+            "domain": "light",
+        },
+        hours=1,
+    )
 
     # Assert
     data = json.loads(result)
@@ -173,35 +173,35 @@ async def test_end_to_end_event_listener_wakes_llm(
     """Test end-to-end flow: event triggers listener which enqueues LLM callback task."""
 
     # Step 1: Create an event listener that watches for motion detection
-    async with get_db_context(db_engine) as db_ctx:
-        await db_ctx.execute_with_retry(
-            text("""INSERT INTO event_listeners
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(
+        text("""INSERT INTO event_listeners
                  (name, match_conditions, source_id, action_type, action_config, enabled,
                   conversation_id, interface_type)
                  VALUES (:name, :conditions, :source_id, :action_type, :action_config,
                          :enabled, :conversation_id, :interface_type)"""),
-            {
-                "name": "Motion Light Automation",
-                "conditions": json.dumps({
-                    "entity_id": "binary_sensor.hallway_motion",
-                    "new_state.state": "on",
-                }),
-                "source_id": EventSourceType.home_assistant.value,
-                "action_type": "wake_llm",
-                "action_config": json.dumps({
-                    "include_event_data": True,
-                }),
-                "enabled": True,
-                "conversation_id": "test_chat_123",
-                "interface_type": "telegram",
-            },
-        )
+        {
+            "name": "Motion Light Automation",
+            "conditions": json.dumps({
+                "entity_id": "binary_sensor.hallway_motion",
+                "new_state.state": "on",
+            }),
+            "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
+            "action_config": json.dumps({
+                "include_event_data": True,
+            }),
+            "enabled": True,
+            "conversation_id": "test_chat_123",
+            "interface_type": "telegram",
+        },
+    )
 
     # Step 2: Create event processor and refresh cache
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -230,64 +230,61 @@ async def test_end_to_end_event_listener_wakes_llm(
     await processor.process_event("home_assistant", motion_event)
 
     # Step 4: Verify the event was stored
-    async with get_db_context(db_engine) as db_ctx:
-        events_result = await db_ctx.fetch_all(
-            text("SELECT * FROM recent_events WHERE source_id = 'home_assistant'")
-        )
-        assert len(events_result) >= 1
+    db_ctx = Database(db_engine)
+    events_result = await db_ctx.fetch_all(
+        text("SELECT * FROM recent_events WHERE source_id = 'home_assistant'")
+    )
+    assert len(events_result) >= 1
 
-        # Find our motion event
-        motion_event_stored = None
-        for event in events_result:
-            # Handle both string (SQLite) and dict (PostgreSQL) formats
-            event_data = safe_json_loads(event["event_data"])
-            if event_data.get("entity_id") == "binary_sensor.hallway_motion":
-                motion_event_stored = event
-                break
+    # Find our motion event
+    motion_event_stored = None
+    for event in events_result:
+        # Handle both string (SQLite) and dict (PostgreSQL) formats
+        event_data = safe_json_loads(event["event_data"])
+        if event_data.get("entity_id") == "binary_sensor.hallway_motion":
+            motion_event_stored = event
+            break
 
-        assert motion_event_stored is not None
-        # Handle both string (SQLite) and dict/list (PostgreSQL) formats
-        triggered_listeners = motion_event_stored["triggered_listener_ids"]
-        if triggered_listeners is None:
-            triggered_listeners = []
-        else:
-            triggered_listeners = safe_json_loads(triggered_listeners)
-        assert len(triggered_listeners) == 1
+    assert motion_event_stored is not None
+    # Handle both string (SQLite) and dict/list (PostgreSQL) formats
+    triggered_listeners = motion_event_stored["triggered_listener_ids"]
+    if triggered_listeners is None:
+        triggered_listeners = []
+    else:
+        triggered_listeners = safe_json_loads(triggered_listeners)
+    assert len(triggered_listeners) == 1
 
     # Step 5: Verify an LLM callback task was created
-    async with get_db_context(db_engine) as db_ctx:
-        # Check tasks table for our callback
-        tasks_result = await db_ctx.fetch_all(
-            text(
-                "SELECT * FROM tasks WHERE task_type = 'llm_callback' AND status = 'pending'"
-            )
+    db_ctx = Database(db_engine)
+    # Check tasks table for our callback
+    tasks_result = await db_ctx.fetch_all(
+        text(
+            "SELECT * FROM tasks WHERE task_type = 'llm_callback' AND status = 'pending'"
         )
+    )
 
-        # There should be at least one llm_callback task
-        assert len(tasks_result) > 0
-        callback_task = tasks_result[0]  # Get the first one
+    # There should be at least one llm_callback task
+    assert len(tasks_result) > 0
+    callback_task = tasks_result[0]  # Get the first one
 
-        # Verify task payload
-        # Handle both string (SQLite) and dict (PostgreSQL) formats
-        payload = safe_json_loads(callback_task["payload"])
-        assert payload["interface_type"] == "telegram"
-        assert payload["conversation_id"] == "test_chat_123"
-        # Event-triggered wake_llm routes to the restricted event_handler profile,
-        # not the (full-trust) listener creator profile.
-        assert payload["processing_profile_id"] == "event_handler"
-        assert "callback_context" in payload
+    # Verify task payload
+    # Handle both string (SQLite) and dict (PostgreSQL) formats
+    payload = safe_json_loads(callback_task["payload"])
+    assert payload["interface_type"] == "telegram"
+    assert payload["conversation_id"] == "test_chat_123"
+    # Event-triggered wake_llm routes to the restricted event_handler profile,
+    # not the (full-trust) listener creator profile.
+    assert payload["processing_profile_id"] == "event_handler"
+    assert "callback_context" in payload
 
-        callback_context = payload["callback_context"]
-        assert (
-            callback_context["trigger"]
-            == "Event listener 'Motion Light Automation' matched"
-        )
-        assert callback_context["source"] == "home_assistant"
-        assert "event_data" in callback_context
-        assert (
-            callback_context["event_data"]["entity_id"]
-            == "binary_sensor.hallway_motion"
-        )
+    callback_context = payload["callback_context"]
+    assert (
+        callback_context["trigger"]
+        == "Event listener 'Motion Light Automation' matched"
+    )
+    assert callback_context["source"] == "home_assistant"
+    assert "event_data" in callback_context
+    assert callback_context["event_data"]["entity_id"] == "binary_sensor.hallway_motion"
 
     # Step 6: Start a task worker that will process the callback task
 
@@ -399,35 +396,35 @@ async def test_one_time_listener_disables_after_trigger(
     """Test that one-time listeners are disabled after they trigger."""
 
     # Create a one-time listener
-    async with get_db_context(db_engine) as db_ctx:
-        result = await db_ctx.execute_with_retry(
-            text("""INSERT INTO event_listeners
+    db_ctx = Database(db_engine)
+    result = await db_ctx.execute(
+        text("""INSERT INTO event_listeners
                  (name, match_conditions, source_id, action_type, enabled,
                   conversation_id, interface_type, one_time)
                  VALUES (:name, :conditions, :source_id, :action_type, :enabled,
                          :conversation_id, :interface_type, :one_time)
                  RETURNING id"""),
-            {
-                "name": "One-time door alert",
-                "conditions": json.dumps({
-                    "entity_id": "binary_sensor.front_door",
-                    "new_state.state": "open",
-                }),
-                "source_id": EventSourceType.home_assistant.value,
-                "action_type": "wake_llm",
-                "enabled": True,
-                "conversation_id": "test_chat_456",
-                "interface_type": "telegram",
-                "one_time": True,
-            },
-        )
-        listener_id = result.scalar_one()
+        {
+            "name": "One-time door alert",
+            "conditions": json.dumps({
+                "entity_id": "binary_sensor.front_door",
+                "new_state.state": "open",
+            }),
+            "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
+            "enabled": True,
+            "conversation_id": "test_chat_456",
+            "interface_type": "telegram",
+            "one_time": True,
+        },
+    )
+    listener_id = result.scalar_one()
 
     # Create processor and process matching event
     processor = EventProcessor(
         sources={},
         sample_interval_hours=1.0,
-        get_db_context_func=lambda: get_db_context(db_engine),
+        get_db_context_func=lambda: Database(db_engine),
         timezone=ZoneInfo("Australia/Sydney"),
     )
 
@@ -443,10 +440,10 @@ async def test_one_time_listener_disables_after_trigger(
     await processor.process_event("home_assistant", door_event)
 
     # Verify listener is now disabled
-    async with get_db_context(db_engine) as db_ctx:
-        result = await db_ctx.fetch_one(
-            text("SELECT enabled FROM event_listeners WHERE id = :id"),
-            {"id": listener_id},
-        )
-        assert result is not None
-        assert result["enabled"] == 0  # SQLite stores False as 0
+    db_ctx = Database(db_engine)
+    result = await db_ctx.fetch_one(
+        text("SELECT enabled FROM event_listeners WHERE id = :id"),
+        {"id": listener_id},
+    )
+    assert result is not None
+    assert result["enabled"] == 0  # SQLite stores False as 0

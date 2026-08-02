@@ -26,7 +26,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import enqueue_task, tasks_table
 from family_assistant.task_worker import (
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 
 def _exec_context(
-    db_ctx: DatabaseContext,
+    db_ctx: Database,
     *,
     conversation_id: str,
     processing_profile_id: str | None,
@@ -89,32 +89,32 @@ def _exec_context(
 async def test_execute_action_refuses_confined_wake_llm(
     db_engine: AsyncEngine,
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        with pytest.raises(WakeLlmProfileError):
-            await execute_action(
-                db_ctx=db,
-                action_type=ActionType.WAKE_LLM,
-                action_config={"context": "diagnostics summary"},
-                conversation_id="conv",
-                processing_profile_id="ops_automation",
-                allow_wake_llm=False,
-            )
+    db = Database(engine=db_engine)
+    with pytest.raises(WakeLlmProfileError):
+        await execute_action(
+            db_ctx=db,
+            action_type=ActionType.WAKE_LLM,
+            action_config={"context": "diagnostics summary"},
+            conversation_id="conv",
+            processing_profile_id="ops_automation",
+            allow_wake_llm=False,
+        )
 
 
 @pytest.mark.asyncio
 async def test_execute_action_allows_permitted_wake_llm(
     db_engine: AsyncEngine,
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        # A profile that permits waking the LLM enqueues without raising.
-        await execute_action(
-            db_ctx=db,
-            action_type=ActionType.WAKE_LLM,
-            action_config={"context": "hello"},
-            conversation_id="conv",
-            processing_profile_id="default_assistant",
-            allow_wake_llm=True,
-        )
+    db = Database(engine=db_engine)
+    # A profile that permits waking the LLM enqueues without raising.
+    await execute_action(
+        db_ctx=db,
+        action_type=ActionType.WAKE_LLM,
+        action_config={"context": "hello"},
+        conversation_id="conv",
+        processing_profile_id="default_assistant",
+        allow_wake_llm=True,
+    )
 
 
 # --- create_automation wake_llm denial for confined profiles ---
@@ -124,61 +124,59 @@ async def test_execute_action_allows_permitted_wake_llm(
 async def test_create_wake_llm_automation_denied_for_confined_profile(
     db_engine: AsyncEngine,
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        ctx = _exec_context(
-            db,
-            conversation_id="conv_confined",
-            processing_profile_id="ops_automation",
-            allow_wake_llm=False,
-        )
-        result = await create_automation_tool(
-            exec_context=ctx,
-            name="Sneaky Wake",
-            automation_type="schedule",
-            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
-            action_type="wake_llm",
-            action_config={"context": "wake up"},
-        )
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert "error" in data
-        assert "not permitted to wake" in data["error"].lower()
+    db = Database(engine=db_engine)
+    ctx = _exec_context(
+        db,
+        conversation_id="conv_confined",
+        processing_profile_id="ops_automation",
+        allow_wake_llm=False,
+    )
+    result = await create_automation_tool(
+        exec_context=ctx,
+        name="Sneaky Wake",
+        automation_type="schedule",
+        trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+        action_type="wake_llm",
+        action_config={"context": "wake up"},
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "not permitted to wake" in data["error"].lower()
 
 
 @pytest.mark.asyncio
 async def test_create_wake_llm_automation_allowed_for_normal_profile(
     db_engine: AsyncEngine,
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        ctx = _exec_context(
-            db,
-            conversation_id="conv_normal",
-            processing_profile_id="default_assistant",
-            allow_wake_llm=True,
-        )
-        result = await create_automation_tool(
-            exec_context=ctx,
-            name="Normal Wake",
-            automation_type="schedule",
-            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
-            action_type="wake_llm",
-            action_config={"context": "wake up"},
-        )
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert "error" not in data
+    db = Database(engine=db_engine)
+    ctx = _exec_context(
+        db,
+        conversation_id="conv_normal",
+        processing_profile_id="default_assistant",
+        allow_wake_llm=True,
+    )
+    result = await create_automation_tool(
+        exec_context=ctx,
+        name="Normal Wake",
+        automation_type="schedule",
+        trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+        action_type="wake_llm",
+        action_config={"context": "wake up"},
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" not in data
 
-        # The scheduled wake carries its originating profile so handle_llm_callback
-        # runs the turn under it rather than the worker default.
-        rows = await db.fetch_all(
-            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
-        )
-        assert rows
-        raw_payload = rows[0]["payload"]
-        payload = (
-            json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
-        )
-        assert payload["processing_profile_id"] == "default_assistant"
+    # The scheduled wake carries its originating profile so handle_llm_callback
+    # runs the turn under it rather than the worker default.
+    rows = await db.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert rows
+    raw_payload = rows[0]["payload"]
+    payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+    assert payload["processing_profile_id"] == "default_assistant"
 
 
 # --- script built-in wake_llm() escape closed for confined profiles ---
@@ -189,24 +187,24 @@ async def test_script_wake_llm_refused_for_confined_profile(
     db_engine: AsyncEngine,
 ) -> None:
     """A confined script cannot escape via Monty's built-in wake_llm()."""
-    async with DatabaseContext(engine=db_engine) as db:
-        ctx = _exec_context(
-            db,
-            conversation_id="conv_script",
-            processing_profile_id="ops_automation",
-            allow_wake_llm=False,
+    db = Database(engine=db_engine)
+    ctx = _exec_context(
+        db,
+        conversation_id="conv_script",
+        processing_profile_id="ops_automation",
+        allow_wake_llm=False,
+    )
+    wake_request: WakeRequest = {
+        "context": {"message": "escape"},
+        "include_event": False,
+    }
+    with pytest.raises(WakeLlmProfileError):
+        await _process_script_wake_llm(
+            exec_context=ctx,
+            wake_contexts=[wake_request],
+            event_data={},
+            listener_id=None,
         )
-        wake_request: WakeRequest = {
-            "context": {"message": "escape"},
-            "include_event": False,
-        }
-        with pytest.raises(WakeLlmProfileError):
-            await _process_script_wake_llm(
-                exec_context=ctx,
-                wake_contexts=[wake_request],
-                event_data={},
-                listener_id=None,
-            )
 
 
 # --- cross-profile update_automation denial ---
@@ -214,71 +212,71 @@ async def test_script_wake_llm_refused_for_confined_profile(
 
 @pytest.mark.asyncio
 async def test_cross_profile_update_denied(db_engine: AsyncEngine) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        owner_ctx = _exec_context(
-            db,
-            conversation_id="conv_owner",
-            processing_profile_id="ops_automation",
-        )
-        created = await create_automation_tool(
-            exec_context=owner_ctx,
-            name="Owned Schedule",
-            automation_type="schedule",
-            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
-            action_type="script",
-            action_config={"script_code": "x = 1\n"},
-        )
-        created_data = created.get_data()
-        assert isinstance(created_data, dict)
-        automation_id = int(created_data["id"])
+    db = Database(engine=db_engine)
+    owner_ctx = _exec_context(
+        db,
+        conversation_id="conv_owner",
+        processing_profile_id="ops_automation",
+    )
+    created = await create_automation_tool(
+        exec_context=owner_ctx,
+        name="Owned Schedule",
+        automation_type="schedule",
+        trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+        action_type="script",
+        action_config={"script_code": "x = 1\n"},
+    )
+    created_data = created.get_data()
+    assert isinstance(created_data, dict)
+    automation_id = int(created_data["id"])
 
-        # A different profile cannot update the automation.
-        other_ctx = _exec_context(
-            db,
-            conversation_id="conv_owner",
-            processing_profile_id="default_assistant",
-        )
-        result = await update_automation_tool(
-            exec_context=other_ctx,
-            automation_id=automation_id,
-            automation_type="schedule",
-            description="hijacked",
-        )
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert "error" in data
-        assert "owned by profile" in data["error"].lower()
+    # A different profile cannot update the automation.
+    other_ctx = _exec_context(
+        db,
+        conversation_id="conv_owner",
+        processing_profile_id="default_assistant",
+    )
+    result = await update_automation_tool(
+        exec_context=other_ctx,
+        automation_id=automation_id,
+        automation_type="schedule",
+        description="hijacked",
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "owned by profile" in data["error"].lower()
 
 
 @pytest.mark.asyncio
 async def test_same_profile_update_allowed(db_engine: AsyncEngine) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        owner_ctx = _exec_context(
-            db,
-            conversation_id="conv_same",
-            processing_profile_id="ops_automation",
-        )
-        created = await create_automation_tool(
-            exec_context=owner_ctx,
-            name="Owned Schedule Same",
-            automation_type="schedule",
-            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
-            action_type="script",
-            action_config={"script_code": "x = 1\n"},
-        )
-        created_data = created.get_data()
-        assert isinstance(created_data, dict)
-        automation_id = int(created_data["id"])
+    db = Database(engine=db_engine)
+    owner_ctx = _exec_context(
+        db,
+        conversation_id="conv_same",
+        processing_profile_id="ops_automation",
+    )
+    created = await create_automation_tool(
+        exec_context=owner_ctx,
+        name="Owned Schedule Same",
+        automation_type="schedule",
+        trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+        action_type="script",
+        action_config={"script_code": "x = 1\n"},
+    )
+    created_data = created.get_data()
+    assert isinstance(created_data, dict)
+    automation_id = int(created_data["id"])
 
-        result = await update_automation_tool(
-            exec_context=owner_ctx,
-            automation_id=automation_id,
-            automation_type="schedule",
-            description="updated by owner",
-        )
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert "error" not in data
+    result = await update_automation_tool(
+        exec_context=owner_ctx,
+        automation_id=automation_id,
+        automation_type="schedule",
+        description="updated by owner",
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" not in data
 
 
 # --- schedule_future_callback wake guard ---
@@ -288,27 +286,27 @@ async def test_same_profile_update_allowed(db_engine: AsyncEngine) -> None:
 async def test_schedule_future_callback_refused_for_confined_profile(
     db_engine: AsyncEngine,
 ) -> None:
-    async with DatabaseContext(engine=db_engine) as db:
-        ctx = _exec_context(
-            db,
-            conversation_id="conv_future_cb",
-            processing_profile_id="ops_automation",
-            allow_wake_llm=False,
-        )
-        result = await schedule_future_callback_tool(
-            exec_context=ctx,
-            callback_time=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-            context="wake later",
-        )
-        assert result is not None
-        assert result.startswith("Error:")
-        assert "not permitted to wake the LLM" in result
+    db = Database(engine=db_engine)
+    ctx = _exec_context(
+        db,
+        conversation_id="conv_future_cb",
+        processing_profile_id="ops_automation",
+        allow_wake_llm=False,
+    )
+    result = await schedule_future_callback_tool(
+        exec_context=ctx,
+        callback_time=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        context="wake later",
+    )
+    assert result is not None
+    assert result.startswith("Error:")
+    assert "not permitted to wake the LLM" in result
 
-        # Nothing was enqueued.
-        rows = await db.fetch_all(
-            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
-        )
-        assert rows == []
+    # Nothing was enqueued.
+    rows = await db.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert rows == []
 
 
 # --- update_automation wake guard for existing wake_llm automations ---
@@ -323,40 +321,40 @@ async def test_wake_llm_update_refused_for_confined_profile(
     The cross-profile ownership check does not fire for legacy (unstamped)
     automations, so the wake guard must refuse the update instead.
     """
-    async with DatabaseContext(engine=db_engine) as db:
-        legacy_ctx = _exec_context(
-            db,
-            conversation_id="conv_wake_update",
-            processing_profile_id=None,
-        )
-        created = await create_automation_tool(
-            exec_context=legacy_ctx,
-            name="Legacy Wake",
-            automation_type="schedule",
-            trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
-            action_type="wake_llm",
-            action_config={"context": "wake up"},
-        )
-        created_data = created.get_data()
-        assert isinstance(created_data, dict)
-        automation_id = int(created_data["id"])
+    db = Database(engine=db_engine)
+    legacy_ctx = _exec_context(
+        db,
+        conversation_id="conv_wake_update",
+        processing_profile_id=None,
+    )
+    created = await create_automation_tool(
+        exec_context=legacy_ctx,
+        name="Legacy Wake",
+        automation_type="schedule",
+        trigger_config={"recurrence_rule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=0"},
+        action_type="wake_llm",
+        action_config={"context": "wake up"},
+    )
+    created_data = created.get_data()
+    assert isinstance(created_data, dict)
+    automation_id = int(created_data["id"])
 
-        confined_ctx = _exec_context(
-            db,
-            conversation_id="conv_wake_update",
-            processing_profile_id="ops_automation",
-            allow_wake_llm=False,
-        )
-        result = await update_automation_tool(
-            exec_context=confined_ctx,
-            automation_id=automation_id,
-            automation_type="schedule",
-            action_config={"context": "hijacked wake"},
-        )
-        data = result.get_data()
-        assert isinstance(data, dict)
-        assert "error" in data
-        assert "not permitted to wake the llm" in data["error"].lower()
+    confined_ctx = _exec_context(
+        db,
+        conversation_id="conv_wake_update",
+        processing_profile_id="ops_automation",
+        allow_wake_llm=False,
+    )
+    result = await update_automation_tool(
+        exec_context=confined_ctx,
+        automation_id=automation_id,
+        automation_type="schedule",
+        action_config={"context": "hijacked wake"},
+    )
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert "error" in data
+    assert "not permitted to wake the llm" in data["error"].lower()
 
 
 # --- execution-time wake guard and profile-consistent context in the worker ---
@@ -412,20 +410,20 @@ async def test_queued_wake_refused_for_confined_profile(
     worker.register_task_handler("llm_callback", handle_llm_callback)
 
     task_id = f"queued_wake_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="llm_callback",
-            payload={
-                "conversation_id": "conv_queued_wake",
-                "interface_type": "telegram",
-                "callback_context": "diagnostics summary",
-                "scheduling_timestamp": datetime.now(UTC).isoformat(),
-                "processing_profile_id": "ops_automation",
-            },
-            max_retries_override=0,
-        )
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="llm_callback",
+        payload={
+            "conversation_id": "conv_queued_wake",
+            "interface_type": "telegram",
+            "callback_context": "diagnostics summary",
+            "scheduling_timestamp": datetime.now(UTC).isoformat(),
+            "processing_profile_id": "ops_automation",
+        },
+        max_retries_override=0,
+    )
     new_task_event.set()
 
     with pytest.raises(RuntimeError, match="Task.*failed"):
@@ -457,33 +455,33 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
     worker.register_task_handler("llm_callback", handle_llm_callback)
 
     task_id = f"routed_wake_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as db_ctx:
-        await enqueue_task(
-            db_context=db_ctx,
-            task_id=task_id,
-            task_type="llm_callback",
-            payload={
-                "conversation_id": "conv_routed_wake",
-                "interface_type": "telegram",
-                "callback_context": "scheduled follow-up",
-                "scheduling_timestamp": datetime.now(UTC).isoformat(),
-                "processing_profile_id": "automation_creation",
-            },
-            max_retries_override=0,
-        )
+    db_ctx = Database(engine=db_engine)
+    await enqueue_task(
+        db_context=db_ctx,
+        task_id=task_id,
+        task_type="llm_callback",
+        payload={
+            "conversation_id": "conv_routed_wake",
+            "interface_type": "telegram",
+            "callback_context": "scheduled follow-up",
+            "scheduling_timestamp": datetime.now(UTC).isoformat(),
+            "processing_profile_id": "automation_creation",
+        },
+        max_retries_override=0,
+    )
     new_task_event.set()
 
     await wait_for_tasks_to_complete(
         db_engine, task_types={"llm_callback"}, timeout_seconds=15
     )
 
-    async with get_db_context(engine=db_engine) as db_ctx:
-        rows = await db_ctx.fetch_all(
-            select(message_history_table.c.content).where(
-                message_history_table.c.conversation_id == "conv_routed_wake",
-                message_history_table.c.role == "system",
-            )
+    db_ctx = Database(engine=db_engine)
+    rows = await db_ctx.fetch_all(
+        select(message_history_table.c.content).where(
+            message_history_table.c.conversation_id == "conv_routed_wake",
+            message_history_table.c.role == "system",
         )
+    )
     trigger_texts = [row["content"] for row in rows]
     assert any("The time is now" in text for text in trigger_texts)
     # Australia/Sydney renders as AEST/AEDT rather than the worker default UTC.
@@ -516,21 +514,19 @@ async def test_event_listener_wake_refused_for_confined_origin(
     skipped instead of enqueueing an llm_callback."""
     processor = EventProcessor(
         sources={},
-        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        get_db_context_func=lambda: Database(engine=db_engine),
         profile_wake_llm_flags={"ops_automation": False},
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        await processor._execute_action_in_context(
-            db,
-            cast(
-                "EventListenerDict", _wake_listener(origin_profile_id="ops_automation")
-            ),
-            {"event": "data"},
-        )
-        rows = await db.fetch_all(
-            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
-        )
-        assert rows == []
+    db = Database(engine=db_engine)
+    await processor._execute_action_in_context(
+        db,
+        cast("EventListenerDict", _wake_listener(origin_profile_id="ops_automation")),
+        {"event": "data"},
+    )
+    rows = await db.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert rows == []
 
 
 @pytest.mark.asyncio
@@ -539,25 +535,23 @@ async def test_event_listener_wake_allowed_origin_routes_to_event_handler(
 ) -> None:
     processor = EventProcessor(
         sources={},
-        get_db_context_func=lambda: get_db_context(engine=db_engine),
+        get_db_context_func=lambda: Database(engine=db_engine),
         profile_wake_llm_flags={"default_assistant": True},
     )
-    async with DatabaseContext(engine=db_engine) as db:
-        await processor._execute_action_in_context(
-            db,
-            cast(
-                "EventListenerDict",
-                _wake_listener(origin_profile_id="default_assistant"),
-            ),
-            {"event": "data"},
-        )
-        rows = await db.fetch_all(
-            select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
-        )
-        assert len(rows) == 1
-        raw_payload = rows[0]["payload"]
-        payload = (
-            json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
-        )
-        # Untrusted trigger: the woken turn runs under the restricted profile.
-        assert payload["processing_profile_id"] == "event_handler"
+    db = Database(engine=db_engine)
+    await processor._execute_action_in_context(
+        db,
+        cast(
+            "EventListenerDict",
+            _wake_listener(origin_profile_id="default_assistant"),
+        ),
+        {"event": "data"},
+    )
+    rows = await db.fetch_all(
+        select(tasks_table).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert len(rows) == 1
+    raw_payload = rows[0]["payload"]
+    payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+    # Untrusted trigger: the woken turn runs under the restricted profile.
+    assert payload["processing_profile_id"] == "event_handler"

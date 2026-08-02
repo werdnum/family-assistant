@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 
@@ -19,9 +19,9 @@ SKILL_CONTENT = (
 
 
 async def cleanup_notes(engine: AsyncEngine) -> None:
-    async with DatabaseContext(engine=engine) as db:
-        stmt = delete(notes_table)
-        await db.execute_with_retry(stmt)
+    db = Database(engine=engine)
+    stmt = delete(notes_table)
+    await db.execute(stmt)
 
 
 @pytest.mark.asyncio
@@ -29,15 +29,15 @@ async def test_skill_detected_on_create(db_engine: AsyncEngine) -> None:
     """Creating a note with skill frontmatter sets is_skill=True and metadata."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.notes.add_or_update(
-            title="My Skill",
-            content=SKILL_CONTENT,
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="My Skill",
+        content=SKILL_CONTENT,
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-        note = await db.notes.get_by_title("My Skill", visibility_grants=None)
+    note = await db.notes.get_by_title("My Skill", visibility_grants=None)
 
     assert note is not None
     assert note.is_skill is True
@@ -50,15 +50,15 @@ async def test_regular_note_not_detected_as_skill(db_engine: AsyncEngine) -> Non
     """Creating a regular note (no frontmatter) sets is_skill=False."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.notes.add_or_update(
-            title="Regular Note",
-            content="Just regular content.",
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Regular Note",
+        content="Just regular content.",
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-        note = await db.notes.get_by_title("Regular Note", visibility_grants=None)
+    note = await db.notes.get_by_title("Regular Note", visibility_grants=None)
 
     assert note is not None
     assert note.is_skill is False
@@ -73,27 +73,27 @@ async def test_skill_detection_updated_on_content_change(
     """Updating a note's content re-evaluates skill detection."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        # Create as skill
-        await db.notes.add_or_update(
-            title="Changeable",
-            content=SKILL_CONTENT,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        note = await db.notes.get_by_title("Changeable", visibility_grants=None)
-        assert note is not None
-        assert note.is_skill is True
+    db = Database(engine=db_engine)
+    # Create as skill
+    await db.notes.add_or_update(
+        title="Changeable",
+        content=SKILL_CONTENT,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    note = await db.notes.get_by_title("Changeable", visibility_grants=None)
+    assert note is not None
+    assert note.is_skill is True
 
-        # Update to regular note
-        await db.notes.add_or_update(
-            title="Changeable",
-            content="Now just regular content.",
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        note = await db.notes.get_by_title("Changeable", visibility_grants=None)
-        assert note is not None
-        assert note.is_skill is False
-        assert note.skill_name is None
+    # Update to regular note
+    await db.notes.add_or_update(
+        title="Changeable",
+        content="Now just regular content.",
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    note = await db.notes.get_by_title("Changeable", visibility_grants=None)
+    assert note is not None
+    assert note.is_skill is False
+    assert note.skill_name is None
 
 
 @pytest.mark.asyncio
@@ -101,19 +101,19 @@ async def test_get_skills_returns_only_skills(db_engine: AsyncEngine) -> None:
     """get_skills() returns only notes where is_skill=True."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.notes.add_or_update(
-            title="Skill Note",
-            content=SKILL_CONTENT,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        await db.notes.add_or_update(
-            title="Regular Note",
-            content="Plain content.",
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Skill Note",
+        content=SKILL_CONTENT,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    await db.notes.add_or_update(
+        title="Regular Note",
+        content="Plain content.",
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-        skills = await db.notes.get_skills(visibility_grants=None)
+    skills = await db.notes.get_skills(visibility_grants=None)
 
     assert len(skills) == 1
     assert skills[0].title == "Skill Note"
@@ -126,21 +126,21 @@ async def test_get_prompt_notes_excludes_skills(db_engine: AsyncEngine) -> None:
     """get_prompt_notes() excludes skill notes even if include_in_prompt=True."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.notes.add_or_update(
-            title="Regular Prompt Note",
-            content="Include me.",
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        await db.notes.add_or_update(
-            title="Skill Note",
-            content=SKILL_CONTENT,
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Regular Prompt Note",
+        content="Include me.",
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    await db.notes.add_or_update(
+        title="Skill Note",
+        content=SKILL_CONTENT,
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-        prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
+    prompt_notes = await db.notes.get_prompt_notes(visibility_grants=None)
 
     titles = [n.title for n in prompt_notes]
     assert "Regular Prompt Note" in titles
@@ -154,21 +154,21 @@ async def test_get_excluded_notes_titles_excludes_skills(
     """get_excluded_notes_titles() excludes skill notes."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.notes.add_or_update(
-            title="Hidden Regular Note",
-            content="Hidden content.",
-            include_in_prompt=False,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
-        await db.notes.add_or_update(
-            title="Hidden Skill",
-            content=SKILL_CONTENT,
-            include_in_prompt=False,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Hidden Regular Note",
+        content="Hidden content.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
+    await db.notes.add_or_update(
+        title="Hidden Skill",
+        content=SKILL_CONTENT,
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-        excluded = await db.notes.get_excluded_notes_titles(visibility_grants=None)
+    excluded = await db.notes.get_excluded_notes_titles(visibility_grants=None)
 
     assert "Hidden Regular Note" in excluded
     assert "Hidden Skill" not in excluded

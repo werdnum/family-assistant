@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.email import ParsedEmailData, received_emails_table
 from family_assistant.storage.repositories.base import BaseRepository
 
@@ -41,23 +42,28 @@ class EmailRepository(BaseRepository):
                 "Cannot store email: 'message_id_header' is missing after Pydantic parsing."
             )
 
-        try:
+        async def _store(txn: DatabaseTransaction) -> int:
+            """Insert the email, enqueue its indexing task, and record the task id.
+
+            One unit: an email row committed without its indexing task would
+            never become searchable, and the caller's duplicate-Message-ID
+            retry would get None back rather than a second chance.
+            """
             # Step 1: Insert the email and get its ID
-            if self._db.engine.dialect.name == "postgresql":
+            if txn.dialect_name == "postgresql":
                 # PostgreSQL: Use RETURNING to get the ID
                 stmt = (
                     insert(received_emails_table)
                     .values(**email_data_for_db)
                     .returning(received_emails_table.c.id)
                 )
-                result = await self._db.execute_with_retry(stmt)
-                row = result.one()  # type: ignore[attr-defined]
-                email_db_id = row[0]
+                result = await txn.execute(stmt)
+                email_db_id = result.scalar_one()
             else:
                 # SQLite: Insert and get lastrowid
                 stmt = insert(received_emails_table).values(**email_data_for_db)
-                result = await self._db.execute_with_retry(stmt)
-                email_db_id = result.lastrowid  # type: ignore[attr-defined]
+                result = await txn.execute(stmt)
+                email_db_id = result.lastrowid
 
             if not email_db_id:
                 raise RuntimeError(
@@ -72,7 +78,7 @@ class EmailRepository(BaseRepository):
             task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
 
             # Step 3: Enqueue the indexing task
-            await self._db.tasks.enqueue(
+            await txn.tasks.enqueue(
                 task_id=task_id,
                 task_type="index_email",
                 payload={"email_db_id": email_db_id},
@@ -87,27 +93,23 @@ class EmailRepository(BaseRepository):
                 .where(received_emails_table.c.id == email_db_id)
                 .values(indexing_task_id=task_id)
             )
-            await self._db.execute_with_retry(update_stmt)
+            await txn.execute(update_stmt)
             self._logger.info(
                 f"Updated email {email_db_id} with indexing task ID {task_id}"
             )
             return int(email_db_id)
 
+        try:
+            return await self._db.atomic(_store)
         except IntegrityError as e:
-            # Handle duplicate emails
+            # A duplicate Message-ID is the delivery retry, not a failure.
             self._logger.warning(
                 f"Email with Message-ID {parsed_email.message_id_header} already exists: {e}"
             )
-            # Don't re-raise - email already exists
             return None
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Database error storing email {parsed_email.message_id_header}: {e}"
-            )
-            raise
-        except Exception as e:
-            self._logger.exception(
-                f"Unexpected error storing email {parsed_email.message_id_header}: {e}"
             )
             raise
 

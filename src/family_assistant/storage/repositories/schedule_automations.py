@@ -219,7 +219,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .returning(schedule_automations_table.c.id)
             )
 
-            result = await self._db.execute_with_retry(stmt)
+            result = await self._db.execute(stmt)
             automation_id = result.scalar_one()
 
             self._logger.info(
@@ -521,7 +521,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
                 .values(enabled=True, next_scheduled_at=next_scheduled_at)
             )
-            await self._db.execute_with_retry(stmt)
+            await self._db.execute(stmt)
 
             self._logger.info(
                 f"Enabled schedule automation {automation_id}, "
@@ -541,8 +541,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             .values(enabled=False)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        updated_count = result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        updated_count = result.rowcount
 
         if updated_count > 0:
             self._logger.info(f"Disabled schedule automation {automation_id}")
@@ -697,8 +697,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             .values(**update_values)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        updated_count = result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        updated_count = result.rowcount
 
         if updated_count > 0:
             self._logger.info(
@@ -744,8 +744,8 @@ class ScheduleAutomationsRepository(BaseRepository):
             & (schedule_automations_table.c.conversation_id == conversation_id)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        deleted_count = result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        deleted_count = result.rowcount
 
         if deleted_count > 0:
             self._logger.info(
@@ -785,8 +785,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .values(status="cancelled")
             )
 
-            result = await self._db.execute_with_retry(stmt)
-            cancelled_count = result.rowcount  # type: ignore[attr-defined]
+            result = await self._db.execute(stmt)
+            cancelled_count = result.rowcount
 
             if cancelled_count > 0:
                 self._logger.info(
@@ -823,7 +823,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .where(tasks_table.c.task_id == row["task_id"])
                 .values(payload=payload)
             )
-            await self._db.execute_with_retry(update_stmt)
+            await self._db.execute(update_stmt)
             marked_count += 1
 
         if marked_count > 0:
@@ -860,7 +860,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .where(tasks_table.c.task_id == row["task_id"])
                 .values(payload=payload)
             )
-            await self._db.execute_with_retry(update_stmt)
+            await self._db.execute(update_stmt)
             marked_count += 1
 
         if marked_count > 0:
@@ -1023,7 +1023,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     execution_count=schedule_automations_table.c.execution_count + 1,
                 )
             )
-            await self._db.execute_with_retry(stmt)
+            await self._db.execute(stmt)
 
             if not schedule_next:
                 self._logger.info(
@@ -1058,7 +1058,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 .where(schedule_automations_table.c.id == automation_id)
                 .values(next_scheduled_at=next_scheduled_at)
             )
-            await self._db.execute_with_retry(stmt)
+            await self._db.execute(stmt)
 
             # Schedule next task instance
             action_type = automation["action_type"]

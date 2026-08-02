@@ -36,7 +36,7 @@ from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
@@ -173,7 +173,7 @@ async def _save_raw_mail_webhook(
 @webhooks_router.post("/webhook/mail/mime")
 async def handle_mail_webhook(
     request: Request,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> Response:
     """
     Receives incoming email via webhook (expects multipart/form-data from Mailgun),
@@ -463,25 +463,32 @@ async def handle_mail_webhook(
             dkim_domain=authentication.dkim_domain if authentication else None,
         )
 
-        # Pass the Pydantic model instance to the storage function
-        email_db_id = await db_context.email.store_incoming(parsed_email_payload)
-        if (
-            email_db_id is not None
-            and email_intake_config.enable_actions
-            and target_user_id is not None
-        ):
-            await db_context.tasks.enqueue(
-                task_id=f"email_intake_action_{email_db_id}",
-                task_type=EMAIL_INTAKE_ACTION_TASK_TYPE,
-                payload={
-                    "email_db_id": email_db_id,
-                    "interface_type": "email",
-                    "conversation_id": f"email:{email_db_id}",
-                    "user_name": target_user_id,
-                },
-                original_task_id=f"email_intake_action_{email_db_id}",
-                max_retries_override=0,
-            )
+        async def _store_and_enqueue() -> int | None:
+            # Store the email and enqueue an action task atomically: if only the
+            # store commits and the enqueue fails, the delivery retry hits the
+            # duplicate Message-ID, gets None back, and the action is skipped forever.
+            email_db_id = await txn.email.store_incoming(parsed_email_payload)
+            if (
+                email_db_id is not None
+                and email_intake_config.enable_actions
+                and target_user_id is not None
+            ):
+                await txn.tasks.enqueue(
+                    task_id=f"email_intake_action_{email_db_id}",
+                    task_type=EMAIL_INTAKE_ACTION_TASK_TYPE,
+                    payload={
+                        "email_db_id": email_db_id,
+                        "interface_type": "email",
+                        "conversation_id": f"email:{email_db_id}",
+                        "user_name": target_user_id,
+                    },
+                    original_task_id=f"email_intake_action_{email_db_id}",
+                    max_retries_override=0,
+                )
+            return email_db_id
+
+        async with db_context.transaction() as txn:
+            await _store_and_enqueue()
 
         return Response(status_code=200, content="Email received and processed.")
 
@@ -517,7 +524,7 @@ class WebhookEventResponse(BaseModel):
 async def handle_generic_webhook(
     request: Request,
     body: WebhookEventPayload,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     event_type: str | None = None,
     source: str | None = None,
 ) -> WebhookEventResponse:
@@ -636,7 +643,7 @@ async def handle_generic_webhook(
 
 
 async def _handle_worker_started(
-    db_context: DatabaseContext,
+    db_context: Database,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
     callback_token: str | None,
@@ -680,7 +687,7 @@ async def _handle_worker_started(
 
 
 async def _handle_worker_completion(
-    db_context: DatabaseContext,
+    db_context: Database,
     # ast-grep-ignore: no-dict-any - Webhook data is dynamic from external worker
     data: dict[str, Any] | None,
     notification_dispatcher: "Notifier | None" = None,

@@ -97,9 +97,8 @@ from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.context import (
-    DatabaseContext,
-    get_db_context,
+from family_assistant.storage.database import (
+    Database,
     set_engine_history_taint_epoch,
 )
 from family_assistant.task_worker import (
@@ -365,10 +364,6 @@ class Assistant:
             llm_client_overrides if llm_client_overrides is not None else {}
         )
         self.database_engine: AsyncEngine | None = None
-        # Dedicated engines created for pool workers (one per worker) so each has
-        # its own DB connection and a worker parked inside a transaction does not
-        # block its siblings. Disposed on shutdown.
-        self.worker_engines: list[AsyncEngine] = []
 
         # Initialize all instance attributes
         self.fastapi_app: FastAPI | None = None
@@ -410,23 +405,20 @@ class Assistant:
         # Logging handler
         self.error_logging_handler = None
 
-    async def _get_db_context_for_provider(self) -> DatabaseContext:
-        """Provides database context for context providers."""
+    def _require_database_engine(self) -> AsyncEngine:
+        """The application engine, which every worker and handle shares."""
         if not self.database_engine:
             raise RuntimeError("Database engine not initialized")
-        return get_db_context(self.database_engine)
+        return self.database_engine
 
-    def _get_db_context_for_telegram(self) -> DatabaseContext:
-        """Provides database context for Telegram service."""
-        if not self.database_engine:
-            raise RuntimeError("Database engine not initialized")
-        return get_db_context(self.database_engine)
+    def _database(self) -> Database:
+        """A handle on this deployment's database.
 
-    def _get_db_context_for_events(self) -> DatabaseContext:
-        """Provides database context for event system."""
-        if not self.database_engine:
-            raise RuntimeError("Database engine not initialized")
-        return get_db_context(self.database_engine)
+        Deferred rather than stored: components are wired before the engine
+        exists, and the handle is stateless so building one per caller costs
+        nothing.
+        """
+        return Database(self._require_database_engine())
 
     async def _ensure_playwright_browsers_installed(self) -> None:
         """Ensure Playwright browsers are installed, install if missing."""
@@ -714,11 +706,11 @@ class Assistant:
 
             # Initialize database only when we create our own engine
             await init_db(self.database_engine)
-            async with get_db_context(self.database_engine) as db_ctx:
-                await db_ctx.init_vector_db()
+            db_ctx = Database(self.database_engine)
+            await db_ctx.init_vector_db()
 
         # Attach the deployment history taint epoch to the engine so every
-        # DatabaseContext (web, telegram, task worker, scripts) applies the same
+        # Database (web, telegram, task worker, scripts) applies the same
         # read-time amnesty when materializing message-history taint metadata.
         set_engine_history_taint_epoch(
             self.database_engine,
@@ -736,7 +728,7 @@ class Assistant:
         database_engine = self.database_engine
         assert database_engine is not None
         self.confirmation_service = ConfirmationService(
-            db_context_factory=lambda: get_db_context(database_engine),
+            db=Database(database_engine),
             notifier=self.notification_dispatcher,
         )
         self.confirmation_result_waiters = ConfirmationResultWaiterRegistry()
@@ -1148,7 +1140,7 @@ class Assistant:
                 else None
             )
             notes_provider = NotesContextProvider(
-                get_db_context_func=self._get_db_context_for_provider,
+                get_db_context_func=self._database,
                 prompts=profile_proc_conf.prompts,
                 attachment_registry=self.attachment_registry,
                 visibility_grants=profile_grants,
@@ -1439,7 +1431,7 @@ class Assistant:
                 processing_services_registry=self.processing_services_registry,
                 app_config=self.config,
                 attachment_registry=self.attachment_registry,
-                get_db_context_func=self._get_db_context_for_telegram,
+                database=self._database(),
                 confirmation_service=self.confirmation_service,
                 confirmation_result_waiters=self.confirmation_result_waiters,
                 fastapi_app=self.fastapi_app,  # Pass FastAPI app for chat_interfaces access
@@ -1512,7 +1504,7 @@ class Assistant:
                         "EventConditionEvaluatorConfig",
                         event_config.model_dump(),
                     ),
-                    get_db_context_func=self._get_db_context_for_events,
+                    get_db_context_func=self._database,
                     timezone=ZoneInfo(
                         self.config.default_profile_settings.processing_config.timezone
                     ),
@@ -1654,7 +1646,7 @@ class Assistant:
         self.task_workers = [
             self._build_task_worker(
                 default_timezone=worker_timezone,
-                engine=self.create_worker_engine(),
+                engine=self._require_database_engine(),
             )
             for _ in range(worker_count)
         ]
@@ -1714,18 +1706,16 @@ class Assistant:
 
         try:
             assert self.database_engine is not None
-            async with get_db_context(self.database_engine) as db_ctx:
-                backend = get_worker_backend(
-                    worker_config.backend_type,
-                    workspace_root=worker_config.workspace_mount_path,
-                    docker_config=worker_config.docker,
-                    kubernetes_config=worker_config.kubernetes,
-                )
-                reconciled = await reconcile_stale_tasks(db_ctx, backend)
-                if reconciled:
-                    logger.info(
-                        f"Reconciled {reconciled} stale worker tasks on startup"
-                    )
+            db_ctx = Database(self.database_engine)
+            backend = get_worker_backend(
+                worker_config.backend_type,
+                workspace_root=worker_config.workspace_mount_path,
+                docker_config=worker_config.docker,
+                kubernetes_config=worker_config.kubernetes,
+            )
+            reconciled = await reconcile_stale_tasks(db_ctx, backend)
+            if reconciled:
+                logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
         except Exception:
             logger.warning(
                 "Worker task reconciliation failed on startup", exc_info=True
@@ -1737,120 +1727,120 @@ class Assistant:
             assert self.database_engine is not None, (
                 "Database engine must be initialized before setting up system tasks"
             )
-            async with get_db_context(self.database_engine) as db_ctx:
-                # Get the timezone from the default profile
-                if not self.default_processing_service:
-                    logger.error(
-                        "Default processing service not available for system tasks setup"
-                    )
-                    return
+            db_ctx = Database(self.database_engine)
+            # Get the timezone from the default profile
+            if not self.default_processing_service:
+                logger.error(
+                    "Default processing service not available for system tasks setup"
+                )
+                return
 
-                local_tz = self.default_processing_service.service_config.timezone
+            local_tz = self.default_processing_service.service_config.timezone
 
-                # Get current time in local timezone and calculate next 3 AM local time
-                now_local = datetime.now(local_tz)
-                next_3am_local = now_local.replace(
-                    hour=3, minute=0, second=0, microsecond=0
+            # Get current time in local timezone and calculate next 3 AM local time
+            now_local = datetime.now(local_tz)
+            next_3am_local = now_local.replace(
+                hour=3, minute=0, second=0, microsecond=0
+            )
+
+            # If it's already past 3 AM today, schedule for tomorrow
+            if now_local >= next_3am_local:
+                next_3am_local += timedelta(days=1)
+
+            # Convert to UTC for storage
+            next_3am_utc = next_3am_local.astimezone(UTC)
+
+            # Upsert the system event cleanup task
+            try:
+                await db_ctx.tasks.enqueue(
+                    task_id="system_event_cleanup_daily",
+                    task_type="system_event_cleanup",
+                    payload={"retention_hours": 48},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,  # Higher retry count for system tasks
+                )
+                logger.info(
+                    f"System event cleanup task scheduled for {next_3am_local} ({local_tz})"
+                )
+            except Exception as e:
+                # If task already exists, this is fine - just log it
+                logger.info(f"System event cleanup task setup: {e}")
+
+            # Upsert the error log cleanup task
+            try:
+                # Get retention days from config
+                error_log_retention_days = (
+                    self.config.logging.database_errors.retention_days
                 )
 
-                # If it's already past 3 AM today, schedule for tomorrow
-                if now_local >= next_3am_local:
-                    next_3am_local += timedelta(days=1)
+                await db_ctx.tasks.enqueue(
+                    task_id="system_error_log_cleanup_daily",
+                    task_type="system_error_log_cleanup",
+                    payload={"retention_days": error_log_retention_days},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,  # Higher retry count for system tasks
+                )
+                logger.info(
+                    f"System error log cleanup task scheduled for {next_3am_local} ({local_tz}) with {error_log_retention_days} day retention"
+                )
+            except Exception as e:
+                # If task already exists, this is fine - just log it
+                logger.info(f"System error log cleanup task setup: {e}")
 
-                # Convert to UTC for storage
-                next_3am_utc = next_3am_local.astimezone(UTC)
+            # Upsert the worker task cleanup task
+            try:
+                await db_ctx.tasks.enqueue(
+                    task_id="system_worker_task_cleanup_daily",
+                    task_type="worker_task_cleanup",
+                    payload={"retention_hours": 48},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,
+                )
+                logger.info(
+                    f"Worker task cleanup task scheduled for {next_3am_local} ({local_tz})"
+                )
+            except Exception as e:
+                logger.info(f"Worker task cleanup task setup: {e}")
 
-                # Upsert the system event cleanup task
-                try:
-                    await db_ctx.tasks.enqueue(
-                        task_id="system_event_cleanup_daily",
-                        task_type="system_event_cleanup",
-                        payload={"retention_hours": 48},
-                        scheduled_at=next_3am_utc,
-                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
-                        max_retries_override=5,  # Higher retry count for system tasks
-                    )
-                    logger.info(
-                        f"System event cleanup task scheduled for {next_3am_local} ({local_tz})"
-                    )
-                except Exception as e:
-                    # If task already exists, this is fine - just log it
-                    logger.info(f"System event cleanup task setup: {e}")
+            # Upsert the stale delegation run reaper (runs hourly so a
+            # stranded run that never retried is surfaced reasonably soon).
+            try:
+                await db_ctx.tasks.enqueue(
+                    task_id="system_delegation_run_cleanup_hourly",
+                    task_type="delegation_run_cleanup",
+                    payload={},
+                    scheduled_at=datetime.now(UTC),
+                    recurrence_rule="FREQ=HOURLY;BYMINUTE=0",
+                    max_retries_override=5,
+                )
+                logger.info("Delegation run cleanup task scheduled (hourly)")
+            except Exception as e:
+                logger.info(f"Delegation run cleanup task setup: {e}")
 
-                # Upsert the error log cleanup task
-                try:
-                    # Get retention days from config
-                    error_log_retention_days = (
-                        self.config.logging.database_errors.retention_days
-                    )
+            # Upsert the completed automation cleanup task
+            try:
+                await db_ctx.tasks.enqueue(
+                    task_id="system_completed_automation_cleanup_daily",
+                    task_type="completed_automation_cleanup",
+                    payload={"retention_hours": 24},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,
+                )
+                logger.info(
+                    f"Completed automation cleanup task scheduled for {next_3am_local} ({local_tz})"
+                )
+            except Exception as e:
+                logger.warning(f"Completed automation cleanup task setup: {e}")
 
-                    await db_ctx.tasks.enqueue(
-                        task_id="system_error_log_cleanup_daily",
-                        task_type="system_error_log_cleanup",
-                        payload={"retention_days": error_log_retention_days},
-                        scheduled_at=next_3am_utc,
-                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
-                        max_retries_override=5,  # Higher retry count for system tasks
-                    )
-                    logger.info(
-                        f"System error log cleanup task scheduled for {next_3am_local} ({local_tz}) with {error_log_retention_days} day retention"
-                    )
-                except Exception as e:
-                    # If task already exists, this is fine - just log it
-                    logger.info(f"System error log cleanup task setup: {e}")
-
-                # Upsert the worker task cleanup task
-                try:
-                    await db_ctx.tasks.enqueue(
-                        task_id="system_worker_task_cleanup_daily",
-                        task_type="worker_task_cleanup",
-                        payload={"retention_hours": 48},
-                        scheduled_at=next_3am_utc,
-                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
-                        max_retries_override=5,
-                    )
-                    logger.info(
-                        f"Worker task cleanup task scheduled for {next_3am_local} ({local_tz})"
-                    )
-                except Exception as e:
-                    logger.info(f"Worker task cleanup task setup: {e}")
-
-                # Upsert the stale delegation run reaper (runs hourly so a
-                # stranded run that never retried is surfaced reasonably soon).
-                try:
-                    await db_ctx.tasks.enqueue(
-                        task_id="system_delegation_run_cleanup_hourly",
-                        task_type="delegation_run_cleanup",
-                        payload={},
-                        scheduled_at=datetime.now(UTC),
-                        recurrence_rule="FREQ=HOURLY;BYMINUTE=0",
-                        max_retries_override=5,
-                    )
-                    logger.info("Delegation run cleanup task scheduled (hourly)")
-                except Exception as e:
-                    logger.info(f"Delegation run cleanup task setup: {e}")
-
-                # Upsert the completed automation cleanup task
-                try:
-                    await db_ctx.tasks.enqueue(
-                        task_id="system_completed_automation_cleanup_daily",
-                        task_type="completed_automation_cleanup",
-                        payload={"retention_hours": 24},
-                        scheduled_at=next_3am_utc,
-                        recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
-                        max_retries_override=5,
-                    )
-                    logger.info(
-                        f"Completed automation cleanup task scheduled for {next_3am_local} ({local_tz})"
-                    )
-                except Exception as e:
-                    logger.warning(f"Completed automation cleanup task setup: {e}")
-
-                try:
-                    await enqueue_message_history_backfill_task(db_ctx)
-                    logger.info("Message history backfill task scheduled")
-                except Exception as e:
-                    logger.warning(f"Message history backfill task setup: {e}")
+            try:
+                await enqueue_message_history_backfill_task(db_ctx)
+                logger.info("Message history backfill task scheduled")
+            except Exception as e:
+                logger.warning(f"Message history backfill task setup: {e}")
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(
@@ -1862,40 +1852,6 @@ class Assistant:
         except Exception as e:
             logger.error(f"Failed to setup system tasks: {e}")
 
-    def create_worker_engine(self) -> AsyncEngine:
-        """Provide a database engine for one pool worker.
-
-        Each worker gets its OWN engine (its own connection) so that a worker
-        parked inside a transaction — e.g. a confirmation-gated delegated run
-        waiting on an in-process future — does not hold the single shared
-        connection and block its siblings. On SQLite this matters most: the
-        shared StaticPool hands out one connection, so without a dedicated engine
-        a long-held worker transaction serializes the whole pool.
-
-        Exception: an in-memory SQLite database (``:memory:``) cannot be shared
-        across engines (each new engine gets a fresh, empty database), so in that
-        case the single shared engine is reused. In-memory SQLite is test-only.
-        """
-        if self.database_engine is None:
-            raise RuntimeError("database_engine must be set before workers")
-
-        url = self.database_engine.url
-        is_memory_sqlite = url.get_backend_name() == "sqlite" and (
-            url.database is None or ":memory:" in url.database
-        )
-        if is_memory_sqlite:
-            return self.database_engine
-
-        engine = create_engine_with_sqlite_optimizations(
-            url.render_as_string(hide_password=False)
-        )
-        set_engine_history_taint_epoch(
-            engine,
-            self.config.taint_policy.history_taint_epoch,
-        )
-        self.worker_engines.append(engine)
-        return engine
-
     def _build_task_worker(
         self, default_timezone: ZoneInfo, engine: AsyncEngine
     ) -> TaskWorker:
@@ -1904,8 +1860,8 @@ class Assistant:
         Every worker in the pool is built here so they share an identical handler
         set and the same shared dependencies (processing service, confirmation
         waiters/managers, etc.). They are interchangeable: any worker can pick up
-        any queued task. Each worker is given its own ``engine`` (see
-        :meth:`create_worker_engine`).
+        any queued task, and they share the application engine -- one database,
+        one engine, one connection pool.
         """
         if self.default_processing_service is None:
             raise RuntimeError("default_processing_service must be set before workers")
@@ -2164,15 +2120,6 @@ class Assistant:
             self.error_logging_handler.close()
             logging.getLogger().removeHandler(self.error_logging_handler)
             logger.info("Error logging handler closed.")
-
-        # Dispose dedicated per-worker engines (always created by us, so always
-        # disposed). Skip any that alias the shared engine (in-memory SQLite).
-        for worker_engine in self.worker_engines:
-            if worker_engine is not self.database_engine:
-                await worker_engine.dispose()
-        if self.worker_engines:
-            logger.info(f"Disposed {len(self.worker_engines)} worker engine(s).")
-        self.worker_engines = []
 
         # Close database engine (only if we created it, not if it was injected)
         if self.database_engine and not self._injected_database_engine:

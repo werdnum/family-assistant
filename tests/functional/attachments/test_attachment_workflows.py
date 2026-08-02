@@ -17,7 +17,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.events import EventActionType, EventSourceType
 from family_assistant.task_worker import (
     TaskWorker,
@@ -90,167 +90,161 @@ class TestAttachmentWorkflows:
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test Camera → Annotate → Response workflow."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            # Create execution context
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        # Create execution context
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Step 1: Get camera snapshot (using mock camera tool)
-            camera_result = await attachment_tools_provider.execute_tool(
-                name="mock_camera_snapshot",
-                arguments={"entity_id": "camera.front_door"},
-                context=exec_context,
-            )
+        # Step 1: Get camera snapshot (using mock camera tool)
+        camera_result = await attachment_tools_provider.execute_tool(
+            name="mock_camera_snapshot",
+            arguments={"entity_id": "camera.front_door"},
+            context=exec_context,
+        )
 
-            # Should return successful result with attachment
-            # The mock camera tool should return a ToolResult with attachment
-            if isinstance(camera_result, ToolResult):
-                # It's a ToolResult
-                assert "snapshot" in camera_result.get_text().lower()
-                assert camera_result.attachments and len(camera_result.attachments) > 0
-                assert camera_result.attachments[0].mime_type.startswith("image/")
-                assert camera_result.attachments[0].content is not None
-                camera_content = camera_result.attachments[0].content
-                camera_mime = camera_result.attachments[0].mime_type
-            else:
-                # Fallback if mock tool returns string (should not happen)
-                camera_content = b"fake_camera_image_data"
-                camera_mime = "image/png"
+        # Should return successful result with attachment
+        # The mock camera tool should return a ToolResult with attachment
+        if isinstance(camera_result, ToolResult):
+            # It's a ToolResult
+            assert "snapshot" in camera_result.get_text().lower()
+            assert camera_result.attachments and len(camera_result.attachments) > 0
+            assert camera_result.attachments[0].mime_type.startswith("image/")
+            assert camera_result.attachments[0].content is not None
+            camera_content = camera_result.attachments[0].content
+            camera_mime = camera_result.attachments[0].mime_type
+        else:
+            # Fallback if mock tool returns string (should not happen)
+            camera_content = b"fake_camera_image_data"
+            camera_mime = "image/png"
 
-            # Use the attachment registry directly (already configured)
-            # Store file first, then register as tool attachment
-            camera_data = await attachment_registry._store_file_only(
-                camera_content,
-                "camera_snapshot.png",
-                camera_mime,
-                media_limited=False,
-            )
-            camera_attachment_id = camera_data.attachment_id
+        # Use the attachment registry directly (already configured)
+        # Store file first, then register as tool attachment
+        camera_data = await attachment_registry._store_file_only(
+            camera_content,
+            "camera_snapshot.png",
+            camera_mime,
+            media_limited=False,
+        )
+        camera_attachment_id = camera_data.attachment_id
 
-            await attachment_registry.register_tool_attachment(
-                db_context=db_context,
-                attachment_id=camera_attachment_id,
-                tool_name="mock_camera_snapshot",
-                mime_type=camera_mime,
-                description="Camera snapshot",
-                size=len(camera_content),
-                content_url=camera_data.content_url or "",
-                storage_path=camera_data.storage_path,
-                conversation_id="test_conversation",
-            )
+        await attachment_registry.register_tool_attachment(
+            db_context=db_context,
+            attachment_id=camera_attachment_id,
+            tool_name="mock_camera_snapshot",
+            mime_type=camera_mime,
+            description="Camera snapshot",
+            size=len(camera_content),
+            content_url=camera_data.content_url or "",
+            storage_path=camera_data.storage_path,
+            conversation_id="test_conversation",
+        )
 
-            # Step 2: Annotate the camera image
-            annotate_result = await attachment_tools_provider.execute_tool(
-                name="annotate_image",
-                arguments={
-                    "image_attachment_id": camera_attachment_id,
-                    "annotation_text": "Motion detected at 2:30 PM",
-                    "position": "top-right",
-                },
-                context=exec_context,
-            )
+        # Step 2: Annotate the camera image
+        annotate_result = await attachment_tools_provider.execute_tool(
+            name="annotate_image",
+            arguments={
+                "image_attachment_id": camera_attachment_id,
+                "annotation_text": "Motion detected at 2:30 PM",
+                "position": "top-right",
+            },
+            context=exec_context,
+        )
 
-            # Should return successful annotation with new attachment
-            if isinstance(annotate_result, ToolResult):
-                # It's a ToolResult
-                assert "annotated" in annotate_result.get_text().lower()
-                assert (
-                    annotate_result.attachments and len(annotate_result.attachments) > 0
-                )
-                assert annotate_result.attachments[0].mime_type.startswith("image/")
-                assert annotate_result.attachments[0].content is not None
-                annotated_content = annotate_result.attachments[0].content
-                annotated_mime = annotate_result.attachments[0].mime_type
-            else:
-                # It's a string result, create mock annotated attachment
-                annotated_content = camera_content + b"_annotated"
-                annotated_mime = camera_mime
+        # Should return successful annotation with new attachment
+        if isinstance(annotate_result, ToolResult):
+            # It's a ToolResult
+            assert "annotated" in annotate_result.get_text().lower()
+            assert annotate_result.attachments and len(annotate_result.attachments) > 0
+            assert annotate_result.attachments[0].mime_type.startswith("image/")
+            assert annotate_result.attachments[0].content is not None
+            annotated_content = annotate_result.attachments[0].content
+            annotated_mime = annotate_result.attachments[0].mime_type
+        else:
+            # It's a string result, create mock annotated attachment
+            annotated_content = camera_content + b"_annotated"
+            annotated_mime = camera_mime
 
-            # Store the annotated attachment
-            annotated_data = await attachment_registry._store_file_only(
-                annotated_content,
-                "annotated_image.png",
-                annotated_mime,
-                media_limited=False,
-            )
-            annotated_attachment_id = annotated_data.attachment_id
+        # Store the annotated attachment
+        annotated_data = await attachment_registry._store_file_only(
+            annotated_content,
+            "annotated_image.png",
+            annotated_mime,
+            media_limited=False,
+        )
+        annotated_attachment_id = annotated_data.attachment_id
 
-            # Register the annotated attachment
-            await attachment_registry.register_attachment(
-                db_context=db_context,
-                attachment_id=annotated_attachment_id,
-                source_type="tool",
-                source_id="annotate_image",
-                mime_type=annotated_mime,
-                description="Annotated image",
-                size=len(annotated_content),
-                content_url=annotated_data.content_url or "",
-                storage_path=annotated_data.storage_path,
-                conversation_id="test_conversation",
-            )
+        # Register the annotated attachment
+        await attachment_registry.register_attachment(
+            db_context=db_context,
+            attachment_id=annotated_attachment_id,
+            source_type="tool",
+            source_id="annotate_image",
+            mime_type=annotated_mime,
+            description="Annotated image",
+            size=len(annotated_content),
+            content_url=annotated_data.content_url or "",
+            storage_path=annotated_data.storage_path,
+            conversation_id="test_conversation",
+        )
 
-            # Step 3: Attach annotated image to response
-            attach_result = await attachment_tools_provider.execute_tool(
-                name="attach_to_response",
-                arguments={"attachment_ids": [annotated_attachment_id]},
-                context=exec_context,
-            )
+        # Step 3: Attach annotated image to response
+        attach_result = await attachment_tools_provider.execute_tool(
+            name="attach_to_response",
+            arguments={"attachment_ids": [annotated_attachment_id]},
+            context=exec_context,
+        )
 
-            # Should return successful attachment to response
-            result_text = (
-                attach_result
-                if isinstance(attach_result, str)
-                else attach_result.get_text()
-            )
-            assert (
-                "sent" in result_text.lower()
-                or "attached" in result_text.lower()
-                or "queued" in result_text.lower()
-            )
+        # Should return successful attachment to response
+        result_text = (
+            attach_result
+            if isinstance(attach_result, str)
+            else attach_result.get_text()
+        )
+        assert (
+            "sent" in result_text.lower()
+            or "attached" in result_text.lower()
+            or "queued" in result_text.lower()
+        )
 
-            # Verify the workflow created the expected chain
-            # Camera → Annotation → Response
-            # We should have two attachments registered
-            all_attachments = await attachment_registry.list_attachments(
-                db_context=db_context,
-                conversation_id="test_conversation",
-                acting_user_id=None,
-            )
+        # Verify the workflow created the expected chain
+        # Camera → Annotation → Response
+        # We should have two attachments registered
+        all_attachments = await attachment_registry.list_attachments(
+            db_context=db_context,
+            conversation_id="test_conversation",
+            acting_user_id=None,
+        )
 
-            assert len(all_attachments) == 2
+        assert len(all_attachments) == 2
 
-            # Find camera and annotated attachments
-            camera_att = next(
-                (
-                    att
-                    for att in all_attachments
-                    if att.source_id == "mock_camera_snapshot"
-                ),
-                None,
-            )
-            annotated_att = next(
-                (att for att in all_attachments if att.source_id == "annotate_image"),
-                None,
-            )
+        # Find camera and annotated attachments
+        camera_att = next(
+            (att for att in all_attachments if att.source_id == "mock_camera_snapshot"),
+            None,
+        )
+        annotated_att = next(
+            (att for att in all_attachments if att.source_id == "annotate_image"),
+            None,
+        )
 
-            assert camera_att is not None
-            assert annotated_att is not None
-            assert camera_att.mime_type.startswith("image/")
-            assert annotated_att.mime_type.startswith("image/")
+        assert camera_att is not None
+        assert annotated_att is not None
+        assert camera_att.mime_type.startswith("image/")
+        assert annotated_att.mime_type.startswith("image/")
 
     async def test_user_image_process_send_workflow(
         self,
@@ -259,174 +253,172 @@ class TestAttachmentWorkflows:
         attachment_registry: AttachmentRegistry,
     ) -> None:
         """Test User Image → Process → Send to Another User workflow."""
-        async with DatabaseContext(engine=db_engine) as db_context:
-            # Create execution context
-            exec_context = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        db_context = Database(engine=db_engine)
+        # Create execution context
+        exec_context = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            # Step 1: Simulate user uploading an image
-            # In real usage, this would come from Telegram/Web interface
-            user_image_content = b"fake_user_uploaded_image_data" + b"\x00" * 200
-            # Register user attachment (includes storage)
-            user_attachment_metadata = (
-                await attachment_registry.register_user_attachment(
-                    db_context=db_context,
-                    content=user_image_content,
-                    filename="user_photo.jpg",
-                    mime_type="image/jpeg",
-                    conversation_id="test_conversation",
-                    description="User uploaded photo",
-                )
-            )
-            user_attachment_id = user_attachment_metadata.attachment_id
+        # Step 1: Simulate user uploading an image
+        # In real usage, this would come from Telegram/Web interface
+        user_image_content = b"fake_user_uploaded_image_data" + b"\x00" * 200
+        # Register user attachment (includes storage)
+        user_attachment_metadata = await attachment_registry.register_user_attachment(
+            db_context=db_context,
+            content=user_image_content,
+            filename="user_photo.jpg",
+            mime_type="image/jpeg",
+            conversation_id="test_conversation",
+            description="User uploaded photo",
+        )
+        user_attachment_id = user_attachment_metadata.attachment_id
 
-            # User attachment already registered above
+        # User attachment already registered above
 
-            # Step 2: Process the user image (annotate it)
-            process_result = await attachment_tools_provider.execute_tool(
-                name="annotate_image",
-                arguments={
-                    "image_attachment_id": user_attachment_id,
-                    "annotation_text": "Enhanced by AI assistant",
-                    "position": "bottom-right",
-                },
-                context=exec_context,
-            )
+        # Step 2: Process the user image (annotate it)
+        process_result = await attachment_tools_provider.execute_tool(
+            name="annotate_image",
+            arguments={
+                "image_attachment_id": user_attachment_id,
+                "annotation_text": "Enhanced by AI assistant",
+                "position": "bottom-right",
+            },
+            context=exec_context,
+        )
 
-            # Should return successful processing with new attachment
-            # Enforce strict contract: annotate_image tool must return ToolResult
-            assert isinstance(process_result, ToolResult), (
-                f"Expected ToolResult, got {type(process_result)}"
-            )
-            assert "annotated" in process_result.get_text().lower()
-            assert process_result.attachments and len(process_result.attachments) > 0
-            assert process_result.attachments[0].mime_type.startswith("image/")
-            assert process_result.attachments[0].content is not None
+        # Should return successful processing with new attachment
+        # Enforce strict contract: annotate_image tool must return ToolResult
+        assert isinstance(process_result, ToolResult), (
+            f"Expected ToolResult, got {type(process_result)}"
+        )
+        assert "annotated" in process_result.get_text().lower()
+        assert process_result.attachments and len(process_result.attachments) > 0
+        assert process_result.attachments[0].mime_type.startswith("image/")
+        assert process_result.attachments[0].content is not None
 
-            processed_content = process_result.attachments[0].content
-            processed_mime = process_result.attachments[0].mime_type
+        processed_content = process_result.attachments[0].content
+        processed_mime = process_result.attachments[0].mime_type
 
-            # Store the processed attachment
-            processed_data = await attachment_registry._store_file_only(
-                processed_content,
-                "processed_photo.jpg",
-                processed_mime,
-                media_limited=False,
-            )
-            processed_attachment_id = processed_data.attachment_id
+        # Store the processed attachment
+        processed_data = await attachment_registry._store_file_only(
+            processed_content,
+            "processed_photo.jpg",
+            processed_mime,
+            media_limited=False,
+        )
+        processed_attachment_id = processed_data.attachment_id
 
-            # Register the processed attachment
-            await attachment_registry.register_attachment(
-                db_context=db_context,
-                attachment_id=processed_attachment_id,
-                source_type="tool",
-                source_id="annotate_image",
-                mime_type=processed_mime,
-                description="Processed user photo",
-                size=len(processed_content),
-                content_url=processed_data.content_url or "",
-                storage_path=processed_data.storage_path,
-                conversation_id="test_conversation",
-            )
+        # Register the processed attachment
+        await attachment_registry.register_attachment(
+            db_context=db_context,
+            attachment_id=processed_attachment_id,
+            source_type="tool",
+            source_id="annotate_image",
+            mime_type=processed_mime,
+            description="Processed user photo",
+            size=len(processed_content),
+            content_url=processed_data.content_url or "",
+            storage_path=processed_data.storage_path,
+            conversation_id="test_conversation",
+        )
 
-            # Step 3: Send processed image to another user
-            # We'll use a fake target chat ID for testing
-            target_chat_id = 987654321
+        # Step 3: Send processed image to another user
+        # We'll use a fake target chat ID for testing
+        target_chat_id = 987654321
 
-            # Create a mock chat interface for testing
-            mock_chat_interface = AsyncMock()
-            mock_chat_interface.send_message.return_value = "mock_message_id_123"
+        # Create a mock chat interface for testing
+        mock_chat_interface = AsyncMock()
+        mock_chat_interface.send_message.return_value = "mock_message_id_123"
 
-            # Temporarily set the chat interface in the execution context
-            exec_context_with_chat = ToolExecutionContext(
-                interface_type="test",
-                conversation_id="test_conversation",
-                user_name="test_user",
-                turn_id="test_turn",
-                db_context=db_context,
-                processing_service=None,
-                clock=None,
-                home_assistant_client=None,
-                event_sources=None,
-                attachment_registry=attachment_registry,
-                camera_backend=None,
-                chat_interface=mock_chat_interface,
-                timezone=ZoneInfo("UTC"),
-                credential_resolvers=None,
-                api_backend=None,
-            )
+        # Temporarily set the chat interface in the execution context
+        exec_context_with_chat = ToolExecutionContext(
+            interface_type="test",
+            conversation_id="test_conversation",
+            user_name="test_user",
+            turn_id="test_turn",
+            db_context=db_context,
+            processing_service=None,
+            clock=None,
+            home_assistant_client=None,
+            event_sources=None,
+            attachment_registry=attachment_registry,
+            camera_backend=None,
+            chat_interface=mock_chat_interface,
+            timezone=ZoneInfo("UTC"),
+            credential_resolvers=None,
+            api_backend=None,
+        )
 
-            send_result = await attachment_tools_provider.execute_tool(
-                name="send_message_to_user",
-                arguments={
-                    "target_chat_id": target_chat_id,
-                    "message_content": "Here's your enhanced photo!",
-                    "attachment_ids": [processed_attachment_id],
-                },
-                context=exec_context_with_chat,
-            )
+        send_result = await attachment_tools_provider.execute_tool(
+            name="send_message_to_user",
+            arguments={
+                "target_chat_id": target_chat_id,
+                "message_content": "Here's your enhanced photo!",
+                "attachment_ids": [processed_attachment_id],
+            },
+            context=exec_context_with_chat,
+        )
 
-            # Should return successful sending
-            # Handle ToolResult return type from tools provider
-            result_text = (
-                send_result.get_text()
-                if isinstance(send_result, ToolResult)
-                else send_result
-            )
-            assert (
-                "sent successfully" in result_text.lower()
-                or "message sent" in result_text.lower()
-            )
-            assert str(target_chat_id) in result_text
+        # Should return successful sending
+        # Handle ToolResult return type from tools provider
+        result_text = (
+            send_result.get_text()
+            if isinstance(send_result, ToolResult)
+            else send_result
+        )
+        assert (
+            "sent successfully" in result_text.lower()
+            or "message sent" in result_text.lower()
+        )
+        assert str(target_chat_id) in result_text
 
-            # Verify the chat interface was called correctly
-            mock_chat_interface.send_message.assert_called_once_with(
-                conversation_id=str(target_chat_id),
-                text="Here's your enhanced photo!",
-                attachment_ids=[processed_attachment_id],
-                on_behalf_of_user_id=None,
-                taint_metadata=TurnTaintState.empty().to_metadata(),
-            )
+        # Verify the chat interface was called correctly
+        mock_chat_interface.send_message.assert_called_once_with(
+            conversation_id=str(target_chat_id),
+            text="Here's your enhanced photo!",
+            attachment_ids=[processed_attachment_id],
+            on_behalf_of_user_id=None,
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+        )
 
-            # Verify the workflow created the expected attachments
-            # User → Processed → Sent to another user
-            all_attachments = await attachment_registry.list_attachments(
-                db_context=db_context,
-                conversation_id="test_conversation",
-                acting_user_id=None,
-            )
+        # Verify the workflow created the expected attachments
+        # User → Processed → Sent to another user
+        all_attachments = await attachment_registry.list_attachments(
+            db_context=db_context,
+            conversation_id="test_conversation",
+            acting_user_id=None,
+        )
 
-            assert len(all_attachments) == 2  # User + processed attachment
+        assert len(all_attachments) == 2  # User + processed attachment
 
-            # Find user and processed attachments
-            user_att = next(
-                (att for att in all_attachments if att.source_type == "user"), None
-            )
-            processed_att = next(
-                (att for att in all_attachments if att.source_id == "annotate_image"),
-                None,
-            )
+        # Find user and processed attachments
+        user_att = next(
+            (att for att in all_attachments if att.source_type == "user"), None
+        )
+        processed_att = next(
+            (att for att in all_attachments if att.source_id == "annotate_image"),
+            None,
+        )
 
-            assert user_att is not None
-            assert processed_att is not None
-            assert user_att.mime_type == "image/jpeg"
-            assert processed_att.mime_type.startswith("image/")
-            assert user_att.description == "User uploaded photo"
-            assert processed_att.description == "Processed user photo"
+        assert user_att is not None
+        assert processed_att is not None
+        assert user_att.mime_type == "image/jpeg"
+        assert processed_att.mime_type.startswith("image/")
+        assert user_att.description == "User uploaded photo"
+        assert processed_att.description == "Processed user photo"
 
     async def test_event_script_camera_wake_llm_workflow(
         self,
@@ -436,19 +428,19 @@ class TestAttachmentWorkflows:
         """Test Event → Script → Camera → Wake LLM workflow with attachments."""
         test_run_id = uuid.uuid4()
 
-        async with DatabaseContext(engine=db_engine) as db_ctx:
-            # Step 1: Create event listener with script that calls camera and wake_llm
-            await db_ctx.events.create_event_listener(
-                name=f"Security Camera Alert {test_run_id}",
-                source_id=EventSourceType.home_assistant,
-                match_conditions={
-                    "entity_id": "binary_sensor.motion_detector",
-                },
-                conversation_id="test_conversation",
-                interface_type="telegram",
-                action_type=EventActionType.script,
-                action_config={
-                    "script_code": """
+        db_ctx = Database(engine=db_engine)
+        # Step 1: Create event listener with script that calls camera and wake_llm
+        await db_ctx.events.create_event_listener(
+            name=f"Security Camera Alert {test_run_id}",
+            source_id=EventSourceType.home_assistant,
+            match_conditions={
+                "entity_id": "binary_sensor.motion_detector",
+            },
+            conversation_id="test_conversation",
+            interface_type="telegram",
+            action_type=EventActionType.script,
+            action_config={
+                "script_code": """
 # Motion detected, take camera snapshot
 camera_result = tools_execute("mock_camera_snapshot", entity_id="camera.front_door")
 
@@ -470,9 +462,9 @@ else:
         "error": "Camera snapshot failed"
     })
 """
-                },
-                enabled=True,
-            )
+            },
+            enabled=True,
+        )
 
         # Step 2: Create infrastructure with attachment support
         shutdown_event = asyncio.Event()
@@ -482,7 +474,7 @@ else:
         processor = EventProcessor(
             sources={},
             sample_interval_hours=1.0,
-            get_db_context_func=lambda: get_db_context(db_engine),
+            get_db_context_func=lambda: Database(db_engine),
             timezone=ZoneInfo("Australia/Sydney"),
         )
 

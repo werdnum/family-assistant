@@ -17,7 +17,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.confirmation import MAX_DELEGATION_REQUEST_CHARS
 from family_assistant.tools.services import delegate_to_service_tool
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
@@ -70,7 +70,7 @@ async def test_delegate_to_service_blocks_disallowed_source_profile() -> None:
         conversation_id="conversation",
         user_name="User",
         turn_id=None,
-        db_context=MagicMock(spec=DatabaseContext),
+        db_context=MagicMock(spec=Database),
         processing_service=cast("ProcessingService", source_service),
         clock=None,
         home_assistant_client=None,
@@ -119,7 +119,7 @@ async def test_delegate_to_service_refuses_over_length_request_when_confirming()
         conversation_id="conversation",
         user_name="User",
         turn_id=None,
-        db_context=MagicMock(spec=DatabaseContext),
+        db_context=MagicMock(spec=Database),
         processing_service=cast("ProcessingService", source_service),
         clock=None,
         home_assistant_client=None,
@@ -178,7 +178,7 @@ async def test_synchronous_delegate_to_service_passes_parent_taint_sources() -> 
         conversation_id="conversation",
         user_name="User",
         turn_id="turn-1",
-        db_context=MagicMock(spec=DatabaseContext),
+        db_context=MagicMock(spec=Database),
         processing_service=cast("ProcessingService", source_service),
         clock=None,
         home_assistant_client=None,
@@ -226,37 +226,37 @@ async def test_async_delegate_to_service_persists_parent_taint_state(
     )
     tracker = _unknown_external_tracker()
 
-    async with get_db_context(db_engine) as db_context:
-        context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="conversation",
-            user_name="User",
-            turn_id="turn-1",
-            db_context=db_context,
-            processing_service=cast("ProcessingService", source_service),
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            camera_backend=None,
-            timezone=ZoneInfo("UTC"),
-            taint_tracker=tracker,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_context = Database(db_engine)
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id="turn-1",
+        db_context=db_context,
+        processing_service=cast("ProcessingService", source_service),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        taint_tracker=tracker,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await delegate_to_service_tool(
-            exec_context=context,
-            target_service_id="target_profile",
-            user_request="summarize this email",
-            delivery_hint="background",
-        )
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="summarize this email",
+        delivery_hint="background",
+    )
 
-        assert result.data is not None
-        result_data = cast("dict[str, object]", result.data)
-        delegation_id = result_data["delegation_id"]
-        assert isinstance(delegation_id, str)
-        run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+    assert result.data is not None
+    result_data = cast("dict[str, object]", result.data)
+    delegation_id = result_data["delegation_id"]
+    assert isinstance(delegation_id, str)
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
 
     assert run is not None
     taint_state = run["taint_state_json"]

@@ -19,7 +19,6 @@ from family_assistant.services.confirmation_service import (
     create_durable_confirmation,
 )
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.storage.context import get_db_context
 from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
 from family_assistant.tools.types import ConfirmationOutcome
 
@@ -140,21 +139,12 @@ async def create_deferred_tool_confirmation(
     timeout_seconds: float,
     target_user_id: str,
     source_prefix: str,
-    link_source_message: bool = True,
 ) -> ConfirmationOutcome:
     """Record a durable confirmation for a confirm-gated tool and notify the user.
 
     Returns a ``completed`` outcome whose ``result`` tells the caller the tool has
     not run yet and is awaiting approval. The policy layer surfaces this result in
     place of the tool's return value.
-
-    ``link_source_message`` resolves the originating user message from
-    ``context.turn_id`` so an approval can thread back to it. Callers whose turn's
-    source message lives in an uncommitted, ambient transaction (e.g. the
-    delegation-completion wakeup, whose data message is written in an isolated
-    context held open across the turn) must pass ``False``: the durable
-    confirmation is written by the confirmation service's own short transaction,
-    which cannot see that row and would violate the foreign key.
     """
     confirmation_prompt = await render_tool_confirmation_prompt(
         tool_name=tool_name,
@@ -162,9 +152,7 @@ async def create_deferred_tool_confirmation(
         context=context,
         source_prefix=source_prefix,
     )
-    confirmation_service = ConfirmationService(
-        db_context_factory=lambda: get_db_context(engine=context.db_context.engine)
-    )
+    confirmation_service = ConfirmationService(db=context.db_context)
     now = context.clock.now() if context.clock is not None else datetime.now(UTC)
     taint_state_json = (
         context.taint_tracker.snapshot().to_metadata()
@@ -180,7 +168,7 @@ async def create_deferred_tool_confirmation(
         tool_args=tool_args,
         confirmation_prompt=confirmation_prompt,
         timeout_seconds=timeout_seconds,
-        turn_id=context.turn_id if link_source_message else None,
+        turn_id=context.turn_id,
         now=now,
         processing_profile_id=context.processing_profile_id,
         origin_interface_type=context.interface_type,
@@ -252,7 +240,6 @@ def build_deferred_confirmation_callback(
             timeout_seconds=timeout_seconds,
             target_user_id=target_user_id,
             source_prefix=source_prefix,
-            link_source_message=False,
         )
 
     return _deferred_confirmation_callback

@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import OnDemandToolsView, ToolsProvider
     from family_assistant.tools.types import EventSourcesById
@@ -150,7 +150,6 @@ class ProcessingService:
     interacting with the LLM, and handling tool calls.
     """
 
-    _USE_ISOLATED_HISTORY_WRITES = True
     kind: Literal["local"] = "local"
 
     def __init__(
@@ -233,7 +232,7 @@ class ProcessingService:
 
     async def _resolve_thread_root_id(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         replied_to_interface_id: str | None,
     ) -> int | None:
@@ -285,7 +284,7 @@ class ProcessingService:
 
     async def _build_initial_messages_for_llm(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         replied_to_interface_id: str | None,
@@ -354,7 +353,7 @@ class ProcessingService:
 
     async def _append_missing_pinned_history_messages(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages_for_llm: list[LLMMessage],
         pinned_history_message_ids: list[int] | None,
     ) -> None:
@@ -633,7 +632,7 @@ class ProcessingService:
 
     async def _save_history_message(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         message: LLMMessage,
         interface_type: str,
@@ -647,39 +646,29 @@ class ProcessingService:
         reasoning_info: MessageReasoningInfo | None = None,
         attachments: list[MessageAttachmentMetadata] | None = None,
         is_internal: bool = False,
-        save_with_isolated_context: bool = False,
     ) -> int | None:
-        """Persist a history message using either the active context or a fresh one."""
+        """Persist a history message."""
         message_timestamp = timestamp if timestamp is not None else self.clock.now()
 
-        async def _persist_message(target_db_context: DatabaseContext) -> int | None:
-            return await target_db_context.message_history.add_message(
-                message=message,
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                interface_message_id=interface_message_id,
-                turn_id=turn_id,
-                thread_root_id=thread_root_id,
-                timestamp=message_timestamp,
-                processing_profile_id=self.service_config.id,
-                subconversation_id=subconversation_id,
-                user_id=user_id,
-                reasoning_info=reasoning_info,
-                attachments=attachments,
-                is_internal=is_internal,
-            )
-
-        # On SQLite, avoid nested contexts with StaticPool because they may share
-        # the same underlying connection/transaction as the outer context.
-        if save_with_isolated_context and db_context.supports_isolated_writes:
-            async with db_context.create_isolated_context() as isolated_db_context:
-                return await _persist_message(isolated_db_context)
-
-        return await _persist_message(db_context)
+        return await db_context.message_history.add_message(
+            message=message,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            interface_message_id=interface_message_id,
+            turn_id=turn_id,
+            thread_root_id=thread_root_id,
+            timestamp=message_timestamp,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            user_id=user_id,
+            reasoning_info=reasoning_info,
+            attachments=attachments,
+            is_internal=is_internal,
+        )
 
     async def _persist_error_history_message(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         error_message: str,
         error_traceback: str,
@@ -689,14 +678,8 @@ class ProcessingService:
         thread_root_id: int | None,
         subconversation_id: str | None,
         user_id: str | None,
-        save_with_isolated_context: bool | None = None,
     ) -> int | None:
-        """Persist a processing error message with the standard write strategy."""
-        use_isolated_context = (
-            self._USE_ISOLATED_HISTORY_WRITES
-            if save_with_isolated_context is None
-            else save_with_isolated_context
-        )
+        """Persist a processing error message."""
         try:
             return await self._save_history_message(
                 db_context,
@@ -711,7 +694,6 @@ class ProcessingService:
                 thread_root_id=thread_root_id,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
-                save_with_isolated_context=use_isolated_context,
             )
         except Exception:
             logger.exception("Failed to save error message to history")
@@ -719,7 +701,7 @@ class ProcessingService:
 
     async def _prepare_turn_messages_for_llm(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         interface_type: str,
         conversation_id: str,
@@ -734,7 +716,6 @@ class ProcessingService:
         thread_root_id: int | None = None,
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
-        save_history_with_isolated_context: bool = True,
         trigger_role: Literal["user", "system"] = "user",
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
@@ -788,7 +769,6 @@ class ProcessingService:
                 subconversation_id=subconversation_id,
                 user_id=user_id,
                 is_internal=trigger_is_internal,
-                save_with_isolated_context=save_history_with_isolated_context,
             )
         if saved_user_msg_record is not None and thread_root_id_for_turn is None:
             thread_root_id_for_turn = saved_user_msg_record
@@ -877,7 +857,7 @@ class ProcessingService:
 
     async def process_message(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         interface_type: str,
         conversation_id: str,
@@ -926,7 +906,7 @@ class ProcessingService:
 
     async def process_message_stream(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         interface_type: str,
         conversation_id: str,
@@ -976,7 +956,7 @@ class ProcessingService:
 
     async def handle_chat_interaction(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: list[ContentPartDict],
@@ -996,7 +976,6 @@ class ProcessingService:
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
-        save_history_with_isolated_context: bool | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> ChatInteractionResult:
         """
@@ -1039,11 +1018,6 @@ class ProcessingService:
 
         if turn_id is None:
             turn_id = str(uuid.uuid4())
-        use_isolated_history_writes = (
-            self._USE_ISOLATED_HISTORY_WRITES
-            if save_history_with_isolated_context is None
-            else save_history_with_isolated_context
-        )
         logger.info(
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
@@ -1070,7 +1044,6 @@ class ProcessingService:
                 thread_root_id=thread_root_id,
                 trigger_is_internal=trigger_is_internal,
                 pinned_history_message_ids=pinned_history_message_ids,
-                save_history_with_isolated_context=use_isolated_history_writes,
                 trigger_role=trigger_role,
                 initial_taint_sources=initial_taint_sources,
             )
@@ -1156,7 +1129,6 @@ class ProcessingService:
                             if index == final_assistant_index
                             else None
                         ),
-                        save_with_isolated_context=use_isolated_history_writes,
                     )
 
                     if isinstance(turn_msg, AssistantMessage) and turn_msg.content:
@@ -1192,7 +1164,6 @@ class ProcessingService:
                 thread_root_id=thread_root_id_for_turn,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
-                save_with_isolated_context=use_isolated_history_writes,
             )
 
             return ChatInteractionResult.error(
@@ -1203,7 +1174,7 @@ class ProcessingService:
 
     async def handle_chat_interaction_stream(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         interface_type: str,
         conversation_id: str,
         trigger_content_parts: list[ContentPartDict],
@@ -1354,7 +1325,6 @@ class ProcessingService:
                                 user_id=user_id,
                                 reasoning_info=reasoning_info_for_stream,
                                 attachments=response_attachments,
-                                save_with_isolated_context=self._USE_ISOLATED_HISTORY_WRITES,
                             )
 
                 except Exception as e:

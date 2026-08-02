@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import exc as sqlalchemy_exc
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.auth import User
 from family_assistant.web.dependencies import get_current_user, get_db
 
@@ -46,7 +46,7 @@ class UnsubscribeRequest(BaseModel):
 async def subscribe(
     request: PushSubscriptionRequest,
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Subscribe to push notifications.
 
@@ -83,7 +83,7 @@ async def subscribe(
 async def unsubscribe(
     request: UnsubscribeRequest,
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[DatabaseContext, Depends(get_db)],
+    db: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """Unsubscribe from push notifications.
 

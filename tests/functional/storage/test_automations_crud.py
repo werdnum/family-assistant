@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
@@ -20,26 +20,24 @@ from family_assistant.task_worker import (
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
     """
-    Provides an entered DatabaseContext for repository tests.
+    Provides an entered Database for repository tests.
 
     Uses the standard db_engine fixture from conftest.py which automatically:
     - Creates a unique database for each test
     - Supports both SQLite and PostgreSQL via --postgres flag
     - Ensures complete test isolation
     """
-    async with DatabaseContext(engine=db_engine) as db_ctx:
-        yield db_ctx
+    db_ctx = Database(engine=db_engine)
+    yield db_ctx
 
 
 class TestScheduleAutomationsRepository:
     """Tests for ScheduleAutomationsRepository CRUD operations."""
 
     @pytest.mark.asyncio
-    async def test_create_schedule_automation(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_create_schedule_automation(self, db_context: Database) -> None:
         """Test creating a schedule automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -71,7 +69,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_create_schedule_automation_with_script(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test creating a schedule automation with script action."""
         conversation_id = str(uuid.uuid4())
@@ -100,7 +98,7 @@ class TestScheduleAutomationsRepository:
         )
 
     @pytest.mark.asyncio
-    async def test_create_with_invalid_rrule(self, db_context: DatabaseContext) -> None:
+    async def test_create_with_invalid_rrule(self, db_context: Database) -> None:
         """Test creating automation with invalid RRULE raises ValueError."""
         conversation_id = str(uuid.uuid4())
 
@@ -115,9 +113,7 @@ class TestScheduleAutomationsRepository:
             )
 
     @pytest.mark.asyncio
-    async def test_create_with_invalid_action_type(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_create_with_invalid_action_type(self, db_context: Database) -> None:
         """Test creating automation with invalid action_type raises ValueError."""
         conversation_id = str(uuid.uuid4())
 
@@ -133,7 +129,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_create_duplicate_name_in_conversation(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test creating automation with duplicate name in same conversation fails."""
         conversation_id = str(uuid.uuid4())
@@ -164,7 +160,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_create_same_name_different_conversations(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test creating automation with same name in different conversations succeeds."""
         conv1 = str(uuid.uuid4())
@@ -193,7 +189,7 @@ class TestScheduleAutomationsRepository:
         assert id1 != id2
 
     @pytest.mark.asyncio
-    async def test_get_by_id(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_id(self, db_context: Database) -> None:
         """Test retrieving automation by ID."""
         conversation_id = str(uuid.uuid4())
 
@@ -225,7 +221,7 @@ class TestScheduleAutomationsRepository:
         assert automation is None
 
     @pytest.mark.asyncio
-    async def test_get_by_name(self, db_context: DatabaseContext) -> None:
+    async def test_get_by_name(self, db_context: Database) -> None:
         """Test retrieving automation by name."""
         conversation_id = str(uuid.uuid4())
 
@@ -258,7 +254,7 @@ class TestScheduleAutomationsRepository:
         assert automation is None
 
     @pytest.mark.asyncio
-    async def test_list_all(self, db_context: DatabaseContext) -> None:
+    async def test_list_all(self, db_context: Database) -> None:
         """Test listing all automations for a conversation."""
         conv1 = str(uuid.uuid4())
         conv2 = str(uuid.uuid4())
@@ -302,7 +298,7 @@ class TestScheduleAutomationsRepository:
         assert automations[0]["name"] == "Auto 3"
 
     @pytest.mark.asyncio
-    async def test_list_all_enabled_only(self, db_context: DatabaseContext) -> None:
+    async def test_list_all_enabled_only(self, db_context: Database) -> None:
         """Test listing only enabled automations."""
         conversation_id = str(uuid.uuid4())
 
@@ -347,7 +343,7 @@ class TestScheduleAutomationsRepository:
         assert automations[0]["name"] == "Enabled Auto"
 
     @pytest.mark.asyncio
-    async def test_update_enabled(self, db_context: DatabaseContext) -> None:
+    async def test_update_enabled(self, db_context: Database) -> None:
         """Test enabling/disabling automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -394,7 +390,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_update_enabled_wrong_conversation(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test updating enabled status with wrong conversation returns False."""
         conversation_id = str(uuid.uuid4())
@@ -418,7 +414,7 @@ class TestScheduleAutomationsRepository:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_update_name(self, db_context: DatabaseContext) -> None:
+    async def test_update_name(self, db_context: Database) -> None:
         """Test updating automation name."""
         conversation_id = str(uuid.uuid4())
 
@@ -445,7 +441,7 @@ class TestScheduleAutomationsRepository:
         assert automation["name"] == "New Name"
 
     @pytest.mark.asyncio
-    async def test_update_description(self, db_context: DatabaseContext) -> None:
+    async def test_update_description(self, db_context: Database) -> None:
         """Test updating automation description."""
         conversation_id = str(uuid.uuid4())
 
@@ -486,7 +482,7 @@ class TestScheduleAutomationsRepository:
         assert automation["description"] is None
 
     @pytest.mark.asyncio
-    async def test_update_action_config(self, db_context: DatabaseContext) -> None:
+    async def test_update_action_config(self, db_context: Database) -> None:
         """Test updating automation action configuration."""
         conversation_id = str(uuid.uuid4())
 
@@ -514,7 +510,7 @@ class TestScheduleAutomationsRepository:
         assert automation["action_config"].get("context") == "new context"
 
     @pytest.mark.asyncio
-    async def test_update_recurrence_rule(self, db_context: DatabaseContext) -> None:
+    async def test_update_recurrence_rule(self, db_context: Database) -> None:
         """Test updating recurrence rule recalculates next_scheduled_at."""
         conversation_id = str(uuid.uuid4())
 
@@ -549,9 +545,7 @@ class TestScheduleAutomationsRepository:
         assert automation["next_scheduled_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_update_recurrence_rule_invalid(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_update_recurrence_rule_invalid(self, db_context: Database) -> None:
         """Test updating with invalid RRULE raises ValueError."""
         conversation_id = str(uuid.uuid4())
 
@@ -574,7 +568,7 @@ class TestScheduleAutomationsRepository:
             )
 
     @pytest.mark.asyncio
-    async def test_update_name_collision(self, db_context: DatabaseContext) -> None:
+    async def test_update_name_collision(self, db_context: Database) -> None:
         """Test updating automation name to an existing name fails."""
         conversation_id = str(uuid.uuid4())
 
@@ -609,7 +603,7 @@ class TestScheduleAutomationsRepository:
             )
 
     @pytest.mark.asyncio
-    async def test_update_wrong_conversation(self, db_context: DatabaseContext) -> None:
+    async def test_update_wrong_conversation(self, db_context: Database) -> None:
         """Test updating with wrong conversation returns False."""
         conversation_id = str(uuid.uuid4())
 
@@ -632,7 +626,7 @@ class TestScheduleAutomationsRepository:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_delete(self, db_context: DatabaseContext) -> None:
+    async def test_delete(self, db_context: Database) -> None:
         """Test deleting automation."""
         conversation_id = str(uuid.uuid4())
 
@@ -660,7 +654,7 @@ class TestScheduleAutomationsRepository:
         assert automation is None
 
     @pytest.mark.asyncio
-    async def test_delete_wrong_conversation(self, db_context: DatabaseContext) -> None:
+    async def test_delete_wrong_conversation(self, db_context: Database) -> None:
         """Test deleting with wrong conversation returns False."""
         conversation_id = str(uuid.uuid4())
 
@@ -684,7 +678,7 @@ class TestScheduleAutomationsRepository:
         assert automation is not None
 
     @pytest.mark.asyncio
-    async def test_get_execution_stats(self, db_context: DatabaseContext) -> None:
+    async def test_get_execution_stats(self, db_context: Database) -> None:
         """Test getting execution statistics."""
         conversation_id = str(uuid.uuid4())
 
@@ -707,7 +701,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_after_task_execution_updates_stats(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test after_task_execution updates execution count and timestamp."""
         conversation_id = str(uuid.uuid4())
@@ -747,7 +741,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_after_task_execution_schedules_next(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test after_task_execution schedules next task instance."""
         conversation_id = str(uuid.uuid4())
@@ -783,7 +777,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_after_task_execution_disabled_automation(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test after_task_execution updates stats but doesn't schedule next task for disabled automation."""
         conversation_id = str(uuid.uuid4())
@@ -828,7 +822,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_create_with_timezone_interprets_rrule_in_local_time(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test that RRULE BYHOUR is interpreted in the given timezone, not UTC."""
         conversation_id = str(uuid.uuid4())
@@ -854,7 +848,7 @@ class TestScheduleAutomationsRepository:
         assert next_sydney.minute == 0
 
     @pytest.mark.asyncio
-    async def test_timezone_differs_from_utc(self, db_context: DatabaseContext) -> None:
+    async def test_timezone_differs_from_utc(self, db_context: Database) -> None:
         """Test that timezone-aware scheduling differs from UTC-based scheduling."""
         conversation_id = str(uuid.uuid4())
         sydney_tz = ZoneInfo("Australia/Sydney")
@@ -898,7 +892,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_after_task_execution_with_timezone(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Test that after_task_execution schedules next occurrence in the correct timezone."""
         conversation_id = str(uuid.uuid4())
@@ -932,7 +926,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_parse_rrule_naive_after_treated_as_utc(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Naive ``after`` datetime should be assumed UTC before timezone conversion."""
         conversation_id = str(uuid.uuid4())
@@ -966,7 +960,7 @@ class TestScheduleAutomationsRepository:
 
     @pytest.mark.asyncio
     async def test_re_enable_recalculates_next_scheduled_at(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Re-enabling an automation should recalculate next_scheduled_at from now."""
         conversation_id = str(uuid.uuid4())
@@ -1015,7 +1009,7 @@ class TestScheduleAutomationsRepository:
 
 
 async def _get_pending_tasks_for_automation(
-    db_context: DatabaseContext, automation_id: int
+    db_context: Database, automation_id: int
 ) -> list[dict]:
     """Helper to query pending tasks for a specific automation."""
     stmt = select(tasks_table).where(
@@ -1027,7 +1021,7 @@ async def _get_pending_tasks_for_automation(
 
 
 async def _get_all_tasks_for_automation(
-    db_context: DatabaseContext, automation_id: int
+    db_context: Database, automation_id: int
 ) -> list[dict]:
     """Helper to query all tasks (any status) for a specific automation."""
     stmt = select(tasks_table).where(
@@ -1037,7 +1031,7 @@ async def _get_all_tasks_for_automation(
     return [dict(row) for row in rows]
 
 
-async def _get_task_by_id(db_context: DatabaseContext, task_id: str) -> dict | None:
+async def _get_task_by_id(db_context: Database, task_id: str) -> dict | None:
     """Helper to query a task by ID."""
     stmt = select(tasks_table).where(tasks_table.c.task_id == task_id)
     row = await db_context.fetch_one(stmt)
@@ -1048,9 +1042,7 @@ class TestTaskQueueSync:
     """Tests for task queue synchronization when automations are modified."""
 
     @pytest.mark.asyncio
-    async def test_disable_cancels_pending_tasks(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_disable_cancels_pending_tasks(self, db_context: Database) -> None:
         """Disabling an automation cancels its pending task queue items."""
         conversation_id = str(uuid.uuid4())
 
@@ -1085,7 +1077,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_disable_preserves_pending_schedule_advance_task(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Disabling cancels future runs without losing terminal stats advancement."""
         conversation_id = str(uuid.uuid4())
@@ -1194,7 +1186,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_stats_only_advance_does_not_rewind_last_execution_at(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """A delayed stats-only advance should not move last_execution_at backward."""
         conversation_id = str(uuid.uuid4())
@@ -1229,7 +1221,7 @@ class TestTaskQueueSync:
         assert automation["execution_count"] == 2
 
     @pytest.mark.asyncio
-    async def test_enable_schedules_new_task(self, db_context: DatabaseContext) -> None:
+    async def test_enable_schedules_new_task(self, db_context: Database) -> None:
         """Re-enabling an automation schedules a new task."""
         conversation_id = str(uuid.uuid4())
 
@@ -1264,7 +1256,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_action_config_reschedules_task(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Updating action_config cancels old task and creates new one with updated payload."""
         conversation_id = str(uuid.uuid4())
@@ -1298,7 +1290,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_action_config_script_reschedules_task(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Updating script action_config creates new task with updated script code."""
         conversation_id = str(uuid.uuid4())
@@ -1333,7 +1325,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_enabled_false_via_update_cancels_tasks(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Setting enabled=False via update() cancels pending tasks."""
         conversation_id = str(uuid.uuid4())
@@ -1365,7 +1357,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_enabled_true_via_update_schedules_task(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Setting enabled=True via update() on a disabled automation schedules a new task."""
         conversation_id = str(uuid.uuid4())
@@ -1402,9 +1394,7 @@ class TestTaskQueueSync:
         assert len(pending) == 1
 
     @pytest.mark.asyncio
-    async def test_delete_cancels_pending_tasks(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_delete_cancels_pending_tasks(self, db_context: Database) -> None:
         """Deleting an automation cancels its pending task queue items."""
         conversation_id = str(uuid.uuid4())
 
@@ -1430,7 +1420,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_recurrence_rule_reschedules_task(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Updating recurrence_rule cancels old task and schedules new one."""
         conversation_id = str(uuid.uuid4())
@@ -1468,7 +1458,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_enable_already_enabled_reschedules(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Calling update_enabled(True) on an already-enabled automation reschedules."""
         conversation_id = str(uuid.uuid4())
@@ -1501,9 +1491,7 @@ class TestTaskQueueSync:
         assert pending[0]["task_id"] != original_task_id
 
     @pytest.mark.asyncio
-    async def test_update_description_no_task_sync(
-        self, db_context: DatabaseContext
-    ) -> None:
+    async def test_update_description_no_task_sync(self, db_context: Database) -> None:
         """Updating non-task-affecting fields doesn't cancel/reschedule tasks."""
         conversation_id = str(uuid.uuid4())
 
@@ -1536,7 +1524,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_enable_updates_next_scheduled_at_in_db(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Re-enabling via update_enabled persists next_scheduled_at to the automation record."""
         conversation_id = str(uuid.uuid4())
@@ -1584,7 +1572,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_name_reschedules_script_task(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Updating name on a script automation (without explicit task_name) reschedules task."""
         conversation_id = str(uuid.uuid4())
@@ -1620,7 +1608,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_name_no_resched_when_task_name_in_action_config(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Updating name on a script automation with explicit task_name doesn't reschedule."""
         conversation_id = str(uuid.uuid4())
@@ -1655,7 +1643,7 @@ class TestTaskQueueSync:
 
     @pytest.mark.asyncio
     async def test_update_name_no_resched_for_wake_llm(
-        self, db_context: DatabaseContext
+        self, db_context: Database
     ) -> None:
         """Updating name on a wake_llm automation doesn't reschedule (name not in payload)."""
         conversation_id = str(uuid.uuid4())

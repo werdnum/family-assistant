@@ -10,7 +10,7 @@ from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage, UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import MidTurnUserInput
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
@@ -107,23 +107,23 @@ async def test_mid_turn_input_is_injected_after_tool_result(
         app_config=AppConfig(),
     )
 
-    async with get_db_context(engine=db_engine) as db_context:
-        generated_messages, _, _ = await service.process_message(
-            db_context=db_context,
-            messages=[UserMessage(content="start")],
-            interface_type="telegram",
-            conversation_id="123",
-            user_name="TestUser",
-            turn_id="turn-1",
-            chat_interface=None,
-            mid_turn_input_provider=MidTurnProvider([
-                MidTurnUserInput(
-                    content="Actually use the newer instruction",
-                    interface_message_id="102",
-                    user_name="TestUser",
-                )
-            ]),
-        )
+    db_context = Database(engine=db_engine)
+    generated_messages, _, _ = await service.process_message(
+        db_context=db_context,
+        messages=[UserMessage(content="start")],
+        interface_type="telegram",
+        conversation_id="123",
+        user_name="TestUser",
+        turn_id="turn-1",
+        chat_interface=None,
+        mid_turn_input_provider=MidTurnProvider([
+            MidTurnUserInput(
+                content="Actually use the newer instruction",
+                interface_message_id="102",
+                user_name="TestUser",
+            )
+        ]),
+    )
 
     assert any(
         isinstance(message, UserMessage)

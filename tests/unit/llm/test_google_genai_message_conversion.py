@@ -454,7 +454,7 @@ class TestThoughtSignatureConversion:
         # Find the assistant (model) content
         assistant_contents = [
             c for c in contents if cast("genai_types.Content", c).role == "model"
-        ]  # type: ignore[attr-defined]
+        ]
         assert len(assistant_contents) > 0, "Should have assistant content"
 
         assistant_content = cast("genai_types.Content", assistant_contents[0])

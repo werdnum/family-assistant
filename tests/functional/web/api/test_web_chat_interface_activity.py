@@ -21,7 +21,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.utils.clock import SystemClock
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.web_chat_interface import WebChatInterface
@@ -36,16 +36,16 @@ async def test_send_message_pings_activity_for_conversation_owner(
 
     # Seed a user message so the conversation has a resolvable owner (the
     # assistant send itself carries no user_id).
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
-        await ctx.message_history.add_message(
-            UserMessage(content="remind me later"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=SystemClock().now(),
-            user_id=owner_id,
-        )
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    await ctx.message_history.add_message(
+        UserMessage(content="remind me later"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=SystemClock().now(),
+        user_id=owner_id,
+    )
 
     hub = ConversationStreamHub()
     interface = WebChatInterface(db_engine, notifier=None, stream_hub=hub)
@@ -81,17 +81,17 @@ async def test_send_message_canonicalizes_alias_owner_for_activity(
     })
     resolver = UserIdentityResolver(config)
 
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
-        # Owner stored under the raw Telegram numeric id.
-        await ctx.message_history.add_message(
-            UserMessage(content="set a reminder"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=SystemClock().now(),
-            user_id="123456789",
-        )
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    # Owner stored under the raw Telegram numeric id.
+    await ctx.message_history.add_message(
+        UserMessage(content="set a reminder"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=SystemClock().now(),
+        user_id="123456789",
+    )
 
     hub = ConversationStreamHub()
     interface = WebChatInterface(
@@ -115,9 +115,9 @@ async def test_send_message_persists_runtime_taint_metadata(
     (trusted baseline) otherwise — never a metadata-less row, which would be
     escalated to unknown_external at read time."""
     conversation_id = "web_conv_taint"
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
 
     interface = WebChatInterface(db_engine, notifier=None, stream_hub=None)
 
@@ -140,13 +140,9 @@ async def test_send_message_persists_runtime_taint_metadata(
     )
     assert tainted_saved is not None
 
-    async with get_db_context(engine=db_engine) as ctx:
-        default_row = await ctx.message_history.get_row_by_internal_id(
-            int(default_saved)
-        )
-        tainted_row = await ctx.message_history.get_row_by_internal_id(
-            int(tainted_saved)
-        )
+    ctx = Database(engine=db_engine)
+    default_row = await ctx.message_history.get_row_by_internal_id(int(default_saved))
+    tainted_row = await ctx.message_history.get_row_by_internal_id(int(tainted_saved))
 
     assert default_row is not None
     assert default_row["taint_metadata_version"] == "runtime_v1"

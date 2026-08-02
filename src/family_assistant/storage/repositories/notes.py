@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
 from family_assistant.skills.frontmatter import parse_frontmatter
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
 
@@ -68,7 +69,7 @@ def _merge_unique_labels(
     return merged
 
 
-# ast-grep-ignore: no-dict-any - dict[str, Any] from DatabaseContext.fetch_all/fetch_one
+# ast-grep-ignore: no-dict-any - dict[str, Any] from Database.fetch_all/fetch_one
 def _row_to_note_model(row: dict[str, Any]) -> NoteModel:
     """Convert a database row dict to a NoteModel."""
     return NoteModel(
@@ -259,7 +260,7 @@ class NotesRepository(BaseRepository):
 
         Empty labels ([]) always pass (the empty set is a subset of anything).
         """
-        if self._db.engine.dialect.name == "postgresql":
+        if self._db.dialect_name == "postgresql":
             return sa.cast(notes_table.c.visibility_labels, JSONB).contained_by(
                 sa.cast(sa.literal(json.dumps(target_labels)), JSONB)
             )
@@ -280,7 +281,7 @@ class NotesRepository(BaseRepository):
         self, required_labels: list[str]
     ) -> sa.ColumnElement[bool]:
         """SQL condition: the row's visibility labels contain every required label."""
-        if self._db.engine.dialect.name == "postgresql":
+        if self._db.dialect_name == "postgresql":
             return sa.cast(notes_table.c.visibility_labels, JSONB).contains(
                 sa.cast(sa.literal(json.dumps(required_labels)), JSONB)
             )
@@ -474,208 +475,223 @@ class NotesRepository(BaseRepository):
             NoteWritePolicyError: if the caller cannot see an existing note with
                 this title, or the resolved labels violate the allowed ceiling.
         """
-        now = datetime.now(UTC)
 
-        existing_note = await self.get_by_title(title, visibility_grants=None)
+        async def _write(txn: DatabaseTransaction) -> str:
+            """Apply the policy preflight, the upsert and the index enqueue as one unit.
 
-        # See-before-overwrite: a restricted profile may not overwrite a note it
-        # cannot see. Skipped when the policy carries no grants (admin bypass).
-        if existing_note is not None and write_policy.visibility_grants is not None:
-            visible_existing = await self.get_by_title(
-                title, visibility_grants=write_policy.visibility_grants
-            )
-            if visible_existing is None:
-                raise NoteWritePolicyError(
-                    f"Cannot modify note '{title}' - insufficient visibility permissions."
+            The see-before-overwrite read and the write that depends on it
+            must not be separated, and a note committed without its indexing
+            task enqueued would never become searchable.
+            """
+            now = datetime.now(UTC)
+            note_content = content
+
+            existing_note = await txn.notes.get_by_title(title, visibility_grants=None)
+
+            # See-before-overwrite: a restricted profile may not overwrite a note it
+            # cannot see. Skipped when the policy carries no grants (admin bypass).
+            if existing_note is not None and write_policy.visibility_grants is not None:
+                visible_existing = await txn.notes.get_by_title(
+                    title, visibility_grants=write_policy.visibility_grants
                 )
+                if visible_existing is None:
+                    raise NoteWritePolicyError(
+                        f"Cannot modify note '{title}' - insufficient visibility permissions."
+                    )
 
-        if append and existing_note:
-            content = existing_note.content + "\n" + content
+            if append and existing_note:
+                note_content = existing_note.content + "\n" + content
 
-        # Determine attachment_ids to use
-        if attachment_ids is None:
-            attachment_ids_to_use = (
-                existing_note.attachment_ids if existing_note else []
-            )
-        else:
-            attachment_ids_to_use = attachment_ids
+            # Determine attachment_ids to use
+            if attachment_ids is None:
+                attachment_ids_to_use = (
+                    existing_note.attachment_ids if existing_note else []
+                )
+            else:
+                attachment_ids_to_use = attachment_ids
 
-        visibility_labels_to_use = write_policy.resolve_labels(
-            is_new_note=existing_note is None,
-            requested_labels=visibility_labels,
-            existing_labels=existing_note.visibility_labels if existing_note else [],
-        )
-        if additional_visibility_labels:
             visibility_labels_to_use = write_policy.resolve_labels(
                 is_new_note=existing_note is None,
-                requested_labels=_merge_unique_labels(
-                    visibility_labels_to_use, additional_visibility_labels
-                ),
+                requested_labels=visibility_labels,
                 existing_labels=existing_note.visibility_labels
                 if existing_note
                 else [],
             )
-
-        if provenance_metadata is None and existing_note:
-            provenance_metadata_to_use = existing_note.provenance_metadata
-        else:
-            provenance_metadata_to_use = provenance_metadata
-
-        # Serialize to JSON strings
-        attachment_ids_json = json.dumps(attachment_ids_to_use)
-        visibility_labels_json = json.dumps(visibility_labels_to_use)
-
-        # Detect skill metadata from frontmatter at write time
-        is_skill, skill_name, skill_description = _detect_skill_metadata(content)
-
-        if self._db.engine.dialect.name == "postgresql":
-            # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
-            try:
-                stmt = pg_insert(notes_table).values(
-                    title=title,
-                    content=content,
-                    include_in_prompt=include_in_prompt,
-                    attachment_ids=attachment_ids_json,
-                    visibility_labels=visibility_labels_json,
-                    is_skill=is_skill,
-                    skill_name=skill_name,
-                    skill_description=skill_description,
-                    provenance_metadata_json=provenance_metadata_to_use,
-                    created_at=now,
-                    updated_at=now,
+            if additional_visibility_labels:
+                visibility_labels_to_use = write_policy.resolve_labels(
+                    is_new_note=existing_note is None,
+                    requested_labels=_merge_unique_labels(
+                        visibility_labels_to_use, additional_visibility_labels
+                    ),
+                    existing_labels=existing_note.visibility_labels
+                    if existing_note
+                    else [],
                 )
-                # Define columns to update on conflict
-                update_dict = {
-                    "content": stmt.excluded.content,
-                    "include_in_prompt": stmt.excluded.include_in_prompt,
-                    "attachment_ids": stmt.excluded.attachment_ids,
-                    "visibility_labels": stmt.excluded.visibility_labels,
-                    "is_skill": stmt.excluded.is_skill,
-                    "skill_name": stmt.excluded.skill_name,
-                    "skill_description": stmt.excluded.skill_description,
-                    "provenance_metadata_json": stmt.excluded.provenance_metadata_json,
-                    "updated_at": stmt.excluded.updated_at,
-                }
-                # The policy checks above are only a preflight: a same-title row
-                # inserted by another transaction after the preflight would
-                # otherwise be overwritten unconditionally. Re-assert the policy
-                # as the conflict-update WHERE so it holds atomically with the
-                # write; a rowcount of 0 means the conflicting row is outside
-                # the policy (or was raced), so refuse instead of overwriting.
-                writable = self._writable_under_policy_condition(write_policy)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["title"],  # The unique constraint column
-                    set_=update_dict,
-                    where=writable,
-                )
-                # Use execute_with_retry as commit is handled by context manager
-                result = await self._db.execute_with_retry(stmt)
-                if writable is not None and result.rowcount == 0:  # type: ignore[attr-defined]
-                    raise NoteWritePolicyError(
-                        f"Cannot modify note '{title}' - a concurrently written "
-                        "note with this title is outside the active profile's "
-                        "write policy."
+
+            if provenance_metadata is None and existing_note:
+                provenance_metadata_to_use = existing_note.provenance_metadata
+            else:
+                provenance_metadata_to_use = provenance_metadata
+
+            # Serialize to JSON strings
+            attachment_ids_json = json.dumps(attachment_ids_to_use)
+            visibility_labels_json = json.dumps(visibility_labels_to_use)
+
+            # Detect skill metadata from frontmatter at write time
+            is_skill, skill_name, skill_description = _detect_skill_metadata(
+                note_content
+            )
+
+            if txn.dialect_name == "postgresql":
+                # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
+                try:
+                    stmt = pg_insert(notes_table).values(
+                        title=title,
+                        content=note_content,
+                        include_in_prompt=include_in_prompt,
+                        attachment_ids=attachment_ids_json,
+                        visibility_labels=visibility_labels_json,
+                        is_skill=is_skill,
+                        skill_name=skill_name,
+                        skill_description=skill_description,
+                        provenance_metadata_json=provenance_metadata_to_use,
+                        created_at=now,
+                        updated_at=now,
                     )
-                self._logger.info(
-                    f"Successfully added/updated note: {title} (using ON CONFLICT)"
-                )
-
-                # Enqueue indexing task
-                await self._enqueue_indexing_task(title)
-                return "Success"
-            except SQLAlchemyError as e:
-                self._logger.exception(
-                    f"PostgreSQL error in add_or_update({title}): {e}"
-                )
-                raise
-
-        else:
-            # Fallback for SQLite and other dialects: Try INSERT, then UPDATE on IntegrityError.
-            try:
-                # Attempt INSERT first
-                insert_stmt = insert(notes_table).values(
-                    title=title,
-                    content=content,
-                    include_in_prompt=include_in_prompt,
-                    attachment_ids=attachment_ids_json,
-                    visibility_labels=visibility_labels_json,
-                    is_skill=is_skill,
-                    skill_name=skill_name,
-                    skill_description=skill_description,
-                    provenance_metadata_json=provenance_metadata_to_use,
-                    created_at=now,
-                    updated_at=now,
-                )
-                await self._db.execute_with_retry(insert_stmt)
-                self._logger.info(f"Inserted new note: {title} (SQLite fallback)")
-
-                # Enqueue indexing task
-                await self._enqueue_indexing_task(title)
-                return "Success"
-            except SQLAlchemyError as e:
-                # Check specifically for unique constraint violation
-                if isinstance(e, IntegrityError):
-                    self._logger.info(
-                        f"Note '{title}' already exists (SQLite fallback), attempting update."
-                    )
-                    # Perform UPDATE if INSERT failed due to unique constraint
-                    update_stmt = (
-                        update(notes_table)
-                        .where(notes_table.c.title == title)
-                        .values(
-                            content=content,
-                            include_in_prompt=include_in_prompt,
-                            attachment_ids=attachment_ids_json,
-                            visibility_labels=visibility_labels_json,
-                            is_skill=is_skill,
-                            skill_name=skill_name,
-                            skill_description=skill_description,
-                            provenance_metadata_json=provenance_metadata_to_use,
-                            updated_at=now,
-                        )
-                    )
-                    # Re-assert the write policy atomically with the update (the
-                    # preflight cannot see a row another transaction inserted in
-                    # the meantime); see the ON CONFLICT WHERE in the pg branch.
+                    # Define columns to update on conflict
+                    update_dict = {
+                        "content": stmt.excluded.content,
+                        "include_in_prompt": stmt.excluded.include_in_prompt,
+                        "attachment_ids": stmt.excluded.attachment_ids,
+                        "visibility_labels": stmt.excluded.visibility_labels,
+                        "is_skill": stmt.excluded.is_skill,
+                        "skill_name": stmt.excluded.skill_name,
+                        "skill_description": stmt.excluded.skill_description,
+                        "provenance_metadata_json": stmt.excluded.provenance_metadata_json,
+                        "updated_at": stmt.excluded.updated_at,
+                    }
+                    # The policy checks above are only a preflight: a same-title row
+                    # inserted by another transaction after the preflight would
+                    # otherwise be overwritten unconditionally. Re-assert the policy
+                    # as the conflict-update WHERE so it holds atomically with the
+                    # write; a rowcount of 0 means the conflicting row is outside
+                    # the policy (or was raced), so refuse instead of overwriting.
                     writable = self._writable_under_policy_condition(write_policy)
-                    if writable is not None:
-                        update_stmt = update_stmt.where(writable)
-                    # Execute update within the same transaction context
-                    result = await self._db.execute_with_retry(update_stmt)
-                    if result.rowcount == 0:  # type: ignore[attr-defined]
-                        if writable is not None:
-                            raise NoteWritePolicyError(
-                                f"Cannot modify note '{title}' - a concurrently "
-                                "written note with this title is outside the "
-                                "active profile's write policy."
-                            ) from e
-                        # This could happen if the note was deleted between the failed INSERT and this UPDATE
-                        self._logger.error(
-                            f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently."
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["title"],  # The unique constraint column
+                        set_=update_dict,
+                        where=writable,
+                    )
+                    # Use execute_with_retry as commit is handled by context manager
+                    result = await txn.execute(stmt)
+                    if writable is not None and result.rowcount == 0:
+                        raise NoteWritePolicyError(
+                            f"Cannot modify note '{title}' - a concurrently written "
+                            "note with this title is outside the active profile's "
+                            "write policy."
                         )
-                        # Re-raise the original error or a custom one
-                        raise RuntimeError(
-                            f"Failed to update note '{title}' after insert conflict."
-                        ) from e
-                    self._logger.info(f"Updated note: {title} (SQLite fallback)")
+                    self._logger.info(
+                        f"Successfully added/updated note: {title} (using ON CONFLICT)"
+                    )
 
                     # Enqueue indexing task
-                    await self._enqueue_indexing_task(title)
+                    await self._enqueue_indexing_task(txn, title)
                     return "Success"
-                else:
-                    # Re-raise other SQLAlchemy errors
+                except SQLAlchemyError as e:
                     self._logger.exception(
-                        f"Database error during INSERT in add_or_update({title}) (SQLite fallback): {e}"
+                        f"PostgreSQL error in add_or_update({title}): {e}"
                     )
-                    raise e
+                    raise
+
+            else:
+                # Fallback for SQLite and other dialects: Try INSERT, then UPDATE on IntegrityError.
+                try:
+                    # Attempt INSERT first
+                    insert_stmt = insert(notes_table).values(
+                        title=title,
+                        content=note_content,
+                        include_in_prompt=include_in_prompt,
+                        attachment_ids=attachment_ids_json,
+                        visibility_labels=visibility_labels_json,
+                        is_skill=is_skill,
+                        skill_name=skill_name,
+                        skill_description=skill_description,
+                        provenance_metadata_json=provenance_metadata_to_use,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    await txn.execute(insert_stmt)
+                    self._logger.info(f"Inserted new note: {title} (SQLite fallback)")
+
+                    # Enqueue indexing task
+                    await self._enqueue_indexing_task(txn, title)
+                    return "Success"
+                except SQLAlchemyError as e:
+                    # Check specifically for unique constraint violation
+                    if isinstance(e, IntegrityError):
+                        self._logger.info(
+                            f"Note '{title}' already exists (SQLite fallback), attempting update."
+                        )
+                        # Perform UPDATE if INSERT failed due to unique constraint
+                        update_stmt = (
+                            update(notes_table)
+                            .where(notes_table.c.title == title)
+                            .values(
+                                content=note_content,
+                                include_in_prompt=include_in_prompt,
+                                attachment_ids=attachment_ids_json,
+                                visibility_labels=visibility_labels_json,
+                                is_skill=is_skill,
+                                skill_name=skill_name,
+                                skill_description=skill_description,
+                                provenance_metadata_json=provenance_metadata_to_use,
+                                updated_at=now,
+                            )
+                        )
+                        # Re-assert the write policy atomically with the update (the
+                        # preflight cannot see a row another transaction inserted in
+                        # the meantime); see the ON CONFLICT WHERE in the pg branch.
+                        writable = self._writable_under_policy_condition(write_policy)
+                        if writable is not None:
+                            update_stmt = update_stmt.where(writable)
+                        # Execute update within the same transaction context
+                        result = await txn.execute(update_stmt)
+                        if result.rowcount == 0:
+                            if writable is not None:
+                                raise NoteWritePolicyError(
+                                    f"Cannot modify note '{title}' - a concurrently "
+                                    "written note with this title is outside the "
+                                    "active profile's write policy."
+                                ) from e
+                            # This could happen if the note was deleted between the failed INSERT and this UPDATE
+                            self._logger.error(
+                                f"Update failed for note '{title}' after insert conflict (SQLite fallback). Note might have been deleted concurrently."
+                            )
+                            # Re-raise the original error or a custom one
+                            raise RuntimeError(
+                                f"Failed to update note '{title}' after insert conflict."
+                            ) from e
+                        self._logger.info(f"Updated note: {title} (SQLite fallback)")
+
+                        # Enqueue indexing task
+                        await self._enqueue_indexing_task(txn, title)
+                        return "Success"
+                    else:
+                        # Re-raise other SQLAlchemy errors
+                        self._logger.exception(
+                            f"Database error during INSERT in add_or_update({title}) (SQLite fallback): {e}"
+                        )
+                        raise e
+
+        return await self._db.atomic(_write)
 
     async def delete(self, title: str) -> bool:
         """Deletes a note by title."""
         try:
             stmt = delete(notes_table).where(notes_table.c.title == title)
             # Use execute_with_retry as commit is handled by context manager
-            result = await self._db.execute_with_retry(stmt)
-            deleted_count = result.rowcount  # type: ignore[attr-defined]
+            result = await self._db.execute(stmt)
+            deleted_count = result.rowcount
             if deleted_count > 0:
                 self._logger.info(f"Deleted note: {title}")
                 return True
@@ -796,13 +812,13 @@ class NotesRepository(BaseRepository):
                 )
             )
 
-            result = await self._db.execute_with_retry(stmt)
-            if result.rowcount > 0:  # type: ignore[attr-defined]
+            result = await self._db.execute(stmt)
+            if result.rowcount > 0:
                 self._logger.info(
                     f"Renamed note from '{original_title}' to '{new_title}'"
                 )
                 # Enqueue indexing task for the updated note
-                await self._enqueue_indexing_task(new_title)
+                await self._enqueue_indexing_task(self._db, new_title)
                 return "Success"
             else:
                 # This indicates the note was deleted between our check and update
@@ -819,20 +835,22 @@ class NotesRepository(BaseRepository):
             )
             raise
 
-    async def _enqueue_indexing_task(self, title: str) -> None:
+    async def _enqueue_indexing_task(self, db: DatabaseExecutor, title: str) -> None:
         """
         Helper function to enqueue an indexing task for a note.
 
         Args:
+            db: The executor the note was written through, so the enqueue joins
+                the same unit of work.
             title: Title of the note to index
         """
         try:
             # Fetch the note to get its ID
             note_stmt = select(notes_table.c.id).where(notes_table.c.title == title)
-            note_row = await self._db.fetch_one(note_stmt)
+            note_row = await db.fetch_one(note_stmt)
             if note_row:
                 # Use UUID to ensure unique task IDs for re-indexing
-                await self._db.tasks.enqueue(
+                await db.tasks.enqueue(
                     task_id=f"index_note_{note_row['id']}_{uuid.uuid4()}",
                     task_type="index_note",
                     payload={"note_id": note_row["id"]},

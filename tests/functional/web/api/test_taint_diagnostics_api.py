@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import (
-    DatabaseContext,
+from family_assistant.storage.database import (
+    Database,
     set_engine_history_taint_epoch,
 )
 from family_assistant.storage.message_history import message_history_table
@@ -22,17 +22,10 @@ def _counts_by_key(items: list[dict[str, object]]) -> dict[str | None, int]:
     }
 
 
-async def _commit_seed_data(db_context: DatabaseContext) -> None:
-    """Commit API fixture seed data so the request connection can observe it."""
-    if db_context.conn is None:
-        raise RuntimeError("Database test context is not active")
-    await db_context.conn.commit()
-
-
 @pytest.mark.asyncio
 async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
     api_client: httpx.AsyncClient,
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
 ) -> None:
     """The endpoint aggregates audits and inventories each history row once."""
     await api_db_context.taint_audit_events.add(
@@ -141,8 +134,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
             "taint_metadata_version": None,
         },
     ]
-    await api_db_context.execute_with_retry(insert(message_history_table).values(rows))
-    await _commit_seed_data(api_db_context)
+    await api_db_context.execute(insert(message_history_table).values(rows))
 
     response = await api_client.get("/api/diagnostics/taint-audit?days=1")
 
@@ -183,7 +175,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
 @pytest.mark.asyncio
 async def test_taint_diagnostics_splits_history_rows_by_epoch(
     api_client: httpx.AsyncClient,
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
     db_engine: AsyncEngine,
 ) -> None:
     """With an epoch configured, history stats split pre/post epoch."""
@@ -237,8 +229,7 @@ async def test_taint_diagnostics_splits_history_rows_by_epoch(
             "taint_metadata_version": "runtime_v1",
         },
     ]
-    await api_db_context.execute_with_retry(insert(message_history_table).values(rows))
-    await _commit_seed_data(api_db_context)
+    await api_db_context.execute(insert(message_history_table).values(rows))
 
     response = await api_client.get("/api/diagnostics/taint-audit?days=1")
 
@@ -259,7 +250,7 @@ async def test_taint_diagnostics_splits_history_rows_by_epoch(
 @pytest.mark.asyncio
 async def test_taint_diagnostics_reports_truncation(
     api_client: httpx.AsyncClient,
-    api_db_context: DatabaseContext,
+    api_db_context: Database,
 ) -> None:
     """Audit breakdowns state when the requested event cap truncates them."""
     for index in range(2):
@@ -281,7 +272,6 @@ async def test_taint_diagnostics_reports_truncation(
             reason="Observe mode decision",
             arguments_summary=None,
         )
-    await _commit_seed_data(api_db_context)
 
     response = await api_client.get("/api/diagnostics/taint-audit?days=1&max_events=1")
 

@@ -22,7 +22,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import and_, delete, insert, or_, select, update
 
 from family_assistant.storage.base import attachment_metadata_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database, DatabaseExecutor
 from family_assistant.storage.email import (
     parse_attachment_infos_with_raw,
     received_emails_table,
@@ -230,7 +230,7 @@ class AttachmentMetadata:
 
 async def _clear_email_attachment_id(
     *,
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     message_id_header: str,
     attachment_id: str,
 ) -> None:
@@ -269,7 +269,7 @@ async def _clear_email_attachment_id(
             new_entries.append(raw)
 
     if updated:
-        await db_context.execute_with_retry(
+        await db_context.execute(
             update(received_emails_table)
             .where(received_emails_table.c.id == row["id"])
             .values(attachment_info=new_entries)
@@ -362,7 +362,7 @@ class AttachmentRegistry:
 
     async def register_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         source_type: str,
         source_id: str,
@@ -381,7 +381,7 @@ class AttachmentRegistry:
         Register a new attachment in the metadata database.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Unique attachment identifier
             source_type: Source of attachment ("user", "tool", "script", "email")
             source_id: Source identifier (user_id, tool_name, email message-id,
@@ -440,7 +440,7 @@ class AttachmentRegistry:
             metadata=attachment_metadata.metadata,
         )
 
-        await db_context.execute_with_retry(insert_stmt)
+        await db_context.execute(insert_stmt)
 
         logger.info(
             f"Registered attachment {attachment_id} from {source_type}:{source_id}"
@@ -450,7 +450,7 @@ class AttachmentRegistry:
 
     async def get_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         *,
         acting_user_id: str | None,
@@ -459,7 +459,7 @@ class AttachmentRegistry:
         Get attachment metadata by ID, enforcing owner scoping.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. An owned attachment is returned only when it
@@ -484,7 +484,7 @@ class AttachmentRegistry:
 
     async def get_attachments(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_ids: list[str],
         *,
         acting_user_id: str | None,
@@ -515,7 +515,7 @@ class AttachmentRegistry:
 
     async def list_attachments(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         *,
         acting_user_id: str | None,
         conversation_id: str | None = None,
@@ -526,7 +526,7 @@ class AttachmentRegistry:
         List attachments with optional filtering.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             acting_user_id: Acts as an owner filter — owned rows appear only for
                 a matching actor, ownerless rows for everyone, ``None`` for
                 ownerless only.
@@ -561,7 +561,7 @@ class AttachmentRegistry:
 
     async def get_recent_attachments_for_conversation(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         conversation_id: str,
         max_age: datetime,
         *,
@@ -571,7 +571,7 @@ class AttachmentRegistry:
         Get recent attachments for a conversation within a time window.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             conversation_id: Conversation identifier
             max_age: Cutoff time - only attachments created after this time are returned
             acting_user_id: Acts as an owner filter — owned rows appear only for
@@ -596,7 +596,7 @@ class AttachmentRegistry:
 
     async def register_user_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         content: bytes,
         filename: str,
         mime_type: str,
@@ -609,7 +609,7 @@ class AttachmentRegistry:
         Register a user-uploaded attachment.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             content: File content bytes
             filename: Original filename
             mime_type: MIME type
@@ -644,7 +644,7 @@ class AttachmentRegistry:
 
     async def register_tool_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         tool_name: str,
         mime_type: str,
@@ -662,7 +662,7 @@ class AttachmentRegistry:
         Register a tool-generated attachment.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier (from AttachmentService)
             tool_name: Name of the tool that created it
             mime_type: MIME type
@@ -697,7 +697,7 @@ class AttachmentRegistry:
 
     async def get_attachment_content(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         *,
         acting_user_id: str | None,
@@ -706,7 +706,7 @@ class AttachmentRegistry:
         Get attachment content by ID, enforcing owner scoping.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. Owned content is returned only for a matching
@@ -741,7 +741,7 @@ class AttachmentRegistry:
 
     async def delete_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         *,
         acting_user_id: str | None,
@@ -750,7 +750,7 @@ class AttachmentRegistry:
         Delete an attachment (metadata and file), enforcing owner scoping.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. An owned attachment is deleted only by a matching
@@ -778,7 +778,7 @@ class AttachmentRegistry:
 
         # Atomic delete
         delete_stmt = delete(attachment_metadata_table).where(and_(*conditions))
-        result = await db_context.execute_with_retry(delete_stmt)
+        result = await db_context.execute(delete_stmt)
 
         success = result.rowcount > 0
         file_deleted = False
@@ -813,7 +813,7 @@ class AttachmentRegistry:
 
     async def _update_access_time(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         acting_user_id: str | None,
     ) -> None:
@@ -833,7 +833,7 @@ class AttachmentRegistry:
                 )
                 .values(accessed_at=datetime.now(UTC))
             )
-            await db_context.execute_with_retry(update_stmt)
+            await db_context.execute(update_stmt)
         except asyncio.CancelledError:
             # Operation cancelled during shutdown - this is fine, access time isn't critical
             pass
@@ -860,21 +860,21 @@ class AttachmentRegistry:
                 user context. An owned row is touched only for a matching actor.
         """
         try:
-            async with DatabaseContext(engine=self.db_engine) as db:
-                await self._update_access_time(db, attachment_id, acting_user_id)
+            db = Database(engine=self.db_engine)
+            await self._update_access_time(db, attachment_id, acting_user_id)
         except Exception as e:
             # Log but don't fail - access time tracking is not critical
             logger.debug(
                 f"Background access time update failed for {attachment_id}: {e}"
             )
 
-    async def cleanup_orphaned_attachments(self, db_context: DatabaseContext) -> int:
+    async def cleanup_orphaned_attachments(self, db_context: DatabaseExecutor) -> int:
         """
         Clean up file system attachments that are no longer referenced in the database.
         Uses AttachmentService to clean up orphaned files based on current database references.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
 
         Returns:
             Number of attachments cleaned up
@@ -889,7 +889,7 @@ class AttachmentRegistry:
 
     async def update_attachment_conversation(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         conversation_id: str,
         *,
@@ -899,7 +899,7 @@ class AttachmentRegistry:
         Update an attachment's conversation_id for security linking.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             conversation_id: New conversation ID to link to
             acting_user_id: Canonical id of the acting user, or ``None`` for no
@@ -919,7 +919,7 @@ class AttachmentRegistry:
             .values(conversation_id=conversation_id)
         )
 
-        result = await db_context.execute_with_retry(update_stmt)
+        result = await db_context.execute(update_stmt)
         success = result.rowcount > 0
 
         if success:
@@ -931,7 +931,7 @@ class AttachmentRegistry:
 
     async def claim_unlinked_attachment(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         attachment_id: str,
         conversation_id: str,
         *,
@@ -945,7 +945,7 @@ class AttachmentRegistry:
         that only succeeds if the attachment is still unlinked and matches criteria.
 
         Args:
-            db_context: Database context
+            db_context: DatabaseExecutor context
             attachment_id: Attachment identifier
             conversation_id: Conversation to link the attachment to
             acting_user_id: Canonical id of the acting user, or ``None`` for no
@@ -976,7 +976,7 @@ class AttachmentRegistry:
             )
         )
 
-        result = await db_context.execute_with_retry(update_stmt)
+        result = await db_context.execute(update_stmt)
 
         if result.rowcount == 0:
             # Either attachment doesn't exist, already claimed, or access denied
@@ -1020,24 +1020,24 @@ class AttachmentRegistry:
         """
         Register a tool-generated attachment using internal database context.
 
-        This is a convenience method that creates its own DatabaseContext.
+        This is a convenience method that creates its own Database.
         Use this from processing.py and other places that don't already have a context.
         """
-        async with DatabaseContext(self.db_engine) as db_context:
-            return await self.register_tool_attachment(
-                db_context=db_context,
-                attachment_id=attachment_id,
-                tool_name=tool_name,
-                mime_type=mime_type,
-                description=description,
-                size=size,
-                content_url=content_url,
-                storage_path=storage_path,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                owner_user_id=owner_user_id,
-                metadata=metadata,
-            )
+        db_context = Database(self.db_engine)
+        return await self.register_tool_attachment(
+            db_context=db_context,
+            attachment_id=attachment_id,
+            tool_name=tool_name,
+            mime_type=mime_type,
+            description=description,
+            size=size,
+            content_url=content_url,
+            storage_path=storage_path,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            owner_user_id=owner_user_id,
+            metadata=metadata,
+        )
 
     async def get_attachment_with_context(
         self,
@@ -1048,17 +1048,17 @@ class AttachmentRegistry:
         """
         Get attachment metadata by ID using internal database context.
 
-        This is a convenience method that creates its own DatabaseContext.
+        This is a convenience method that creates its own Database.
 
         Args:
             attachment_id: Attachment identifier
             acting_user_id: Canonical id of the acting user, or ``None`` for no
                 user context. Owned rows are visible only to a matching actor.
         """
-        async with DatabaseContext(self.db_engine) as db_context:
-            return await self.get_attachment(
-                db_context, attachment_id, acting_user_id=acting_user_id
-            )
+        db_context = Database(self.db_engine)
+        return await self.get_attachment(
+            db_context, attachment_id, acting_user_id=acting_user_id
+        )
 
     async def store_and_register_tool_attachment(
         self,
@@ -1072,7 +1072,7 @@ class AttachmentRegistry:
         owner_user_id: str | None = None,
         # ast-grep-ignore: no-dict-any - Free-form JSON metadata with arbitrary keys from various callers
         metadata: dict[str, Any] | None = None,
-        db_context: DatabaseContext | None = None,
+        db_context: DatabaseExecutor | None = None,
     ) -> AttachmentMetadata:
         """
         Store file content and register as a tool attachment in one operation.
@@ -1090,7 +1090,7 @@ class AttachmentRegistry:
             owner_user_id: Canonical owner (personal-data tools set this;
                 ``None`` keeps the attachment ownerless).
             metadata: Additional metadata
-            db_context: Optional DatabaseContext to use for registration
+            db_context: Optional Database to use for registration
 
         Returns:
             AttachmentMetadata for the stored and registered attachment
@@ -1380,7 +1380,7 @@ class AttachmentRegistry:
     async def resolve_attachment_path(
         self,
         attachment_id: str,
-        db_context: DatabaseContext | None = None,
+        db_context: DatabaseExecutor | None = None,
         *,
         acting_user_id: str | None,
     ) -> Path | None:
@@ -1395,10 +1395,10 @@ class AttachmentRegistry:
         """
         metadata: AttachmentMetadata | None = None
         if db_context is None:
-            async with DatabaseContext(engine=self.db_engine) as own_db_context:
-                metadata = await self.get_attachment(
-                    own_db_context, attachment_id, acting_user_id=acting_user_id
-                )
+            own_db_context = Database(engine=self.db_engine)
+            metadata = await self.get_attachment(
+                own_db_context, attachment_id, acting_user_id=acting_user_id
+            )
         else:
             metadata = await self.get_attachment(
                 db_context, attachment_id, acting_user_id=acting_user_id

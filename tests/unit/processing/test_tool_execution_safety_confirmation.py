@@ -21,7 +21,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.types import (
     ConfirmationOutcome,
@@ -165,7 +165,7 @@ async def test_safety_decision_stripped_before_execution() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -206,7 +206,7 @@ async def test_safety_decision_require_confirmation_approved() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -256,7 +256,7 @@ async def test_safety_decision_require_confirmation_rejected() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -295,7 +295,7 @@ async def test_safety_decision_require_confirmation_timed_out() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -332,7 +332,7 @@ async def test_safety_decision_no_callback_available() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -371,7 +371,7 @@ async def test_safety_decision_allowed_no_confirmation(decision: str) -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -411,7 +411,7 @@ async def test_safety_decision_approved_but_tool_fails() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -459,7 +459,7 @@ async def test_safety_decision_blocked_or_unknown_refused(
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -517,7 +517,7 @@ async def test_safety_confirmation_timeout_error_yields_declined_result() -> Non
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=RaisingConfirmationCallback(TimeoutError()),
     )
@@ -555,7 +555,7 @@ async def test_safety_confirmation_unexpected_error_propagates() -> None:
             conversation_id="conv_123",
             user_name="testuser",
             turn_id="turn_1",
-            db_context=Mock(spec=DatabaseContext),
+            db_context=Mock(spec=Database),
             chat_interface=None,
             request_confirmation_callback=RaisingConfirmationCallback(
                 RuntimeError("confirmation infrastructure broke")
@@ -587,7 +587,7 @@ async def test_safety_decision_not_interpreted_outside_action_space() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=None,
     )
@@ -630,7 +630,7 @@ async def test_safety_confirmation_uses_configured_timeout() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -694,7 +694,7 @@ async def test_safety_confirmation_completed_result_preserved_with_ack() -> None
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
         taint_tracker=turn_taint_tracker,
@@ -744,7 +744,7 @@ async def test_safety_confirmation_oversized_type_text_refused() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -795,7 +795,7 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -841,7 +841,7 @@ async def test_safety_confirmation_completed_string_result_acknowledged() -> Non
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )
@@ -899,7 +899,7 @@ async def test_safety_confirmation_failed_durable_execution_acknowledged() -> No
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
         taint_tracker=turn_taint_tracker,
@@ -951,7 +951,7 @@ async def test_original_tool_call_arguments_not_mutated() -> None:
         conversation_id="conv_123",
         user_name="testuser",
         turn_id="turn_1",
-        db_context=Mock(spec=DatabaseContext),
+        db_context=Mock(spec=Database),
         chat_interface=None,
         request_confirmation_callback=callback,
     )

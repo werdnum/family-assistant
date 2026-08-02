@@ -4,7 +4,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_db
 
 events_api_router = APIRouter()
@@ -26,7 +26,7 @@ class EventsListResponse(BaseModel):
 @events_api_router.get("/")
 @events_api_router.get("")
 async def list_events(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     source_id: str | None = None,
     hours: Annotated[int, Query(ge=1)] = 24,
     only_triggered: bool = False,
@@ -48,7 +48,7 @@ async def list_events(
 
 @events_api_router.get("/{event_id}")
 async def get_event(
-    event_id: str, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    event_id: str, db_context: Annotated[Database, Depends(get_db)]
 ) -> EventModel:
     """Return details for a single event."""
     event = await db_context.events.get_event_by_id(event_id)

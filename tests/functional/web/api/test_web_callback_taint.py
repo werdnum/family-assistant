@@ -28,7 +28,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
 )
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.task_worker import LlmCallbackPayload, handle_llm_callback
 from family_assistant.tools.types import ToolExecutionContext
@@ -59,7 +59,7 @@ class TaintedReplyService:
         self.processing_services_registry: dict[str, object] = {}
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
-        db_context = cast("DatabaseContext", kwargs["db_context"])
+        db_context = cast("Database", kwargs["db_context"])
         tainted_state = TurnTaintState.empty().add_source(
             TaintSource(
                 source_type=TaintSourceType.TOOL_OUTPUT,
@@ -88,7 +88,7 @@ class TaintedReplyService:
 
 
 def _exec_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     processing_service: TaintedReplyService,
     chat_interface: ChatInterface,
 ) -> ToolExecutionContext:
@@ -131,26 +131,26 @@ async def test_web_callback_delivery_copy_inherits_turn_taint(
     delivery copy with the trusted-empty baseline even though the reply derives
     from tainted tool output.
     """
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
 
     processing_service = TaintedReplyService()
     chat_interface = WebChatInterface(db_engine, notifier=None, stream_hub=None)
 
-    async with DatabaseContext(engine=db_engine) as db_context:
-        await handle_llm_callback(
-            _exec_context(db_context, processing_service, chat_interface),
-            _payload(),
-        )
+    db_context = Database(engine=db_engine)
+    await handle_llm_callback(
+        _exec_context(db_context, processing_service, chat_interface),
+        _payload(),
+    )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        assistant_rows = await ctx.fetch_all(
-            select(message_history_table)
-            .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
-            .where(message_history_table.c.role == "assistant")
-            .order_by(message_history_table.c.internal_id)
-        )
+    ctx = Database(engine=db_engine)
+    assistant_rows = await ctx.fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == TEST_CONVERSATION_ID)
+        .where(message_history_table.c.role == "assistant")
+        .order_by(message_history_table.c.internal_id)
+    )
 
     # Two assistant rows: the turn's canonical reply and the web delivery copy.
     assert len(assistant_rows) == 2

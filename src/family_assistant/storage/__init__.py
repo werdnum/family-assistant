@@ -29,7 +29,7 @@ from family_assistant.storage.base import (
 
 # Import table definitions for direct use
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.email import received_emails_table
 from family_assistant.storage.error_logs import error_logs_table
@@ -228,9 +228,9 @@ async def _initialize_vector_storage(engine: AsyncEngine) -> None:
     if VECTOR_STORAGE_ENABLED:
         logger.info("Initializing vector DB components...")
         try:
-            # Use DatabaseContext which handles its own retry logic for execution
-            async with DatabaseContext(engine=engine) as vector_init_context:
-                await vector_init_context.vector.init_db()
+            # Use Database which handles its own retry logic for execution
+            vector_init_context = Database(engine=engine)
+            await vector_init_context.vector.init_db()
             logger.info("Vector DB components initialized successfully.")
         except Exception as vec_e:
             logger.exception(
@@ -334,7 +334,7 @@ async def init_db(engine: AsyncEngine) -> None:
 # Re-export functions and tables from specific modules to maintain the facade
 # Define __all__ AFTER all functions/variables it references are defined.
 __all__ = [
-    "DatabaseContext",  # Export the new context manager
+    "Database",
     # Enums
     "EventActionType",
     "EventSourceType",
@@ -344,7 +344,6 @@ __all__ = [
     "delegation_runs_table",
     "error_logs_table",
     "event_listeners_table",
-    "get_db_context",
     "init_db",  # Now defined above
     "ios_push_tokens_table",
     "message_history_table",

@@ -13,7 +13,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -188,18 +188,18 @@ async def test_list_home_assistant_entities_with_filter(
 
     # --- Simulate User Interaction ---
     user_message = "Show me all temperature sensors"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message}],
-            trigger_interface_message_id="msg_ha_list_test",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message}],
+        trigger_interface_message_id="msg_ha_list_test",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply, "No reply received"
@@ -357,18 +357,18 @@ async def test_list_home_assistant_entities_with_area_filter(
 
     # --- Simulate User Interaction ---
     user_message = "What devices are in the pool area?"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message}],
-            trigger_interface_message_id="msg_ha_area_test",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message}],
+        trigger_interface_message_id="msg_ha_area_test",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply, "No reply received"
@@ -479,18 +479,18 @@ async def test_list_home_assistant_entities_no_client(
 
     # --- Simulate User Interaction ---
     user_message = "List all entities"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message}],
-            trigger_interface_message_id="msg_ha_no_client_test",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message}],
+        trigger_interface_message_id="msg_ha_no_client_test",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and "not currently available" in final_reply, (

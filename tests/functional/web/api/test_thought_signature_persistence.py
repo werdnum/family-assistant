@@ -26,7 +26,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     CompositeToolsProvider,
@@ -127,8 +127,8 @@ async def llm_integration_processing_service(
 
     # Set up context providers
     # Define async function for notes provider
-    async def get_db_context_for_notes() -> DatabaseContext:
-        return get_db_context(engine=db_engine)
+    def get_db_context_for_notes() -> Database:
+        return Database(engine=db_engine)
 
     calendar_provider = CalendarContextProvider(
         calendar_config={},  # type: ignore[arg-type]

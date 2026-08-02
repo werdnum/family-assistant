@@ -238,7 +238,7 @@ if TYPE_CHECKING:
     )
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.skills.registry import NoteRegistry
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.storage.repositories.notes import NoteWritePolicy
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
@@ -356,7 +356,7 @@ class ToolExecutionContext:
     conversation_id: str  # e.g., Telegram chat ID string, web session UUID
     user_name: str  # Name of the user initiating the request
     turn_id: str | None  # The ID of the current processing turn
-    db_context: DatabaseContext
+    db_context: Database
     # Infrastructure fields - REQUIRED (no defaults) to catch bugs via type checker
     processing_service: ProcessingService | None  # NO DEFAULT - must specify explicitly
     clock: Clock | None  # NO DEFAULT - must specify explicitly

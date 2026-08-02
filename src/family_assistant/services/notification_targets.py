@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 
 from family_assistant.services.notifier import NotificationMetadata, Notifier
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ _CONVERSATION_LOOKBACK = timedelta(days=365)
 
 
 async def resolve_conversation_user(
-    db_context: DatabaseContext,
+    db_context: Database,
     *,
     interface_type: str,
     conversation_id: str,
@@ -42,7 +42,7 @@ async def resolve_conversation_user(
 
 async def notify_conversation(
     notifier: Notifier,
-    db_context: DatabaseContext,
+    db_context: Database,
     *,
     interface_type: str | None,
     conversation_id: str | None,

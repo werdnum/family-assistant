@@ -197,9 +197,9 @@ class DocumentIndexer:
         db_context = exec_context.db_context
         if not db_context:
             logger.error(
-                "DatabaseContext not found in ToolExecutionContext for process_document."
+                "Database not found in ToolExecutionContext for process_document."
             )
-            raise ValueError("Missing DatabaseContext dependency in context.")
+            raise ValueError("Missing Database dependency in context.")
 
         document_id = payload.get("document_id")
         if not document_id:

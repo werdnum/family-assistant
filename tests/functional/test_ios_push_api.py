@@ -28,7 +28,7 @@ async def test_register_token_creates_row(
     assert data["status"] == "success"
     assert "id" in data
 
-    async with db_engine.begin() as conn:  # type: ignore[attr-defined]
+    async with db_engine.begin() as conn:
         result = await conn.execute(
             select(ios_push_tokens_table).where(
                 ios_push_tokens_table.c.id == int(data["id"])
@@ -50,7 +50,7 @@ async def test_register_token_defaults_to_production(
     response = await api_client.post("/api/ios/push-tokens", json={"token": "def456"})
 
     assert response.status_code == 200
-    async with db_engine.begin() as conn:  # type: ignore[attr-defined]
+    async with db_engine.begin() as conn:
         result = await conn.execute(select(ios_push_tokens_table))
         row = result.fetchone()
         assert row is not None
@@ -72,7 +72,7 @@ async def test_register_token_is_idempotent(
         json={"token": "tok", "environment": "sandbox"},
     )
 
-    async with db_engine.begin() as conn:  # type: ignore[attr-defined]
+    async with db_engine.begin() as conn:
         result = await conn.execute(select(ios_push_tokens_table))
         rows = result.fetchall()
         assert len(rows) == 1
@@ -94,7 +94,7 @@ async def test_unregister_token_removes_row(
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
-    async with db_engine.begin() as conn:  # type: ignore[attr-defined]
+    async with db_engine.begin() as conn:
         result = await conn.execute(select(ios_push_tokens_table))
         assert result.fetchall() == []
 

@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from zoneinfo import ZoneInfo
@@ -15,7 +15,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 # Define a type alias for prompts if not already a dedicated class
 PromptsType = dict[str, str]
@@ -83,7 +83,7 @@ class NotesContextProvider(ContextProvider):
 
     def __init__(
         self,
-        get_db_context_func: Callable[[], Awaitable[DatabaseContext]],
+        get_db_context_func: Callable[[], Database],
         prompts: PromptsType,
         attachment_registry: Any = None,  # noqa: ANN401 # AttachmentRegistry | None
         visibility_grants: set[str] | None = None,
@@ -93,7 +93,7 @@ class NotesContextProvider(ContextProvider):
         Initializes the NotesContextProvider.
 
         Args:
-            get_db_context_func: An async function that returns a DatabaseContext.
+            get_db_context_func: A function that returns a Database handle.
             prompts: A dictionary containing prompt templates for formatting.
             attachment_registry: Optional attachment registry for fetching attachment metadata.
             visibility_grants: If set, only notes whose labels are a subset are included.
@@ -110,7 +110,7 @@ class NotesContextProvider(ContextProvider):
         return "notes"
 
     async def _format_attachments(
-        self, db_context: DatabaseContext, attachment_ids: list[str]
+        self, db_context: Database, attachment_ids: list[str]
     ) -> str:
         """
         Formats attachment metadata for display in the prompt.
@@ -161,97 +161,95 @@ class NotesContextProvider(ContextProvider):
     async def get_context_fragments(self) -> list[str]:
         fragments: list[str] = []
         try:
-            async with (
-                await self._get_db_context_func() as db_context
-            ):  # Get context per call
-                # Use targeted queries - skills are identified at write time via is_skill column
-                prompt_notes = await db_context.notes.get_prompt_notes(
-                    visibility_grants=self._visibility_grants
-                )
-                db_skills = await db_context.notes.get_skills(
-                    visibility_grants=self._visibility_grants
-                )
-                excluded_titles = await db_context.notes.get_excluded_notes_titles(
-                    visibility_grants=self._visibility_grants
-                )
+            db_context = self._get_db_context_func()
+            # Use targeted queries - skills are identified at write time via is_skill column
+            prompt_notes = await db_context.notes.get_prompt_notes(
+                visibility_grants=self._visibility_grants
+            )
+            db_skills = await db_context.notes.get_skills(
+                visibility_grants=self._visibility_grants
+            )
+            excluded_titles = await db_context.notes.get_excluded_notes_titles(
+                visibility_grants=self._visibility_grants
+            )
 
-                # 1. Regular notes section
-                if prompt_notes:
-                    notes_list_str = ""
-                    note_item_format = self._prompts.get(
-                        "note_item_format",
-                        "- {title}: {content}",  # Default format
+            # 1. Regular notes section
+            if prompt_notes:
+                notes_list_str = ""
+                note_item_format = self._prompts.get(
+                    "note_item_format",
+                    "- {title}: {content}",  # Default format
+                )
+                for note in prompt_notes:
+                    note_text = note_item_format.format(
+                        title=note.title, content=note.content
                     )
-                    for note in prompt_notes:
-                        note_text = note_item_format.format(
-                            title=note.title, content=note.content
+                    notes_list_str += note_text + "\n"
+
+                    # Add attachment references if present
+                    attachment_ids = note.attachment_ids
+                    if attachment_ids:
+                        attachment_text = await self._format_attachments(
+                            db_context, attachment_ids
                         )
-                        notes_list_str += note_text + "\n"
+                        if attachment_text:
+                            notes_list_str += attachment_text + "\n"
 
-                        # Add attachment references if present
-                        attachment_ids = note.attachment_ids
-                        if attachment_ids:
-                            attachment_text = await self._format_attachments(
-                                db_context, attachment_ids
-                            )
-                            if attachment_text:
-                                notes_list_str += attachment_text + "\n"
-
-                    notes_context_header_template = self._prompts.get(
-                        "notes_context_header", "Relevant notes:\n{notes_list}"
-                    )
-                    formatted_notes_context = notes_context_header_template.format(
-                        notes_list=notes_list_str.strip()
-                    ).strip()
-                    if formatted_notes_context:
-                        fragments.append(formatted_notes_context)
-                else:
-                    no_notes_message = self._prompts.get("no_notes")
-                    if no_notes_message:
-                        fragments.append(no_notes_message)
-
-                # 2. Skill catalog (DB skills + file-based skills)
-                file_skills = (
-                    self._note_registry.get_skill_catalog(self._visibility_grants)
-                    if self._note_registry
-                    else []
+                notes_context_header_template = self._prompts.get(
+                    "notes_context_header", "Relevant notes:\n{notes_list}"
                 )
-                if db_skills or file_skills:
-                    catalog_lines = [
-                        "## Available Skills",
-                        "Use the `get_note` tool to load a skill's full instructions.",
-                    ]
-                    for skill in db_skills:
-                        catalog_lines.append(
-                            f"- **{skill.skill_name}**: {skill.skill_description}"
-                        )
-                    for skill in file_skills:
-                        catalog_lines.append(f"- **{skill.name}**: {skill.description}")
-                    fragments.append("\n".join(catalog_lines))
+                formatted_notes_context = notes_context_header_template.format(
+                    notes_list=notes_list_str.strip()
+                ).strip()
+                if formatted_notes_context:
+                    fragments.append(formatted_notes_context)
+            else:
+                no_notes_message = self._prompts.get("no_notes")
+                if no_notes_message:
+                    fragments.append(no_notes_message)
 
-                # 3. Excluded regular notes
-                if excluded_titles:
-                    excluded_notes_format = self._prompts.get(
-                        "excluded_notes_format",
-                        "Other available notes (not included above): {excluded_titles}",
+            # 2. Skill catalog (DB skills + file-based skills)
+            file_skills = (
+                self._note_registry.get_skill_catalog(self._visibility_grants)
+                if self._note_registry
+                else []
+            )
+            if db_skills or file_skills:
+                catalog_lines = [
+                    "## Available Skills",
+                    "Use the `get_note` tool to load a skill's full instructions.",
+                ]
+                for skill in db_skills:
+                    catalog_lines.append(
+                        f"- **{skill.skill_name}**: {skill.skill_description}"
                     )
-                    excluded_titles_str = ", ".join(
-                        f'"{title}"' for title in excluded_titles
-                    )
-                    formatted_excluded_notes = excluded_notes_format.format(
-                        excluded_titles=excluded_titles_str
-                    ).strip()
-                    if formatted_excluded_notes:
-                        fragments.append(formatted_excluded_notes)
+                for skill in file_skills:
+                    catalog_lines.append(f"- **{skill.name}**: {skill.description}")
+                fragments.append("\n".join(catalog_lines))
 
-                logger.debug(
-                    "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
-                    self.name,
-                    len(prompt_notes),
-                    len(db_skills),
-                    len(file_skills),
-                    len(fragments),
+            # 3. Excluded regular notes
+            if excluded_titles:
+                excluded_notes_format = self._prompts.get(
+                    "excluded_notes_format",
+                    "Other available notes (not included above): {excluded_titles}",
                 )
+                excluded_titles_str = ", ".join(
+                    f'"{title}"' for title in excluded_titles
+                )
+                formatted_excluded_notes = excluded_notes_format.format(
+                    excluded_titles=excluded_titles_str
+                ).strip()
+                if formatted_excluded_notes:
+                    fragments.append(formatted_excluded_notes)
+
+            logger.debug(
+                "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
+                self.name,
+                len(prompt_notes),
+                len(db_skills),
+                len(file_skills),
+                len(fragments),
+            )
         except Exception as e:
             logger.exception(f"[{self.name}] Failed to get notes context: {e}")
             return []
@@ -260,32 +258,32 @@ class NotesContextProvider(ContextProvider):
     async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
         """Return provenance taint for notes auto-included in the system prompt."""
         sources: list[TaintSource] = []
-        async with await self._get_db_context_func() as db_context:
-            prompt_notes = await db_context.notes.get_prompt_notes(
-                visibility_grants=self._visibility_grants
+        db_context = self._get_db_context_func()
+        prompt_notes = await db_context.notes.get_prompt_notes(
+            visibility_grants=self._visibility_grants
+        )
+        for note in prompt_notes:
+            provenance_metadata = note.provenance_metadata
+            if not isinstance(provenance_metadata, dict):
+                continue
+            state = TurnTaintState.from_metadata(
+                provenance_metadata.get("taint_metadata")
             )
-            for note in prompt_notes:
-                provenance_metadata = note.provenance_metadata
-                if not isinstance(provenance_metadata, dict):
-                    continue
-                state = TurnTaintState.from_metadata(
-                    provenance_metadata.get("taint_metadata")
+            if state.max_tier <= SourceTrustTier.TRUSTED_USER:
+                continue
+            sources.extend(state.sources)
+            sources.append(
+                TaintSource(
+                    source_type=TaintSourceType.NOTE,
+                    source_id=note.title,
+                    tier=state.max_tier,
+                    labels=frozenset(note.visibility_labels),
+                    reason=(
+                        f"Prompt-included note '{note.title}' carries "
+                        "stored provenance taint."
+                    ),
                 )
-                if state.max_tier <= SourceTrustTier.TRUSTED_USER:
-                    continue
-                sources.extend(state.sources)
-                sources.append(
-                    TaintSource(
-                        source_type=TaintSourceType.NOTE,
-                        source_id=note.title,
-                        tier=state.max_tier,
-                        labels=frozenset(note.visibility_labels),
-                        reason=(
-                            f"Prompt-included note '{note.title}' carries "
-                            "stored provenance taint."
-                        ),
-                    )
-                )
+            )
         return tuple(sources)
 
 

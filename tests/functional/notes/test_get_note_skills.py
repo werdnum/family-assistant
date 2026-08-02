@@ -9,7 +9,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.skills import NoteRegistry, ParsedSkill
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.notes import get_note_tool
@@ -17,13 +17,13 @@ from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 
 async def cleanup_notes(engine: AsyncEngine) -> None:
-    async with DatabaseContext(engine=engine) as db:
-        stmt = delete(notes_table)
-        await db.execute_with_retry(stmt)
+    db = Database(engine=engine)
+    stmt = delete(notes_table)
+    await db.execute(stmt)
 
 
 def make_exec_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     note_registry: NoteRegistry | None = None,
     visibility_grants: set[str] | None = None,
 ) -> ToolExecutionContext:
@@ -59,16 +59,16 @@ async def test_get_note_returns_db_note(db_engine: AsyncEngine) -> None:
     """get_note should return DB note when it exists."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.notes.add_or_update(
-            title="My Note",
-            content="DB content.",
-            include_in_prompt=True,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="My Note",
+        content="DB content.",
+        include_in_prompt=True,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-        exec_context = make_exec_context(db)
-        result = await get_note_tool(title="My Note", exec_context=exec_context)
+    exec_context = make_exec_context(db)
+    result = await get_note_tool(title="My Note", exec_context=exec_context)
 
     data = _data(result)
     assert data["exists"] is True
@@ -90,11 +90,9 @@ async def test_get_note_falls_back_to_file_skill(db_engine: AsyncEngine) -> None
         ),
     ])
 
-    async with DatabaseContext(engine=db_engine) as db:
-        exec_context = make_exec_context(db, note_registry=registry)
-        result = await get_note_tool(
-            title="Research Assistant", exec_context=exec_context
-        )
+    db = Database(engine=db_engine)
+    exec_context = make_exec_context(db, note_registry=registry)
+    result = await get_note_tool(title="Research Assistant", exec_context=exec_context)
 
     data = _data(result)
     assert data["exists"] is True
@@ -117,18 +115,16 @@ async def test_get_note_db_overrides_file_skill(db_engine: AsyncEngine) -> None:
         ),
     ])
 
-    async with DatabaseContext(engine=db_engine) as db:
-        await db.notes.add_or_update(
-            title="Research Assistant",
-            content="DB version of research assistant.",
-            include_in_prompt=False,
-            write_policy=NoteWritePolicy.UNCONSTRAINED,
-        )
+    db = Database(engine=db_engine)
+    await db.notes.add_or_update(
+        title="Research Assistant",
+        content="DB version of research assistant.",
+        include_in_prompt=False,
+        write_policy=NoteWritePolicy.UNCONSTRAINED,
+    )
 
-        exec_context = make_exec_context(db, note_registry=registry)
-        result = await get_note_tool(
-            title="Research Assistant", exec_context=exec_context
-        )
+    exec_context = make_exec_context(db, note_registry=registry)
+    result = await get_note_tool(title="Research Assistant", exec_context=exec_context)
 
     data = _data(result)
     assert data["exists"] is True
@@ -153,25 +149,25 @@ async def test_get_note_file_skill_respects_visibility(
         ),
     ])
 
-    async with DatabaseContext(engine=db_engine) as db:
-        # Without grants
-        exec_context = make_exec_context(
-            db, note_registry=registry, visibility_grants=set()
-        )
-        result = await get_note_tool(title="Internal Skill", exec_context=exec_context)
-        data = _data(result)
-        assert data["exists"] is False
+    db = Database(engine=db_engine)
+    # Without grants
+    exec_context = make_exec_context(
+        db, note_registry=registry, visibility_grants=set()
+    )
+    result = await get_note_tool(title="Internal Skill", exec_context=exec_context)
+    data = _data(result)
+    assert data["exists"] is False
 
-        # With matching grants
-        exec_context_with_grants = make_exec_context(
-            db, note_registry=registry, visibility_grants={"internal"}
-        )
-        result = await get_note_tool(
-            title="Internal Skill", exec_context=exec_context_with_grants
-        )
-        data = _data(result)
-        assert data["exists"] is True
-        assert data["content"] == "Internal instructions."
+    # With matching grants
+    exec_context_with_grants = make_exec_context(
+        db, note_registry=registry, visibility_grants={"internal"}
+    )
+    result = await get_note_tool(
+        title="Internal Skill", exec_context=exec_context_with_grants
+    )
+    data = _data(result)
+    assert data["exists"] is True
+    assert data["content"] == "Internal instructions."
 
 
 @pytest.mark.asyncio
@@ -188,11 +184,9 @@ async def test_get_note_not_found_anywhere(db_engine: AsyncEngine) -> None:
         ),
     ])
 
-    async with DatabaseContext(engine=db_engine) as db:
-        exec_context = make_exec_context(db, note_registry=registry)
-        result = await get_note_tool(
-            title="Nonexistent Note", exec_context=exec_context
-        )
+    db = Database(engine=db_engine)
+    exec_context = make_exec_context(db, note_registry=registry)
+    result = await get_note_tool(title="Nonexistent Note", exec_context=exec_context)
 
     data = _data(result)
     assert data["exists"] is False
@@ -203,9 +197,9 @@ async def test_get_note_no_registry(db_engine: AsyncEngine) -> None:
     """get_note should work fine with no NoteRegistry (backwards compat)."""
     await cleanup_notes(db_engine)
 
-    async with DatabaseContext(engine=db_engine) as db:
-        exec_context = make_exec_context(db, note_registry=None)
-        result = await get_note_tool(title="Missing", exec_context=exec_context)
+    db = Database(engine=db_engine)
+    exec_context = make_exec_context(db, note_registry=None)
+    result = await get_note_tool(title="Missing", exec_context=exec_context)
 
     data = _data(result)
     assert data["exists"] is False

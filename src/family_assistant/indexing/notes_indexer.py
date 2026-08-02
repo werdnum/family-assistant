@@ -50,9 +50,9 @@ class NotesIndexer:
         db_context = exec_context.db_context
         if not db_context:
             logger.error(
-                "DatabaseContext not found in ToolExecutionContext for handle_index_note."
+                "Database not found in ToolExecutionContext for handle_index_note."
             )
-            raise ValueError("Missing DatabaseContext dependency in context.")
+            raise ValueError("Missing Database dependency in context.")
 
         note_id = payload.get("note_id")
         if not note_id:

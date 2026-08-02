@@ -8,7 +8,7 @@ from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage import error_logs_table
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.error_logs import (
     cleanup_old_error_logs,
     get_error_logs,
@@ -20,9 +20,9 @@ from family_assistant.utils.logging_handler import SQLAlchemyErrorHandler
 async def test_error_logging_integration(db_engine: AsyncEngine) -> None:
     """Test that errors are logged to the database correctly."""
     # Clear all existing error logs first to ensure test isolation
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Clear all error logs
-        await db_context.execute_with_retry(delete(error_logs_table))
+    db_context = Database(engine=db_engine)
+    # Clear all error logs
+    await db_context.execute(delete(error_logs_table))
 
     # Create a test logger with our handler
     test_logger = logging.getLogger("test_error_logger")
@@ -61,64 +61,64 @@ async def test_error_logging_integration(db_engine: AsyncEngine) -> None:
         await handler.wait_for_pending_logs()
 
         # Check the database
-        async with DatabaseContext(engine=db_engine) as db_context:
-            # Get error logs from our test logger only
-            query = (
-                select(error_logs_table)
-                .where(error_logs_table.c.logger_name == "test_error_logger")
-                .order_by(error_logs_table.c.timestamp)
-            )
-            error_logs = await db_context.fetch_all(query)
+        db_context = Database(engine=db_engine)
+        # Get error logs from our test logger only
+        query = (
+            select(error_logs_table)
+            .where(error_logs_table.c.logger_name == "test_error_logger")
+            .order_by(error_logs_table.c.timestamp)
+        )
+        error_logs = await db_context.fetch_all(query)
 
-            # Should have 3 error logs (2 ERROR, 1 CRITICAL)
-            if len(error_logs) != 3:
-                # Debug: print all error logs found
-                print(f"\nExpected 3 error logs, but found {len(error_logs)}:")
-                for i, log in enumerate(error_logs):
-                    print(f"\n{i + 1}. Logger: {log['logger_name']}")
-                    print(f"   Level: {log['level']}")
-                    print(f"   Message: {log['message']}")
-                    print(f"   Timestamp: {log['timestamp']}")
-                    print(f"   Module: {log['module']}")
-                    print(f"   Function: {log['function_name']}")
+        # Should have 3 error logs (2 ERROR, 1 CRITICAL)
+        if len(error_logs) != 3:
+            # Debug: print all error logs found
+            print(f"\nExpected 3 error logs, but found {len(error_logs)}:")
+            for i, log in enumerate(error_logs):
+                print(f"\n{i + 1}. Logger: {log['logger_name']}")
+                print(f"   Level: {log['level']}")
+                print(f"   Message: {log['message']}")
+                print(f"   Timestamp: {log['timestamp']}")
+                print(f"   Module: {log['module']}")
+                print(f"   Function: {log['function_name']}")
 
-            assert len(error_logs) == 3
+        assert len(error_logs) == 3
 
-            # Check first error (simple error)
-            first_error = error_logs[0]
-            assert first_error["level"] == "ERROR"
-            assert first_error["message"] == "Test error message"
-            assert first_error["logger_name"] == "test_error_logger"
-            assert first_error["exception_type"] is None
-            assert first_error["traceback"] is None
+        # Check first error (simple error)
+        first_error = error_logs[0]
+        assert first_error["level"] == "ERROR"
+        assert first_error["message"] == "Test error message"
+        assert first_error["logger_name"] == "test_error_logger"
+        assert first_error["exception_type"] is None
+        assert first_error["traceback"] is None
 
-            # Check second error (with exception)
-            second_error = error_logs[1]
-            assert second_error["level"] == "ERROR"
-            assert "Division by zero occurred" in second_error["message"]
-            assert second_error["exception_type"] == "ZeroDivisionError"
-            assert second_error["exception_message"] == "division by zero"
-            assert "ZeroDivisionError: division by zero" in second_error["traceback"]
-            assert "1 / 0" in second_error["traceback"]
+        # Check second error (with exception)
+        second_error = error_logs[1]
+        assert second_error["level"] == "ERROR"
+        assert "Division by zero occurred" in second_error["message"]
+        assert second_error["exception_type"] == "ZeroDivisionError"
+        assert second_error["exception_message"] == "division by zero"
+        assert "ZeroDivisionError: division by zero" in second_error["traceback"]
+        assert "1 / 0" in second_error["traceback"]
 
-            # Check third error (critical)
-            third_error = error_logs[2]
-            assert third_error["level"] == "CRITICAL"
-            assert third_error["message"] == "Critical system failure"
+        # Check third error (critical)
+        third_error = error_logs[2]
+        assert third_error["level"] == "CRITICAL"
+        assert third_error["message"] == "Critical system failure"
 
-            # Test the get_error_logs function
-            errors = await get_error_logs(db_context, level="ERROR")
-            assert len(errors) == 2  # Only ERROR level, not CRITICAL
+        # Test the get_error_logs function
+        errors = await get_error_logs(db_context, level="ERROR")
+        assert len(errors) == 2  # Only ERROR level, not CRITICAL
 
-            errors = await get_error_logs(db_context, level="CRITICAL")
-            assert len(errors) == 1
+        errors = await get_error_logs(db_context, level="CRITICAL")
+        assert len(errors) == 1
 
-            # Test filtering by logger name
-            errors = await get_error_logs(db_context, logger_name="test_error_logger")
-            assert len(errors) == 3
+        # Test filtering by logger name
+        errors = await get_error_logs(db_context, logger_name="test_error_logger")
+        assert len(errors) == 3
 
-            errors = await get_error_logs(db_context, logger_name="nonexistent")
-            assert len(errors) == 0
+        errors = await get_error_logs(db_context, logger_name="nonexistent")
+        assert len(errors) == 0
 
     finally:
         # Clean up the handler and reset logger state
@@ -133,58 +133,58 @@ async def test_error_logging_integration(db_engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_error_log_cleanup(db_engine: AsyncEngine) -> None:
     """Test that old error logs are cleaned up correctly."""
-    async with DatabaseContext(engine=db_engine) as db_context:
-        # Insert error logs with different ages
-        now = datetime.now(UTC)
+    db_context = Database(engine=db_engine)
+    # Insert error logs with different ages
+    now = datetime.now(UTC)
 
-        # Old error (40 days ago)
-        stmt1 = insert(error_logs_table).values(
-            timestamp=now - timedelta(days=40),
-            logger_name="old.error",
-            level="ERROR",
-            message="Old error message",
+    # Old error (40 days ago)
+    stmt1 = insert(error_logs_table).values(
+        timestamp=now - timedelta(days=40),
+        logger_name="old.error",
+        level="ERROR",
+        message="Old error message",
+    )
+    await db_context.execute(stmt1)
+
+    # Recent error (10 days ago)
+    stmt2 = insert(error_logs_table).values(
+        timestamp=now - timedelta(days=10),
+        logger_name="recent.error",
+        level="ERROR",
+        message="Recent error message",
+    )
+    await db_context.execute(stmt2)
+
+    # Very recent error (1 hour ago)
+    stmt3 = insert(error_logs_table).values(
+        timestamp=now - timedelta(hours=1),
+        logger_name="very.recent.error",
+        level="ERROR",
+        message="Very recent error message",
+    )
+    await db_context.execute(stmt3)
+
+    # Run cleanup with 30 day retention
+    deleted_count = await cleanup_old_error_logs(db_context, retention_days=30)
+
+    # Should have deleted 1 error (the 40-day old one)
+    assert deleted_count == 1
+
+    # Verify remaining errors (only count the ones we created)
+    query = (
+        select(error_logs_table)
+        .where(
+            error_logs_table.c.logger_name.in_([
+                "old.error",
+                "recent.error",
+                "very.recent.error",
+            ])
         )
-        await db_context.execute_with_retry(stmt1)
+        .order_by(error_logs_table.c.timestamp)
+    )
+    remaining_errors = await db_context.fetch_all(query)
 
-        # Recent error (10 days ago)
-        stmt2 = insert(error_logs_table).values(
-            timestamp=now - timedelta(days=10),
-            logger_name="recent.error",
-            level="ERROR",
-            message="Recent error message",
-        )
-        await db_context.execute_with_retry(stmt2)
-
-        # Very recent error (1 hour ago)
-        stmt3 = insert(error_logs_table).values(
-            timestamp=now - timedelta(hours=1),
-            logger_name="very.recent.error",
-            level="ERROR",
-            message="Very recent error message",
-        )
-        await db_context.execute_with_retry(stmt3)
-
-        # Run cleanup with 30 day retention
-        deleted_count = await cleanup_old_error_logs(db_context, retention_days=30)
-
-        # Should have deleted 1 error (the 40-day old one)
-        assert deleted_count == 1
-
-        # Verify remaining errors (only count the ones we created)
-        query = (
-            select(error_logs_table)
-            .where(
-                error_logs_table.c.logger_name.in_([
-                    "old.error",
-                    "recent.error",
-                    "very.recent.error",
-                ])
-            )
-            .order_by(error_logs_table.c.timestamp)
-        )
-        remaining_errors = await db_context.fetch_all(query)
-
-        assert len(remaining_errors) == 2
-        assert all(e["logger_name"] != "old.error" for e in remaining_errors)
-        assert any(e["logger_name"] == "recent.error" for e in remaining_errors)
-        assert any(e["logger_name"] == "very.recent.error" for e in remaining_errors)
+    assert len(remaining_errors) == 2
+    assert all(e["logger_name"] != "old.error" for e in remaining_errors)
+    assert any(e["logger_name"] == "recent.error" for e in remaining_errors)
+    assert any(e["logger_name"] == "very.recent.error" for e in remaining_errors)

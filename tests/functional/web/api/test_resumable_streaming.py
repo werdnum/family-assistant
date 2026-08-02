@@ -56,7 +56,7 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -152,9 +152,9 @@ async def collect_sse_stream(
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+) -> AsyncGenerator[Database]:
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -221,9 +221,9 @@ def test_processing_service(
     mock_processing_service_config: ProcessingServiceConfig,
     db_engine: AsyncEngine,
 ) -> ProcessingService:
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
-        async with get_db_context(engine=db_engine) as new_ctx:
-            return new_ctx
+    def get_entered_db_context_for_provider() -> Database:
+        new_ctx = Database(engine=db_engine)
+        return new_ctx
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
@@ -280,9 +280,9 @@ async def app_fixture(
         storage_path=tempfile.mkdtemp(), db_engine=db_engine, config=None
     )
 
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)
-        await temp_db_ctx.init_vector_db()
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_db_ctx.init_vector_db()
 
     return app
 
@@ -316,7 +316,7 @@ class _SpyNotifier:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:
@@ -430,14 +430,14 @@ async def test_post_turn_rejects_conversation_owned_by_another_user(
     conversation_id = f"conv_owned_{uuid.uuid4().hex[:8]}"
 
     # Seed a message owned by a *different* user directly in the DB.
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="victim's private message"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=datetime.now(UTC),
-            user_id="someone_else",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="victim's private message"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
 
     response = await test_client.post(
         "/api/v1/chat/turns",
@@ -451,12 +451,12 @@ async def test_post_turn_rejects_conversation_owned_by_another_user(
     assert response.status_code == 404, response.text
 
     # No new message should have been persisted by the rejected request.
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=20,
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
     assert len(rows) == 1
     assert rows[0]["user_id"] == "someone_else"
 
@@ -513,21 +513,21 @@ async def test_stream_on_multi_owner_conversation_returns_404(
     is refused with 404 — it can't be streamed through this hub without leaking
     co-owners' turns. The caller here (``test_user``) is one of two owners."""
     conversation_id = f"conv_multi_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="from the caller"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-        )
-        await ctx.message_history.add_message(
-            UserMessage(content="from another group member"),
-            interface_type="web",
-            conversation_id=conversation_id,
-            timestamp=datetime.now(UTC),
-            user_id="someone_else",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="from the caller"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    await ctx.message_history.add_message(
+        UserMessage(content="from another group member"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
 
     response = await test_client.get(
         f"/api/v1/chat/conversations/{conversation_id}/stream",
@@ -585,12 +585,12 @@ async def test_post_turn_is_idempotent_on_turn_id_retry(
         timeout=10.0,
     )
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=20,
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
     user_rows = [r for r in rows if r["role"] == "user"]
     assert len(user_rows) == 1, (
         f"Expected exactly one user message for the retried turn, got "
@@ -661,12 +661,12 @@ async def test_post_turn_idempotent_across_hub_restart(
     assert fresh_hub.get_active_producer_tasks(conversation_id) == []
     assert fresh_hub.get_turn(conversation_id, turn_id) is None
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=20,
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
     user_rows = [r for r in rows if r["role"] == "user"]
     assert len(user_rows) == 1, (
         f"Expected exactly one user message across the restart, got "
@@ -690,17 +690,17 @@ async def test_post_turn_rejects_turn_id_from_another_conversation(
     target_conversation = f"conv_b_{uuid.uuid4().hex[:8]}"
 
     # The caller (test_user) already used this turn_id in another conversation.
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            message=UserMessage(content="original turn"),
-            interface_type="web",
-            conversation_id=other_conversation,
-            interface_message_id=f"temp_{turn_id}",
-            turn_id=turn_id,
-            thread_root_id=None,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        message=UserMessage(content="original turn"),
+        interface_type="web",
+        conversation_id=other_conversation,
+        interface_message_id=f"temp_{turn_id}",
+        turn_id=turn_id,
+        thread_root_id=None,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
 
     # Reusing it in a brand-new conversation passes the (allow_new) ownership
     # gate but must be rejected by the conversation-scoped idempotency check.
@@ -950,9 +950,9 @@ async def test_web_chat_interface_publishes_live_update_to_hub(
     """WebChatInterface.send_message (scheduled callbacks / task-worker flows)
     publishes a ``message`` event to the hub so an open follow-stream reloads —
     these messages never go through the /turns producer."""
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
 
     hub = ConversationStreamHub()
     interface = WebChatInterface(db_engine, stream_hub=hub)
@@ -1179,12 +1179,12 @@ async def test_send_message_idempotent_on_turn_id(
     assert second.json()["turn_id"] == turn_id
     assert second.json()["reply"] == "reply-once"
 
-    async with get_db_context(engine=db_engine) as ctx:
-        rows = await ctx.message_history.get_recent_with_metadata(
-            interface_type="api",
-            conversation_id=conversation_id,
-            limit=20,
-        )
+    ctx = Database(engine=db_engine)
+    rows = await ctx.message_history.get_recent_with_metadata(
+        interface_type="api",
+        conversation_id=conversation_id,
+        limit=20,
+    )
     user_rows = [r for r in rows if r["role"] == "user"]
     assert len(user_rows) == 1, (
         f"retried /send_message double-persisted the user message: "
@@ -1210,37 +1210,37 @@ async def test_conversation_list_filters_to_owned(
     foreign = f"conv_foreign_{uuid.uuid4().hex[:8]}"
     multi = f"conv_multi_{uuid.uuid4().hex[:8]}"
 
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
-        await ctx.message_history.add_message(
-            UserMessage(content="mine"),
-            interface_type="web",
-            conversation_id=owned,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-        )
-        await ctx.message_history.add_message(
-            UserMessage(content="theirs"),
-            interface_type="web",
-            conversation_id=foreign,
-            timestamp=datetime.now(UTC),
-            user_id="someone_else",
-        )
-        await ctx.message_history.add_message(
-            UserMessage(content="mine in group"),
-            interface_type="web",
-            conversation_id=multi,
-            timestamp=datetime.now(UTC),
-            user_id="test_user",
-        )
-        await ctx.message_history.add_message(
-            UserMessage(content="theirs in group"),
-            interface_type="web",
-            conversation_id=multi,
-            timestamp=datetime.now(UTC),
-            user_id="someone_else",
-        )
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    await ctx.message_history.add_message(
+        UserMessage(content="mine"),
+        interface_type="web",
+        conversation_id=owned,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    await ctx.message_history.add_message(
+        UserMessage(content="theirs"),
+        interface_type="web",
+        conversation_id=foreign,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
+    await ctx.message_history.add_message(
+        UserMessage(content="mine in group"),
+        interface_type="web",
+        conversation_id=multi,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    await ctx.message_history.add_message(
+        UserMessage(content="theirs in group"),
+        interface_type="web",
+        conversation_id=multi,
+        timestamp=datetime.now(UTC),
+        user_id="someone_else",
+    )
 
     response = await test_client.get("/api/v1/chat/conversations")
     assert response.status_code == 200, response.text
@@ -1270,18 +1270,18 @@ async def test_conversation_list_identity_maps_telegram_owner(
     app_fixture.state.user_identity_resolver = UserIdentityResolver(resolver_config)
 
     telegram_conv = f"conv_tg_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
-        # Stored under the raw Telegram numeric id, which canonicalizes to
-        # test_user via the resolver.
-        await ctx.message_history.add_message(
-            UserMessage(content="from telegram"),
-            interface_type="telegram",
-            conversation_id=telegram_conv,
-            timestamp=datetime.now(UTC),
-            user_id="4242",
-        )
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    # Stored under the raw Telegram numeric id, which canonicalizes to
+    # test_user via the resolver.
+    await ctx.message_history.add_message(
+        UserMessage(content="from telegram"),
+        interface_type="telegram",
+        conversation_id=telegram_conv,
+        timestamp=datetime.now(UTC),
+        user_id="4242",
+    )
 
     list_response = await test_client.get("/api/v1/chat/conversations")
     assert list_response.status_code == 200, list_response.text
@@ -1320,16 +1320,16 @@ async def test_conversation_list_attributes_unnormalized_stored_owner_ids(
     app_fixture.state.user_identity_resolver = UserIdentityResolver(resolver_config)
 
     padded_conv = f"conv_padded_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
-        await ctx.message_history.add_message(
-            UserMessage(content="stored before normalization"),
-            interface_type="web",
-            conversation_id=padded_conv,
-            timestamp=datetime.now(UTC),
-            user_id="Owner <OWNER@Example.com>",
-        )
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    await ctx.message_history.add_message(
+        UserMessage(content="stored before normalization"),
+        interface_type="web",
+        conversation_id=padded_conv,
+        timestamp=datetime.now(UTC),
+        user_id="Owner <OWNER@Example.com>",
+    )
 
     response = await test_client.get("/api/v1/chat/conversations")
     assert response.status_code == 200, response.text
@@ -1355,20 +1355,20 @@ async def _seed_owned_conversations(
     order they were written (oldest first)."""
     conversation_ids: list[str] = []
     base = datetime.now(UTC)
-    async with get_db_context(engine=db_engine) as ctx:
-        await init_db(db_engine)
-        await ctx.init_vector_db()
-        for index in range(count):
-            conversation_id = f"{prefix}_{index}_{uuid.uuid4().hex[:8]}"
-            await ctx.message_history.add_message(
-                UserMessage(content=f"message {index}"),
-                interface_type="web",
-                conversation_id=conversation_id,
-                # Distinct increasing timestamps give a deterministic order.
-                timestamp=base + timedelta(seconds=index),
-                user_id=owner_id,
-            )
-            conversation_ids.append(conversation_id)
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+    for index in range(count):
+        conversation_id = f"{prefix}_{index}_{uuid.uuid4().hex[:8]}"
+        await ctx.message_history.add_message(
+            UserMessage(content=f"message {index}"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            # Distinct increasing timestamps give a deterministic order.
+            timestamp=base + timedelta(seconds=index),
+            user_id=owner_id,
+        )
+        conversation_ids.append(conversation_id)
     return conversation_ids
 
 
@@ -1414,15 +1414,15 @@ async def test_conversation_list_count_is_ownership_filtered(
         db_engine, owner_id="test_user", count=3, prefix="conv_owned"
     )
     # Interleave conversations owned solely by another user.
-    async with get_db_context(engine=db_engine) as ctx:
-        for index in range(4):
-            await ctx.message_history.add_message(
-                UserMessage(content="theirs"),
-                interface_type="web",
-                conversation_id=f"conv_foreign_{index}_{uuid.uuid4().hex[:8]}",
-                timestamp=datetime.now(UTC) + timedelta(seconds=100 + index),
-                user_id="someone_else",
-            )
+    ctx = Database(engine=db_engine)
+    for index in range(4):
+        await ctx.message_history.add_message(
+            UserMessage(content="theirs"),
+            interface_type="web",
+            conversation_id=f"conv_foreign_{index}_{uuid.uuid4().hex[:8]}",
+            timestamp=datetime.now(UTC) + timedelta(seconds=100 + index),
+            user_id="someone_else",
+        )
 
     response = await test_client.get("/api/v1/chat/conversations")
     assert response.status_code == 200, response.text
@@ -1446,15 +1446,15 @@ async def test_conversation_list_pagination_has_no_empty_nonfinal_pages(
     )
     # Heavily interleave foreign conversations so a naive post-filter would
     # produce short/empty pages.
-    async with get_db_context(engine=db_engine) as ctx:
-        for index in range(10):
-            await ctx.message_history.add_message(
-                UserMessage(content="theirs"),
-                interface_type="web",
-                conversation_id=f"conv_other_{index}_{uuid.uuid4().hex[:8]}",
-                timestamp=datetime.now(UTC) + timedelta(seconds=200 + index),
-                user_id="someone_else",
-            )
+    ctx = Database(engine=db_engine)
+    for index in range(10):
+        await ctx.message_history.add_message(
+            UserMessage(content="theirs"),
+            interface_type="web",
+            conversation_id=f"conv_other_{index}_{uuid.uuid4().hex[:8]}",
+            timestamp=datetime.now(UTC) + timedelta(seconds=200 + index),
+            user_id="someone_else",
+        )
 
     collected, page_sizes, reported_count = await _page_all_conversations(
         test_client, page_size=2
@@ -1481,21 +1481,21 @@ async def test_conversation_list_multi_owner_excluded_from_count(
         db_engine, owner_id="test_user", count=2, prefix="conv_solo"
     )
     multi = f"conv_shared_{uuid.uuid4().hex[:8]}"
-    async with get_db_context(engine=db_engine) as ctx:
-        await ctx.message_history.add_message(
-            UserMessage(content="mine in group"),
-            interface_type="web",
-            conversation_id=multi,
-            timestamp=datetime.now(UTC) + timedelta(seconds=300),
-            user_id="test_user",
-        )
-        await ctx.message_history.add_message(
-            UserMessage(content="theirs in group"),
-            interface_type="web",
-            conversation_id=multi,
-            timestamp=datetime.now(UTC) + timedelta(seconds=301),
-            user_id="someone_else",
-        )
+    ctx = Database(engine=db_engine)
+    await ctx.message_history.add_message(
+        UserMessage(content="mine in group"),
+        interface_type="web",
+        conversation_id=multi,
+        timestamp=datetime.now(UTC) + timedelta(seconds=300),
+        user_id="test_user",
+    )
+    await ctx.message_history.add_message(
+        UserMessage(content="theirs in group"),
+        interface_type="web",
+        conversation_id=multi,
+        timestamp=datetime.now(UTC) + timedelta(seconds=301),
+        user_id="someone_else",
+    )
 
     response = await test_client.get("/api/v1/chat/conversations")
     assert response.status_code == 200, response.text

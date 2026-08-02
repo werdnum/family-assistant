@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.security.taint import TaintSource
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class DeepResearchProcessingService(ProcessingService):
         conversation_id: str,
         subconversation_id: str | None,
         user_name: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> RemoteSubmission:
         """Start a Deep Research interaction without blocking on its result.

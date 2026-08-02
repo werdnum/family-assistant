@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import enqueue_task
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ def assert_wake_llm_allowed(
 
 
 async def execute_action(
-    db_ctx: DatabaseContext,
+    db_ctx: Database,
     action_type: ActionType,
     # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],

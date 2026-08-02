@@ -14,7 +14,7 @@ from family_assistant.storage.vector import add_document, add_embedding
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.storage.types import MessageHistoryRow
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -53,7 +53,7 @@ class MessageHistoryDocument:
 
 
 async def enqueue_message_history_backfill_task(
-    db_context: DatabaseContext,
+    db_context: Database,
     *,
     limit: int = DEFAULT_MESSAGE_HISTORY_INDEX_BATCH_SIZE,
 ) -> None:

@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from dateutil.parser import parse as parse_datetime
 from sqlalchemy import text
 
-# get_db_context import removed - using exec_context.db_context for dependency injection
+# Database import removed - using exec_context.db_context for dependency injection
 from family_assistant.events.validation import format_validation_errors
 from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 

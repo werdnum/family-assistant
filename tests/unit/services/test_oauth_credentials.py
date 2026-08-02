@@ -30,7 +30,7 @@ from family_assistant.services.oauth_credentials import (
     OAuthRefreshFailedError,
     OAuthScopeNotGrantedError,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -107,7 +107,7 @@ class _RecordingNotifier:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:
@@ -115,15 +115,13 @@ class _RecordingNotifier:
 
 
 @pytest_asyncio.fixture
-async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[DatabaseContext]:
-    """An entered DatabaseContext backed by the test database."""
-    async with DatabaseContext(engine=db_engine) as ctx:
-        yield ctx
+async def db_context(db_engine: AsyncEngine) -> AsyncGenerator[Database]:
+    """An entered Database backed by the test database."""
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
-def _exec_context(
-    db_context: DatabaseContext, user_id: str | None
-) -> ToolExecutionContext:
+def _exec_context(db_context: Database, user_id: str | None) -> ToolExecutionContext:
     """A minimal ToolExecutionContext carrying only user_id and db_context."""
     return ToolExecutionContext(
         interface_type="web",
@@ -165,7 +163,7 @@ def _resolver(
 
 
 async def _seed_connection(
-    db_context: DatabaseContext,
+    db_context: Database,
     encryption: CredentialEncryption,
     *,
     user_id: str = USER_ID,
@@ -189,7 +187,7 @@ async def _seed_connection(
 
 
 @pytest.mark.asyncio
-async def test_no_acting_user_fails_closed(db_context: DatabaseContext) -> None:
+async def test_no_acting_user_fails_closed(db_context: Database) -> None:
     resolver = _resolver(CredentialEncryption(generate_key()))
     exec_context = _exec_context(db_context, user_id=None)
 
@@ -198,7 +196,7 @@ async def test_no_acting_user_fails_closed(db_context: DatabaseContext) -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_connection_fails_closed(db_context: DatabaseContext) -> None:
+async def test_no_connection_fails_closed(db_context: Database) -> None:
     resolver = _resolver(CredentialEncryption(generate_key()))
     exec_context = _exec_context(db_context, user_id=USER_ID)
 
@@ -209,7 +207,7 @@ async def test_no_connection_fails_closed(db_context: DatabaseContext) -> None:
 
 
 @pytest.mark.asyncio
-async def test_needs_reauth_status_fails_closed(db_context: DatabaseContext) -> None:
+async def test_needs_reauth_status_fails_closed(db_context: Database) -> None:
     encryption = CredentialEncryption(generate_key())
     generation = await _seed_connection(db_context, encryption)
     await db_context.oauth_connections.mark_needs_reauth(
@@ -225,7 +223,7 @@ async def test_needs_reauth_status_fails_closed(db_context: DatabaseContext) -> 
 
 
 @pytest.mark.asyncio
-async def test_scope_not_granted_fails_closed(db_context: DatabaseContext) -> None:
+async def test_scope_not_granted_fails_closed(db_context: Database) -> None:
     encryption = CredentialEncryption(generate_key())
     await _seed_connection(db_context, encryption, scopes=[GMAIL])
     resolver = _resolver(encryption)
@@ -245,7 +243,7 @@ async def test_scope_not_granted_fails_closed(db_context: DatabaseContext) -> No
 
 @pytest.mark.asyncio
 async def test_happy_path_refresh_caches_token(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     encryption = CredentialEncryption(generate_key())
     await _seed_connection(db_context, encryption, refresh_token="refresh-abc")
@@ -269,7 +267,7 @@ async def test_happy_path_refresh_caches_token(
 
 @pytest.mark.asyncio
 async def test_refresh_uses_decrypted_refresh_token(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     encryption = CredentialEncryption(generate_key())
     await _seed_connection(db_context, encryption, refresh_token="secret-refresh")
@@ -307,7 +305,7 @@ async def test_refresh_uses_decrypted_refresh_token(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_calls_single_flight(db_context: DatabaseContext) -> None:
+async def test_concurrent_calls_single_flight(db_context: Database) -> None:
     encryption = CredentialEncryption(generate_key())
     await _seed_connection(db_context, encryption)
     gate = asyncio.Event()
@@ -337,7 +335,7 @@ async def test_concurrent_calls_single_flight(db_context: DatabaseContext) -> No
 
 @pytest.mark.asyncio
 async def test_invalid_grant_marks_needs_reauth_and_notifies(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     encryption = CredentialEncryption(generate_key())
     generation = await _seed_connection(db_context, encryption)
@@ -369,7 +367,7 @@ async def test_invalid_grant_marks_needs_reauth_and_notifies(
 
 @pytest.mark.asyncio
 async def test_stale_generation_does_not_flip_replacement(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     encryption = CredentialEncryption(generate_key())
     old_generation = await _seed_connection(db_context, encryption)
@@ -406,7 +404,7 @@ async def test_stale_generation_does_not_flip_replacement(
 
 
 @pytest.mark.asyncio
-async def test_reconnect_invalidates_cache(db_context: DatabaseContext) -> None:
+async def test_reconnect_invalidates_cache(db_context: Database) -> None:
     encryption = CredentialEncryption(generate_key())
     await _seed_connection(db_context, encryption)
     transport = _ScriptedTransport([_ok_token("token-gen1"), _ok_token("token-gen2")])
@@ -430,7 +428,7 @@ async def test_reconnect_invalidates_cache(db_context: DatabaseContext) -> None:
 
 
 @pytest.mark.asyncio
-async def test_evict_cached_token_forces_refresh(db_context: DatabaseContext) -> None:
+async def test_evict_cached_token_forces_refresh(db_context: Database) -> None:
     encryption = CredentialEncryption(generate_key())
     await _seed_connection(db_context, encryption)
     transport = _ScriptedTransport([_ok_token("token-1"), _ok_token("token-2")])
@@ -454,7 +452,7 @@ async def test_evict_cached_token_forces_refresh(db_context: DatabaseContext) ->
 
 @pytest.mark.asyncio
 async def test_transient_refresh_failure_does_not_mutate_row(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     encryption = CredentialEncryption(generate_key())
     generation = await _seed_connection(db_context, encryption)
@@ -480,7 +478,7 @@ async def test_transient_refresh_failure_does_not_mutate_row(
 
 @pytest.mark.asyncio
 async def test_decryption_failure_propagates_without_mutation(
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     writing_encryption = CredentialEncryption(generate_key())
     generation = await _seed_connection(db_context, writing_encryption)

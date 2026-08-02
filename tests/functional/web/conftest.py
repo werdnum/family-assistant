@@ -38,7 +38,7 @@ from family_assistant.services.attachment_registry import (
 )
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -849,7 +849,7 @@ async def authenticated_page(web_test_fixture: WebTestFixture) -> Page:
 class TestDataFactory:
     """Factory for creating test data consistently."""
 
-    def __init__(self, db_context: DatabaseContext) -> None:
+    def __init__(self, db_context: Database) -> None:
         self.db_context = db_context
         self._note_counter = 0
         self._document_counter = 0
@@ -899,7 +899,7 @@ class TestDataFactory:
 @pytest.fixture
 def test_data_factory(db_engine: AsyncEngine) -> TestDataFactory:
     """Factory for creating test data."""
-    # In real implementation, would create a DatabaseContext
+    # In real implementation, would create a Database
     # For now, return a factory that creates mock data
     return TestDataFactory(None)  # type: ignore[arg-type]
 
@@ -1088,9 +1088,9 @@ async def playwright() -> AsyncGenerator[Any]:
 @pytest_asyncio.fixture(scope="function")
 async def api_db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
+) -> AsyncGenerator[Database]:
     """
-    Provides a high-level `DatabaseContext` instance for API-level tests.
+    Provides a high-level `Database` instance for API-level tests.
 
     Purpose:
         Simplifies database interaction in API tests by providing an already
@@ -1100,8 +1100,8 @@ async def api_db_context(
     Scope:
         Function-scoped. Depends on the standard `db_engine` fixture.
     """
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -1175,13 +1175,13 @@ def api_test_processing_service(
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
+    def get_entered_db_context_for_provider() -> Database:
         """
-        Returns an awaitable that resolves to an entered DatabaseContext.
+        Returns an awaitable that resolves to an entered Database.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=db_engine) as new_ctx:
-            return new_ctx
+        new_ctx = Database(engine=db_engine)
+        return new_ctx
 
     # Create mock context providers
     notes_provider = NotesContextProvider(
@@ -1278,9 +1278,9 @@ async def app_fixture(
     )
 
     # Ensure database is initialized for this app instance
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)  # Initialize main schema
-        await temp_db_ctx.init_vector_db()  # Initialize vector schema
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)  # Initialize main schema
+    await temp_db_ctx.init_vector_db()  # Initialize vector schema
 
     return app
 

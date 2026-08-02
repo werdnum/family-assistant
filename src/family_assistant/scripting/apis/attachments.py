@@ -12,7 +12,7 @@ import logging
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
     import builtins
@@ -78,7 +78,7 @@ class ScriptAttachment:
         Args:
             metadata: The attachment metadata
             registry: The attachment registry for content access
-            db_context_getter: Function that returns a DatabaseContext
+            db_context_getter: Function that returns a Database
             user_id: User ID for authorization checks
         """
         self._metadata = metadata
@@ -263,7 +263,7 @@ class AttachmentAPI:
         attachment_registry: AttachmentRegistry,
         conversation_id: str | None = None,
         db_engine: AsyncEngine | None = None,
-        db_context: DatabaseContext | None = None,
+        db_context: Database | None = None,
         user_id: str | None = None,
     ) -> None:
         """
@@ -272,7 +272,7 @@ class AttachmentAPI:
         Args:
             attachment_registry: The attachment registry service
             conversation_id: Current conversation ID for scoping
-            db_engine: Database engine for DatabaseContext (used as fallback)
+            db_engine: Database engine for Database (used as fallback)
             db_context: Existing database context to reuse (preferred over engine)
                        This allows reading attachments created in the same transaction.
             user_id: User ID for authorization checks
@@ -294,7 +294,7 @@ class AttachmentAPI:
     async def _read_async(self, attachment_id: str) -> str | None:
         """Read attachment content as a string."""
 
-        async def _do_read(db_ctx: DatabaseContext) -> str | None:
+        async def _do_read(db_ctx: Database) -> str | None:
             content = await self.attachment_registry.get_attachment_content(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
@@ -313,13 +313,13 @@ class AttachmentAPI:
             return await _do_read(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_read(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_read(db_context)
 
     async def _read_bytes_async(self, attachment_id: str) -> bytes | None:
         """Read attachment content as raw bytes without UTF-8 decoding."""
 
-        async def _do_read(db_ctx: DatabaseContext) -> bytes | None:
+        async def _do_read(db_ctx: Database) -> bytes | None:
             return await self.attachment_registry.get_attachment_content(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
@@ -329,13 +329,13 @@ class AttachmentAPI:
             return await _do_read(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_read(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_read(db_context)
 
     async def _get_async(self, attachment_id: str) -> AttachmentInfoDict | None:
         """Get attachment metadata by ID."""
 
-        async def _do_get(db_ctx: DatabaseContext) -> AttachmentInfoDict | None:
+        async def _do_get(db_ctx: Database) -> AttachmentInfoDict | None:
             attachment = await self.attachment_registry.get_attachment(
                 db_ctx, attachment_id, acting_user_id=self._acting_user_id
             )
@@ -361,8 +361,8 @@ class AttachmentAPI:
             return await _do_get(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_get(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_get(db_context)
 
     async def _list_async(
         self,
@@ -372,7 +372,7 @@ class AttachmentAPI:
         """List attachments in the current conversation."""
 
         async def _do_list(
-            db_ctx: DatabaseContext,
+            db_ctx: Database,
         ) -> builtins.list[AttachmentInfoDict]:
             attachments = await self.attachment_registry.list_attachments(
                 db_ctx,
@@ -403,25 +403,25 @@ class AttachmentAPI:
             return await _do_list(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_list(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_list(db_context)
 
     async def _send_async(self, attachment_id: str, message: str | None = None) -> str:
         """Send an attachment to the user."""
 
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            # Verify attachment exists and is accessible
-            attachment = await self.attachment_registry.get_attachment(
-                db_context, attachment_id, acting_user_id=self._acting_user_id
-            )
+        db_context = Database(engine=self._require_db_engine())
+        # Verify attachment exists and is accessible
+        attachment = await self.attachment_registry.get_attachment(
+            db_context, attachment_id, acting_user_id=self._acting_user_id
+        )
 
-            if not attachment:
-                return f"Attachment {attachment_id} not found"
+        if not attachment:
+            return f"Attachment {attachment_id} not found"
 
-            if message:
-                return f"Sent attachment {attachment_id} with message: {message}"
-            else:
-                return f"Sent attachment {attachment_id}"
+        if message:
+            return f"Sent attachment {attachment_id} with message: {message}"
+        else:
+            return f"Sent attachment {attachment_id}"
 
     async def _create_async(
         self,
@@ -444,7 +444,7 @@ class AttachmentAPI:
             media_limited=False,
         )
 
-        async def _do_register(db_ctx: DatabaseContext) -> AttachmentMetadata:
+        async def _do_register(db_ctx: Database) -> AttachmentMetadata:
             return await self.attachment_registry.register_attachment(
                 db_context=db_ctx,
                 attachment_id=file_metadata.attachment_id,
@@ -465,8 +465,8 @@ class AttachmentAPI:
             return await _do_register(self.db_context)
 
         # Fallback: create new context (for standalone use cases)
-        async with DatabaseContext(engine=self._require_db_engine()) as db_context:
-            return await _do_register(db_context)
+        db_context = Database(engine=self._require_db_engine())
+        return await _do_register(db_context)
 
 
 def create_attachment_api(

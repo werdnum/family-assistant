@@ -31,7 +31,7 @@ from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteModel
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
@@ -87,10 +87,10 @@ def parse_sse_events(response_text: str) -> list[SSEEvent]:
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
-    """Provides a DatabaseContext for a single test function."""
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+) -> AsyncGenerator[Database]:
+    """Provides a Database for a single test function."""
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -162,13 +162,13 @@ def test_processing_service(
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
+    def get_entered_db_context_for_provider() -> Database:
         """
-        Returns an awaitable that resolves to an entered DatabaseContext.
+        Returns an awaitable that resolves to an entered Database.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=db_engine) as new_ctx:
-            return new_ctx
+        new_ctx = Database(engine=db_engine)
+        return new_ctx
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
@@ -226,9 +226,9 @@ async def app_fixture(
 
     app.state.web_chat_interface = WebChatInterface(db_engine)
 
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)
-        await temp_db_ctx.init_vector_db()
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_db_ctx.init_vector_db()
 
     return app
 
@@ -302,10 +302,10 @@ async def test_api_chat_send_message_stream_minimal(
     # Check database state - messages should be saved
     # Need to extract conversation_id from the stream (it's generated)
     # Since we don't have it in the response, we'll check for any recent messages
-    async with get_db_context(engine=db_engine) as fresh_ctx:
-        recent_conversations = await fresh_ctx.message_history.get_all_grouped(
-            interface_type="api"
-        )
+    fresh_ctx = Database(engine=db_engine)
+    recent_conversations = await fresh_ctx.message_history.get_all_grouped(
+        interface_type="api"
+    )
 
     # Should have at least one conversation
     assert len(recent_conversations) > 0
@@ -432,14 +432,12 @@ async def test_api_chat_send_message_stream_with_tools(
     assert combined_text == llm_final_reply
 
     # Check database - note should be created
-    # Use a fresh DatabaseContext to avoid PostgreSQL snapshot isolation issues
+    # Use a fresh Database to avoid PostgreSQL snapshot isolation issues
     # where a pre-existing transaction may not see data committed by the API handler.
     # Retry briefly since PostgreSQL commits may not be immediately visible.
     async def _check_note_exists() -> NoteModel | None:
-        async with get_db_context(engine=db_engine) as fresh_ctx:
-            return await fresh_ctx.notes.get_by_title(
-                note_title, visibility_grants=None
-            )
+        fresh_ctx = Database(engine=db_engine)
+        return await fresh_ctx.notes.get_by_title(note_title, visibility_grants=None)
 
     note = await wait_for_condition(
         _check_note_exists,
@@ -742,7 +740,7 @@ class _SpyNotifier:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: NotificationMetadata | None = None,
     ) -> None:
@@ -843,12 +841,12 @@ async def test_streaming_continues_and_notifies_after_client_disconnect(
     assert metadata.conversation_id == conversation_id
 
     # The assistant reply must also have been persisted despite the disconnect.
-    async with get_db_context(engine=db_engine) as fresh_ctx:
-        messages = await fresh_ctx.message_history.get_recent_with_metadata(
-            interface_type="web",
-            conversation_id=conversation_id,
-            limit=20,
-        )
+    fresh_ctx = Database(engine=db_engine)
+    messages = await fresh_ctx.message_history.get_recent_with_metadata(
+        interface_type="web",
+        conversation_id=conversation_id,
+        limit=20,
+    )
     assistant_messages = [
         m
         for m in messages

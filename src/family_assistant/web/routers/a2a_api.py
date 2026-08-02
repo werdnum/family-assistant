@@ -58,7 +58,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     coerce_taint_metadata,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.a2a_tasks import A2ATaskRow
 from family_assistant.web.dependencies import get_current_user, get_db
 
@@ -202,7 +202,7 @@ async def a2a_jsonrpc(
     rpc_request: JSONRPCRequest,
     request: Request,
     current_user: Annotated[dict[str, object], Depends(get_current_user)],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> Response:
     """JSON-RPC 2.0 endpoint for A2A protocol methods.
 
@@ -256,7 +256,7 @@ async def _handle_send_message(
     params: dict[str, object],
     request: Request,
     current_user: dict[str, object],
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> JSONResponse:
     """Handle the message/send JSON-RPC method.
 
@@ -308,29 +308,24 @@ async def _handle_send_message(
     base_url = str(request.base_url).rstrip("/")
 
     if not _send_is_blocking(send_params):
-        # Commit the 'working' row in its own transaction BEFORE spawning the
-        # background task: that task runs on a separate db connection and, on
-        # Postgres, cannot see the request transaction (not committed until this
-        # handler returns). Without this its update_task_status would silently
-        # no-op and the row would be stuck 'working'. Mirrors the streaming path.
-        # create_task_if_absent also handles concurrent retries with the same
-        # task_id atomically, returning the existing task rather than surfacing
-        # the unique-constraint loser as a JSON-RPC internal error.
-        db_engine: AsyncEngine = request.app.state.database_engine
-        async with get_db_context(db_engine) as committed_db:
-            existing = await committed_db.a2a_tasks.create_task_if_absent(
-                task_id=task_id,
-                profile_id=profile_id,
-                conversation_id=conversation_id,
-                context_id=context_id,
-                status=TaskState.working,
-                history_json=[history_entry],
-            )
+        # create_task_if_absent handles concurrent retries with the same task_id
+        # atomically, returning the existing task rather than surfacing the
+        # unique-constraint loser as a JSON-RPC internal error. The 'working'
+        # row is durable when this returns, so the background task -- which runs
+        # on its own connection -- can see it.
+        existing = await db_context.a2a_tasks.create_task_if_absent(
+            task_id=task_id,
+            profile_id=profile_id,
+            conversation_id=conversation_id,
+            context_id=context_id,
+            status=TaskState.working,
+            history_json=[history_entry],
+        )
         if existing is not None:
             return _jsonrpc_result(
                 request_id, _row_to_task(existing).model_dump(exclude_none=True)
             )
-        return _start_background_send(
+        return await _start_background_send(
             request_id,
             request=request,
             service=service,
@@ -377,7 +372,7 @@ async def _handle_send_message(
 
 async def _execute_and_persist_send(
     *,
-    db_context: DatabaseContext,
+    db_context: Database,
     service: DelegatableService,
     task_id: str,
     context_id: str,
@@ -450,7 +445,7 @@ async def _execute_and_persist_send(
     )
 
 
-def _start_background_send(
+async def _start_background_send(
     request_id: str | int | None,
     *,
     request: Request,
@@ -494,6 +489,13 @@ def _start_background_send(
         name=f"a2a-send-{task_id}",
     )
 
+    # Let the new task reach its first suspension point before returning. A
+    # task cancelled before its first step never runs its body at all, so its
+    # CancelledError handler never persists a terminal state and the row would
+    # be stuck 'working' forever -- and a graceful shutdown cancels in-flight
+    # sends without warning.
+    await asyncio.sleep(0)
+
     working_task = Task(
         id=task_id,
         context_id=context_id,
@@ -527,21 +529,21 @@ async def _run_background_send(
     that already finalized this row wins over a later write here.
     """
     try:
-        async with get_db_context(db_engine) as bg_db:
-            await _execute_and_persist_send(
-                db_context=bg_db,
-                service=service,
-                task_id=task_id,
-                context_id=context_id,
-                conversation_id=conversation_id,
-                content_parts=content_parts,
-                message=message,
-                history_entry=history_entry,
-                user_id=user_id,
-                chat_interfaces=chat_interfaces,
-                confirmation_ui_managers=confirmation_ui_managers,
-                base_url=base_url,
-            )
+        bg_db = Database(db_engine)
+        await _execute_and_persist_send(
+            db_context=bg_db,
+            service=service,
+            task_id=task_id,
+            context_id=context_id,
+            conversation_id=conversation_id,
+            content_parts=content_parts,
+            message=message,
+            history_entry=history_entry,
+            user_id=user_id,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            base_url=base_url,
+        )
     except asyncio.CancelledError:
         # Cancelled by tasks/cancel (the DB row is already 'canceled') or by a
         # graceful shutdown (stop_services cancels in-flight sends, then awaits
@@ -588,12 +590,12 @@ async def _mark_a2a_task_terminal(
 ) -> None:
     """Best-effort write of a terminal status for a backgrounded a2a task."""
     artifact = error_to_artifact(error_text)
-    async with get_db_context(db_engine) as db:
-        await db.a2a_tasks.update_task_status(
-            task_id=task_id,
-            status=status,
-            artifacts_json=[artifact.model_dump(exclude_none=True)] if artifact else [],
-        )
+    db = Database(db_engine)
+    await db.a2a_tasks.update_task_status(
+        task_id=task_id,
+        status=status,
+        artifacts_json=[artifact.model_dump(exclude_none=True)] if artifact else [],
+    )
 
 
 # ===== tasks/get =====
@@ -602,7 +604,7 @@ async def _mark_a2a_task_terminal(
 async def _handle_get_task(
     request_id: str | int | None,
     params: dict[str, object],
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> JSONResponse:
     """Handle the tasks/get JSON-RPC method."""
     try:
@@ -627,7 +629,7 @@ async def _handle_cancel_task(
     request_id: str | int | None,
     params: dict[str, object],
     request: Request,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> JSONResponse:
     """Handle the tasks/cancel JSON-RPC method."""
     try:
@@ -811,15 +813,15 @@ async def _stream_message(
     # Create task in a short-lived context so it's immediately visible to
     # concurrent tasks/get and tasks/cancel requests.
     try:
-        async with get_db_context(db_engine) as db_context:
-            await db_context.a2a_tasks.create_task(
-                task_id=task_id,
-                profile_id=profile_id,
-                conversation_id=conversation_id,
-                context_id=context_id,
-                status=TaskState.working,
-                history_json=[history_entry],
-            )
+        db_context = Database(db_engine)
+        await db_context.a2a_tasks.create_task(
+            task_id=task_id,
+            profile_id=profile_id,
+            conversation_id=conversation_id,
+            context_id=context_id,
+            status=TaskState.working,
+            history_json=[history_entry],
+        )
     except Exception:
         logger.exception("Failed to create A2A task %s", task_id)
         error_event = TaskStatusUpdateEvent(
@@ -863,47 +865,47 @@ async def _stream_message(
     cancel_event = asyncio.Event()
     cancel_events[task_id] = cancel_event
     try:
-        async with get_db_context(db_engine) as db_context:
-            try:
-                async for stream_event in service.handle_chat_interaction_stream(
-                    db_context=db_context,
-                    interface_type="a2a",
-                    conversation_id=conversation_id,
-                    trigger_content_parts=content_parts,
-                    trigger_interface_message_id=message.message_id,
-                    user_name=user_id,
-                    user_id=user_id,
-                    initial_taint_sources=_initial_taint_sources_from_message(message),
-                ):
-                    # Check for cooperative cancellation between chunks
-                    if cancel_event.is_set():
-                        is_canceled = True
-                        break
-                    if stream_event.type == "content" and stream_event.content:
-                        accumulated_text += stream_event.content
-                        artifact_event = TaskArtifactUpdateEvent(
-                            task_id=task_id,
-                            context_id=context_id,
-                            artifact=Artifact(
-                                artifact_id=artifact_id,
-                                parts=[Part(root=TextPart(text=stream_event.content))],
-                            ),
-                            append=True,
-                        )
-                        yield _sse_jsonrpc(  # noqa: ASYNC119
-                            request_id,
-                            "artifact",
-                            artifact_event.model_dump(exclude_none=True),
-                        )
-                    elif stream_event.type == "error":
-                        has_error = True
-                        error_msg = stream_event.error or "Unknown error"
-                    elif stream_event.type == "done":
-                        break
-            except Exception:
-                logger.exception("Error during A2A streaming for task %s", task_id)
-                has_error = True
-                error_msg = "Internal streaming error"
+        db_context = Database(db_engine)
+        try:
+            async for stream_event in service.handle_chat_interaction_stream(
+                db_context=db_context,
+                interface_type="a2a",
+                conversation_id=conversation_id,
+                trigger_content_parts=content_parts,
+                trigger_interface_message_id=message.message_id,
+                user_name=user_id,
+                user_id=user_id,
+                initial_taint_sources=_initial_taint_sources_from_message(message),
+            ):
+                # Check for cooperative cancellation between chunks
+                if cancel_event.is_set():
+                    is_canceled = True
+                    break
+                if stream_event.type == "content" and stream_event.content:
+                    accumulated_text += stream_event.content
+                    artifact_event = TaskArtifactUpdateEvent(
+                        task_id=task_id,
+                        context_id=context_id,
+                        artifact=Artifact(
+                            artifact_id=artifact_id,
+                            parts=[Part(root=TextPart(text=stream_event.content))],
+                        ),
+                        append=True,
+                    )
+                    yield _sse_jsonrpc(
+                        request_id,
+                        "artifact",
+                        artifact_event.model_dump(exclude_none=True),
+                    )
+                elif stream_event.type == "error":
+                    has_error = True
+                    error_msg = stream_event.error or "Unknown error"
+                elif stream_event.type == "done":
+                    break
+        except Exception:
+            logger.exception("Error during A2A streaming for task %s", task_id)
+            has_error = True
+            error_msg = "Internal streaming error"
     finally:
         cancel_events.pop(task_id, None)
 
@@ -974,13 +976,13 @@ async def _stream_message(
         status_message.model_dump(exclude_none=True),
     ]
 
-    async with get_db_context(db_engine) as db_context:
-        await db_context.a2a_tasks.update_task_status(
-            task_id=task_id,
-            status=final_status,
-            artifacts_json=artifacts_json or None,
-            history_json=history,
-        )
+    db_context = Database(db_engine)
+    await db_context.a2a_tasks.update_task_status(
+        task_id=task_id,
+        status=final_status,
+        artifacts_json=artifacts_json or None,
+        history_json=history,
+    )
 
 
 # ===== Helpers =====

@@ -99,7 +99,11 @@ from family_assistant.services.deferred_tool_confirmation import (
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.services.user_identity import UserIdentityResolver
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import (
+    Database,
+    DatabaseExecutor,
+    DatabaseTransaction,
+)
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
     enqueue_task,
@@ -151,7 +155,7 @@ def _conservative_unknown_external_metadata(reason: str) -> TaintMetadata:
 
 
 async def _delegation_result_taint_metadata(
-    db_context: DatabaseContext,
+    db_context: DatabaseExecutor,
     run: DelegationRunDict,
 ) -> TaintMetadata:
     """Taint metadata for history rows that carry a delegation run's *result*.
@@ -204,7 +208,7 @@ async def _delegation_result_taint_metadata(
 
 
 async def _llm_callback_delivery_taint_metadata(
-    db_context: DatabaseContext,
+    db_context: Database,
     assistant_message_internal_id: int | None,
 ) -> TaintMetadata:
     """Taint metadata for an LLM-callback delivery copy of a turn's reply.
@@ -582,7 +586,7 @@ new_task_event = asyncio.Event()  # Event to notify worker of immediate tasks
 
 # Example Task Handler (no external dependencies)
 async def handle_log_message(
-    db_context: DatabaseContext,
+    db_context: Database,
     # ast-grep-ignore: no-dict-any - Debug handler that accepts arbitrary payloads for logging
     payload: dict[str, Any],
 ) -> None:
@@ -635,9 +639,9 @@ async def handle_llm_callback(
         raise ValueError("Missing ChatInterface dependency in context.")
     if not db_context:
         logger.error(
-            "DatabaseContext not found in ToolExecutionContext for handle_llm_callback."
+            "Database not found in ToolExecutionContext for handle_llm_callback."
         )
-        raise ValueError("Missing DatabaseContext dependency in context.")
+        raise ValueError("Missing Database dependency in context.")
     if not conversation_id:  # conversation_id should be set by _process_task
         logger.error(
             "Conversation ID not found in ToolExecutionContext for handle_llm_callback."
@@ -1177,13 +1181,10 @@ class TaskWorker:
                 )
             return
 
-        # Commit the running transition in its own transaction so the waiting
-        # caller sees it and no row lock is held across the long delegated turn.
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            started = await isolated_db.delegation_runs.mark_running(
-                delegation_id,
-                clock.now(),
-            )
+        started = await exec_context.db_context.delegation_runs.mark_running(
+            delegation_id,
+            clock.now(),
+        )
         if started is None:
             # The conditional mark_running matched no row: the run is no longer
             # queued — the stale-run reaper failed it, or a sibling worker
@@ -1207,23 +1208,22 @@ class TaskWorker:
             request_confirmation_callback = (
                 self._build_delegation_confirmation_callback(exec_context, run)
             )
-            async with exec_context.db_context.create_isolated_context() as run_db:
-                result = await target_service.handle_chat_interaction(
-                    db_context=run_db,
-                    interface_type=run["interface_type"],
-                    conversation_id=run["conversation_id"],
-                    trigger_content_parts=content_parts,
-                    trigger_interface_message_id=None,
-                    user_name=run["user_name"] or exec_context.user_name,
-                    user_id=run["user_id"],
-                    replied_to_interface_id=None,
-                    chat_interface=chat_interface,
-                    chat_interfaces=exec_context.chat_interfaces,
-                    confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                    request_confirmation_callback=request_confirmation_callback,
-                    subconversation_id=run["subconversation_id"],
-                    initial_taint_sources=_taint_sources_from_delegation_run(run),
-                )
+            result = await target_service.handle_chat_interaction(
+                db_context=exec_context.db_context,
+                interface_type=run["interface_type"],
+                conversation_id=run["conversation_id"],
+                trigger_content_parts=content_parts,
+                trigger_interface_message_id=None,
+                user_name=run["user_name"] or exec_context.user_name,
+                user_id=run["user_id"],
+                replied_to_interface_id=None,
+                chat_interface=chat_interface,
+                chat_interfaces=exec_context.chat_interfaces,
+                confirmation_ui_managers=exec_context.confirmation_ui_managers,
+                request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=run["subconversation_id"],
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
+            )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught
             # here: it propagates so the task is retried, and the retry's
@@ -1257,20 +1257,19 @@ class TaskWorker:
         """
         clock = exec_context.clock or self.clock
         completed_at = clock.now()
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            if result.error_traceback:
-                terminal_run = await isolated_db.delegation_runs.mark_failed(
-                    delegation_id=delegation_id,
-                    error=result.error_traceback,
-                    completed_at=completed_at,
-                )
-            else:
-                terminal_run = await isolated_db.delegation_runs.mark_completed(
-                    delegation_id=delegation_id,
-                    result_text=result.text_reply,
-                    result_attachment_ids=result.attachment_ids or [],
-                    completed_at=completed_at,
-                )
+        if result.error_traceback:
+            terminal_run = await exec_context.db_context.delegation_runs.mark_failed(
+                delegation_id=delegation_id,
+                error=result.error_traceback,
+                completed_at=completed_at,
+            )
+        else:
+            terminal_run = await exec_context.db_context.delegation_runs.mark_completed(
+                delegation_id=delegation_id,
+                result_text=result.text_reply,
+                result_attachment_ids=result.attachment_ids or [],
+                completed_at=completed_at,
+            )
         if terminal_run is None:
             # Already terminal (a concurrent reaper/poll won) or gone; the winner
             # delivers the notification.
@@ -1305,15 +1304,12 @@ class TaskWorker:
         remote_context_id = target_service.remote_context_id(
             run["conversation_id"], run["subconversation_id"]
         )
-        # Claim queued -> awaiting_remote (NULL id) before submit; the real id is
-        # reconciled from the submit response in _after_submission.
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            awaiting = await isolated_db.delegation_runs.mark_awaiting_remote(
-                delegation_id,
-                remote_task_id=None,
-                remote_context_id=remote_context_id,
-                started_at=clock.now(),
-            )
+        awaiting = await exec_context.db_context.delegation_runs.mark_awaiting_remote(
+            delegation_id,
+            remote_task_id=None,
+            remote_context_id=remote_context_id,
+            started_at=clock.now(),
+        )
         if awaiting is None:
             # No longer queued — the reaper failed it or a sibling worker claimed
             # it first. Do not submit.
@@ -1409,12 +1405,9 @@ class TaskWorker:
         delegation_id = run["delegation_id"]
         # Bump in its own committed transaction so the delegation_runs row lock is
         # released before the re-submit's reconcile (update_remote_task) touches
-        # the same row from a separate isolated context — otherwise the two
-        # contend on the row and block on PostgreSQL.
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            attempts = await isolated_db.delegation_runs.bump_poll_attempt(
-                delegation_id, clock.now()
-            )
+        attempts = await exec_context.db_context.delegation_runs.bump_poll_attempt(
+            delegation_id, clock.now()
+        )
         logger.warning("Re-submitting remote delegation %s: %s.", delegation_id, reason)
         await self._resubmit_awaiting_remote(
             exec_context,
@@ -1492,12 +1485,11 @@ class TaskWorker:
         # Persist the remote-assigned id (the run was claimed with a NULL id, or
         # a re-submit produced a new one) so polling/cancel target the real task.
         if submission.remote_task_id != run["remote_task_id"]:
-            async with exec_context.db_context.create_isolated_context() as isolated_db:
-                await isolated_db.delegation_runs.update_remote_task(
-                    delegation_id,
-                    remote_task_id=submission.remote_task_id,
-                    remote_context_id=submission.remote_context_id,
-                )
+            await exec_context.db_context.delegation_runs.update_remote_task(
+                delegation_id,
+                remote_task_id=submission.remote_task_id,
+                remote_context_id=submission.remote_context_id,
+            )
 
         if submission.terminal_result is not None:
             # The remote returned a terminal task on submit; no polling needed.
@@ -1530,14 +1522,13 @@ class TaskWorker:
             "conversation_id": run["conversation_id"],
             "user_name": run["user_name"] or exec_context.user_name,
         }
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            await isolated_db.tasks.enqueue(
-                task_id=task_id,
-                task_type=DELEGATION_POLL_TASK_TYPE,
-                payload=payload,
-                scheduled_at=clock.now() + timedelta(seconds=delay_seconds),
-                max_retries_override=3,
-            )
+        await exec_context.db_context.tasks.enqueue(
+            task_id=task_id,
+            task_type=DELEGATION_POLL_TASK_TYPE,
+            payload=payload,
+            scheduled_at=clock.now() + timedelta(seconds=delay_seconds),
+            max_retries_override=3,
+        )
 
     async def handle_delegation_poll(
         self,
@@ -1724,15 +1715,14 @@ class TaskWorker:
             "running_timeout_seconds", DELEGATION_RUN_STALE_SECONDS
         )
         created_before = now - timedelta(seconds=running_timeout_seconds)
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            reaped = await isolated_db.delegation_runs.reap_stale(
-                now=now,
-                created_before=created_before,
-                error=(
-                    "The delegated run did not complete within the allowed time "
-                    "and was marked failed."
-                ),
-            )
+        reaped = await exec_context.db_context.delegation_runs.reap_stale(
+            now=now,
+            created_before=created_before,
+            error=(
+                "The delegated run did not complete within the allowed time "
+                "and was marked failed."
+            ),
+        )
         if reaped:
             logger.warning(
                 "Reaped %d stale delegation run(s) older than %.0fs.",
@@ -1758,10 +1748,11 @@ class TaskWorker:
         # force-notify whose delivery failed leaves a terminal run notified_at
         # NULL with no owning task left to retry it. The completed_at gate keeps
         # this from racing a live inline caller within its short handoff window.
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            unnotified = await isolated_db.delegation_runs.find_terminal_unnotified(
+        unnotified = (
+            await exec_context.db_context.delegation_runs.find_terminal_unnotified(
                 completed_before=created_before
             )
+        )
         if unnotified:
             logger.warning(
                 "Recovering %d terminal delegation run(s) left unnotified.",
@@ -1782,16 +1773,15 @@ class TaskWorker:
         retries) gets a fresh poll re-enqueued so it is not stuck until the cap.
         A run past its cap is failed (CAS) + the remote cancelled + notified.
         """
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            awaiting = await isolated_db.delegation_runs.list_awaiting_remote()
-            # Delegation ids that already have a live (pending/processing) poll
-            # task, so we re-enqueue only genuinely lost polls (no multiplication).
-            live_poll_tasks = await isolated_db.tasks.get_all(
-                task_type=DELEGATION_POLL_TASK_TYPE, status="pending", limit=500
-            )
-            live_poll_tasks += await isolated_db.tasks.get_all(
-                task_type=DELEGATION_POLL_TASK_TYPE, status="processing", limit=500
-            )
+        awaiting = await exec_context.db_context.delegation_runs.list_awaiting_remote()
+        # Delegation ids that already have a live (pending/processing) poll
+        # task, so we re-enqueue only genuinely lost polls (no multiplication).
+        live_poll_tasks = await exec_context.db_context.tasks.get_all(
+            task_type=DELEGATION_POLL_TASK_TYPE, status="pending", limit=500
+        )
+        live_poll_tasks += await exec_context.db_context.tasks.get_all(
+            task_type=DELEGATION_POLL_TASK_TYPE, status="processing", limit=500
+        )
         polled_ids: set[str] = set()
         for task in live_poll_tasks:
             payload = task.get("payload")
@@ -1841,15 +1831,14 @@ class TaskWorker:
             # Fail FIRST via the non-terminal CAS so we never clobber a terminal
             # result a live poll has just written; only if we won the transition
             # do we cancel the remote and notify.
-            async with exec_context.db_context.create_isolated_context() as isolated_db:
-                failed = await isolated_db.delegation_runs.mark_failed(
-                    delegation_id=run["delegation_id"],
-                    error=(
-                        "The remote profile did not finish within the allowed "
-                        "time and was cancelled."
-                    ),
-                    completed_at=now,
-                )
+            failed = await exec_context.db_context.delegation_runs.mark_failed(
+                delegation_id=run["delegation_id"],
+                error=(
+                    "The remote profile did not finish within the allowed "
+                    "time and was cancelled."
+                ),
+                completed_at=now,
+            )
             if failed is None:
                 # A poll finalized this run between the snapshot and now.
                 continue
@@ -1964,12 +1953,11 @@ class TaskWorker:
     ) -> None:
         """Mark a delegation run failed (committed immediately) and notify."""
         clock = exec_context.clock or self.clock
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            run = await isolated_db.delegation_runs.mark_failed(
-                delegation_id=delegation_id,
-                error=error,
-                completed_at=clock.now(),
-            )
+        run = await exec_context.db_context.delegation_runs.mark_failed(
+            delegation_id=delegation_id,
+            error=error,
+            completed_at=clock.now(),
+        )
         if run is not None:
             await self._notify_delegation_if_needed(exec_context, run)
 
@@ -2031,70 +2019,72 @@ class TaskWorker:
 
         message_text = self._delegation_notification_text(run)
         attachments = self._delegation_notification_attachments(run)
-        async with exec_context.db_context.create_isolated_context() as isolated_db:
-            notification_taint_metadata = await _delegation_result_taint_metadata(
-                isolated_db, run
+        interface_type = run["interface_type"]
+
+        notification_taint_metadata = await _delegation_result_taint_metadata(
+            exec_context.db_context, run
+        )
+        should_notify = interface_type in _HISTORY_NOTIFICATION_INTERFACES
+
+        # Deliver before recording, and record in one transaction afterwards.
+        # A transaction may not span the send: interfaces resolve targets and
+        # fetch attachment payloads from their own handle while sending, which
+        # the ambient-transaction guard rejects. Sending first keeps the
+        # contract this ordering exists to protect -- a failed send leaves
+        # notified_at NULL for retry, with no dangling history row -- without a
+        # transaction ever being open across the interface call.
+        sent_message_id: str | None = None
+        if not should_notify:
+            chat_interface = self._chat_interface_for_interface(
+                exec_context,
+                interface_type,
             )
-            message_internal_id = await isolated_db.message_history.add_message(
+            if chat_interface is None:
+                raise RuntimeError(f"No chat interface available for {interface_type}")
+            sent_message_id = await chat_interface.send_message(
+                conversation_id=run["conversation_id"],
+                text=message_text,
+                parse_mode=None,
+                attachment_ids=run["result_attachment_ids_json"] or None,
+                on_behalf_of_user_id=run["user_id"],
+                taint_metadata=notification_taint_metadata,
+            )
+            if sent_message_id is None:
+                raise DelegationNotificationError(
+                    f"Failed to deliver delegation notification for "
+                    f"{run['delegation_id']} via {interface_type}."
+                )
+
+        async def _record_notification(txn: DatabaseTransaction) -> int | None:
+            message_internal_id = await txn.message_history.add_message(
                 AssistantMessage(
                     content=message_text,
                     taint_metadata=notification_taint_metadata,
                 ),
-                interface_type=run["interface_type"],
+                interface_type=interface_type,
                 conversation_id=run["conversation_id"],
                 timestamp=clock.now(),
                 attachments=attachments,
+                interface_message_id=sent_message_id,
             )
-
-            if run["interface_type"] in _HISTORY_NOTIFICATION_INTERFACES:
-                await self._push_notify_delegation_completion(
-                    isolated_db,
-                    run,
-                    message_text,
-                )
-                self._tickle_stream_hub_on_commit(
-                    isolated_db,
-                    run["conversation_id"],
-                    user_id=run["user_id"],
-                )
-            else:
-                chat_interface = self._chat_interface_for_interface(
-                    exec_context,
-                    run["interface_type"],
-                )
-                if chat_interface is None:
-                    raise RuntimeError(
-                        f"No chat interface available for {run['interface_type']}"
-                    )
-                sent_message_id = await chat_interface.send_message(
-                    conversation_id=run["conversation_id"],
-                    text=message_text,
-                    parse_mode=None,
-                    attachment_ids=run["result_attachment_ids_json"] or None,
-                    on_behalf_of_user_id=run["user_id"],
-                    taint_metadata=notification_taint_metadata,
-                )
-                if sent_message_id is None:
-                    # Delivery failed (invalid chat, Bot API error, ...). Roll back
-                    # this isolated transaction so the message-history row is undone
-                    # and notified_at stays NULL; the run is retried via the
-                    # terminal-on-entry re-notification path rather than being
-                    # recorded as delivered.
-                    raise DelegationNotificationError(
-                        f"Failed to deliver delegation notification for "
-                        f"{run['delegation_id']} via {run['interface_type']}."
-                    )
-                if message_internal_id is not None:
-                    await isolated_db.message_history.update_interface_id(
-                        internal_id=message_internal_id,
-                        interface_message_id=sent_message_id,
-                    )
-
-            await isolated_db.delegation_runs.mark_notified(
+            await txn.delegation_runs.mark_notified(
                 delegation_id=run["delegation_id"],
                 result_message_internal_id=message_internal_id,
                 notified_at=clock.now(),
             )
+            return message_internal_id
+
+        await exec_context.db_context.atomic(_record_notification)
+        if should_notify:
+            await self._push_notify_delegation_completion(
+                exec_context.db_context,
+                run,
+                message_text,
+            )
+        self._tickle_stream_hub_on_commit(
+            run["conversation_id"],
+            user_id=run["user_id"],
+        )
 
     def _source_service_for_delegation(
         self,
@@ -2127,15 +2117,14 @@ class TaskWorker:
         )
         trigger_text = self._delegation_wakeup_text(run)
         source_subconversation_id = run["source_subconversation_id"]
-        async with exec_context.db_context.create_isolated_context() as wake_db:
-            wake_turn_id = str(uuid.uuid4())
-            # The wakeup data message carries the delegated result, so it must be
-            # labeled with the delegated run's own taint (folded with the parent's)
-            # rather than the parent taint alone.
-            wakeup_data_taint_metadata = await _delegation_result_taint_metadata(
-                wake_db, run
-            )
-            data_message_internal_id = await wake_db.message_history.add_message(
+        wake_turn_id = str(uuid.uuid4())
+
+        # Phase 1: Commit the wakeup message before the LLM turn.
+        wakeup_data_taint_metadata = await _delegation_result_taint_metadata(
+            exec_context.db_context, run
+        )
+        data_message_internal_id = (
+            await exec_context.db_context.message_history.add_message(
                 UserMessage(
                     content=self._delegation_wakeup_data_text(run),
                     taint_metadata=wakeup_data_taint_metadata,
@@ -2150,71 +2139,95 @@ class TaskWorker:
                 subconversation_id=source_subconversation_id,
                 is_internal=True,
             )
-            if data_message_internal_id is None:
-                raise DelegationNotificationError(
-                    f"Failed to persist wakeup data for delegation "
-                    f"{run['delegation_id']}."
-                )
-            result = await source_service.handle_chat_interaction(
-                db_context=wake_db,
-                interface_type=run["interface_type"],
-                conversation_id=run["conversation_id"],
-                trigger_content_parts=[{"type": "text", "text": trigger_text}],
-                trigger_interface_message_id=None,
-                user_name=run["user_name"] or exec_context.user_name,
-                user_id=run["user_id"],
-                replied_to_interface_id=None,
-                chat_interface=chat_interface,
-                chat_interfaces=exec_context.chat_interfaces,
-                confirmation_ui_managers=exec_context.confirmation_ui_managers,
-                request_confirmation_callback=build_deferred_confirmation_callback(
-                    target_user_id=run["user_id"],
-                    source_prefix=("From a completed delegated task — approve to run:"),
-                    missing_owner_message=lambda tool_name: (
-                        "This delegated task has no recorded owner, so the "
-                        f"confirm-gated tool '{tool_name}' cannot be approved and "
-                        "was not run."
-                    ),
-                ),
-                trigger_attachments=self._delegation_notification_attachments(run),
-                subconversation_id=source_subconversation_id,
-                thread_root_id=data_message_internal_id,
-                trigger_is_internal=True,
-                pinned_history_message_ids=[data_message_internal_id],
-                trigger_role="system",
-                save_history_with_isolated_context=False,
-                turn_id=wake_turn_id,
-                initial_taint_sources=_taint_sources_from_delegation_run(run),
+        )
+        if data_message_internal_id is None:
+            raise DelegationNotificationError(
+                f"Failed to persist wakeup data for delegation {run['delegation_id']}."
             )
+
+        # Phase 2: Run the LLM turn untransacted.
+        result = await source_service.handle_chat_interaction(
+            db_context=exec_context.db_context,
+            interface_type=run["interface_type"],
+            conversation_id=run["conversation_id"],
+            trigger_content_parts=[{"type": "text", "text": trigger_text}],
+            trigger_interface_message_id=None,
+            user_name=run["user_name"] or exec_context.user_name,
+            user_id=run["user_id"],
+            replied_to_interface_id=None,
+            chat_interface=chat_interface,
+            chat_interfaces=exec_context.chat_interfaces,
+            confirmation_ui_managers=exec_context.confirmation_ui_managers,
+            request_confirmation_callback=build_deferred_confirmation_callback(
+                target_user_id=run["user_id"],
+                source_prefix=("From a completed delegated task — approve to run:"),
+                missing_owner_message=lambda tool_name: (
+                    "This delegated task has no recorded owner, so the "
+                    f"confirm-gated tool '{tool_name}' cannot be approved and "
+                    "was not run."
+                ),
+            ),
+            trigger_attachments=self._delegation_notification_attachments(run),
+            subconversation_id=source_subconversation_id,
+            thread_root_id=data_message_internal_id,
+            trigger_is_internal=True,
+            pinned_history_message_ids=[data_message_internal_id],
+            trigger_role="system",
+            turn_id=wake_turn_id,
+            initial_taint_sources=_taint_sources_from_delegation_run(run),
+        )
+
+        # Phase 3: deliver, then record the delivery and mark notified atomically.
+        sent_message_id = await self._send_source_profile_delegation_response(
+            run, result, chat_interface
+        )
+
+        async def _deliver_and_notify(txn: DatabaseTransaction) -> int | None:
             message_internal_id = (
                 await self._deliver_source_profile_delegation_response(
-                    wake_db,
+                    txn,
                     run,
                     result,
                     chat_interface,
                     clock,
                     wake_turn_id,
                     data_message_internal_id,
+                    sent_message_id,
                 )
             )
-            await wake_db.delegation_runs.mark_notified(
+            await txn.delegation_runs.mark_notified(
                 delegation_id=run["delegation_id"],
                 result_message_internal_id=message_internal_id,
                 notified_at=clock.now(),
             )
             return message_internal_id
 
+        message_internal_id = await exec_context.db_context.atomic(_deliver_and_notify)
+        if run["interface_type"] in _HISTORY_NOTIFICATION_INTERFACES:
+            delivery_text = result.text_reply or "Delegated task finished."
+            await self._push_notify_delegation_completion(
+                exec_context.db_context,
+                run,
+                delivery_text,
+            )
+        self._tickle_stream_hub_on_commit(
+            run["conversation_id"],
+            user_id=run["user_id"],
+        )
+        return message_internal_id
+
     async def _deliver_source_profile_delegation_response(
         self,
-        db_context: DatabaseContext,
+        db_context: DatabaseExecutor,
         run: DelegationRunDict,
         result: ChatInteractionResult,
         chat_interface: ChatInterface | None,
         clock: Clock,
         wake_turn_id: str,
         thread_root_id: int,
+        sent_message_id: str | None,
     ) -> int | None:
-        """Deliver the source profile's response to a terminal delegation wakeup."""
+        """Record the source profile's response to a terminal delegation wakeup."""
         if result.has_error:
             raise DelegationNotificationError(
                 f"Source profile '{run['source_profile_id']}' failed while handling "
@@ -2310,18 +2323,40 @@ class TaskWorker:
                 f"{run['delegation_id']}."
             )
 
+        if sent_message_id is not None:
+            await db_context.message_history.update_interface_id(
+                internal_id=visible_message_internal_id,
+                interface_message_id=sent_message_id,
+            )
+        return visible_message_internal_id
+
+    async def _send_source_profile_delegation_response(
+        self,
+        run: DelegationRunDict,
+        result: ChatInteractionResult,
+        chat_interface: ChatInterface | None,
+    ) -> str | None:
+        """Deliver the source profile's response, before anything is recorded.
+
+        Interfaces resolve targets and fetch attachment payloads from their own
+        database handle while sending, which the ambient-transaction guard
+        rejects -- so the send happens before the recording transaction opens.
+        A failure here raises, leaving notified_at NULL for retry with nothing
+        written.
+        """
+        if result.has_error:
+            raise DelegationNotificationError(
+                f"Source profile '{run['source_profile_id']}' failed while handling "
+                f"delegation {run['delegation_id']} wakeup."
+            )
+        if not (result.text_reply or self._source_delivery_attachment_ids(run, result)):
+            raise DelegationNotificationError(
+                f"Source profile '{run['source_profile_id']}' produced no response "
+                f"for delegation {run['delegation_id']}."
+            )
+
         if run["interface_type"] in _HISTORY_NOTIFICATION_INTERFACES:
-            await self._push_notify_delegation_completion(
-                db_context,
-                run,
-                delivery_text,
-            )
-            self._tickle_stream_hub_on_commit(
-                db_context,
-                run["conversation_id"],
-                user_id=run["user_id"],
-            )
-            return visible_message_internal_id
+            return None
 
         if chat_interface is None:
             raise RuntimeError(
@@ -2329,9 +2364,9 @@ class TaskWorker:
             )
         sent_message_id = await chat_interface.send_message(
             conversation_id=run["conversation_id"],
-            text=delivery_text,
+            text=result.text_reply or "Delegated task finished.",
             parse_mode=None,
-            attachment_ids=delivery_attachment_ids,
+            attachment_ids=self._source_delivery_attachment_ids(run, result),
             on_behalf_of_user_id=run["user_id"],
         )
         if sent_message_id is None:
@@ -2339,11 +2374,7 @@ class TaskWorker:
                 f"Failed to deliver source profile response for delegation "
                 f"{run['delegation_id']} via {run['interface_type']}."
             )
-        await db_context.message_history.update_interface_id(
-            internal_id=visible_message_internal_id,
-            interface_message_id=sent_message_id,
-        )
-        return visible_message_internal_id
+        return sent_message_id
 
     @staticmethod
     def _source_delivery_attachment_ids(
@@ -2450,7 +2481,7 @@ class TaskWorker:
 
     async def _push_notify_delegation_completion(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         run: DelegationRunDict,
         message_text: str,
     ) -> None:
@@ -2478,15 +2509,14 @@ class TaskWorker:
 
     def _tickle_stream_hub_on_commit(
         self,
-        db_context: DatabaseContext,
         conversation_id: str,
         user_id: str | None = None,
     ) -> None:
-        """Nudge open web streams to reload once the message commits.
+        """Nudge open web streams to reload when the message becomes visible.
 
-        Two nudges fire, both scheduled from an ``on_commit`` hook so they only
-        run after the surrounding transaction commits (the new row must be
-        visible to a refetch). Strong references are held until they complete.
+        Two nudges fire as this method executes, since the message write is
+        already durable when the surrounding transaction commits. Strong
+        references are held until they complete.
 
         * A content-free ``message`` event on the conversation's own stream, so
           a client with that thread open refetches its history. This mirrors
@@ -2502,37 +2532,34 @@ class TaskWorker:
         hub = self.stream_hub
         loop = asyncio.get_running_loop()
 
-        def _schedule_publish() -> None:
-            task = loop.create_task(
-                hub.publish(
+        task = loop.create_task(
+            hub.publish(
+                conversation_id,
+                "message",
+                turn_id=None,
+                payload={
+                    "conversation_id": conversation_id,
+                    "new_messages": True,
+                },
+            )
+        )
+        self._hub_publish_tasks.add(task)
+        task.add_done_callback(self._hub_publish_tasks.discard)
+
+        if user_id:
+            activity_task = loop.create_task(
+                hub.publish_activity(
                     conversation_id,
-                    "message",
-                    turn_id=None,
-                    payload={
-                        "conversation_id": conversation_id,
-                        "new_messages": True,
-                    },
+                    user_id=user_id,
+                    reason="delegation",
                 )
             )
-            self._hub_publish_tasks.add(task)
-            task.add_done_callback(self._hub_publish_tasks.discard)
-
-            if user_id:
-                activity_task = loop.create_task(
-                    hub.publish_activity(
-                        conversation_id,
-                        user_id=user_id,
-                        reason="delegation",
-                    )
-                )
-                self._hub_publish_tasks.add(activity_task)
-                activity_task.add_done_callback(self._hub_publish_tasks.discard)
-
-        db_context.on_commit(_schedule_publish)
+            self._hub_publish_tasks.add(activity_task)
+            activity_task.add_done_callback(self._hub_publish_tasks.discard)
 
     async def _handle_recurrence(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         task: TaskDict,
     ) -> None:
         """Handles scheduling the next instance of a recurring task."""
@@ -2700,7 +2727,7 @@ class TaskWorker:
 
     async def _enqueue_schedule_automation_advance(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         request: ScheduleAutomationAdvanceRequest,
     ) -> None:
         """Persist retryable work to advance a terminal schedule automation task."""
@@ -2722,7 +2749,7 @@ class TaskWorker:
 
     async def _flush_schedule_automation_advance_outbox(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         source_task_id: str,
     ) -> bool:
         """Drain one durable schedule advancement outbox into an advance task."""
@@ -2744,7 +2771,7 @@ class TaskWorker:
         await self._enqueue_schedule_automation_advance(db_context, request)
         updated_payload = dict(payload)
         updated_payload.pop(SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY, None)
-        await db_context.execute_with_retry(
+        await db_context.execute(
             update(tasks_table)
             .where(tasks_table.c.task_id == source_task_id)
             .values(payload=updated_payload)
@@ -2753,7 +2780,7 @@ class TaskWorker:
 
     async def _drain_schedule_automation_advance_outbox(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
     ) -> int:
         """Flush persisted schedule advancement outbox entries from terminal source tasks."""
         outbox_exists = (
@@ -2761,7 +2788,7 @@ class TaskWorker:
                 tasks_table.c.payload,
                 f"$.{SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY}",
             ).is_not(None)
-            if db_context.engine.dialect.name == "sqlite"
+            if db_context.dialect_name == "sqlite"
             else tasks_table.c.payload[SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY].is_not(
                 None
             )
@@ -2793,7 +2820,7 @@ class TaskWorker:
 
     async def _handle_schedule_automation_task_terminal(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         task: TaskDict,
     ) -> None:
         """Persist retryable work to advance a terminal schedule automation task."""
@@ -2835,7 +2862,7 @@ class TaskWorker:
 
     async def _process_task(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         task: TaskDict,
         wake_up_event: asyncio.Event,
     ) -> ScheduleAutomationAdvanceRequest | None:
@@ -3045,7 +3072,7 @@ class TaskWorker:
 
     async def _handle_task_failure(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         task: TaskDict,
         handler_exc: Exception,
     ) -> ScheduleAutomationAdvanceRequest | None:
@@ -3137,7 +3164,7 @@ class TaskWorker:
 
     async def _notify_task_failure(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         task: TaskDict,
     ) -> None:
         """Push-notify the conversation owner that a task failed after its retries."""
@@ -3163,7 +3190,7 @@ class TaskWorker:
 
     async def _enqueue_script_error_notification(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         task: TaskDict,
         error_str: str,
     ) -> None:
@@ -3371,38 +3398,36 @@ class TaskWorker:
                 if not self.engine:
                     raise RuntimeError("Database engine not initialized")
                 # Split task processing into separate transactions for better isolation
-                async with get_db_context(
+                outbox_context = Database(
                     engine=self.engine,
-                ) as outbox_context:
-                    drained_count = (
-                        await self._drain_schedule_automation_advance_outbox(
-                            outbox_context
-                        )
-                    )
+                )
+                drained_count = await self._drain_schedule_automation_advance_outbox(
+                    outbox_context
+                )
                 if drained_count > 0:
                     self._update_last_activity()
                     continue
 
                 # Transaction 1: Dequeue task (commits immediately)
                 task = None
-                async with get_db_context(
+                dequeue_context = Database(
                     engine=self.engine,
-                ) as dequeue_context:
-                    logger.debug(
-                        "Polling for tasks on DB context: %s",
-                        dequeue_context.engine.url,
+                )
+                logger.debug(
+                    "Polling for tasks on DB context: %s",
+                    dequeue_context.engine.url,
+                )
+                try:  # Inner try for dequeue
+                    task = await dequeue_context.tasks.dequeue(
+                        worker_id=self.worker_id,
+                        task_types=task_types_handled,
+                        current_time=self.clock.now(),  # Pass current time from worker's clock
                     )
-                    try:  # Inner try for dequeue
-                        task = await dequeue_context.tasks.dequeue(
-                            worker_id=self.worker_id,
-                            task_types=task_types_handled,
-                            current_time=self.clock.now(),  # Pass current time from worker's clock
-                        )
-                    except Exception as e:
-                        logger.exception(
-                            f"Error during task dequeue for worker {self.worker_id}: {e}"
-                        )
-                        # Continue to next iteration without processing
+                except Exception as e:
+                    logger.exception(
+                        f"Error during task dequeue for worker {self.worker_id}: {e}"
+                    )
+                    # Continue to next iteration without processing
 
                 # Process task in separate transaction if one was dequeued
                 if task:
@@ -3415,19 +3440,19 @@ class TaskWorker:
                     self._update_last_activity()  # Update activity when starting task processing
                     try:  # Inner try for task processing
                         # Transaction 2: Process task and update status (commits immediately)
-                        async with get_db_context(
+                        process_context = Database(
                             engine=self.engine,
-                        ) as process_context:
-                            advance_request = await self._process_task(
-                                process_context, task, wake_up_event
-                            )
+                        )
+                        advance_request = await self._process_task(
+                            process_context, task, wake_up_event
+                        )
                         if advance_request is not None:
-                            async with get_db_context(
+                            advance_context = Database(
                                 engine=self.engine,
-                            ) as advance_context:
-                                await self._flush_schedule_automation_advance_outbox(
-                                    advance_context, advance_request.source_task_id
-                                )
+                            )
+                            await self._flush_schedule_automation_advance_outbox(
+                                advance_context, advance_request.source_task_id
+                            )
                         self._update_last_activity()  # Update after successful task processing
                         # After successful task processing, immediately continue to check for more tasks
                         # This eliminates unnecessary delays between tasks
@@ -4728,7 +4753,7 @@ async def handle_reindex_document(
 
     db_context = exec_context.db_context
     if not db_context:
-        raise ValueError("Missing DatabaseContext dependency in context.")
+        raise ValueError("Missing Database dependency in context.")
 
     # 1. Delete existing embeddings
     await db_context.vector.delete_document_embeddings(document_id)

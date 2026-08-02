@@ -114,7 +114,7 @@ class EventsRepository(BaseRepository):
                         last_execution_at=now,
                     )
                 )
-                await self._db.execute_with_retry(stmt)
+                await self._db.execute(stmt)
                 return True, None
 
             # Check if under limit
@@ -133,7 +133,7 @@ class EventsRepository(BaseRepository):
                     last_execution_at=now,
                 )
             )
-            await self._db.execute_with_retry(stmt)
+            await self._db.execute(stmt)
 
             return True, None
 
@@ -202,7 +202,7 @@ class EventsRepository(BaseRepository):
                 .returning(event_listeners_table.c.id)
             )
 
-            result = await self._db.execute_with_retry(stmt)
+            result = await self._db.execute(stmt)
             listener_id = result.scalar_one()
 
             self._logger.info(
@@ -319,8 +319,8 @@ class EventsRepository(BaseRepository):
             .values(enabled=enabled)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        updated_count = result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        updated_count = result.rowcount
 
         if updated_count > 0:
             status = "enabled" if enabled else "disabled"
@@ -361,8 +361,8 @@ class EventsRepository(BaseRepository):
             & (event_listeners_table.c.conversation_id == conversation_id)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        deleted_count = result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        deleted_count = result.rowcount
 
         if deleted_count > 0:
             self._logger.info(
@@ -453,8 +453,8 @@ class EventsRepository(BaseRepository):
             .values(**update_values)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        updated_count = result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        updated_count = result.rowcount
 
         if updated_count > 0:
             self._logger.info(
@@ -495,9 +495,8 @@ class EventsRepository(BaseRepository):
             .returning(recent_events_table.c.id)
         )
 
-        result = await self._db.execute_with_retry(stmt)
-        row = result.one()  # type: ignore[attr-defined]
-        event_id = row[0]
+        result = await self._db.execute(stmt)
+        event_id = result.scalar_one()
 
         self._logger.debug(f"Recorded {source_type.value} event with ID {event_id}")
         return event_id
@@ -567,7 +566,7 @@ class EventsRepository(BaseRepository):
                 created_at=datetime.now(UTC),
             )
 
-            await self._db.execute_with_retry(stmt)
+            await self._db.execute(stmt)
 
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in store_event: {e}")
@@ -635,8 +634,8 @@ class EventsRepository(BaseRepository):
                 recent_events_table.c.created_at < cutoff_time
             )
 
-            result = await self._db.execute_with_retry(stmt)
-            deleted_count = result.rowcount  # type: ignore[attr-defined]
+            result = await self._db.execute(stmt)
+            deleted_count = result.rowcount
 
             self._logger.info(
                 f"Cleaned up {deleted_count} events older than {retention_hours} hours"
@@ -673,8 +672,8 @@ class EventsRepository(BaseRepository):
                 & (event_listeners_table.c.last_execution_at < cutoff_time)
             )
 
-            result = await self._db.execute_with_retry(stmt)
-            deleted_count = result.rowcount  # type: ignore[attr-defined]
+            result = await self._db.execute(stmt)
+            deleted_count = result.rowcount
 
             if deleted_count > 0:
                 self._logger.info(
@@ -806,7 +805,7 @@ class EventsRepository(BaseRepository):
                 return None
 
             # Check if we're using SQLite or PostgreSQL
-            is_sqlite = self._db.engine.dialect.name == "sqlite"
+            is_sqlite = self._db.dialect_name == "sqlite"
 
             if is_sqlite:
                 # For SQLite, we need to use LIKE on the JSON string representation

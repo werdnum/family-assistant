@@ -23,7 +23,7 @@ from family_assistant.indexing.ingestion import process_document_ingestion_reque
 from family_assistant.indexing.message_history_indexer import (
     MESSAGE_HISTORY_SOURCE_TYPE,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import DocumentUploadResponse
@@ -59,7 +59,7 @@ class DocumentListResponse(BaseModel):
 
 @documents_api_router.get("/")
 async def list_documents(
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     limit: int = 100,
     offset: int = 0,
     source_type: str | None = None,
@@ -99,7 +99,7 @@ async def list_documents(
 
 @documents_api_router.get("/{document_id}")
 async def get_document(
-    document_id: int, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    document_id: int, db_context: Annotated[Database, Depends(get_db)]
 ) -> dict:
     """Get a document by ID with detailed information including embeddings."""
     record = await get_document_by_id(db_context, document_id)
@@ -191,7 +191,7 @@ async def get_document(
 )
 async def reindex_document(
     document_id: int,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """
     API endpoint to re-index a document.
@@ -241,7 +241,7 @@ async def upload_document(
         ),
     ],
     # Other dependencies
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     # Optional Form fields
     source_uri: Annotated[
         str | None,

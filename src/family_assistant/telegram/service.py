@@ -19,9 +19,6 @@ from family_assistant.telegram.interface import TelegramChatInterface
 from family_assistant.telegram.ui import TelegramConfirmationUIManager
 
 if TYPE_CHECKING:
-    import contextlib
-    from collections.abc import Callable
-
     from fastapi import FastAPI
 
     from family_assistant.config_models import AppConfig
@@ -32,7 +29,7 @@ if TYPE_CHECKING:
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
     )
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.tools.types import ConfirmationOutcome
 
 
@@ -53,9 +50,7 @@ class TelegramService:
         ],  # Registry of all services
         app_config: AppConfig,
         attachment_registry: AttachmentRegistry,  # Changed from AttachmentService
-        get_db_context_func: Callable[
-            ..., contextlib.AbstractAsyncContextManager[DatabaseContext]
-        ],
+        database: Database,
         confirmation_service: ConfirmationService | None = None,
         confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None,
         fastapi_app: FastAPI | None = None,  # FastAPI app for accessing app.state
@@ -69,7 +64,7 @@ class TelegramService:
             processing_services_registry: Dictionary of all ProcessingService instances.
             app_config: The main application configuration (typed AppConfig model).
             attachment_registry: The AttachmentRegistry instance for handling file attachments.
-            get_db_context_func: Async context manager function to get a DatabaseContext.
+            database: Handle for this deployment's database.
         """
         logger.info("Initializing TelegramService...")
         builder = (
@@ -158,7 +153,7 @@ class TelegramService:
             telegram_service=self,
             user_identity_resolver=self.user_identity_resolver,
             processing_service=processing_service,  # Pass default service to handler
-            get_db_context_func=get_db_context_func,
+            database=database,
             message_batcher=None,
             confirmation_manager=self.confirmation_manager,
         )

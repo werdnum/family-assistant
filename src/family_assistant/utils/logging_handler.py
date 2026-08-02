@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.error_logs import error_logs_table
 
 
@@ -91,11 +91,11 @@ class SQLAlchemyErrorHandler(logging.Handler):
     async def _async_emit(self, record: logging.LogRecord) -> None:
         """Write log record to database."""
         try:
-            async with DatabaseContext(engine=self.engine) as db_context:
-                error_log = self._create_error_log_dict(record)
-                stmt = insert(error_logs_table).values(**error_log)
-                await db_context.execute_with_retry(stmt)
-                self.consecutive_failures = 0  # Reset on success
+            db_context = Database(engine=self.engine)
+            error_log = self._create_error_log_dict(record)
+            stmt = insert(error_logs_table).values(**error_log)
+            await db_context.execute(stmt)
+            self.consecutive_failures = 0  # Reset on success
         except Exception as e:
             self.consecutive_failures += 1
             # Log to stderr as fallback

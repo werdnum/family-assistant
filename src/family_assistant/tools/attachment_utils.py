@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 
 if TYPE_CHECKING:
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -64,9 +64,9 @@ async def fetch_attachment_object(
             f"Found attachment {attachment_id}: {metadata.description}, conversation_id: {metadata.conversation_id}"
         )
 
-        # Create a DatabaseContext getter for the ScriptAttachment
+        # Create a Database getter for the ScriptAttachment
         # Use the existing database context from the execution context to maintain transaction consistency
-        def db_context_getter() -> DatabaseContext:
+        def db_context_getter() -> Database:
             return context.db_context
 
         # Create and return ScriptAttachment object

@@ -28,7 +28,7 @@ from family_assistant.services.oauth_integration_state import (
     evaluate_oauth_integration_state,
 )
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.oauth_connections import (
     OAuthConnectionModel,
 )
@@ -61,7 +61,7 @@ class _RecordingNotificationDispatcher:
         user_identifier: str,
         title: str,
         body: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         *,
         metadata: object | None = None,
     ) -> None:
@@ -205,9 +205,9 @@ async def google_app(
     db_engine: AsyncEngine,
 ) -> AsyncGenerator[_GoogleTestApp]:
     """Build a minimal FastAPI app wired for the Google integration router."""
-    async with get_db_context(engine=db_engine) as temp_ctx:
-        await init_db(db_engine)
-        await temp_ctx.init_vector_db()
+    temp_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_ctx.init_vector_db()
 
     integration = _google_integration_config()
     google_server = _FakeGoogleServer()
@@ -273,8 +273,8 @@ async def _authorize_and_extract_state(
 async def _fetch_connection(
     db_engine: AsyncEngine, user_id: str
 ) -> OAuthConnectionModel | None:
-    async with get_db_context(engine=db_engine) as db:
-        return await db.oauth_connections.get_connection(user_id, "google")
+    db = Database(engine=db_engine)
+    return await db.oauth_connections.get_connection(user_id, "google")
 
 
 @pytest.mark.asyncio
@@ -668,9 +668,9 @@ async def test_api_token_auth_refused_for_session_only_routes(
     identity is rejected by ``get_current_session_user`` even though it would
     otherwise authenticate.
     """
-    async with get_db_context(engine=db_engine) as temp_ctx:
-        await init_db(db_engine)
-        await temp_ctx.init_vector_db()
+    temp_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_ctx.init_vector_db()
 
     integration = _google_integration_config()
     app = FastAPI()
@@ -743,9 +743,9 @@ async def test_uses_get_current_user_not_diagnostics_reader(
     with ``auth_service.auth_enabled`` True and no session/token, the request is
     rejected even when a diagnostics token is presented as a bearer header.
     """
-    async with get_db_context(engine=db_engine) as temp_ctx:
-        await init_db(db_engine)
-        await temp_ctx.init_vector_db()
+    temp_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_ctx.init_vector_db()
 
     monkeypatch.setenv("DIAGNOSTICS_READONLY_TOKEN", "diag-secret-token")
 

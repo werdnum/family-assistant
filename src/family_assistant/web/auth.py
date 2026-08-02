@@ -19,7 +19,7 @@ from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
 from family_assistant.storage.base import api_tokens_table
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -157,56 +157,56 @@ class AuthService:
         token_prefix = token_value[:8]
         token_secret_part = token_value[8:]
 
-        async with get_db_context(self.database_engine) as db:
-            query = select(api_tokens_table).where(
-                api_tokens_table.c.prefix == token_prefix,
-                api_tokens_table.c.token_type == "api",
+        db = Database(self.database_engine)
+        query = select(api_tokens_table).where(
+            api_tokens_table.c.prefix == token_prefix,
+            api_tokens_table.c.token_type == "api",
+        )
+        token_row = await db.fetch_one(query)
+
+        if not token_row:
+            logger.debug(f"API token with prefix {token_prefix} not found.")
+            return None
+
+        if not pwd_context.verify(token_secret_part, token_row["hashed_token"]):
+            logger.warning(
+                f"Invalid API token provided for prefix {token_prefix}."
+            )  # Potentially log user_identifier if available and safe
+            return None
+
+        if token_row["is_revoked"]:
+            logger.warning(
+                f"Attempt to use revoked API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
             )
-            token_row = await db.fetch_one(query)
+            return None
 
-            if not token_row:
-                logger.debug(f"API token with prefix {token_prefix} not found.")
-                return None
-
-            if not pwd_context.verify(token_secret_part, token_row["hashed_token"]):
-                logger.warning(
-                    f"Invalid API token provided for prefix {token_prefix}."
-                )  # Potentially log user_identifier if available and safe
-                return None
-
-            if token_row["is_revoked"]:
-                logger.warning(
-                    f"Attempt to use revoked API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
-                )
-                return None
-
-            now = datetime.now(UTC)
-            if token_row["expires_at"] and token_row["expires_at"] < now:
-                logger.warning(
-                    f"Attempt to use expired API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
-                )
-                return None
-
-            # Update last_used_at
-            update_query = (
-                update(api_tokens_table)
-                .where(api_tokens_table.c.id == token_row["id"])
-                .values(last_used_at=now)
+        now = datetime.now(UTC)
+        if token_row["expires_at"] and token_row["expires_at"] < now:
+            logger.warning(
+                f"Attempt to use expired API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
             )
-            await db.execute_with_retry(update_query)
-            # No need to commit explicitly if get_db_context handles transaction lifecycle
+            return None
 
-            logger.info(
-                f"API token authenticated for user: {token_row['user_identifier']} (Token ID: {token_row['id']})"
-            )
-            # Mimic OIDC userinfo structure for session consistency
-            return {
-                "sub": token_row["user_identifier"],
-                "name": token_row["user_identifier"],  # Or a display name if available
-                "email": token_row["user_identifier"],  # Or actual email if available
-                "source": "api_token",
-                "token_id": token_row["id"],
-            }
+        # Update last_used_at
+        update_query = (
+            update(api_tokens_table)
+            .where(api_tokens_table.c.id == token_row["id"])
+            .values(last_used_at=now)
+        )
+        await db.execute(update_query)
+        # No need to commit explicitly if Database handles transaction lifecycle
+
+        logger.info(
+            f"API token authenticated for user: {token_row['user_identifier']} (Token ID: {token_row['id']})"
+        )
+        # Mimic OIDC userinfo structure for session consistency
+        return {
+            "sub": token_row["user_identifier"],
+            "name": token_row["user_identifier"],  # Or a display name if available
+            "email": token_row["user_identifier"],  # Or actual email if available
+            "source": "api_token",
+            "token_id": token_row["id"],
+        }
 
     async def handle_login(self, request: Request) -> RedirectResponse:
         """Redirects the user to the OIDC provider for authentication."""
@@ -370,14 +370,12 @@ class AuthMiddleware:
                     from family_assistant.storage import (  # noqa: PLC0415 - deferred to avoid circular import at module level
                         api_tokens as api_tokens_storage,
                     )
-                    from family_assistant.storage.context import (  # noqa: PLC0415 - deferred to avoid circular import at module level
-                        get_db_context,
+                    from family_assistant.storage.database import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+                        Database,
                     )
 
-                    async with get_db_context(self.auth_service.database_engine) as db:
-                        is_valid = await api_tokens_storage.is_token_valid(
-                            db, api_token_id
-                        )
+                    db = Database(self.auth_service.database_engine)
+                    is_valid = await api_tokens_storage.is_token_valid(db, api_token_id)
                     self._token_valid_cache[cache_key] = {
                         "valid": is_valid,
                         "checked_at": now,

@@ -22,7 +22,7 @@ from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -289,18 +289,18 @@ async def test_download_state_history_success(
 
     # --- Simulate User Interaction ---
     user_message = "Can you download the history for temperature and humidity sensors?"
-    async with DatabaseContext(engine=db_engine) as db_context:
-        result = await processing_service.handle_chat_interaction(
-            db_context=db_context,
-            chat_interface=MagicMock(),
-            interface_type="test",
-            conversation_id=TEST_CHAT_ID,
-            trigger_content_parts=[{"type": "text", "text": user_message}],
-            trigger_interface_message_id="msg_ha_history_test",
-            user_name=TEST_USER_NAME,
-        )
-        final_reply = result.text_reply
-        error = result.error_traceback
+    db_context = Database(engine=db_engine)
+    result = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": user_message}],
+        trigger_interface_message_id="msg_ha_history_test",
+        user_name=TEST_USER_NAME,
+    )
+    final_reply = result.text_reply
+    error = result.error_traceback
 
     assert error is None, f"Error during interaction: {error}"
     assert final_reply and "history" in final_reply.lower(), (

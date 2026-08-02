@@ -51,7 +51,7 @@ from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
 from family_assistant.security.taint import InMemoryTurnTaintTracker
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.web.audio_utils import StatefulResampler
@@ -1271,63 +1271,61 @@ class AsteriskLiveHandler:
             )
 
             try:
-                async with get_db_context(self.database_engine) as db_context:
-                    exec_context = ToolExecutionContext(
-                        interface_type="telephone",
-                        conversation_id=self.conversation_id,
-                        user_name=self.extension or "Caller",
-                        user_id=None,
-                        turn_id=call_id,
-                        db_context=db_context,
-                        chat_interface=None,
-                        chat_interfaces=self.chat_interfaces,
-                        confirmation_ui_managers=self.confirmation_ui_managers,
-                        timezone=self.processing_service.service_config.timezone,
-                        processing_profile_id=self.processing_service.service_config.id,
-                        subconversation_id=None,
-                        request_confirmation_callback=None,
-                        processing_service=self.processing_service,
-                        clock=self.processing_service.clock,
-                        home_assistant_client=self.processing_service.home_assistant_client,
-                        event_sources=self.processing_service.event_sources,
-                        indexing_source=(
-                            cast(
-                                "IndexingSource | None",
-                                self.processing_service.event_sources.get("indexing"),
-                            )
-                            if self.processing_service.event_sources
-                            else None
-                        ),
-                        attachment_registry=self.processing_service.attachment_registry,
-                        camera_backend=self.processing_service.camera_backend,
-                        tools_provider=self.processing_service.tools_provider,
-                        visibility_grants=(
-                            set(
-                                self.processing_service.service_config.visibility_grants
-                            )
-                            if self.processing_service.service_config.visibility_grants
-                            else None
-                        ),
-                        default_note_visibility_labels=(
-                            self.processing_service.service_config.default_note_visibility_labels
-                        ),
-                        required_note_visibility_labels=(
-                            self.processing_service.service_config.required_note_visibility_labels
-                        ),
-                        allowed_note_visibility_labels=(
-                            self.processing_service.service_config.allowed_note_visibility_labels
-                        ),
-                        allow_wake_llm=(
-                            self.processing_service.service_config.allow_wake_llm
-                        ),
-                        credential_resolvers=None,
-                        api_backend=None,
-                        taint_tracker=self._taint_tracker,
-                    )
+                db_context = Database(self.database_engine)
+                exec_context = ToolExecutionContext(
+                    interface_type="telephone",
+                    conversation_id=self.conversation_id,
+                    user_name=self.extension or "Caller",
+                    user_id=None,
+                    turn_id=call_id,
+                    db_context=db_context,
+                    chat_interface=None,
+                    chat_interfaces=self.chat_interfaces,
+                    confirmation_ui_managers=self.confirmation_ui_managers,
+                    timezone=self.processing_service.service_config.timezone,
+                    processing_profile_id=self.processing_service.service_config.id,
+                    subconversation_id=None,
+                    request_confirmation_callback=None,
+                    processing_service=self.processing_service,
+                    clock=self.processing_service.clock,
+                    home_assistant_client=self.processing_service.home_assistant_client,
+                    event_sources=self.processing_service.event_sources,
+                    indexing_source=(
+                        cast(
+                            "IndexingSource | None",
+                            self.processing_service.event_sources.get("indexing"),
+                        )
+                        if self.processing_service.event_sources
+                        else None
+                    ),
+                    attachment_registry=self.processing_service.attachment_registry,
+                    camera_backend=self.processing_service.camera_backend,
+                    tools_provider=self.processing_service.tools_provider,
+                    visibility_grants=(
+                        set(self.processing_service.service_config.visibility_grants)
+                        if self.processing_service.service_config.visibility_grants
+                        else None
+                    ),
+                    default_note_visibility_labels=(
+                        self.processing_service.service_config.default_note_visibility_labels
+                    ),
+                    required_note_visibility_labels=(
+                        self.processing_service.service_config.required_note_visibility_labels
+                    ),
+                    allowed_note_visibility_labels=(
+                        self.processing_service.service_config.allowed_note_visibility_labels
+                    ),
+                    allow_wake_llm=(
+                        self.processing_service.service_config.allow_wake_llm
+                    ),
+                    credential_resolvers=None,
+                    api_backend=None,
+                    taint_tracker=self._taint_tracker,
+                )
 
-                    result = await self.processing_service.tools_provider.execute_tool(
-                        name, args, exec_context, call_id
-                    )
+                result = await self.processing_service.tools_provider.execute_tool(
+                    name, args, exec_context, call_id
+                )
 
                 if isinstance(result, ToolResult):
                     if result.data is not None:
@@ -1434,14 +1432,14 @@ class AsteriskLiveHandler:
                 write_policy = NoteWritePolicy.UNCONSTRAINED
                 transcript_labels = None
 
-            async with get_db_context(self.database_engine) as db_context:
-                await db_context.notes.add_or_update(
-                    title=title,
-                    content=content,
-                    include_in_prompt=False,
-                    visibility_labels=transcript_labels,
-                    write_policy=write_policy,
-                )
+            db_context = Database(self.database_engine)
+            await db_context.notes.add_or_update(
+                title=title,
+                content=content,
+                include_in_prompt=False,
+                visibility_labels=transcript_labels,
+                write_policy=write_policy,
+            )
 
             logger.info(
                 f"Saved call transcript: {title} "

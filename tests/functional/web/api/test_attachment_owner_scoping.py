@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_current_user
 
 if TYPE_CHECKING:
@@ -32,15 +32,15 @@ async def _register(
     *,
     owner_user_id: str | None,
 ) -> str:
-    async with get_db_context(engine=db_engine) as db_context:
-        metadata = await registry.store_and_register_tool_attachment(
-            file_content=b"personal payload",
-            filename="personal.txt",
-            content_type="text/plain",
-            tool_name="gmail_get_attachment",
-            owner_user_id=owner_user_id,
-            db_context=db_context,
-        )
+    db_context = Database(engine=db_engine)
+    metadata = await registry.store_and_register_tool_attachment(
+        file_content=b"personal payload",
+        filename="personal.txt",
+        content_type="text/plain",
+        tool_name="gmail_get_attachment",
+        owner_user_id=owner_user_id,
+        db_context=db_context,
+    )
     return metadata.attachment_id
 
 
@@ -175,10 +175,10 @@ async def test_delete_owned_attachment_404_for_non_owner(
     assert response.status_code == 404
 
     # The owner can still read it: the failed delete left the row intact.
-    async with get_db_context(engine=db_engine) as db_context:
-        assert (
-            await attachment_registry_fixture.get_attachment(
-                db_context, attachment_id, acting_user_id=OWNER
-            )
-            is not None
+    db_context = Database(engine=db_engine)
+    assert (
+        await attachment_registry_fixture.get_attachment(
+            db_context, attachment_id, acting_user_id=OWNER
         )
+        is not None
+    )

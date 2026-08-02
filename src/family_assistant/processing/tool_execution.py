@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById
     from family_assistant.utils.clock import Clock
@@ -133,7 +133,7 @@ class ToolExecutor:
 
     async def _build_attach_to_response_metadata(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         attachment_ids: list[str],
         *,
         acting_user_id: str | None,
@@ -166,7 +166,7 @@ class ToolExecutor:
 
     async def _build_attach_to_response_output(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         result_payload: str,
         *,
         acting_user_id: str | None,
@@ -193,7 +193,7 @@ class ToolExecutor:
         user_name: str,
         user_id: str | None,
         turn_id: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         chat_interface: ChatInterface | None,
         chat_interfaces: dict[str, ChatInterface] | None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None,
@@ -530,7 +530,7 @@ class ToolExecutor:
         acting_user_id: str | None,
         *,
         arguments: dict[str, object] | None,
-        db_context: DatabaseContext,
+        db_context: Database,
     ) -> str | None:
         """Owner for a large-result auto-conversion.
 
@@ -569,7 +569,7 @@ class ToolExecutor:
     async def _handle_large_text_result(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         content: str,
         function_name: str,
         conversation_id: str,
@@ -601,7 +601,7 @@ class ToolExecutor:
     async def _process_tool_attachments(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         attachments: list[ToolAttachment],
         function_name: str,
         conversation_id: str,
@@ -670,7 +670,7 @@ class ToolExecutor:
     async def _build_output_for_tool_result(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         result: ToolResult,
         function_name: str,
         conversation_id: str,
@@ -743,7 +743,7 @@ class ToolExecutor:
     async def _build_output_for_string_result(
         self,
         *,
-        db_context: DatabaseContext,
+        db_context: Database,
         result: object,
         function_name: str,
         conversation_id: str,
@@ -783,7 +783,7 @@ class ToolExecutor:
         conversation_id: str,
         user_name: str,
         turn_id: str,
-        db_context: DatabaseContext,
+        db_context: Database,
         chat_interface: ChatInterface | None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,

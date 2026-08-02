@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.calendar_integration import (
     fetch_event_details_for_confirmation,
 )
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -54,7 +54,7 @@ TEST_TIMEZONE_STR = "Australia/Sydney"
 
 
 def create_test_execution_context(
-    db_context: DatabaseContext,
+    db_context: Database,
     tools_provider: LocalToolsProvider | None = None,
 ) -> ToolExecutionContext:
     """Helper to create a ToolExecutionContext for tests with minimal boilerplate."""
@@ -104,44 +104,44 @@ async def create_test_event_in_radicale(
     )
 
     # Create a minimal database context for the test
-    async with get_db_context(engine=engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-create",
-            user_name="TestUser",
-            turn_id="test-turn-create",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            chat_interface=None,
-            timezone=ZoneInfo(TEST_TIMEZONE_STR),
-            request_confirmation_callback=None,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(engine=engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-create",
+        user_name="TestUser",
+        turn_id="test-turn-create",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        request_confirmation_callback=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        result = await add_calendar_event_tool(
-            exec_context=exec_context,
-            calendar_config=calendar_config,
-            summary=event_summary,
-            start_time=start_dt.isoformat(),
-            end_time=end_dt.isoformat(),
-            all_day=False,
-        )
+    result = await add_calendar_event_tool(
+        exec_context=exec_context,
+        calendar_config=calendar_config,
+        summary=event_summary,
+        start_time=start_dt.isoformat(),
+        end_time=end_dt.isoformat(),
+        all_day=False,
+    )
 
-        logger.info(f"Event creation result: {result}")
+    logger.info(f"Event creation result: {result}")
 
-        # Now search for the event to get its UID
+    # Now search for the event to get its UID
 
-        search_result = await search_calendar_events_tool(
-            exec_context=exec_context,
-            calendar_config=calendar_config,
-            search_text=event_summary,
-        )
+    search_result = await search_calendar_events_tool(
+        exec_context=exec_context,
+        calendar_config=calendar_config,
+        search_text=event_summary,
+    )
 
     # Extract UID from search result
 
@@ -210,55 +210,54 @@ async def test_modify_calendar_event_confirmation_shows_event_details(
     # Create LocalToolsProvider with calendar config so renderer can fetch event details
     mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
-    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        mock_context = create_test_execution_context(
-            db_context=db_ctx, tools_provider=mock_provider
-        )
+    db_ctx = Database(engine=pg_vector_db_engine)
+    mock_context = create_test_execution_context(
+        db_context=db_ctx, tools_provider=mock_provider
+    )
 
-        test_args = {
-            "uid": event_uid,
-            "calendar_url": test_calendar_url,
-            "new_summary": "Education Open Day",
-            "new_start_time": start_dt.replace(hour=9).isoformat(),
-            "new_end_time": start_dt.replace(hour=12).isoformat(),
-        }
+    test_args = {
+        "uid": event_uid,
+        "calendar_url": test_calendar_url,
+        "new_summary": "Education Open Day",
+        "new_start_time": start_dt.replace(hour=9).isoformat(),
+        "new_end_time": start_dt.replace(hour=12).isoformat(),
+    }
 
-        confirmation_prompt = await render_modify_calendar_event_confirmation(
-            test_args, mock_context
-        )
+    confirmation_prompt = await render_modify_calendar_event_confirmation(
+        test_args, mock_context
+    )
 
-        # Debug: print the confirmation prompt
-        print(f"\n\nDEBUG: Confirmation prompt:\n{confirmation_prompt}\n\n")
-        print(f"DEBUG: Looking for event_summary: {event_summary}")
-        print(f"DEBUG: Event details: {fetched_details}")
+    # Debug: print the confirmation prompt
+    print(f"\n\nDEBUG: Confirmation prompt:\n{confirmation_prompt}\n\n")
+    print(f"DEBUG: Looking for event_summary: {event_summary}")
+    print(f"DEBUG: Event details: {fetched_details}")
 
-        # Also check for escaped version of the summary since confirmation uses telegramify_markdown
+    # Also check for escaped version of the summary since confirmation uses telegramify_markdown
 
-        escaped_summary = telegramify_markdown.escape_markdown(event_summary)
-        print(f"DEBUG: Escaped event_summary: {escaped_summary}")
+    escaped_summary = telegramify_markdown.escape_markdown(event_summary)
+    print(f"DEBUG: Escaped event_summary: {escaped_summary}")
 
-        # Verify the confirmation prompt contains both original and new details
-        # Check for either escaped or unescaped version
-        assert (
-            event_summary in confirmation_prompt
-            or escaped_summary in confirmation_prompt
-        ), (
-            f"Original event summary not in confirmation. Looking for '{event_summary}' or '{escaped_summary}'"
-        )
-        assert "Education Open Day" in confirmation_prompt, (
-            "New summary not in confirmation"
-        )
-        assert "Event details not found" not in confirmation_prompt, (
-            "Should not show error message"
-        )
+    # Verify the confirmation prompt contains both original and new details
+    # Check for either escaped or unescaped version
+    assert (
+        event_summary in confirmation_prompt or escaped_summary in confirmation_prompt
+    ), (
+        f"Original event summary not in confirmation. Looking for '{event_summary}' or '{escaped_summary}'"
+    )
+    assert "Education Open Day" in confirmation_prompt, (
+        "New summary not in confirmation"
+    )
+    assert "Event details not found" not in confirmation_prompt, (
+        "Should not show error message"
+    )
 
-        # Verify it formats the event time correctly
-        # The exact format depends on format_datetime_or_date but should mention the time
-        assert (
-            "14:00" in confirmation_prompt
-            or "2:00" in confirmation_prompt
-            or "2 PM" in confirmation_prompt
-        ), "Original event time not properly formatted in confirmation"
+    # Verify it formats the event time correctly
+    # The exact format depends on format_datetime_or_date but should mention the time
+    assert (
+        "14:00" in confirmation_prompt
+        or "2:00" in confirmation_prompt
+        or "2 PM" in confirmation_prompt
+    ), "Original event time not properly formatted in confirmation"
 
 
 @pytest.mark.asyncio
@@ -310,33 +309,32 @@ async def test_delete_calendar_event_confirmation_shows_event_details(
     # Create LocalToolsProvider with calendar config so renderer can fetch event details
     mock_provider = LocalToolsProvider([], {}, calendar_config=test_calendar_config)
 
-    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        mock_context = create_test_execution_context(
-            db_context=db_ctx, tools_provider=mock_provider
-        )
+    db_ctx = Database(engine=pg_vector_db_engine)
+    mock_context = create_test_execution_context(
+        db_context=db_ctx, tools_provider=mock_provider
+    )
 
-        test_args = {
-            "uid": event_uid,
-            "calendar_url": test_calendar_url,
-        }
+    test_args = {
+        "uid": event_uid,
+        "calendar_url": test_calendar_url,
+    }
 
-        confirmation_prompt = await render_delete_calendar_event_confirmation(
-            args=test_args, context=mock_context
-        )
+    confirmation_prompt = await render_delete_calendar_event_confirmation(
+        args=test_args, context=mock_context
+    )
 
-        # Verify the confirmation prompt
-        # The confirmation uses telegramify_markdown which escapes special characters
+    # Verify the confirmation prompt
+    # The confirmation uses telegramify_markdown which escapes special characters
 
-        escaped_summary = telegramify_markdown.escape_markdown(event_summary)
+    escaped_summary = telegramify_markdown.escape_markdown(event_summary)
 
-        assert (
-            event_summary in confirmation_prompt
-            or escaped_summary in confirmation_prompt
-        ), (
-            f"Event summary '{event_summary}' (or escaped '{escaped_summary}') not in delete confirmation"
-        )
-        assert "delete" in confirmation_prompt.lower(), "Delete action not mentioned"
-        assert "Event details not found" not in confirmation_prompt
+    assert (
+        event_summary in confirmation_prompt or escaped_summary in confirmation_prompt
+    ), (
+        f"Event summary '{event_summary}' (or escaped '{escaped_summary}') not in delete confirmation"
+    )
+    assert "delete" in confirmation_prompt.lower(), "Delete action not mentioned"
+    assert "Event details not found" not in confirmation_prompt
 
 
 @pytest.mark.asyncio
@@ -424,66 +422,64 @@ async def test_confirming_tools_provider_with_calendar_events(
     )
 
     # Create execution context
-    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-conv-confirm",
-            user_name="TestUser",
-            turn_id="test-turn-1",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            chat_interface=None,
-            timezone=ZoneInfo(TEST_TIMEZONE_STR),
-            request_confirmation_callback=capture_confirmation_callback,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-        )
+    db_ctx = Database(engine=pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv-confirm",
+        user_name="TestUser",
+        turn_id="test-turn-1",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        request_confirmation_callback=capture_confirmation_callback,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-        # Execute modify with confirmation
-        test_args = {
-            "uid": event_uid,
-            "calendar_url": test_calendar_url,
-            "new_summary": "Quarterly Business Review",
-        }
+    # Execute modify with confirmation
+    test_args = {
+        "uid": event_uid,
+        "calendar_url": test_calendar_url,
+        "new_summary": "Quarterly Business Review",
+    }
 
-        result = await confirming_provider.execute_tool(
-            name="modify_calendar_event",
-            arguments=test_args,
-            context=exec_context,
-        )
+    result = await confirming_provider.execute_tool(
+        name="modify_calendar_event",
+        arguments=test_args,
+        context=exec_context,
+    )
 
-        # Verify confirmation was requested
-        assert len(confirmation_prompts_shown) == 1, (
-            f"Should have shown exactly one confirmation, but got {len(confirmation_prompts_shown)}: {confirmation_prompts_shown}"
-        )
-        confirmation_info = confirmation_prompts_shown[0]
+    # Verify confirmation was requested
+    assert len(confirmation_prompts_shown) == 1, (
+        f"Should have shown exactly one confirmation, but got {len(confirmation_prompts_shown)}: {confirmation_prompts_shown}"
+    )
+    confirmation_info = confirmation_prompts_shown[0]
 
-        # Check that the right tool was called with the right arguments
-        assert "modify_calendar_event called with args:" in confirmation_info, (
-            f"Expected confirmation for modify_calendar_event, got: {confirmation_info}"
-        )
-        assert event_uid in confirmation_info, (
-            f"Event UID '{event_uid}' not in confirmation info: {confirmation_info}"
-        )
-        assert "Quarterly Business Review" in confirmation_info, (
-            f"New summary not in confirmation info: {confirmation_info}"
-        )
+    # Check that the right tool was called with the right arguments
+    assert "modify_calendar_event called with args:" in confirmation_info, (
+        f"Expected confirmation for modify_calendar_event, got: {confirmation_info}"
+    )
+    assert event_uid in confirmation_info, (
+        f"Event UID '{event_uid}' not in confirmation info: {confirmation_info}"
+    )
+    assert "Quarterly Business Review" in confirmation_info, (
+        f"New summary not in confirmation info: {confirmation_info}"
+    )
 
-        # The tool should have executed successfully
+    # The tool should have executed successfully
 
-        result_text = (
-            result.get_text() if isinstance(result, ToolResult) else str(result)
-        )
-        assert (
-            "updated" in result_text.lower()
-            or "successfully" in result_text.lower()
-            or "modified" in result_text.lower()
-        ), f"Tool execution failed: {result}"
+    result_text = result.get_text() if isinstance(result, ToolResult) else str(result)
+    assert (
+        "updated" in result_text.lower()
+        or "successfully" in result_text.lower()
+        or "modified" in result_text.lower()
+    ), f"Tool execution failed: {result}"
 
 
 @pytest.mark.asyncio
@@ -563,38 +559,38 @@ async def test_confirming_provider_sets_tools_provider_for_renderer(
         confirmation_timeout=10.0,
     )
 
-    async with get_db_context(engine=pg_vector_db_engine) as db_ctx:
-        exec_context = ToolExecutionContext(
-            interface_type="test",
-            conversation_id="test-conv-renderer",
-            user_name="TestUser",
-            turn_id="test-turn-renderer",
-            db_context=db_ctx,
-            processing_service=None,
-            clock=None,
-            home_assistant_client=None,
-            event_sources=None,
-            attachment_registry=None,
-            chat_interface=None,
-            timezone=ZoneInfo(TEST_TIMEZONE_STR),
-            request_confirmation_callback=rendering_confirmation_callback,
-            camera_backend=None,
-            credential_resolvers=None,
-            api_backend=None,
-            # tools_provider intentionally left as None to mimic production
-        )
+    db_ctx = Database(engine=pg_vector_db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv-renderer",
+        user_name="TestUser",
+        turn_id="test-turn-renderer",
+        db_context=db_ctx,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        chat_interface=None,
+        timezone=ZoneInfo(TEST_TIMEZONE_STR),
+        request_confirmation_callback=rendering_confirmation_callback,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        # tools_provider intentionally left as None to mimic production
+    )
 
-        test_args = {
-            "uid": event_uid,
-            "calendar_url": test_calendar_url,
-            "new_summary": "Updated Summary",
-        }
+    test_args = {
+        "uid": event_uid,
+        "calendar_url": test_calendar_url,
+        "new_summary": "Updated Summary",
+    }
 
-        await confirming_provider.execute_tool(
-            name="modify_calendar_event",
-            arguments=test_args,
-            context=exec_context,
-        )
+    await confirming_provider.execute_tool(
+        name="modify_calendar_event",
+        arguments=test_args,
+        context=exec_context,
+    )
 
     assert len(rendered_prompts) == 1
     prompt = rendered_prompts[0]
@@ -621,25 +617,25 @@ async def test_confirmation_when_event_not_found(
         [], {}, calendar_config=cast("CalendarConfig", {})
     )
 
-    async with get_db_context(engine=db_engine) as db_ctx:
-        mock_context = create_test_execution_context(
-            db_context=db_ctx, tools_provider=mock_provider
-        )
+    db_ctx = Database(engine=db_engine)
+    mock_context = create_test_execution_context(
+        db_context=db_ctx, tools_provider=mock_provider
+    )
 
-        test_args = {
-            "uid": "non-existent-event@example.com",
-            "calendar_url": "https://example.com/calendar/",
-            "new_summary": "This will fail",
-        }
+    test_args = {
+        "uid": "non-existent-event@example.com",
+        "calendar_url": "https://example.com/calendar/",
+        "new_summary": "This will fail",
+    }
 
-        # Render confirmation - will try to fetch event and fail gracefully
-        confirmation_prompt = await render_modify_calendar_event_confirmation(
-            args=test_args, context=mock_context
-        )
+    # Render confirmation - will try to fetch event and fail gracefully
+    confirmation_prompt = await render_modify_calendar_event_confirmation(
+        args=test_args, context=mock_context
+    )
 
-        # Should show error message but still show the changes
-        assert "Event details not found" in confirmation_prompt
-        assert "This will fail" in confirmation_prompt
+    # Should show error message but still show the changes
+    assert "Event details not found" in confirmation_prompt
+    assert "This will fail" in confirmation_prompt
 
 
 @pytest.mark.asyncio
@@ -651,20 +647,20 @@ async def test_modify_calendar_confirmation_shows_empty_string_changes(
         [], {}, calendar_config=cast("CalendarConfig", {})
     )
 
-    async with get_db_context(engine=db_engine) as db_ctx:
-        mock_context = create_test_execution_context(
-            db_context=db_ctx, tools_provider=mock_provider
-        )
+    db_ctx = Database(engine=db_engine)
+    mock_context = create_test_execution_context(
+        db_context=db_ctx, tools_provider=mock_provider
+    )
 
-        confirmation_prompt = await render_modify_calendar_event_confirmation(
-            args={
-                "uid": "event@example.com",
-                "calendar_url": "https://example.com/calendar/",
-                "new_summary": "",
-                "new_description": "",
-            },
-            context=mock_context,
-        )
+    confirmation_prompt = await render_modify_calendar_event_confirmation(
+        args={
+            "uid": "event@example.com",
+            "calendar_url": "https://example.com/calendar/",
+            "new_summary": "",
+            "new_description": "",
+        },
+        context=mock_context,
+    )
 
     assert "Set summary" in confirmation_prompt
     assert "Set description" in confirmation_prompt

@@ -150,7 +150,7 @@ class ErrorLogsRepository(BaseRepository):
             .returning(error_logs_table.c.id)
         )
 
-        result = await self._db.execute_with_retry(stmt)
+        result = await self._db.execute(stmt)
         return result.scalar_one()
 
     async def delete_old(self, older_than: datetime) -> int:
@@ -166,5 +166,5 @@ class ErrorLogsRepository(BaseRepository):
         stmt = error_logs_table.delete().where(
             error_logs_table.c.timestamp < older_than
         )
-        result = await self._db.execute_with_retry(stmt)
-        return result.rowcount  # type: ignore[attr-defined]
+        result = await self._db.execute(stmt)
+        return result.rowcount

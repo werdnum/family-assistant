@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.security.taint import TaintSource, TurnTaintTracker
-    from family_assistant.storage.context import DatabaseContext
+    from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById, ToolDefinition
 
@@ -162,7 +162,7 @@ class LLMStreamingLoop:
 
     async def run(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         interface_type: str,
         conversation_id: str,
@@ -230,7 +230,7 @@ class LLMStreamingLoop:
 
     async def run_stream(
         self,
-        db_context: DatabaseContext,
+        db_context: Database,
         messages: list[LLMMessage],
         interface_type: str,
         conversation_id: str,

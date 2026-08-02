@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.services.attachment_registry import AttachmentRegistry
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,16 +57,16 @@ def test_media_is_held_to_the_multimodal_limit(
 async def test_registering_oversized_media_reports_the_multimodal_limit(
     registry: AttachmentRegistry, db_engine: AsyncEngine
 ) -> None:
-    async with DatabaseContext(db_engine) as db_context:
-        with pytest.raises(
-            ValueError, match=f"maximum allowed size of {_MAX_MULTIMODAL_SIZE}"
-        ):
-            await registry.register_user_attachment(
-                db_context=db_context,
-                content=_BETWEEN_THE_LIMITS,
-                filename="long.ogg",
-                mime_type="audio/ogg",
-            )
+    db_context = Database(db_engine)
+    with pytest.raises(
+        ValueError, match=f"maximum allowed size of {_MAX_MULTIMODAL_SIZE}"
+    ):
+        await registry.register_user_attachment(
+            db_context=db_context,
+            content=_BETWEEN_THE_LIMITS,
+            filename="long.ogg",
+            mime_type="audio/ogg",
+        )
 
 
 async def test_a_document_between_the_limits_is_still_accepted(
@@ -79,13 +79,13 @@ async def test_a_document_between_the_limits_is_still_accepted(
     `read_text_attachment` extracts its text. A size only a model objects to is
     not a reason to refuse the upload, so `max_file_size` remains its limit.
     """
-    async with DatabaseContext(db_engine) as db_context:
-        metadata = await registry.register_user_attachment(
-            db_context=db_context,
-            content=_BETWEEN_THE_LIMITS,
-            filename="long.pdf",
-            mime_type="application/pdf",
-        )
+    db_context = Database(db_engine)
+    metadata = await registry.register_user_attachment(
+        db_context=db_context,
+        content=_BETWEEN_THE_LIMITS,
+        filename="long.pdf",
+        mime_type="application/pdf",
+    )
 
     assert metadata.size == len(_BETWEEN_THE_LIMITS)
 
@@ -99,14 +99,14 @@ async def test_a_generated_attachment_is_not_held_to_the_media_limit(
     later injection that may never happen — the user loses the work over a limit
     describing what a model will accept. `max_file_size` still applies.
     """
-    async with DatabaseContext(db_engine) as db_context:
-        metadata = await registry.store_and_register_tool_attachment(
-            file_content=_BETWEEN_THE_LIMITS,
-            filename="generated.mp4",
-            content_type="video/mp4",
-            tool_name="generate_video",
-            db_context=db_context,
-        )
+    db_context = Database(db_engine)
+    metadata = await registry.store_and_register_tool_attachment(
+        file_content=_BETWEEN_THE_LIMITS,
+        filename="generated.mp4",
+        content_type="video/mp4",
+        tool_name="generate_video",
+        db_context=db_context,
+    )
 
     assert metadata.size == len(_BETWEEN_THE_LIMITS)
 
@@ -114,14 +114,12 @@ async def test_a_generated_attachment_is_not_held_to_the_media_limit(
 async def test_a_generated_attachment_still_obeys_the_file_limit(
     registry: AttachmentRegistry, db_engine: AsyncEngine
 ) -> None:
-    async with DatabaseContext(db_engine) as db_context:
-        with pytest.raises(
-            ValueError, match=f"maximum allowed size of {_MAX_FILE_SIZE}"
-        ):
-            await registry.store_and_register_tool_attachment(
-                file_content=b"\0" * (_MAX_FILE_SIZE + 1),
-                filename="huge.mp4",
-                content_type="video/mp4",
-                tool_name="generate_video",
-                db_context=db_context,
-            )
+    db_context = Database(db_engine)
+    with pytest.raises(ValueError, match=f"maximum allowed size of {_MAX_FILE_SIZE}"):
+        await registry.store_and_register_tool_attachment(
+            file_content=b"\0" * (_MAX_FILE_SIZE + 1),
+            filename="huge.mp4",
+            content_type="video/mp4",
+            tool_name="generate_video",
+            db_context=db_context,
+        )

@@ -139,7 +139,9 @@ def test_resolve_live_llm_fallback_model_returns_none_when_no_fallback_client() 
 
     class _PrimaryOnlyRetrying:
         fallback_client = None  # no real fallback is wired
-        fallback_model = "openai/gpt-5.6-terra"  # default from RetryingLLMClient.__init__
+        fallback_model = (
+            "openai/gpt-5.6-terra"  # default from RetryingLLMClient.__init__
+        )
 
     assert resolve_live_llm_fallback_model(_PrimaryOnlyRetrying()) is None
 

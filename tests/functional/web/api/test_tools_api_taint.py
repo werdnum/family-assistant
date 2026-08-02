@@ -15,7 +15,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
-from family_assistant.storage.context import get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     TaintTrackingToolsProvider,
@@ -175,12 +175,14 @@ async def test_direct_tool_api_failure_returns_accumulated_taint(
 
     assert response.status_code == 500
     assert response.json()["taint_metadata"]["max_tier"] == "unknown_external"
-    async with get_db_context(db_engine) as db_context:
-        messages = await db_context.message_history.get_recent(
-            interface_type="api",
-            conversation_id="failed-direct-tool",
-        )
-    assert messages == []
+    # The request was received, so its user message is durable; what a failed
+    # tool must not leave behind is an assistant reply.
+    db_context = Database(db_engine)
+    messages = await db_context.message_history.get_recent(
+        interface_type="api",
+        conversation_id="failed-direct-tool",
+    )
+    assert [message for message in messages if message.role == "assistant"] == []
 
 
 @pytest.mark.asyncio

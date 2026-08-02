@@ -33,7 +33,7 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import init_db
-from family_assistant.storage.context import DatabaseContext, get_db_context
+from family_assistant.storage.database import Database
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -64,10 +64,10 @@ logger = logging.getLogger(__name__)
 @pytest_asyncio.fixture(scope="function")
 async def db_context(
     db_engine: AsyncEngine,
-) -> AsyncGenerator[DatabaseContext]:
-    """Provides a DatabaseContext for a single test function."""
-    async with get_db_context(engine=db_engine) as ctx:
-        yield ctx
+) -> AsyncGenerator[Database]:
+    """Provides a Database for a single test function."""
+    ctx = Database(engine=db_engine)
+    yield ctx
 
 
 @pytest.fixture(scope="function")
@@ -136,23 +136,23 @@ def test_processing_service(
     mock_llm_client: RuleBasedMockLLMClient,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config: ProcessingServiceConfig,
-    db_context: DatabaseContext,  # This is an instance of DatabaseContext from the fixture
+    db_context: Database,  # This is an instance of Database from the fixture
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components."""
 
-    # NotesContextProvider expects get_db_context_func to be Callable[[], Awaitable[DatabaseContext]]
-    # This means it wants a function that, when called and awaited, returns an *entered* DatabaseContext.
-    # The db_context fixture provides an already entered DatabaseContext instance.
+    # NotesContextProvider expects get_db_context_func to be Callable[[], Awaitable[Database]]
+    # This means it wants a function that, when called and awaited, returns an *entered* Database.
+    # The db_context fixture provides an already entered Database instance.
     # We need its engine to create new contexts for the provider if it manages its own lifecycle.
     captured_engine = db_context.engine
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
+    def get_entered_db_context_for_provider() -> Database:
         """
-        Returns an awaitable that resolves to an entered DatabaseContext.
+        Returns an awaitable that resolves to an entered Database.
         This matches the expected type for NotesContextProvider's get_db_context_func.
         """
-        async with get_db_context(engine=captured_engine) as new_ctx:
-            return new_ctx
+        new_ctx = Database(engine=captured_engine)
+        return new_ctx
 
     # Create mock context providers
     notes_provider = NotesContextProvider(
@@ -215,9 +215,9 @@ async def app_fixture(
     app.state.web_chat_interface = WebChatInterface(db_engine)
 
     # Ensure database is initialized for this app instance
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)  # Initialize main schema
-        await temp_db_ctx.init_vector_db()  # Initialize vector schema
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)  # Initialize main schema
+    await temp_db_ctx.init_vector_db()  # Initialize vector schema
 
     return app
 
@@ -255,15 +255,15 @@ def test_processing_service_no_tools(
     mock_llm_client: RuleBasedMockLLMClient,
     test_tools_provider: ToolsProvider,
     mock_processing_service_config_no_tools: ProcessingServiceConfig,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> ProcessingService:
     """Creates a ProcessingService instance with mock/test components and no tools."""
 
     captured_engine = db_context.engine
 
-    async def get_entered_db_context_for_provider() -> DatabaseContext:
-        async with get_db_context(engine=captured_engine) as new_ctx:
-            return new_ctx
+    def get_entered_db_context_for_provider() -> Database:
+        new_ctx = Database(engine=captured_engine)
+        return new_ctx
 
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
@@ -321,9 +321,9 @@ async def app_fixture_no_tools(
 
     app.state.web_chat_interface = WebChatInterface(db_engine)
 
-    async with get_db_context(engine=db_engine) as temp_db_ctx:
-        await init_db(db_engine)
-        await temp_db_ctx.init_vector_db()
+    temp_db_ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await temp_db_ctx.init_vector_db()
 
     return app
 
@@ -344,7 +344,7 @@ async def test_client_no_tools(
 @pytest.mark.asyncio
 async def test_api_chat_add_note_tool(
     test_client: AsyncClient,
-    db_context: DatabaseContext,
+    db_context: Database,
     mock_llm_client: RuleBasedMockLLMClient,  # To set rules
     test_processing_service: ProcessingService,  # To access its config
 ) -> None:
@@ -483,7 +483,7 @@ async def test_api_chat_add_note_tool(
 async def test_api_chat_send_message_persists_user_id(
     test_client: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Test that user_id is correctly persisted when sending a message."""
     # Arrange
@@ -539,7 +539,7 @@ async def test_api_chat_send_message_persists_user_id(
 async def test_api_chat_send_message_persists_user_id_no_tools(
     test_client_no_tools: AsyncClient,
     mock_llm_client: RuleBasedMockLLMClient,
-    db_context: DatabaseContext,
+    db_context: Database,
 ) -> None:
     """Test that user_id is correctly persisted when sending a message with no tools enabled."""
     # Arrange

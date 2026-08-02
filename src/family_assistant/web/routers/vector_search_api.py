@@ -8,7 +8,7 @@ from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.indexing.message_history_indexer import (
     MESSAGE_HISTORY_SOURCE_TYPE,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.storage.vector_search import (
     MetadataFilter,
@@ -58,7 +58,7 @@ class SearchResult(BaseModel):
 @vector_search_api_router.post("/")
 async def search_documents_api(
     payload: SearchRequest,
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
     embedding_generator: Annotated[
         EmbeddingGenerator, Depends(get_embedding_generator_dependency)
     ],
@@ -130,7 +130,7 @@ class DocumentDetail(BaseModel):
 
 @vector_search_api_router.get("/document/{document_id}")
 async def get_document_detail(
-    document_id: int, db_context: Annotated[DatabaseContext, Depends(get_db)]
+    document_id: int, db_context: Annotated[Database, Depends(get_db)]
 ) -> DocumentDetail:
     """Return document metadata."""
     record: DocumentRecord | None = await get_document_by_id(db_context, document_id)

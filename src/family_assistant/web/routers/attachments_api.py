@@ -15,7 +15,7 @@ from family_assistant.services.attachment_registry import (
 from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
 )
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import (
     get_attachment_registry,
     get_current_user,
@@ -60,7 +60,7 @@ async def upload_attachment(
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> AttachmentUploadResponse:
     """
     Upload a file as a chat attachment.
@@ -120,7 +120,7 @@ async def serve_attachment(
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> FileResponse:
     """
     Serve an attachment file by its ID.
@@ -213,7 +213,7 @@ async def delete_attachment(
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> dict[str, str]:
     """
     Delete an attachment file by its ID.
@@ -258,7 +258,7 @@ async def get_attachment_metadata(
     attachment_registry: Annotated[
         AttachmentRegistry, Depends(get_attachment_registry)
     ],
-    db_context: Annotated[DatabaseContext, Depends(get_db)],
+    db_context: Annotated[Database, Depends(get_db)],
 ) -> AttachmentMetadata:
     """
     Get metadata for an attachment.
