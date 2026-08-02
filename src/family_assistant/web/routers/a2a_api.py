@@ -429,12 +429,34 @@ async def _execute_and_persist_send(
     )
     history = [history_entry, agent_message.model_dump(exclude_none=True)]
 
-    await db_context.a2a_tasks.update_task_status(
+    persisted = await db_context.a2a_tasks.update_task_status(
         task_id=task_id,
         status=final_status,
         artifacts_json=artifacts_dicts,
         history_json=history,
     )
+    if not persisted:
+        # The row went terminal while this send was running -- a concurrent
+        # tasks/cancel, which the blocking path is now exposed to because its
+        # 'working' row is durable the moment it is written rather than at the
+        # end of the request. The guarded update above is what keeps ``canceled``
+        # winning; returning the locally built Task would hand the caller a
+        # completed task whose stored row says otherwise, so report what was
+        # actually persisted.
+        row = await db_context.a2a_tasks.get_task(task_id)
+        if row is not None:
+            logger.info(
+                "A2A task %s reached a terminal state while its send was "
+                "running; returning the persisted '%s' task.",
+                task_id,
+                row["status"],
+            )
+            return _row_to_task(row)
+        logger.warning(
+            "A2A task %s could not be finalized and its row is gone; "
+            "returning the in-memory result.",
+            task_id,
+        )
 
     return Task(
         id=task_id,
