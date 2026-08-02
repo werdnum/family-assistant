@@ -439,7 +439,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // from the awaiting list above, which is emptied by Stop, a conversation
   // change and the recovery drain — so "not awaiting" says nothing about
   // delivery, while an entry here is positive evidence of it.
-  const consumedSteerEchoesRef = useRef<string[]>([]);
+  const consumedSteerEchoesRef = useRef<{ id: number; content: string }[]>([]);
+  // Monotonic id stamped on each observed echo. A steer captures the current
+  // value before it sends, and only accepts an echo stamped after that — so an
+  // identical message echoed EARLIER (the user said "continue" twice) can't be
+  // read as delivery of the later one.
+  const echoSeqRef = useRef(0);
   useEffect(() => {
     setSteerError(null);
     // Drop any queued/awaiting steers so they can't fire into the new conversation.
@@ -1074,7 +1079,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // response was lost report success instead of asking the user to resend
     // something the turn already acted on. Bounded: it only has to outlive an
     // in-flight steer request, so a short tail is plenty.
-    consumedSteerEchoesRef.current.push(content);
+    echoSeqRef.current += 1;
+    consumedSteerEchoesRef.current.push({ id: echoSeqRef.current, content });
     if (consumedSteerEchoesRef.current.length > 20) {
       consumedSteerEchoesRef.current.shift();
     }
@@ -2178,6 +2184,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // prompt marked unconsumed — which terminal recovery resends, repeating
       // whatever the user asked for. Registered early, the echo removes it.
       awaitingEchoSteersRef.current.push(prompt);
+      // Echoes already seen don't say anything about THIS submission, so only
+      // ones stamped after this point count as its delivery.
+      const echoesSeenBeforeSubmit = echoSeqRef.current;
       const result = await steerStream({ prompt });
       if (result === 'accepted') {
         // Left registered (or already removed by its echo): if the turn ends
@@ -2185,7 +2194,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // follow-up instead of losing it.
         return 'accepted';
       }
-      const echoedIdx = consumedSteerEchoesRef.current.lastIndexOf(prompt);
+      const echoedIdx = consumedSteerEchoesRef.current.findIndex(
+        (echo) => echo.content === prompt && echo.id > echoesSeenBeforeSubmit
+      );
       if (result === 'error' && echoedIdx !== -1) {
         // Ambiguous failure, but we SAW the turn echo this prompt back, so it
         // was delivered and the response is what got lost. Report acceptance so
