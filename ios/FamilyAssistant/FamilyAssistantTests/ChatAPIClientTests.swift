@@ -256,6 +256,35 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertFalse(sawStreamRequest)
     }
 
+    func testStartTurnConflictCarriesRunningTurnID() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {
+                  "detail": {
+                    "message": "This conversation already has a running turn.",
+                    "active_turn_id": "turn-already-running"
+                  }
+                }
+                """,
+                statusCode: 409
+            )
+        }
+
+        do {
+            _ = try await makeClient().startTurn(
+                turnID: "turn-rival",
+                prompt: "Change direction",
+                conversationID: "web_conv_conflict",
+                profileID: "default_assistant",
+                attachments: []
+            )
+            XCTFail("startTurn should expose the running turn from a 409 response")
+        } catch ChatAPIError.turnAlreadyRunning(let activeTurnID) {
+            XCTAssertEqual(activeTurnID, "turn-already-running")
+        }
+    }
+
     func testCancelTurnPostsConversationID() async throws {
         var payload: [String: Any]?
         ChatMockBackendURLProtocol.respond { request in
@@ -1014,9 +1043,13 @@ struct ChatMockResponse {
     /// An SSE response that delivers `initial` and then stays open until
     /// `controller` is finished or the request is cancelled, so a turn can be
     /// held in flight while the test drives other interactions.
-    static func hangingStream(_ initial: String, controller: HangingStream) -> ChatMockResponse {
+    static func hangingStream(
+        _ initial: String,
+        statusCode: Int = 200,
+        controller: HangingStream
+    ) -> ChatMockResponse {
         ChatMockResponse(
-            statusCode: 200,
+            statusCode: statusCode,
             data: Data(initial.utf8),
             headers: ["Content-Type": "text/event-stream"],
             hangingStream: controller

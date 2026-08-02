@@ -227,6 +227,10 @@ struct ChatAPIClient {
             )
         )
         let (startData, startResponse) = try await urlSession.data(for: startRequest)
+        if (startResponse as? HTTPURLResponse)?.statusCode == 409,
+           let conflict = try? JSONDecoder.chatDecoder.decode(ChatTurnConflictResponse.self, from: startData) {
+            throw ChatAPIError.turnAlreadyRunning(activeTurnID: conflict.detail.activeTurnID)
+        }
         try validate(response: startResponse, data: startData)
         let turn = try JSONDecoder.chatDecoder.decode(ChatTurnResponse.self, from: startData)
         return ChatTurnStart(
@@ -955,10 +959,25 @@ private struct ChatServerError: Decodable {
     let detail: String?
 }
 
+private struct ChatTurnConflictResponse: Decodable {
+    let detail: Detail
+
+    struct Detail: Decodable {
+        let activeTurnID: String
+
+        enum CodingKeys: String, CodingKey {
+            case activeTurnID = "active_turn_id"
+        }
+    }
+}
+
 enum ChatAPIError: LocalizedError, Equatable {
     case invalidServerURL
     case invalidResponse
     case validation(String)
+    /// Starting a second turn was refused because the conversation already has
+    /// a running turn. The client can recover by steering `activeTurnID`.
+    case turnAlreadyRunning(activeTurnID: String)
     /// A non-2xx HTTP response. `retryAfter` carries the parsed `Retry-After`
     /// header (seconds) when the server attached one — chiefly on a 429 — so the
     /// classifier can honor the server's backoff instead of a hard-coded default.
@@ -972,6 +991,8 @@ enum ChatAPIError: LocalizedError, Equatable {
             "The server returned an invalid response."
         case .validation(let message):
             message
+        case .turnAlreadyRunning:
+            "This conversation already has a running turn."
         case .server(let statusCode, let detail, _):
             if let detail, !detail.isEmpty {
                 detail
