@@ -1407,6 +1407,78 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'does not resend an adopted prompt the user stopped before it was placed',
+    async () => {
+      // Stop pressed after the kickoff adopted the running turn but before the
+      // steer landed: the cancel wins, so /steer answers 409. No stream ever
+      // opened, so nothing will report turn_ended(cancelled) — and resending
+      // would restart the very interaction the user just ended.
+      let releaseSteer: () => void = () => {};
+      const steerGate = new Promise<void>((resolve) => {
+        releaseSteer = resolve;
+      });
+      let steerRequested: () => void = () => {};
+      const steerStarted = new Promise<void>((resolve) => {
+        steerRequested = resolve;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', () =>
+          HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-14',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          )
+        ),
+        http.post('/api/v1/chat/turns/:turnId/cancel', () =>
+          HttpResponse.json({
+            turn_id: 'running-turn-14',
+            conversation_id: 'web_conv_stopped_adopt',
+            status: 'cancelling',
+          })
+        ),
+        http.post('/api/v1/chat/turns/:turnId/steer', async () => {
+          steerRequested();
+          await steerGate;
+          return HttpResponse.json(
+            { detail: 'Turn is not running; start a new turn instead.' },
+            { status: 409 }
+          );
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          throw new Error('must not subscribe: the turn was cancelled');
+        })
+      );
+
+      const completions: Array<{ undeliveredPrompt: string | null }> = [];
+      const { result } = renderHook(() =>
+        useStreamingResponse({
+          onComplete: (report: { undeliveredPrompt: string | null }) => completions.push(report),
+        })
+      );
+      const sending = result.current.sendStreamingMessage({
+        prompt: 'and the dentist too',
+        conversationId: 'web_conv_stopped_adopt',
+      });
+
+      await steerStarted;
+      await expect(result.current.stopTurn()).resolves.toBe(true);
+      releaseSteer();
+      await sending;
+
+      // Nothing to recover: the send is abandoned with the turn it joined.
+      expect(completions).toHaveLength(1);
+      expect(completions[0].undeliveredPrompt).toBeNull();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'starts its own turn when the adopted turn is already gone by the steer',
     async () => {
       // The named turn can finish between the kickoff's 409 and the steer. Then

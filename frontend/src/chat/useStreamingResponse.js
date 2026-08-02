@@ -65,6 +65,11 @@ export const useStreamingResponse = ({
   // target the live server-side turn. Set once the turn is kicked off and
   // cleared when the stream settles.
   const activeTurnRef = useRef(null);
+  // Set once the user asks to stop the live turn, cleared when a new send
+  // begins. A send still placing itself when Stop lands has no stream to carry
+  // the turn_ended(cancelled) event, so this is the only record that the user
+  // asked for the interaction to end.
+  const stopRequestedRef = useRef(false);
 
   const sendStreamingMessage = useCallback(
     async ({
@@ -76,6 +81,7 @@ export const useStreamingResponse = ({
       turnId = undefined,
     }) => {
       setIsStreaming(true);
+      stopRequestedRef.current = false;
       abortControllerRef.current = new AbortController();
 
       let currentMessage = '';
@@ -295,7 +301,14 @@ export const useStreamingResponse = ({
               // caller starts it as its own turn — the conversation is idle now,
               // so that kickoff will be accepted. Throwing here would leave the
               // message existing nowhere at all.
-              undeliveredPrompt = adoptedSteer.prompt;
+              //
+              // Unless the user pressed Stop while this send was still placing
+              // itself: the cancel is why the turn is gone, and resending would
+              // restart the interaction they just ended. No stream ever opened
+              // here, so no turn_ended(cancelled) will say so — only this flag.
+              if (!stopRequestedRef.current) {
+                undeliveredPrompt = adoptedSteer.prompt;
+              }
               return;
             }
             // A 5xx is ambiguous — the steer may have been queued before the
@@ -932,6 +945,7 @@ export const useStreamingResponse = ({
   // after retries. The caller should surface a false so the user knows a pending
   // approval may still be live.
   const stopTurn = useCallback(async () => {
+    stopRequestedRef.current = true;
     let active = activeTurnRef.current;
     if (!active) {
       return true;
