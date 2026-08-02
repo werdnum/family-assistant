@@ -795,3 +795,48 @@ class TestHighlightImageTool:
         assert "Invalid shape 'triangle'" in result.text
         assert "Must be 'rectangle' or 'circle'" in result.text
         assert not result.attachments or len(result.attachments) == 0
+
+
+class TestScriptAttachmentSyncContent:
+    """The synchronous content API that scripts call."""
+
+    def test_get_content_uses_the_handle_without_entering_it(
+        self,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """The getter's return value is used directly, not entered.
+
+        Database is deliberately not an async context manager, so entering it
+        here fails every script that reads an attachment through the
+        synchronous API -- whatever the registry would have returned.
+
+        The registry is a stub because that is the whole point: the failure
+        this pins happens before any content lookup, and the real registry
+        would need a database reachable from the fresh event loop that
+        ``get_content`` spins up.
+        """
+        seen: list[object] = []
+
+        class _StubRegistry:
+            async def get_attachment_content(
+                self,
+                db_context: object,
+                attachment_id: str,
+                *,
+                acting_user_id: str | None,
+            ) -> bytes:
+                _ = attachment_id, acting_user_id
+                seen.append(db_context)
+                return b"attachment bytes"
+
+        metadata = Mock()
+        metadata.attachment_id = str(uuid.uuid4())
+
+        script_attachment = ScriptAttachment(
+            metadata=metadata,
+            registry=cast("AttachmentRegistry", _StubRegistry()),
+            db_context_getter=lambda: Database(db_engine),
+        )
+
+        assert script_attachment.get_content() == b"attachment bytes"
+        assert isinstance(seen[0], Database)

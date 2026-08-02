@@ -69,7 +69,7 @@ class ScriptAttachment:
         self,
         metadata: AttachmentMetadata,
         registry: AttachmentRegistry,
-        db_context_getter: Callable,
+        db_context_getter: Callable[[], Database],
         user_id: str | None = None,
     ) -> None:
         """
@@ -130,17 +130,19 @@ class ScriptAttachment:
                 # We need to run async code from sync context
                 # This will work in the script execution environment
                 async def _get_content() -> bytes:
-                    async with self._db_context_getter() as db_context:
-                        content = await self._registry.get_attachment_content(
-                            db_context,
-                            self._metadata.attachment_id,
-                            acting_user_id=self._acting_user_id,
+                    # The handle is used directly, not entered: Database is not
+                    # a context manager, and it owns no connection to hold open.
+                    db_context = self._db_context_getter()
+                    content = await self._registry.get_attachment_content(
+                        db_context,
+                        self._metadata.attachment_id,
+                        acting_user_id=self._acting_user_id,
+                    )
+                    if content is None:
+                        raise RuntimeError(
+                            f"Could not retrieve content for attachment {self._metadata.attachment_id}"
                         )
-                        if content is None:
-                            raise RuntimeError(
-                                f"Could not retrieve content for attachment {self._metadata.attachment_id}"
-                            )
-                        return content
+                    return content
 
                 # Try to get running loop, fall back to new loop if none
                 try:
