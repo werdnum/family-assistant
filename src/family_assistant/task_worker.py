@@ -688,13 +688,23 @@ async def _deliver_llm_callback_reply(
             f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
         ) from e
 
+    if sent_message_id is None:
+        # A None return is how the ChatInterface contract reports a failed
+        # delivery. Returning here would let the task complete with nothing
+        # sent; raising leaves the reply undelivered so a retry resumes at the
+        # checkpoint and sends it, rather than dropping it silently.
+        raise RuntimeError(
+            f"Chat interface reported no delivery for the LLM callback reply to "
+            f"{interface_type}:{conversation_id}."
+        )
+
     logger.info(
         f"Sent LLM response for callback to {interface_type}:{conversation_id}."
     )
 
-    if sent_message_id is None or assistant_message_internal_id is None:
-        # Nothing to stamp, so the reply stays "undelivered" and a retry of this
-        # task re-enters delivery rather than regenerating the turn: a duplicate
+    if assistant_message_internal_id is None:
+        # Delivered, but there is no persisted row to stamp, so the checkpoint
+        # cannot close. A retry of this task would deliver again -- a duplicate
         # message at worst, never repeated tool side effects.
         logger.warning(
             f"Delivered the LLM callback reply to {interface_type}:{conversation_id} "

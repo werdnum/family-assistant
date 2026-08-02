@@ -182,6 +182,54 @@ class _FailingDeliveryInterface(WebChatInterface):
         return await super().send_message(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the interface signature
 
 
+class _NoDeliveryIdInterface(WebChatInterface):
+    """A web interface that reports its first send as undelivered."""
+
+    def __init__(self, db_engine: AsyncEngine) -> None:
+        super().__init__(db_engine, notifier=None, stream_hub=None)
+        self.send_attempts = 0
+
+    async def send_message(self, *args: object, **kwargs: object) -> str | None:
+        self.send_attempts += 1
+        if self.send_attempts == 1:
+            return None
+        return await super().send_message(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the interface signature
+
+
+@pytest.mark.asyncio
+async def test_callback_treats_a_missing_delivery_id_as_a_failed_send(
+    db_engine: AsyncEngine,
+) -> None:
+    """Returning None is how the interface reports a failed delivery.
+
+    Continuing past it would let the task complete with nothing sent and no
+    retry, silently dropping the reply the turn already generated.
+    """
+    ctx = Database(engine=db_engine)
+    await init_db(db_engine)
+    await ctx.init_vector_db()
+
+    processing_service = TaintedReplyService()
+    chat_interface = _NoDeliveryIdInterface(db_engine)
+
+    with pytest.raises(RuntimeError, match="reported no delivery"):
+        await handle_llm_callback(
+            _exec_context(
+                Database(engine=db_engine), processing_service, chat_interface
+            ),
+            _payload(),
+        )
+
+    # The retry resumes at delivery rather than regenerating.
+    await handle_llm_callback(
+        _exec_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload(),
+    )
+
+    assert processing_service.call_count == 1
+    assert chat_interface.send_attempts == 2
+
+
 @pytest.mark.asyncio
 async def test_callback_retry_resumes_at_delivery_without_rerunning_the_turn(
     db_engine: AsyncEngine,
