@@ -263,10 +263,16 @@ export const useStreamingResponse = ({
             }
             // A network or 5xx failure is ambiguous — the steer may have been
             // queued before the response failed — so it must NOT be auto-resent.
-            // Surface it and let the caller keep the text.
-            throw new Error(
-              `Could not deliver the message to the running turn (HTTP ${steerResponse.status})`
+            // The composer has already cleared, though, and nothing persisted
+            // it, so the error has to carry the text back or the message exists
+            // only in an optimistic bubble that a refresh discards.
+            const ambiguous = new Error(
+              "Your message may not have reached the assistant, and it's still working on the " +
+                'previous one. Check the reply, then send it again if it was missed:\n\n' +
+                `> ${adoptedSteer.prompt}`
             );
+            ambiguous.userFacing = true;
+            throw ambiguous;
           }
           const steerBody = await steerResponse.json().catch(() => ({}));
           pendingAdoptedEcho = {

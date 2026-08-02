@@ -448,7 +448,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   );
   // Same story for handleReloadHistory: the completion handler reconciles an
   // adopted turn whose output it suppressed, and that callback is defined below.
-  const handleReloadHistoryRef = useRef<((conversationId: string) => void) | null>(null);
+  const handleReloadHistoryRef = useRef<
+    ((conversationId: string, options?: { retryIfBailed?: boolean }) => void) | null
+  >(null);
   // Set when the running turn ended because the user stopped it, so the
   // completion handler can render a "stopped" affordance instead of an empty
   // bubble (and never an error toast).
@@ -961,7 +963,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // — not only when the prompt went unconsumed, which is the narrower case
       // handled below.
       if (adopted && conversationId) {
-        void handleReloadHistoryRef.current?.(conversationId);
+        // retryIfBailed: recovering a prompt fires its replacement turn right
+        // after this, and an active stream makes the reconcile bail.
+        void handleReloadHistoryRef.current?.(conversationId, { retryIfBailed: true });
       }
 
       if (recoverAdopted) {
@@ -1132,7 +1136,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const handleReloadHistory = useCallback(
     (
       reloadConversationId: string,
-      options?: { errorIfNoReply?: boolean; turnId?: string; errorOnFailedReload?: boolean }
+      options?: {
+        errorIfNoReply?: boolean;
+        turnId?: string;
+        errorOnFailedReload?: boolean;
+        retryIfBailed?: boolean;
+      }
     ) => {
       activeStreamConversationIdRef.current = null;
       // A bounded resume that gave up — or a 410 — no longer holds the turn's
@@ -1165,7 +1174,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           // stays unconfirmed and self-heals on the next successful reload. (A 410
           // omits errorOnFailedReload — its reply is durably persisted — so a
           // transient /messages failure there stays silent and self-heals.)
-          if (options?.errorIfNoReply && options.turnId && result === 'bailed') {
+          if (
+            result === 'bailed' &&
+            (options?.retryIfBailed || (options?.errorIfNoReply && options.turnId))
+          ) {
+            // A stream was active for this conversation, so the reconcile never
+            // ran. Drive the fallback poll to retry once that stream clears —
+            // a recovered prompt starts its replacement turn immediately, which
+            // is exactly what bails this reload.
             setPendingReconcileConvId(reloadConversationId);
             return;
           }
@@ -2121,13 +2137,27 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         return 'finished';
       }
       setSteerError(null);
+      // Register as awaiting-echo BEFORE the request, not after it resolves. The
+      // turn can drain the steer and publish its user_input echo while the POST
+      // response is still in flight; the echo handler then finds nothing to
+      // remove, and registering afterwards would leave an already-consumed
+      // prompt marked unconsumed — which terminal recovery resends, repeating
+      // whatever the user asked for. Registered early, the echo removes it.
+      awaitingEchoSteersRef.current.push(prompt);
       const result = await steerStream({ prompt });
       if (result === 'accepted') {
-        // Track it as awaiting-echo so that if the turn completes without
-        // draining it (a final text-only iteration), the completion handler
-        // recovers it as a normal follow-up instead of losing it.
-        awaitingEchoSteersRef.current.push(prompt);
+        // Left registered (or already removed by its echo): if the turn ends
+        // without draining it, the completion handler recovers it as a normal
+        // follow-up instead of losing it.
         return 'accepted';
+      }
+      // Not accepted, so nothing will ever echo it. Drop the registration again
+      // — the caller handles this prompt itself (resending a 'finished' one as a
+      // normal message, keeping an 'error' one in the composer), and leaving it
+      // registered would have recovery send it a second time.
+      const registeredIdx = awaitingEchoSteersRef.current.lastIndexOf(prompt);
+      if (registeredIdx !== -1) {
+        awaitingEchoSteersRef.current.splice(registeredIdx, 1);
       }
       if (result === 'error') {
         // The turn may still be running and the steer may even have been

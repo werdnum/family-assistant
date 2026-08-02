@@ -1367,6 +1367,51 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'hands back the text when an adopted steer fails ambiguously',
+    async () => {
+      // A 5xx may or may not have queued the steer, so it must not auto-resend.
+      // The composer has already cleared and nothing persisted the prompt, so
+      // the error has to carry the text or the message is only in a bubble a
+      // refresh discards.
+      let steers = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', () =>
+          HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-11',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          )
+        ),
+        http.post('/api/v1/chat/turns/:turnId/steer', () => {
+          steers += 1;
+          return new HttpResponse(null, { status: 503 });
+        })
+      );
+
+      const errors: Error[] = [];
+      const { result } = renderHook(() =>
+        useStreamingResponse({ onError: (e: Error) => errors.push(e) })
+      );
+      await result.current.sendStreamingMessage({
+        prompt: 'move the dentist to Friday',
+        conversationId: 'web_conv_ambiguous',
+      });
+
+      expect(steers).toBe(1);
+      expect(errors).toHaveLength(1);
+      // The text comes back with the error, and it renders as written.
+      expect(errors[0].message).toContain('move the dentist to Friday');
+      expect((errors[0] as Error & { userFacing?: boolean }).userFacing).toBe(true);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'refuses to adopt a running turn when the send carried attachments',
     async () => {
       // Steering carries text only. Adopting here would answer the prompt with
