@@ -226,24 +226,14 @@ unrepresentable.
 Blind spots (`typeCheckingMode = "basic"`, `Any`-typed paths, string-keyed dispatch) are covered by
 layers 2–4.
 
-### 2. ast-grep migration ratchet (shrink-only counter)
+### 2. ast-grep conformance rules
 
-Reuse the suppression-budget pattern (`scripts/check_suppression_budget.py`, `.lint-budget.toml`):
-its ratchet logic is generic; only its counter is ruff-specific. Add a sibling counter driven by
-`ast-grep scan --json` over migration rules:
+Because the cutover deletes the legacy names outright (see migration plan), no migration ratchet is
+needed: once `DatabaseContext` / `get_db_context` / `create_isolated_context` no longer exist, the
+old pattern is unrepresentable and the type checker alone prevents reintroduction. Two permanent
+rules guard the parts the type checker cannot see:
 
-- `migration-legacy-db-context`: any reference to `DatabaseContext` / `get_db_context`
-- `migration-isolated-context`: calls to `create_isolated_context` / `supports_isolated_writes`
-
-Budgets start at today's counts, auto-lower as sites are converted (rewritten file must reach the
-commit — same mechanic as the existing script), and **fail CI on any increase**. This makes
-incremental migration enforceable: the old pattern can only shrink, and the milestones below can
-land as separate reviewable PRs without the old world leaking back. When a counter hits zero, the
-symbol is deleted and the rule flips to a permanent `severity: error` conformance rule.
-
-Two more permanent rules:
-
-- ban `engine.begin()` / raw transaction management outside `storage/` (lands with the end state)
+- ban `engine.begin()` / raw transaction management outside `storage/` (lands with the cutover)
 - ban raw `create_async_engine` outside `storage/base.py` — this one lands in **M0**, covering
   `tests/` too, because bypassing fixtures are a moving target: the known offenders are
   `tests/conftest.py:324` (PG engine, wrong pool class), `tests/functional/web/conftest.py:548`
@@ -286,80 +276,63 @@ actually what CI exercises.
 
 ## Migration plan
 
-Milestones are separately land-able PRs, each green on full dual-backend CI.
+Two PRs, each green on full dual-backend CI. The whole semantic change lands **all at once**: no
+interim tactical fix, no window with two internal database APIs, complying literally with the
+no-backwards-compatibility rule (`AGENTS.md`: "when migrating from X to Y, delete X immediately").
 
-**On the no-backwards-compatibility rule** (`AGENTS.md`: "when migrating from X to Y, delete X
-immediately"): M1–M2 deliberately deviate — `DatabaseContext` and the new types coexist until M3.
-The rule's *purpose* is preserved: within each converted subsystem the old type is fully excised in
-that same PR (the type checker exposes every stale caller subsystem-by-subsystem), the coexistence
-window is time-boxed, and the ratchet makes it monotone — this is a bounded migration with an
-enforced endpoint, not a compatibility layer kept for callers' convenience. The alternative that
-satisfies the rule literally — new API + all ~130 call-site conversions + deletion as one cutover —
-forfeits reviewability and bisectability on the riskiest change this codebase has seen. If strict
-compliance is preferred, the same content can land as a stacked PR chain (M1 → M2a…M2e → M3) merged
-in one short window; the diffs are identical, only the merge cadence changes. **Decision needed**
-(open question 5).
-
-- **Immediately, ahead of M0 — tactical #1076 fix.** Register tool attachments via
-  `create_isolated_context`, mirroring `_save_history_message`, and fix the unactionable error
-  message. `media_analyst` is broken *today*, and M0→M2 is several PRs; the cost is one more
-  isolated-context site in a budget that only shrinks and that M3 empties anyway. Deleted when the
-  turn pipeline flips in M2.
 - **M0 — groundwork (no semantic change).** Unify test engine creation through the production
-  factory; add engine instrumentation + leak/duration checks (observational); land the ast-grep
-  ratchet tooling with budgets **seeded from the counter's own measured counts at landing time**
-  (never from numbers in this doc — a stale prose count that seeded a budget too high would silently
-  permit a new legacy site); add the migration rules.
-- **M1 — new core + storage layer.** Introduce `Database` / `DatabaseTransaction` / executor
-  protocol; rewrite repositories (adding `atomic()` to multi-statement methods); convert the task
-  worker (already structured as four transaction phases at `task_worker.py:3351-3465`, it is the
-  natural first consumer) and delete its 14 isolated-context sites. Enable the visibility property
-  test.
-- **M2 — entry points, one per PR.** Web `get_db` dependency (endpoints receive `Database`; explicit
-  blocks in webhooks/oauth/a2a per worklist) → turn pipeline (`turn_producer`, `chat_api`,
-  `llm_loop`, `ToolExecutionContext`) → telegram handler → a2a → asterisk. As each flips, its lane
-  of the LLM/tool-boundary invariant goes from observational to enforcing. **#1076 is structurally
-  fixed** when the turn pipeline flips: tool-registered attachments are committed at registration
-  and visible to delegation validation. The turn-pipeline PR specifically must include the parallel
-  tool-call test from verification layer 3 (that flip is what makes it pass) and is the point where
-  #1077's `_repair_unmatched_tool_calls` formally changes role from race mitigation to the
-  designed-for recovery path (behaviour change 5).
-- **M3 — excision.** Delete `DatabaseContext`, `get_db_context`, `create_isolated_context`,
-  `supports_isolated_writes`, `_USE_ISOLATED_HISTORY_WRITES` and the `save_with_isolated_context`
-  plumbing, the a2a pre-commit workaround (`a2a_api.py:310-347`), the deferred-confirmation FK
-  workaround (`deferred_tool_confirmation.py:150-158`), and `tools_api.py`'s manual rollback. Revert
-  SQLite's `pool_reset_on_return=None` (`storage/base.py:83`) to the default — it exists solely to
-  protect the cross-context clobbering the engine lock now makes impossible, and leaving it behind
-  would be a silent leftover of a removed hazard. Flip migration rules to bans; update `AGENTS.md`'s
-  Database Access Pattern section and the error message that told the model to "try again once they
-  are committed".
+  factory, enforced by the raw-`create_async_engine` ban; add engine instrumentation + the
+  leak/duration checks (observational until the cutover).
+- **M1 — the cutover, one PR.** Introduce `Database` / `DatabaseTransaction` / executor protocol;
+  rewrite the repositories (moving multi-statement bodies into `atomic()` closures); convert every
+  caller per the worklist; and in the same change delete the legacy API and its scar tissue:
+  `DatabaseContext`, `get_db_context`, `create_isolated_context`, `supports_isolated_writes`,
+  `_USE_ISOLATED_HISTORY_WRITES` and the `save_with_isolated_context` plumbing, the a2a pre-commit
+  workaround (`a2a_api.py:310-347`), the deferred-confirmation FK workaround
+  (`deferred_tool_confirmation.py:150-158`), `tools_api.py`'s manual rollback, and SQLite's
+  `pool_reset_on_return=None` (`storage/base.py:83`), which exists solely to protect the
+  cross-context clobbering the engine lock makes impossible. Flip the runtime invariants from
+  observational to enforcing; land the cross-connection visibility property test and the parallel
+  tool-call test; update `AGENTS.md`'s Database Access Pattern section and the error message that
+  told the model to "try again once they are committed".
+
+For reviewability, the cutover PR is structured as one commit per subsystem in dependency order —
+storage core → task worker → web `get_db` dependency → turn pipeline (`turn_producer`, `chat_api`,
+`llm_loop`, `ToolExecutionContext`) → telegram → a2a → asterisk → excisions — with the PR head
+green; intermediate commits need not be. **#1076 is structurally fixed by the cutover**
+(tool-registered attachments commit at registration and are visible to delegation validation), which
+is also the point where #1077's `_repair_unmatched_tool_calls` formally changes role from race
+mitigation to the designed-for recovery path (behaviour change 5).
 
 ## Alternatives considered
 
-- **Tactical fix for #1076 as the *only* response** (no migration): every future (turn-context write
-  → other-connection read) pair is another incident. Rejected as the endpoint — but the tactical fix
-  itself lands immediately (see the migration plan) rather than waiting on the migration, so the
-  user-visible break isn't carried across milestones.
-- **Big-bang rewrite in one PR**: ~130 sites + 50 endpoints; unreviewable, and a single regression
-  blocks everything. The ratchet exists precisely to make incremental safe.
+- **Interim tactical fix for #1076** (register tool attachments via an isolated context ahead of the
+  migration): deliberately not landed — the cutover fixes the bug structurally, and a stopgap that
+  the same change immediately deletes adds a confusing intermediate state for little gain. The break
+  persists only until M1 merges.
+- **Incremental migration** (per-entry-point PRs with a shrink-only ast-grep ratchet modeled on
+  `.lint-budget.toml`, budgets seeded from measured counts): viable and fully designed, but it
+  leaves two internal database APIs coexisting across the window — against the delete-immediately
+  rule — and spreads one semantic change across many merges. Rejected by maintainer decision in
+  favour of the single cutover; with the legacy names deleted in the same PR that converts the
+  callers, the ratchet has nothing left to count.
 - **Keep `DatabaseContext`'s name/shape, change semantics silently**: zero compile errors → no
   worklist, and the most dangerous kind of change (behaviour shifts under unchanged syntax).
   Rejected.
 - **Session-per-turn with SQLAlchemy ORM `Session`**: this codebase is Core-based with a working
   repository pattern; introducing the ORM is an unrelated (larger) migration.
 
-## Open questions
+## Decisions
 
-1. Milestone cadence vs the delete-immediately rule: independent milestone PRs with a ratcheted
-   coexistence window (proposed), or a stacked PR chain merged in one short window for strict
-   compliance. See "Migration plan".
-
-### Resolved in review
-
+- **Cadence: groundwork PR, then one cutover PR** — new API, all caller conversions, and legacy
+  deletion land together; no interim tactical fix (maintainer decision).
 - PostgreSQL pool bounds: **5/10** (`pool_size`/`max_overflow`) at this deployment's scale.
 - Naming: **`Database` / `DatabaseTransaction`** — the `*Context` suffix was part of what made the
   current type easy to misuse.
-- M2 order: **web dependency first**, then the turn pipeline.
+- Conversion order within the cutover: **web dependency before the turn pipeline** (smaller blast
+  radius first).
 - Production runtime checks: the **handle-under-ambient-transaction guard raises in production on
   both backends** (it is the difference between an exception and a wedged turn); the LLM/tool
   boundary assertion stays test-only, since its seams are the test fakes.
+
+No open questions remain.
