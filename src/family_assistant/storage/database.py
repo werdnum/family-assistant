@@ -36,7 +36,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from sqlalchemy import event
 from sqlalchemy.exc import (
     DBAPIError,
     IntegrityError,
@@ -726,6 +725,7 @@ class DatabaseTransaction(DatabaseExecutor):
         self._lock: asyncio.Lock | None = None
         self._token: contextvars.Token[bool] | None = None
         self._transaction_cm: Any = None
+        self._on_commit_callbacks: list[Callable[[], Any]] = []
 
     @property
     def engine(self) -> AsyncEngine:
@@ -771,8 +771,10 @@ class DatabaseTransaction(DatabaseExecutor):
         """Commit the transaction, or roll it back if the block raised."""
         if self._transaction_cm is None:
             return
+        committed = False
         try:
             await self._transaction_cm.__aexit__(exc_type, exc_val, exc_tb)
+            committed = exc_type is None
         finally:
             if self._token is not None:
                 _AMBIENT_TRANSACTION.reset(self._token)
@@ -780,6 +782,11 @@ class DatabaseTransaction(DatabaseExecutor):
             self._connection = None
             self._transaction_cm = None
             self._release_lock()
+            callbacks, self._on_commit_callbacks = self._on_commit_callbacks, []
+
+        if committed:
+            for callback in callbacks:
+                callback()
 
     def _release_lock(self) -> None:
         if self._lock is not None:
@@ -809,24 +816,27 @@ class DatabaseTransaction(DatabaseExecutor):
         return await body(self)
 
     def on_commit(self, callback: Callable[[], Any]) -> Callable[[], Any]:
-        """Register a callback to run when this transaction commits.
+        """Register a callback to run once this transaction has committed.
 
-        Callbacks live on the transaction object and are discarded with it on
-        rollback, so a replayed ``atomic()`` closure re-registers them and they
-        fire exactly once, after the commit that actually succeeded.
+        Held on the transaction object rather than on SQLAlchemy's ``commit``
+        connection event, which fires *before* the DBAPI commit: a worker woken
+        from there can poll a queue whose row is not yet visible, and the
+        callback would still run if the commit then failed. These run after the
+        transaction context has exited successfully, and are discarded with the
+        transaction on rollback -- so a replayed ``atomic()`` closure
+        re-registers them and they fire exactly once, after the commit that
+        actually succeeded.
 
         Args:
-            callback: A callable to be executed on commit.
+            callback: A callable to be executed after commit.
 
         Returns:
             The original callback for chaining.
         """
-        connection = self.connection
-
-        def event_listener_wrapper(*args: object, **kwargs: object) -> None:
-            callback()
-
-        event.listen(connection.sync_connection, "commit", event_listener_wrapper)
+        # Accessing the connection asserts the transaction is active, so a
+        # callback cannot be registered on a finished transaction.
+        _ = self.connection
+        self._on_commit_callbacks.append(callback)
         return callback
 
 

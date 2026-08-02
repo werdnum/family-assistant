@@ -987,29 +987,26 @@ class AttachmentRegistry:
             )
         )
 
-        result = await db_context.execute(update_stmt)
+        async def _claim(txn: DatabaseTransaction) -> AttachmentMetadata | None:
+            """Atomically claim and fetch the attachment in one statement.
 
-        if result.rowcount == 0:
-            # Either attachment doesn't exist, already claimed, or access denied
+            UPDATE ... RETURNING makes the claim and metadata read one operation,
+            so a retry can't find the attachment already claimed (conversation_id
+            no longer NULL) — preventing orphaned claims on fetch failure.
+            """
+            stmt_with_returning = update_stmt.returning(attachment_metadata_table)
+            result = await txn.execute(stmt_with_returning)
+            row = result.one_or_none()
+
+            if row:
+                logger.info(
+                    f"Successfully claimed attachment {attachment_id} for conversation {conversation_id}"
+                )
+                return AttachmentMetadata.from_row(cast("AttachmentRowDict", row))
+
             return None
 
-        # Successfully claimed, now fetch the updated record
-        query = select(attachment_metadata_table).where(
-            and_(
-                attachment_metadata_table.c.attachment_id == attachment_id,
-                self._owner_visibility_clause(acting_user_id),
-            )
-        )
-        row = await db_context.fetch_one(query)
-
-        if row:
-            logger.info(
-                f"Successfully claimed attachment {attachment_id} for conversation {conversation_id}"
-            )
-            # Note: accessed_at is updated by the claim UPDATE statement above
-            return AttachmentMetadata.from_row(cast("AttachmentRowDict", row))
-
-        return None
+        return await db_context.atomic(_claim)
 
     # Convenience methods that create their own database contexts
 

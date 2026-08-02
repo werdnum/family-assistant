@@ -806,6 +806,7 @@ async def handle_llm_callback(
         # the turn's user_id too — not just into the confirmation callback.
         callback_owner_user_id = payload.get("created_by_user_id")
 
+        # --- Generation Phase (committed, durable) ---
         # Call the ProcessingService.
         # NOTE: `handle_chat_interaction` now handles saving of all messages in the turn.
         result = await processing_service.handle_chat_interaction(
@@ -851,62 +852,76 @@ async def handle_llm_callback(
                 f"LLM callback had processing errors for {interface_type}:{conversation_id}"
             )
 
-        sent_message_id_str = None
-        # Send message if there's text content OR attachments
+        # --- Delivery Phase (send first, then record atomically) ---
+        # The generation phase is complete and durable. Now attempt delivery and record.
+        # This follows the delegation pattern: send happens outside the transaction
+        # (so a failed send doesn't hold the connection), then record+mark in atomic block.
+        sent_message_id_str: str | None = None
+        delivery_taint_metadata = None
+
+        # Pre-fetch taint metadata outside the delivery block, since this is a read and
+        # we want to keep the atomic block minimal
         if final_llm_content_to_send or response_attachment_ids:
-            # This delivery copy repeats an LLM-derived reply, so it must carry
-            # the turn's authoritative taint rather than defaulting to the
-            # trusted-empty baseline (which a persisted-but-metadata-less copy
-            # would otherwise get). Reuse the taint the turn already persisted on
-            # its canonical assistant row; if that row can't be resolved, fall
-            # back CONSERVATIVELY to unknown_external since the reply may derive
-            # from tainted tool output.
             delivery_taint_metadata = await _llm_callback_delivery_taint_metadata(
                 db_context,
                 final_assistant_message_internal_id,
             )
-            sent_message_id_str = await chat_interface.send_message(
-                conversation_id=conversation_id,
-                text=final_llm_content_to_send
-                or "",  # Use empty string if no text but have attachments
-                parse_mode="MarkdownV2",
-                attachment_ids=response_attachment_ids,
-                on_behalf_of_user_id=callback_owner_user_id,
-                taint_metadata=delivery_taint_metadata,
-            )
-            logger.info(
-                f"Sent LLM response for callback to {interface_type}:{conversation_id}."
-            )
+
+        if final_llm_content_to_send or response_attachment_ids:
+            try:
+                sent_message_id_str = await chat_interface.send_message(
+                    conversation_id=conversation_id,
+                    text=final_llm_content_to_send
+                    or "",  # Use empty string if no text but have attachments
+                    parse_mode="MarkdownV2",
+                    attachment_ids=response_attachment_ids,
+                    on_behalf_of_user_id=callback_owner_user_id,
+                    taint_metadata=delivery_taint_metadata,
+                )
+                logger.info(
+                    f"Sent LLM response for callback to {interface_type}:{conversation_id}."
+                )
+            except Exception as e:
+                logger.exception(
+                    f"Failed to send LLM callback response to {interface_type}:{conversation_id}: {e}"
+                )
+                # KNOWN GAP: the task retries by re-entering this handler from
+                # the top, so the LLM turn runs again and any stateful tools it
+                # used repeat. The generation is already durable; what is
+                # missing is a delivery checkpoint the retry consults to resume
+                # at delivery and reuse the persisted reply. See the
+                # handle_llm_callback row of the worklist in
+                # docs/design/db-commit-as-you-go.md.
+                raise RuntimeError(
+                    f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
+                ) from e
         else:
             # Case: No final_llm_content_to_send and no attachments.
             logger.warning(
                 f"LLM turn completed for callback in {interface_type}:{conversation_id}, but final message had no content or attachments."
             )
 
+        # --- Record delivery atomically ---
         # Update interface message ID if we sent a message successfully
         if sent_message_id_str and final_assistant_message_internal_id is not None:
-            try:
-                await db_context.message_history.update_interface_id(
+
+            async def _record_delivery(txn: DatabaseTransaction) -> None:
+                """Atomically update the interface message ID after successful send."""
+                await txn.message_history.update_interface_id(
                     internal_id=final_assistant_message_internal_id,
                     interface_message_id=sent_message_id_str,
                 )
+
+            try:
+                await db_context.atomic(_record_delivery)
             except Exception as e:
                 logger.exception(
                     f"Failed to update interface_message_id for callback response: {e}"
                 )
+                # Log but don't fail the task - send already succeeded, this is metadata
         elif sent_message_id_str:  # Message sent but no internal_id to update
             logger.warning(
                 f"Sent LLM callback response to {interface_type}:{conversation_id}, but could not find internal_id ({final_assistant_message_internal_id}) to update its interface_message_id."
-            )
-        elif (
-            final_llm_content_to_send or response_attachment_ids
-        ):  # We expected to send a message but failed
-            logger.error(
-                f"Failed to send LLM callback response to {interface_type}:{conversation_id}"
-            )
-            # Raise an exception to mark the task as failed
-            raise RuntimeError(
-                f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
             )
 
         if processing_error_traceback:

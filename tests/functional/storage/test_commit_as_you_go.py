@@ -6,6 +6,8 @@ docs/design/db-commit-as-you-go.md.
 """
 
 import asyncio
+import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 
 import pytest
@@ -198,6 +200,41 @@ async def test_on_commit_fires_once_after_the_commit_that_succeeded(
         txn.on_commit(lambda: fired.append("committed"))
 
     assert fired == ["committed"]
+
+
+@pytest.mark.asyncio
+async def test_on_commit_runs_only_once_the_write_is_visible(
+    db_engine: AsyncEngine,
+) -> None:
+    """A commit callback must not observe a database without its own write.
+
+    SQLAlchemy's ``commit`` connection event fires *before* the DBAPI commit,
+    so a worker woken from there can poll a queue whose row is not yet visible,
+    clear its event, and miss the task until the next poll. Read here on a
+    plain sqlite3 connection -- a genuinely separate reader, and synchronous,
+    so it observes exactly the moment the callback ran.
+    """
+    if db_engine.dialect.name != "sqlite":
+        pytest.skip("uses a direct sqlite3 reader to observe commit ordering")
+    database_path = db_engine.url.database
+    assert database_path is not None
+
+    db = Database(engine=db_engine)
+    seen: list[list[str]] = []
+
+    def record_visible_titles() -> None:
+        with closing(sqlite3.connect(database_path)) as reader:
+            seen.append([row[0] for row in reader.execute("SELECT title FROM notes")])
+
+    async with db.transaction() as txn:
+        txn.on_commit(record_visible_titles)
+        await txn.notes.add_or_update(
+            title="visible-to-the-callback",
+            content="written in the transaction the callback is waiting on",
+            write_policy=NoteWritePolicy.UNCONSTRAINED,  # ast-grep-ignore: no-unconstrained-note-write-policy - storage-level invariant test, not a profile write path
+        )
+
+    assert seen and "visible-to-the-callback" in seen[0]
 
 
 @pytest.mark.asyncio

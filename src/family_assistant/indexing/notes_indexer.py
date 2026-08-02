@@ -91,10 +91,7 @@ class NotesIndexer:
             f"Added/Updated document record for note {note_id}, vector DB doc ID: {doc_id}"
         )
 
-        # --- 4. Delete existing embeddings if re-indexing ---
-        await delete_document_embeddings(db_context, doc_id)
-
-        # --- 5. Get the document record for pipeline ---
+        # --- 4. Get the document record for pipeline ---
         try:
             db_document_record = await get_document_by_id(db_context, doc_id)
             if not db_document_record:
@@ -105,7 +102,7 @@ class NotesIndexer:
             logger.exception(f"Error fetching document record {doc_id}: {e}")
             raise RuntimeError(f"Failed to fetch document record {doc_id}") from e
 
-        # --- 6. Prepare Initial Content for Pipeline ---
+        # --- 5. Prepare Initial Content for Pipeline ---
         initial_items: list[IndexableContent] = []
         if note_doc._content:
             # The pipeline will handle title extraction, chunking, summarizing, etc.
@@ -126,7 +123,7 @@ class NotesIndexer:
             # Task is considered done as the document record was created/updated.
             return
 
-        # --- 7. Run Indexing Pipeline ---
+        # --- 6. Run Indexing Pipeline (untransacted, prepares replacement dispatch) ---
         try:
             logger.info(
                 f"Running indexing pipeline for note {note_id} (Doc ID: {doc_id}) with {len(initial_items)} initial items."
@@ -143,6 +140,13 @@ class NotesIndexer:
                 f"Indexing pipeline run failed for note {note_id} (Doc ID: {doc_id}): {e}"
             )
             raise RuntimeError(f"Indexing pipeline failed for note {note_id}") from e
+
+        # --- 7. Delete the superseded embeddings ---
+        # Deliberately last: the pipeline has already enqueued the replacement
+        # dispatch durably, so the deletion can never commit without a
+        # replacement on its way. The reverse order left a note with no search
+        # embeddings whenever the pipeline or the enqueue failed.
+        await delete_document_embeddings(db_context, doc_id)
 
         logger.info(
             f"Indexing pipeline successfully initiated for note {note_id} (Doc ID: {doc_id})."
