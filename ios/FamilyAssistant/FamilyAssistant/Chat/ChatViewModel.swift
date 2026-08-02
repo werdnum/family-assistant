@@ -2694,7 +2694,11 @@ final class ChatViewModel {
             }
             clearComposerIfMatching(prompt)
             queuedFollowUpSteers.append(prompt)
-            await sendNextQueuedFollowUpSteerIfReady()
+            if reattachedRunningTurnID == activeTurn.turnID {
+                clearReattachedSession()
+            } else {
+                await sendNextQueuedFollowUpSteerIfReady()
+            }
         case .error:
             removeInFlightSteer(prompt)
             removeAwaitingEchoSteer(prompt)

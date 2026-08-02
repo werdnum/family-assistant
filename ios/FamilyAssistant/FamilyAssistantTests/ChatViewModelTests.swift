@@ -1699,6 +1699,58 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(model.draftText, "")
     }
 
+    func testRecoveredTurnFinishingBeforeSteerSendsPromptAsFollowUp() async throws {
+        let messageLookups = AtomicCounter()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_recovered_finished/messages"):
+                let lookup = messageLookups.increment()
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_recovered_finished",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false,
+                      "active_turns":\(lookup == 1 ? "[{\"turn_id\":\"turn-finished-before-steer\",\"started_at\":\"2026-08-01T23:25:26Z\",\"latest_seq\":0,\"status\":\"running\"}]" : "[]")
+                    }
+                    """
+                )
+            case ("POST", "/api/v1/chat/turns/turn-finished-before-steer/steer"):
+                steerRequests.increment()
+                return .json(#"{"detail":"Turn is not running"}"#, statusCode: 409)
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(payload["prompt"] as? String, "send as a follow-up")
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"web_conv_recovered_finished","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_recovered_finished/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_recovered_finished")
+        model.draftText = "send as a follow-up"
+
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        XCTAssertEqual(steerRequests.value, 1)
+        XCTAssertGreaterThanOrEqual(messageLookups.value, 2)
+        XCTAssertEqual(privateStringArray("queuedFollowUpSteers", in: model), [])
+        XCTAssertEqual(model.draftText, "")
+    }
+
     func testNormalSendPreflightPreservesDraftEditedDuringLookup() async throws {
         let lookup = HangingStream()
         let lookupRequests = AtomicCounter()
