@@ -50,6 +50,7 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import init_db  # Import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.instrumentation import get_instrumentation
 
 # Explicitly import the module defining the tasks table to ensure metadata registration
 # Import vector storage init and context
@@ -221,6 +222,31 @@ def reset_task_event() -> Generator[None]:
 # This fixture has been removed - tests should use db_engine directly
 
 
+# The engine-level invariants (no transaction parked open, no leaked pooled
+# connection) only hold once the commit-as-you-go cutover lands: today's
+# turn-spanning DatabaseContext violates the duration bound by design. Until
+# then the fixtures report violations without failing, which validates the
+# instrumentation against the real suite. Flipping this to True is part of the
+# cutover -- see docs/design/db-commit-as-you-go.md.
+DB_ENGINE_INVARIANTS_ENFORCED = False
+
+
+def check_db_engine_invariants(engine: AsyncEngine, test_name: str) -> None:
+    """Report (or fail on) transaction-duration and connection-leak violations."""
+    instrumentation = get_instrumentation(engine)
+    if instrumentation is None:
+        return
+    violations = instrumentation.violations()
+    if not violations:
+        return
+    report = f"Database engine invariant violations in {test_name}:\n" + "\n".join(
+        violations
+    )
+    if DB_ENGINE_INVARIANTS_ENFORCED:
+        raise AssertionError(report)
+    logger.warning(report)
+
+
 @pytest_asyncio.fixture(scope="function")
 async def db_engine(
     request: pytest.FixtureRequest,
@@ -260,7 +286,7 @@ async def db_engine(
         ) as tmp_file:
             tmp_name = tmp_file.name
         engine = create_engine_with_sqlite_optimizations(
-            f"sqlite+aiosqlite:///{tmp_name}"
+            f"sqlite+aiosqlite:///{tmp_name}", instrument=True
         )
         logger.info(f"\n--- SQLite Test DB Setup ({request.node.name}) ---")
         logger.info(f"Created SQLite test engine: {engine.url}")
@@ -290,6 +316,7 @@ async def db_engine(
         admin_url = postgres_container.get_connection_url().replace(
             "postgresql://", "postgresql+asyncpg://", 1
         )
+        # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
         admin_engine = create_async_engine(
             admin_url, echo=False, isolation_level="AUTOCOMMIT"
         )
@@ -321,7 +348,7 @@ async def db_engine(
             test_db_url = f"{db_part}/{unique_db_name}?{query_params}"
         else:
             test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
-        engine = create_async_engine(test_db_url, echo=False)
+        engine = create_engine_with_sqlite_optimizations(test_db_url, instrument=True)
         logger.info(f"Created PostgreSQL test engine for database: {unique_db_name}")
 
         # Initialize vector extension first for PostgreSQL
@@ -348,6 +375,10 @@ async def db_engine(
         # Cleanup: dispose the engine
         logger.info(f"--- Test DB Teardown ({request.node.name}) ---")
 
+        # Checked before dispose(), which returns every connection to the pool
+        # and would mask a leak.
+        check_db_engine_invariants(engine, request.node.name)
+
         # Force close all connections before disposing
         await engine.dispose()
 
@@ -370,6 +401,7 @@ async def db_engine(
         # Drop the PostgreSQL database if we created one
         if db_backend == "postgres" and unique_db_name and admin_url:
             # Recreate admin engine for cleanup
+            # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
             admin_engine = create_async_engine(
                 admin_url, echo=False, isolation_level="AUTOCOMMIT"
             )
@@ -558,6 +590,7 @@ async def pg_vector_db_engine(
     admin_url = postgres_container.get_connection_url().replace(
         "postgresql://", "postgresql+asyncpg://", 1
     )
+    # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
     admin_engine = create_async_engine(
         admin_url, echo=False, isolation_level="AUTOCOMMIT"
     )
@@ -590,7 +623,7 @@ async def pg_vector_db_engine(
     else:
         test_db_url = admin_url.rsplit("/", 1)[0] + f"/{unique_db_name}"
 
-    engine = create_engine_with_sqlite_optimizations(test_db_url)
+    engine = create_engine_with_sqlite_optimizations(test_db_url, instrument=True)
 
     # No global engine to patch anymore - engine is passed via dependency injection
     logger.info("Using PostgreSQL test engine with vector support.")
@@ -609,9 +642,11 @@ async def pg_vector_db_engine(
         yield engine
     finally:
         logger.info(f"--- PostgreSQL Test DB Teardown ({unique_db_name}) ---")
+        check_db_engine_invariants(engine, request.node.name)
         await engine.dispose()
 
         # Drop the PostgreSQL database
+        # ast-grep-ignore: no-raw-create-async-engine - AUTOCOMMIT admin engine for CREATE/DROP DATABASE, never runs application queries
         admin_engine = create_async_engine(
             admin_url, echo=False, isolation_level="AUTOCOMMIT"
         )

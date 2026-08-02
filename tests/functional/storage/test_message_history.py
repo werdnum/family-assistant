@@ -9,10 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio  # Need this for async fixtures
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    create_async_engine,
-)  # Need these for engine fixture
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -27,7 +24,10 @@ from family_assistant.security.taint import (
 )
 
 # Import metadata to create tables
-from family_assistant.storage.base import metadata
+from family_assistant.storage.base import (
+    create_engine_with_sqlite_optimizations,
+    metadata,
+)
 from family_assistant.storage.context import (
     DatabaseContext,
     get_db_context,
@@ -48,7 +48,7 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 @pytest_asyncio.fixture(scope="function")
 async def db_engine() -> AsyncGenerator[AsyncEngine]:
     """Creates an in-memory SQLite engine and sets up the schema for each test function."""
-    engine = create_async_engine(TEST_DATABASE_URL)
+    engine = create_engine_with_sqlite_optimizations(TEST_DATABASE_URL, instrument=True)
     async with engine.begin() as conn:
         # Ensure tables are created - only creates if they don't exist
         await conn.run_sync(metadata.create_all)

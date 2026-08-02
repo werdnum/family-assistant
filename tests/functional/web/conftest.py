@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from filelock import FileLock
 from httpx import ASGITransport, AsyncClient
 from playwright.async_api import Page, async_playwright
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -37,6 +37,7 @@ from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
 )
 from family_assistant.storage import init_db
+from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.context import DatabaseContext, get_db_context
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
@@ -545,10 +546,8 @@ async def session_db_engine() -> AsyncGenerator[AsyncEngine]:
     ) as db_file:
         db_path = db_file.name
 
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{db_path}",
-        echo=False,
-        connect_args={"check_same_thread": False},
+    engine = create_engine_with_sqlite_optimizations(
+        f"sqlite+aiosqlite:///{db_path}", instrument=True
     )
 
     # Initialize schema
