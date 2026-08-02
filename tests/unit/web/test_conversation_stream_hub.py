@@ -683,20 +683,25 @@ async def test_reject_if_running_admits_a_turn_once_the_previous_ended() -> None
 
 @pytest.mark.asyncio
 @pytest.mark.no_db
-async def test_reject_if_running_is_scoped_to_the_user() -> None:
-    """The guard exists to stop one user's two clients racing one history. It is
-    scoped to that user, matching the ownership check the endpoint applies."""
+async def test_reject_if_running_ignores_the_raw_user_id() -> None:
+    """A different raw user_id does not buy a second turn on one conversation.
+
+    The endpoint has already established a single canonical owner by this point,
+    but that person can arrive under more than one raw identity (web session vs
+    API token), and turn records carry the raw one. Matching on it would let the
+    second identity start the rival turn this guard exists to refuse.
+    """
     hub = ConversationStreamHub()
     await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
 
-    other = await hub.start_turn(
-        "conv",
-        turn_id="t2",
-        user_id="u2",
-        started_at=_now(),
-        reject_if_running=True,
-    )
-    assert other.turn_id == "t2"
+    with pytest.raises(ConversationTurnRunningError):
+        await hub.start_turn(
+            "conv",
+            turn_id="t2",
+            user_id="u2",
+            started_at=_now(),
+            reject_if_running=True,
+        )
 
 
 @pytest.mark.asyncio

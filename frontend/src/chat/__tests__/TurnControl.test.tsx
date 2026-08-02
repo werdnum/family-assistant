@@ -1012,6 +1012,10 @@ describe('Web turn control (Stop / Steer)', () => {
       expect(steers).toBe(0);
       expect(errors).toHaveLength(1);
       expect(errors[0].message).toMatch(/attachments could not be sent/);
+      // Flagged for verbatim rendering: the caller shows this text as written
+      // instead of the generic "I encountered an error" line, which would hide
+      // the only part that says what to do.
+      expect((errors[0] as Error & { userFacing?: boolean }).userFacing).toBe(true);
     },
     { timeout: 30000 }
   );
@@ -1090,7 +1094,7 @@ describe('Web turn control (Stop / Steer)', () => {
       // The first attempt targeted the id the kickoff was rejected under; the
       // retry followed the adoption instead of 404ing until it gave up.
       expect(cancelledTurnIds[0]).not.toBe('running-turn-5');
-      expect(cancelledTurnIds.at(-1)).toBe('running-turn-5');
+      expect(cancelledTurnIds[cancelledTurnIds.length - 1]).toBe('running-turn-5');
 
       const controller = await streamReady;
       controller.enqueue(

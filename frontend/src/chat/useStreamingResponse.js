@@ -29,17 +29,17 @@ export const streamResumeTuning = {
 /**
  * Hook for handling streaming responses from the chat API
  * @param {Object} options - Hook options
- * @param {Function} options.onMessage - Callback when content is streamed (receives accumulated content)
- * @param {Function} options.onToolCall - Callback when tool calls are updated (receives array of all tool calls)
- * @param {Function} options.onToolConfirmationRequest - Callback when tool confirmation is requested
- * @param {Function} options.onToolConfirmationResult - Callback when tool confirmation result is received
- * @param {Function} options.onError - Callback when an error occurs (receives Error object)
- * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls, completed, turnId, streamedTurnId }). `turnId` is the id this send was kicked off with, so caller-side bookkeeping keyed at send time still matches; `streamedTurnId` is the turn actually followed, which differs only when a refused send adopted the conversation's running turn.
- * @param {Function} options.onUserInput - Callback when a mid-turn steering message is injected into the running turn (receives the message content). Lets the UI render the steering message as a user bubble while the turn continues.
- * @param {Function} options.onCancelled - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
- * @param {Function} options.onReloadHistory - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
- * @param {Function} options.onCheckTurnActive - Async (conversationId, turnId) => boolean: whether the server still reports this turn running. Used so a held-open resume leg held open by a concurrent turn doesn't reset the give-up streak.
- * @returns {Object} { sendStreamingMessage, cancelStream, isStreaming }
+ * @param {Function} [options.onMessage] - Callback when content is streamed (receives accumulated content)
+ * @param {Function} [options.onToolCall] - Callback when tool calls are updated (receives array of all tool calls)
+ * @param {Function} [options.onToolConfirmationRequest] - Callback when tool confirmation is requested
+ * @param {Function} [options.onToolConfirmationResult] - Callback when tool confirmation result is received
+ * @param {Function} [options.onError] - Callback when an error occurs (receives Error object)
+ * @param {Function} [options.onComplete] - Callback when stream completes (receives { content, toolCalls, completed, turnId, streamedTurnId }). `turnId` is the id this send was kicked off with, so caller-side bookkeeping keyed at send time still matches; `streamedTurnId` is the turn actually followed, which differs only when a refused send adopted the conversation's running turn.
+ * @param {Function} [options.onUserInput] - Callback when a mid-turn steering message is injected into the running turn (receives the message content). Lets the UI render the steering message as a user bubble while the turn continues.
+ * @param {Function} [options.onCancelled] - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
+ * @param {Function} [options.onReloadHistory] - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
+ * @param {Function} [options.onCheckTurnActive] - Async (conversationId, turnId) => boolean: whether the server still reports this turn running. Used so a held-open resume leg held open by a concurrent turn doesn't reset the give-up streak.
+ * @returns {{sendStreamingMessage: Function, cancelStream: Function, stopTurn: Function, steerStream: Function, isStreaming: boolean}}
  */
 export const useStreamingResponse = ({
   onMessage = () => {},
@@ -175,10 +175,16 @@ export const useStreamingResponse = ({
           // reason and asks for a resend — rather than quietly delivering a
           // message with its files stripped off.
           if (runningTurnId && attachments?.length) {
-            throw new Error(
+            const refusal = new Error(
               'This conversation is still working on the previous message, so the ' +
                 'attachments could not be sent. Wait for it to finish, then send them again.'
             );
+            // Tells the caller to show this text as-is. It is an instruction to
+            // the user, not a fault report, so replacing it with the generic
+            // "I encountered an error" line would hide the only thing that says
+            // what to do — and point at diagnostics for a non-bug.
+            refusal.userFacing = true;
+            throw refusal;
           }
           if (runningTurnId) {
             adoptedSteer = {

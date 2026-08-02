@@ -415,6 +415,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const activeStreamConversationIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
   const lastStreamingErrorRef = useRef<string | null>(null);
+  // Whether that error was written for the user (shown verbatim) rather than
+  // for a debugger (replaced by the generic line plus a diagnostics link).
+  const lastStreamingErrorIsUserFacingRef = useRef(false);
   // The turn id of the currently-streaming turn, used to tag mid-turn steering
   // user bubbles. Set in handleNew, cleared when the turn completes.
   const activeTurnIdRef = useRef<string | null>(null);
@@ -731,6 +734,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // Store the error but don't treat it as terminal — the stream may recover
     // with subsequent tool results or text content
     lastStreamingErrorRef.current = typeof error === 'string' ? error : error.message;
+    // Some failures are written for the user rather than for a debugger — a send
+    // refused because the conversation is still busy, which tells them what to
+    // do next. Those are rendered verbatim instead of being replaced by the
+    // generic error line below.
+    lastStreamingErrorIsUserFacingRef.current =
+      typeof error !== 'string' && (error as Error & { userFacing?: boolean }).userFacing === true;
     // The optimistic row is retired in handleStreamingComplete (always called
     // from the hook's finally, keyed by the completing turn id) — including the
     // failed-POST case — so nothing to do here.
@@ -752,6 +761,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const messageId = streamingMessageIdRef.current;
       const toolCallMessageId = toolCallMessageIdRef.current;
       const lastError = lastStreamingErrorRef.current;
+      const lastErrorIsUserFacing = lastStreamingErrorIsUserFacingRef.current;
       const wasStopped = turnStoppedRef.current;
       turnStoppedRef.current = false;
 
@@ -836,21 +846,23 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             })
           );
         } else if (lastError) {
-          // No text, no tool calls, but had an error: show error message
+          // No text, no tool calls, but had an error. A user-facing one already
+          // says what happened and what to do (e.g. a send refused because the
+          // conversation is still busy), so show it as written — the generic
+          // line would hide the instruction and point at diagnostics for
+          // something that isn't a fault.
           const diagnosticsUrl = getDiagnosticsUrl({
             conversationId: conversationId ?? undefined,
           });
+          const errorText = lastErrorIsUserFacing
+            ? lastError
+            : `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`;
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === messageId
                 ? {
                     ...msg,
-                    content: [
-                      {
-                        type: 'text',
-                        text: `Sorry, I encountered an error processing your message. [View diagnostics](${diagnosticsUrl}) for debugging details.`,
-                      },
-                    ],
+                    content: [{ type: 'text', text: errorText }],
                     isLoading: false,
                   }
                 : msg
@@ -905,6 +917,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         toolCallMessageIdRef.current = null;
       }
       lastStreamingErrorRef.current = null;
+      lastStreamingErrorIsUserFacingRef.current = false;
       fetchConversations();
 
       // Recover/queue follow-ups only on a clean completion we actually saw end.
@@ -1917,6 +1930,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       activeTurnIdRef.current = turnId;
       turnStoppedRef.current = false;
       lastStreamingErrorRef.current = null;
+      lastStreamingErrorIsUserFacingRef.current = false;
       selfTurnIdsRef.current.add(turnId);
 
       await sendStreamingMessage({

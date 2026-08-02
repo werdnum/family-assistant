@@ -1092,11 +1092,15 @@ async def api_chat_create_turn(
     # and ``start_turn`` awaits, so a rival POST can pass this check too. The
     # authoritative check is ``reject_if_running`` on ``start_turn``, which runs
     # under the same lock as the registration; both raise the same 409.
+    # Any running turn blocks, not just one whose raw user_id matches: ownership
+    # was already settled above (sole canonical owner), and one person reaching
+    # the conversation through two linked raw identities would otherwise slip a
+    # rival turn past this.
     running_turn = next(
         (
             turn
             for turn in hub.active_turns(conversation_id)
-            if turn.status == "running" and turn.user_id == user_id
+            if turn.status == "running"
         ),
         None,
     )

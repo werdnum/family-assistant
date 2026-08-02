@@ -186,7 +186,7 @@ class TurnAlreadyExistsError(Exception):
 
 class ConversationTurnRunningError(Exception):
     """Raised by ``start_turn(reject_if_running=True)`` when the conversation
-    already has a different turn running for the same user.
+    already has a different turn running.
 
     Callers hand the running turn back to the client so it can steer that turn
     instead of starting a rival one.
@@ -590,12 +590,18 @@ class ConversationStreamHub:
         this turn; it is stored on the record atomically so the cancel/steer
         endpoints can never observe a running turn without its controller.
 
-        ``reject_if_running`` enforces one turn at a time per conversation for
-        ``user_id``: registration is refused with ``ConversationTurnRunningError``
-        if another of that user's turns is still running. The check happens under
-        the same lock as the registration, so two concurrent kickoffs with
-        different turn ids cannot both find the conversation idle and both be
-        admitted.
+        ``reject_if_running`` enforces one turn at a time per conversation:
+        registration is refused with ``ConversationTurnRunningError`` if ANY turn
+        on the conversation is still running. The check happens under the same
+        lock as the registration, so two concurrent kickoffs with different turn
+        ids cannot both find the conversation idle and both be admitted.
+
+        Deliberately not scoped to ``user_id``. A conversation the hub serves has
+        exactly one canonical owner (the endpoint's sole-owner check refuses the
+        rest), but one person can reach it through several raw identities — web
+        and API tokens resolve to the same human, and turn records carry the raw
+        id. Comparing raw ids would let that person's second identity register a
+        rival turn, which is the interleaved history this guard exists to stop.
         """
         # Check-then-act idempotency: grab the per-conversation lock once we
         # know the conversation exists.
@@ -607,11 +613,7 @@ class ConversationStreamHub:
 
             if reject_if_running:
                 running = next(
-                    (
-                        turn
-                        for turn in state.turns.values()
-                        if turn.status == "running" and turn.user_id == user_id
-                    ),
+                    (turn for turn in state.turns.values() if turn.status == "running"),
                     None,
                 )
                 if running is not None:
