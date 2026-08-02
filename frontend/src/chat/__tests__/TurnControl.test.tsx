@@ -853,10 +853,11 @@ describe('Web turn control (Stop / Steer)', () => {
       expect(steerBodies[0].prompt).toBe('Ah it was a dental x-ray');
       expect(steeredTurnIds[0]).toBe('running-turn-1');
 
-      // Followed from where the running turn began, so its own events replay
-      // without dragging in earlier turns'.
+      // Followed from just after the steer was queued (queued_after_seq 7),
+      // so the bubble shows what the turn does in response to this message
+      // rather than replaying the work it had already done.
       const controller = await ready;
-      expect(streamFromSeqs[0]).toBe('7');
+      expect(streamFromSeqs[0]).toBe('8');
 
       // The running turn echoes the steer back. The composer already rendered
       // this prompt optimistically when it was sent, so the echo must not
@@ -925,15 +926,14 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
-    'swallows the adopted echo, not an identical input the turn already consumed',
+    'follows an adopted turn from the steer, not from the work it had already done',
     async () => {
-      // Replay starts at the running turn's first event, so a message the turn
-      // consumed BEFORE we adopted it can carry the same text as the one we
-      // just steered in ("continue" twice). Matching on text alone would treat
-      // that older event as our echo and then render the real echo as a second
-      // bubble beside the optimistic one. The steer's queued_after_seq is the
-      // floor that separates them.
-      const { ready } = installConflictingTurn('running-turn-3', 3, 5);
+      // The adopted turn has usually been running a while. Replaying it from
+      // its first event would pour that earlier answer into the bubble the
+      // composer just opened for THIS message — showing the previous reply
+      // again beneath it, and twice over when history had already rendered it.
+      // The turn began at seq 3 but the steer was queued at seq 5.
+      const { ready, streamFromSeqs } = installConflictingTurn('running-turn-3', 3, 5);
 
       const user = userEvent.setup();
       await renderChatApp({ waitForReady: true });
@@ -943,25 +943,24 @@ describe('Web turn control (Stop / Steer)', () => {
       await user.keyboard('{Enter}');
 
       const controller = await ready;
-      // Replay of what the turn consumed BEFORE we adopted it: identical text,
-      // at or below the floor. Our own echo has not been published yet.
+      expect(streamFromSeqs[0]).toBe('6');
+
+      // Everything from here is the turn's response to the adopted message: its
+      // echo (swallowed, already rendered optimistically) and the new text.
       controller.enqueue(
-        sse('user_input', { turn_id: 'running-turn-3', content: 'continue', seq: 4 })
+        sse('user_input', { turn_id: 'running-turn-3', content: 'continue', seq: 6 })
       );
       controller.enqueue(
-        sse('text', { turn_id: 'running-turn-3', content: 'Carrying on.', seq: 5 })
+        sse('text', { turn_id: 'running-turn-3', content: 'Carrying on.', seq: 7 })
       );
 
       await waitFor(() => {
         expect(screen.getByText('Carrying on.')).toBeInTheDocument();
       }, WAIT);
-      // Two bubbles: this replayed input, plus the optimistic render of what we
-      // sent. One would mean the dedupe ate the history and is still holding
-      // its match open for the echo — which then renders as the duplicate.
       const bubbles = screen
         .getAllByTestId('user-message-content')
         .filter((el) => el.textContent?.includes('continue'));
-      expect(bubbles).toHaveLength(2);
+      expect(bubbles).toHaveLength(1);
 
       controller.enqueue(
         sse('turn_ended', { turn_id: 'running-turn-3', status: 'complete', seq: 8 })

@@ -292,8 +292,15 @@ only a different `turn_id` arriving while a turn is running is refused.
 Send the message to the running turn with [Steer a Turn](#steer-a-turn) rather than starting a new
 one; `active_turn_id` is the turn to target. A client that has lost track of the running turn (its
 stream dropped, or the app was suspended and resumed) reaches this case, and the payload is enough
-to recover without a second round trip: steer the prompt into `active_turn_id`, then subscribe from
-`active_turn_first_seq` to replay that turn's events without dragging in earlier turns'.
+to recover without a second round trip: steer the prompt into `active_turn_id`, then subscribe.
+
+Subscribe from the steer's `queued_after_seq + 1`, not from `active_turn_first_seq`. The turn has
+usually been working for a while, and replaying it from the start pours that earlier answer into the
+bubble the client just opened for the new message — showing the previous reply again underneath it,
+and twice over when history had already rendered that turn. What the turn does in response to the
+steered message begins after `queued_after_seq`; the rest is reconciled from persisted history when
+the turn ends. `active_turn_first_seq` remains the turn's own starting cursor for a client that
+genuinely wants the whole turn replayed.
 
 Steering carries text only, so a refused request that had `attachments` cannot be recovered this way
 — the files would be dropped from a message the model still answered. Surface the refusal to the

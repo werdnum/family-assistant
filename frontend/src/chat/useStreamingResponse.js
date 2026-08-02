@@ -213,16 +213,13 @@ export const useStreamingResponse = ({
         let durableTurnState = null;
         // The one steer echo to swallow, because the caller already rendered
         // this prompt optimistically as a normal send (see the user_input
-        // branch in the stream loop). `{ prompt, afterSeq }`: replay starts at
-        // the running turn's first event, so an identical earlier input in the
-        // same turn (the user said "continue" twice) would match on content
-        // alone. afterSeq is the stream head when the steer was queued, and the
-        // echo is published after that, so anything at or below it is history.
+        // branch in the stream loop). `{ prompt, afterSeq }` — afterSeq is the
+        // stream head when the steer was queued, so the echo is published above
+        // it and anything at or below is the turn's earlier work.
         let pendingAdoptedEcho = null;
         if (adoptedSteer) {
           effectiveTurnId = adoptedSteer.turnId;
           resolvedConversationId = conversationId;
-          firstSeq = adoptedSteer.fromSeq;
           activeTurnRef.current = {
             turnId: effectiveTurnId,
             conversationId: resolvedConversationId,
@@ -253,12 +250,21 @@ export const useStreamingResponse = ({
           pendingAdoptedEcho = {
             prompt: adoptedSteer.prompt,
             // Absent (an older backend): fall back to the turn's start, which
-            // only risks the duplicate-content case this floor exists to fix.
+            // restores the previous replay-the-whole-turn behaviour.
             afterSeq:
               typeof steerBody.queued_after_seq === 'number'
                 ? steerBody.queued_after_seq
                 : adoptedSteer.fromSeq - 1,
           };
+          // Follow the adopted turn from just after our message was queued, NOT
+          // from where the turn began. The turn has usually been working for a
+          // while — its earlier text and tool calls would replay into the bubble
+          // the composer just opened for THIS message, showing the previous
+          // answer again underneath it (and twice over, when history had already
+          // rendered that turn before the tab was resumed). What the turn does
+          // in response to this message starts here; the rest is reconciled from
+          // persisted history when the turn ends.
+          firstSeq = pendingAdoptedEcho.afterSeq + 1;
         } else {
           const {
             conversation_id: streamConversationId,
