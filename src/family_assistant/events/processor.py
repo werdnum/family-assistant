@@ -166,6 +166,7 @@ class EventProcessor:
             )
 
         triggered_listener_ids = []
+        listener_failures: list[Exception] = []
 
         # Check each listener and process matches. Match conditions may run
         # a condition script, so this must happen outside any transaction.
@@ -206,12 +207,22 @@ class EventProcessor:
                     if await db_ctx.atomic(_process_listener):
                         triggered_listener_ids.append(listener["id"])
                 except Exception as e:
+                    # Held, not swallowed. Each listener commits on its own now,
+                    # so there is nothing to gain by abandoning the rest of them
+                    # -- but the caller has to learn that an action was dropped.
+                    # A webhook source that saw success here would acknowledge
+                    # the event, and the sender would never retry it.
                     logger.exception(f"Error processing listener {listener['id']}: {e}")
+                    listener_failures.append(e)
 
-        # Store event for debugging/testing in its own operation
+        # Store event for debugging/testing in its own operation. Before the
+        # re-raise below, so the record of what did fire survives the failure.
         await self.event_storage.store_event_in_context(
             db_ctx, source_id, event_data, triggered_listener_ids
         )
+
+        if listener_failures:
+            raise listener_failures[0]
 
     async def _check_match_conditions(
         self,

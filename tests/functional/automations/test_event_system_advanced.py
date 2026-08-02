@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
@@ -18,7 +18,7 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage import Database
-from family_assistant.storage.events import EventSourceType
+from family_assistant.storage.events import EventSourceType, recent_events_table
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
 from family_assistant.tools import (
     CompositeToolsProvider,
@@ -387,6 +387,61 @@ async def test_end_to_end_event_listener_wakes_llm(
     assert "Motion detected" in call_kwargs["text"]
 
     # Cleanup is handled by the task_worker_manager fixture
+
+
+@pytest.mark.asyncio
+async def test_failing_listener_surfaces_to_the_event_caller(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dropped listener action fails the event instead of reporting success.
+
+    A webhook source that saw success here would acknowledge the event, and the
+    sender would never retry the action that was lost. The event is still
+    recorded first, so the record of what happened survives the failure.
+    """
+    db_ctx = Database(db_engine)
+    await db_ctx.execute(
+        text("""INSERT INTO event_listeners
+                 (name, match_conditions, source_id, action_type, enabled,
+                  conversation_id, interface_type, one_time)
+                 VALUES (:name, :conditions, :source_id, :action_type, :enabled,
+                         :conversation_id, :interface_type, :one_time)"""),
+        {
+            "name": "Failing alert",
+            "conditions": json.dumps({"entity_id": "binary_sensor.back_door"}),
+            "source_id": EventSourceType.home_assistant.value,
+            "action_type": "wake_llm",
+            "enabled": True,
+            "conversation_id": "test_chat_789",
+            "interface_type": "telegram",
+            "one_time": False,
+        },
+    )
+
+    async def fail_action(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise RuntimeError("action enqueue unavailable")
+
+    monkeypatch.setattr(EventProcessor, "_execute_action_in_context", fail_action)
+
+    processor = EventProcessor(
+        sources={},
+        sample_interval_hours=1.0,
+        get_db_context_func=lambda: Database(db_engine),
+        timezone=ZoneInfo("Australia/Sydney"),
+    )
+    processor._running = True
+    await processor._refresh_listener_cache()
+
+    with pytest.raises(RuntimeError, match="action enqueue unavailable"):
+        await processor.process_event(
+            "home_assistant", {"entity_id": "binary_sensor.back_door"}
+        )
+
+    monkeypatch.undo()
+    stored = await Database(db_engine).fetch_all(select(recent_events_table))
+    assert stored, "the event should be recorded before the failure is raised"
 
 
 @pytest.mark.asyncio
