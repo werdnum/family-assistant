@@ -435,11 +435,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // silently lost. A list, since the user can submit several steers during one
   // long turn.
   const awaitingEchoSteersRef = useRef<string[]>([]);
+  // Steers we have SEEN the turn echo back, i.e. observed it consume. Distinct
+  // from the awaiting list above, which is emptied by Stop, a conversation
+  // change and the recovery drain — so "not awaiting" says nothing about
+  // delivery, while an entry here is positive evidence of it.
+  const consumedSteerEchoesRef = useRef<string[]>([]);
   useEffect(() => {
     setSteerError(null);
     // Drop any queued/awaiting steers so they can't fire into the new conversation.
     awaitingEchoSteersRef.current = [];
     pendingFollowupsRef.current = [];
+    consumedSteerEchoesRef.current = [];
   }, [conversationId]);
   // handleNew is defined after the streaming callbacks; the completion handler
   // reaches it via this ref to fire a queued follow-up.
@@ -759,6 +765,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       unconsumedAdoptedPrompt = null,
       undeliveredPrompt = null,
       adopted = false,
+      kickoffFailed = false,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
@@ -767,6 +774,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       unconsumedAdoptedPrompt?: string | null;
       undeliveredPrompt?: string | null;
       adopted?: boolean;
+      kickoffFailed?: boolean;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
@@ -945,6 +953,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       //   Each recovery is resent as one new turn, so a conversation that keeps
       //   failing drains the queue rather than looping on it.
       const recoverQueued = completed && !wasStopped;
+      // A recovered message's own kickoff can fail before any stream is opened
+      // (a 500 from /turns), which reports completed: false. That is terminal
+      // for this send, unlike a local detach (navigation), which also reports
+      // false but leaves the server turn running. The hook says which happened
+      // — inferring it from lastError would also catch a mid-stream error event,
+      // which is explicitly non-terminal. Without this the queue stops draining
+      // and the messages behind it are lost.
+      const terminalKickoffFailure = kickoffFailed && !wasStopped;
       const recoverAdopted = recoverQueued && Boolean(unconsumedAdoptedPrompt);
 
       // A prompt that reached nothing at all — the kickoff was refused and the
@@ -1009,7 +1025,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // clears abortControllerRef / activeTurnRef after onComplete returns) so
       // the follow-up turn's refs aren't clobbered and Stop/Steer target it
       // correctly.
-      if (recoverQueued || undeliveredPrompt) {
+      if (recoverQueued || undeliveredPrompt || terminalKickoffFailure) {
         const followup = pendingFollowupsRef.current.shift();
         if (followup) {
           const convAtSchedule = conversationIdRef.current;
@@ -1053,6 +1069,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     const idx = awaitingEchoSteersRef.current.findIndex((s) => s.trim() === content.trim());
     if (idx !== -1) {
       awaitingEchoSteersRef.current.splice(idx, 1);
+    }
+    // Record it as observed-delivered, which is what lets a steer whose POST
+    // response was lost report success instead of asking the user to resend
+    // something the turn already acted on. Bounded: it only has to outlive an
+    // in-flight steer request, so a short tail is plenty.
+    consumedSteerEchoesRef.current.push(content);
+    if (consumedSteerEchoesRef.current.length > 20) {
+      consumedSteerEchoesRef.current.shift();
     }
   }, []);
 
@@ -1260,6 +1284,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // Load messages for a conversation
   const loadConversationMessages = useCallback(async (convId: string, background = false) => {
     try {
+      // A background reload is deferred, so the user can have moved on before it
+      // runs — an aborted stream still reconciles the conversation it was for.
+      // Painting that history now would replace the thread on screen with
+      // another conversation's, under the current one's composer, and would also
+      // abort the load the new conversation has in flight (they share an abort
+      // controller). A foreground load IS the user opening this conversation, so
+      // it proceeds; the state it sets is what makes the ref match.
+      if (background && conversationIdRef.current !== convId) {
+        return 'bailed' as ReloadResult;
+      }
       const streamWasActiveAtRequestStart = activeStreamConversationIdRef.current === convId;
 
       // Cancel previous messages request if it exists
@@ -2151,11 +2185,25 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // follow-up instead of losing it.
         return 'accepted';
       }
-      // Not accepted, so nothing will ever echo it. Drop the registration again
-      // — the caller handles this prompt itself (resending a 'finished' one as a
+      const echoedIdx = consumedSteerEchoesRef.current.lastIndexOf(prompt);
+      if (result === 'error' && echoedIdx !== -1) {
+        // Ambiguous failure, but we SAW the turn echo this prompt back, so it
+        // was delivered and the response is what got lost. Report acceptance so
+        // the composer clears; keeping the text would invite a retry that sends
+        // the instruction a second time.
+        //
+        // This keys off having observed the echo, not off the registration
+        // being absent: Stop, a conversation change and the recovery drain all
+        // empty that registry too, so absence would read a message the turn
+        // never saw as delivered and drop it.
+        consumedSteerEchoesRef.current.splice(echoedIdx, 1);
+        return 'accepted';
+      }
+      const registeredIdx = awaitingEchoSteersRef.current.lastIndexOf(prompt);
+      // Otherwise nothing will echo it, so drop the registration again: the
+      // caller handles this prompt itself (resending a 'finished' one as a
       // normal message, keeping an 'error' one in the composer), and leaving it
       // registered would have recovery send it a second time.
-      const registeredIdx = awaitingEchoSteersRef.current.lastIndexOf(prompt);
       if (registeredIdx !== -1) {
         awaitingEchoSteersRef.current.splice(registeredIdx, 1);
       }

@@ -105,6 +105,12 @@ export const useStreamingResponse = ({
       // resends it unconditionally — unlike the cases below there is no doubt
       // about delivery, so a resend cannot duplicate it.
       let undeliveredPrompt = null;
+      // True once the turn's event stream has been opened at least once. Lets
+      // the completion report distinguish a send that died during setup (the
+      // kickoff POST failed) from one that was detached mid-stream — both end
+      // with completed: false, but only the first means nothing is running
+      // server-side and the caller's queue should keep moving.
+      let streamStarted = false;
 
       // Client-generated turn id makes the kickoff idempotent: a retried POST
       // with the same id returns the existing turn instead of starting a
@@ -235,16 +241,41 @@ export const useStreamingResponse = ({
             turnId: effectiveTurnId,
             conversationId: resolvedConversationId,
           };
+          // The text has to come back with any ambiguous failure: the kickoff
+          // was refused, the composer has cleared, and nothing persisted this
+          // prompt, so an error without it leaves the message only in a bubble
+          // that a refresh discards.
+          const ambiguousDeliveryError = () => {
+            const ambiguous = new Error(
+              "Your message may not have reached the assistant, and it's still working on the " +
+                'previous one. Check the reply, then send it again if it was missed:\n\n' +
+                `> ${adoptedSteer.prompt}`
+            );
+            ambiguous.userFacing = true;
+            return ambiguous;
+          };
           const steerUrl = `/api/v1/chat/turns/${encodeURIComponent(effectiveTurnId)}/steer`;
-          const steerResponse = await fetch(steerUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              conversation_id: resolvedConversationId,
-              prompt: adoptedSteer.prompt,
-            }),
-            signal: abortControllerRef.current.signal,
-          });
+          let steerResponse;
+          try {
+            steerResponse = await fetch(steerUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                conversation_id: resolvedConversationId,
+                prompt: adoptedSteer.prompt,
+              }),
+              signal: abortControllerRef.current.signal,
+            });
+          } catch (steerFetchError) {
+            if (steerFetchError?.name === 'AbortError') {
+              throw steerFetchError;
+            }
+            // A dropped connection is as ambiguous as a 5xx — the request may
+            // have reached the server — and it is the likeliest failure here,
+            // since a flaky connection is what makes a client lose its turn
+            // handle and land on this path at all.
+            throw ambiguousDeliveryError();
+          }
           if (!steerResponse.ok) {
             if (steerResponse.status === 401) {
               redirectToLogin();
@@ -261,18 +292,9 @@ export const useStreamingResponse = ({
               undeliveredPrompt = adoptedSteer.prompt;
               return;
             }
-            // A network or 5xx failure is ambiguous — the steer may have been
-            // queued before the response failed — so it must NOT be auto-resent.
-            // The composer has already cleared, though, and nothing persisted
-            // it, so the error has to carry the text back or the message exists
-            // only in an optimistic bubble that a refresh discards.
-            const ambiguous = new Error(
-              "Your message may not have reached the assistant, and it's still working on the " +
-                'previous one. Check the reply, then send it again if it was missed:\n\n' +
-                `> ${adoptedSteer.prompt}`
-            );
-            ambiguous.userFacing = true;
-            throw ambiguous;
+            // A 5xx is ambiguous — the steer may have been queued before the
+            // response failed — so it must NOT be auto-resent.
+            throw ambiguousDeliveryError();
           }
           const steerBody = await steerResponse.json().catch(() => ({}));
           pendingAdoptedEcho = {
@@ -746,6 +768,7 @@ export const useStreamingResponse = ({
         // closes and is bounded). The bubble's spinner honestly reflects "still
         // working", and the user can cancel — preferred over giving up on a slow
         // legitimate tool call.
+        streamStarted = true;
         let outcome = await consumeStream(firstSeq ?? 0);
         let noProgressResumes = 0;
         let resumeDelayMs = streamResumeTuning.initialDelayMs;
@@ -847,6 +870,10 @@ export const useStreamingResponse = ({
           // A prompt that reached nothing: recover it whatever the outcome,
           // since no turn ever saw it and no stream was followed.
           undeliveredPrompt,
+          // The send failed before any stream was followed, so there is no
+          // server-side turn to wait on — terminal for this send, unlike a
+          // local detach.
+          kickoffFailed: !streamStarted && !turnEnded,
           // True when this send followed a turn it adopted rather than one it
           // started. The stream withholds that turn's output until it echoes
           // our prompt, so its earlier tail is missing from the thread and has
@@ -962,7 +989,7 @@ export const useStreamingResponse = ({
   //                  running and the steer may even have been accepted, so the
   //                  caller must NOT auto-resend; surface it and keep the draft.
   const steerStream = useCallback(async ({ prompt }) => {
-    let active = activeTurnRef.current;
+    const active = activeTurnRef.current;
     if (!active) {
       return 'finished';
     }
@@ -972,25 +999,17 @@ export const useStreamingResponse = ({
     // message); a persistent 5xx/network is 'error' (don't auto-resend).
     const attempts = 5;
     for (let attempt = 0; attempt < attempts; attempt++) {
-      // Re-read the live identity every attempt, as Stop does: a kickoff still
-      // in flight can be refused (409) and adopt the conversation's running
-      // turn, repointing this ref. Retrying the id that kickoff was refused
-      // under would 404 to exhaustion and demote a steer the running turn could
-      // have taken into a post-turn follow-up.
+      // Deliberately pinned to the turn this steer was submitted against, NOT
+      // re-read from activeTurnRef the way Stop is. The ref moves on for
+      // reasons that have nothing to do with adoption: a turn ending drains the
+      // recovery queue, which starts a NEW turn carrying this very prompt as
+      // its kickoff — following the ref there would steer the same text into
+      // the turn already sending it, and the user would see it twice.
       //
-      // Only follow it WITHIN the conversation this steer was typed in. The
-      // user can switch conversations during the backoff, and the ref then
-      // names a turn in another thread — delivering this prompt there would put
-      // one conversation's message into another. Give up instead; 'error' keeps
-      // the caller from auto-resending and preserves the text.
-      const live = activeTurnRef.current;
-      if (live && live.conversationId !== active.conversationId) {
-        console.warn('Turn steer abandoned: the active turn moved to another conversation.');
-        return 'error';
-      }
-      if (live) {
-        active = live;
-      }
+      // The cost is that a steer submitted while a kickoff is still in flight
+      // 404s to exhaustion and comes back 'finished', so the caller resends it
+      // as a normal follow-up. The message still gets through; it just arrives
+      // as its own turn instead of steering the running one.
       const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
       const body = JSON.stringify({ conversation_id: active.conversationId, prompt });
       let lastWas404 = false;

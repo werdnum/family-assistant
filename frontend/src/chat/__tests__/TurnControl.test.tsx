@@ -1237,11 +1237,13 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
-    'abandons a steer retry when the active turn moves to another conversation',
+    'keeps a retrying steer pinned to the turn it was submitted against',
     async () => {
-      // The retry loop re-reads the live turn so it can follow a 409 adoption.
-      // That must not follow the ref across a conversation switch during the
-      // backoff, or one thread's message is delivered into another.
+      // The retry loop must not follow the live-turn ref. It moves for reasons
+      // unrelated to this steer — another conversation being opened, or a turn
+      // ending and the recovery queue starting a new one carrying this very
+      // prompt — and following it would deliver the message into the wrong
+      // thread or into a turn that is already sending it.
       const steeredTurnIds: string[] = [];
       const { result } = renderHook(() => useStreamingResponse({}));
 
@@ -1287,8 +1289,12 @@ describe('Web turn control (Stop / Steer)', () => {
         turnId: 'turn-in-B',
       });
 
-      await expect(steering).resolves.toBe('error');
-      expect(steeredTurnIds).not.toContain('turn-in-B');
+      // Every attempt went to the turn the steer was typed against, and the
+      // exhausted 404s report 'finished' — the caller resends it as a normal
+      // message rather than it landing somewhere it doesn't belong.
+      await expect(steering).resolves.toBe('finished');
+      expect(steeredTurnIds.length).toBeGreaterThan(0);
+      expect(new Set(steeredTurnIds)).toEqual(new Set(['turn-in-A']));
       result.current.cancelStream();
     },
     { timeout: 30000 }
