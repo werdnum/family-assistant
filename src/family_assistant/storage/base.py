@@ -91,7 +91,9 @@ def create_engine_with_sqlite_optimizations(
         }
         if is_sqlite
         else {},
-        pool_pre_ping=True,
+        # Pre-ping guards against a pooled connection the server dropped;
+        # SQLite's single in-process connection cannot go stale that way.
+        pool_pre_ping=not is_sqlite,
         pool_reset_on_return="rollback",
         **(
             {"poolclass": StaticPool}

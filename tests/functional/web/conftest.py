@@ -556,7 +556,7 @@ async def session_db_engine() -> AsyncGenerator[AsyncEngine]:
 
     yield engine
 
-    check_db_engine_invariants(engine, "session_db_engine")
+    await check_db_engine_invariants(engine, "session_db_engine")
     await engine.dispose()
 
     # Clean up database file
