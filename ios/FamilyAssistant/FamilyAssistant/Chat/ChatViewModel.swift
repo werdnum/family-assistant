@@ -193,10 +193,20 @@ final class ChatViewModel {
         isStreaming && reattachedRunningTurnID == nil
     }
 
-    /// The lightweight turn identity for the active session, or nil when no turn
-    /// is in flight. The steer/stop control dictionaries key on this identity.
+    /// The lightweight turn identity for the active local session or a running
+    /// turn recovered from the server. The steer/stop control dictionaries key
+    /// on this identity.
     private var activeTurnIdentity: ActiveChatTurn? {
-        activeTurnSession.map { ActiveChatTurn(turnID: $0.turnID, conversationID: $0.conversationID) }
+        if let activeTurnSession {
+            return ActiveChatTurn(
+                turnID: activeTurnSession.turnID,
+                conversationID: activeTurnSession.conversationID
+            )
+        }
+        guard let reattachedRunningTurnID, let conversationID else {
+            return nil
+        }
+        return ActiveChatTurn(turnID: reattachedRunningTurnID, conversationID: conversationID)
     }
     // In-flight optimistic summaries, keyed by the owning turn id (value is the
     // conversation id). While a conversation has any pending turn,
@@ -1024,6 +1034,12 @@ final class ChatViewModel {
     /// snapshot before the foreign-turn loop: see `reconcileSuspendedSession`.
     private func attachDiscoveredActiveTurns(_ activeTurns: [ChatActiveTurnInfo]) async {
         await reconcileSuspendedSession(against: activeTurns)
+        if activeTurnSession == nil, let reattachedRunningTurnID,
+           !activeTurns.contains(where: {
+               $0.turnID == reattachedRunningTurnID && $0.status == "running"
+           }) {
+            clearReattachedSession()
+        }
         for turn in activeTurns {
             guard turn.status == "running",
                   turn.turnID != activeTurnSession?.turnID,
@@ -1162,9 +1178,10 @@ final class ChatViewModel {
     /// mode (`isStreaming = false`), and release the preserved session and its
     /// per-turn control state so the composer returns to a normal send.
     private func clearReattachedSession() {
+        let turnID = activeTurnSession?.turnID ?? reattachedRunningTurnID
         reattachedRunningTurnID = nil
         isStreaming = false
-        if let turnID = activeTurnSession?.turnID {
+        if let turnID {
             registeredTurnIDs.remove(turnID)
             pendingStopTurnIDs.remove(turnID)
             stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
@@ -1456,7 +1473,14 @@ final class ChatViewModel {
     }
 
     func sendDraft() async {
-        let prompt = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        await sendDraft(fallbackFromSteer: false)
+    }
+
+    private func sendDraft(fallbackFromSteer: Bool) async {
+        let submittedDraftText = draftText
+        let submittedDraftAttachments = draftAttachments
+        let prompt = submittedDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hadActiveTurnAtSubmission = activeTurnIdentity != nil
         guard !prompt.isEmpty || !draftAttachments.isEmpty else {
             return
         }
@@ -1484,7 +1508,68 @@ final class ChatViewModel {
             // startNewConversation clears the composer; restore the captured
             // prompt so the recursive send still has it.
             draftText = prompt
-            return await sendDraft()
+            return await sendDraft(fallbackFromSteer: fallbackFromSteer)
+        }
+
+        // A missing local session is not proof that the conversation is idle: a
+        // background/foreground handover or a stream teardown can lose the local
+        // handle while the durable turn keeps running. Ask the authoritative
+        // messages endpoint before starting a rival turn. A failed lookup is not
+        // fatal — the turn-start endpoint's 409 response is the race-safe backstop.
+        if !hadActiveTurnAtSubmission, !opensGeneratedLaunchDraft {
+            do {
+                let response = try await apiClient.getMessagesPage(
+                    conversationID: id,
+                    after: nil,
+                    limit: 1
+                )
+                guard conversationID == id else {
+                    return
+                }
+                // The preflight introduced an await into submission. Never send
+                // the captured text if the user edited the composer meanwhile;
+                // leave the newer draft untouched for their next tap.
+                guard draftText == submittedDraftText,
+                      draftAttachments == submittedDraftAttachments
+                else {
+                    return
+                }
+                if let runningTurn = response.activeTurns
+                    .filter({ $0.status == "running" })
+                    .max(by: { $0.startedAt < $1.startedAt }) {
+                    reportTurnHandleRecovery(
+                        source: "active_turns_preflight",
+                        turnID: runningTurn.turnID
+                    )
+                    await adoptRunningTurnAndSteer(
+                        turnID: runningTurn.turnID,
+                        conversationID: id
+                    )
+                    return
+                }
+                if fallbackFromSteer {
+                    reportSteerDegradedToSend(reason: "no_running_server_turn")
+                }
+            } catch {
+                errorReporter.report(error, component: "Chat.activeTurnLookup")
+                guard conversationID == id,
+                      draftText == submittedDraftText,
+                      draftAttachments == submittedDraftAttachments
+                else {
+                    return
+                }
+                if fallbackFromSteer {
+                    reportSteerDegradedToSend(reason: "active_turn_lookup_failed")
+                }
+            }
+        }
+
+        // A concurrent reconciliation may have restored the turn handle while
+        // the preflight was suspended. Prefer that identity over cancelling it
+        // and starting a new turn from a stale idle snapshot.
+        if !hadActiveTurnAtSubmission, activeTurnIdentity != nil {
+            await sendSteerDraft()
+            return
         }
 
         cancelStream()
@@ -2009,6 +2094,34 @@ final class ChatViewModel {
                     )
                 }
             }
+        } catch ChatAPIError.turnAlreadyRunning(let activeTurnID) {
+            // The preflight and POST are necessarily racy: another client can
+            // start a turn between them. Convert the rejected optimistic send
+            // back into composer state, adopt the server's turn, and steer it.
+            guard !isSuspendCancelled(streamToken),
+                  !Task.isCancelled,
+                  currentStreamToken == streamToken,
+                  conversationID == id
+            else {
+                return
+            }
+            removeLocalAssistantPlaceholder(assistantMessageID)
+            messages.removeAll {
+                $0.id.hasPrefix("local_user_") && $0.turnID == turnID
+            }
+            registeredTurnIDs.remove(turnID)
+            pendingStopTurnIDs.remove(turnID)
+            stopAfterRegistrationByTurnID.removeValue(forKey: turnID)
+            stopRequestedTurnIDs.remove(turnID)
+            pendingSteersByTurnID[turnID] = nil
+            activeTurnSession = nil
+            currentStreamToken = nil
+            streamTask = nil
+            draftText = prompt
+            draftAttachments = attachments
+            reportTurnHandleRecovery(source: "start_turn_conflict", turnID: activeTurnID)
+            await adoptRunningTurnAndSteer(turnID: activeTurnID, conversationID: id)
+            return
         } catch is CancellationError {
             // A suspend-cancel (real background) must preserve the turn for
             // foreground reattach: no queued stop-cancel POST, no optimistic
@@ -2394,7 +2507,7 @@ final class ChatViewModel {
         // just a normal message. Send it as one (sendDraft consumes and clears
         // the composer).
         guard let activeTurn = activeTurnIdentity else {
-            await sendDraft()
+            await sendDraft(fallbackFromSteer: true)
             return
         }
         guard !hasPendingSteer(prompt) else {
@@ -2414,6 +2527,57 @@ final class ChatViewModel {
             steerErrorMessage = error.localizedDescription
             errorReporter.report(error, component: "Chat.steerTurn")
         }
+    }
+
+    /// Adopt a server-reported running turn when the local session handle was
+    /// lost, restore steer/stop mode, ensure its follow stream is attached, and
+    /// deliver the current composer text as a steer. Attachments remain in the
+    /// composer because steering is text-only; they become visible again when
+    /// the recovered turn ends.
+    private func adoptRunningTurnAndSteer(turnID: String, conversationID: String) async {
+        guard self.conversationID == conversationID else {
+            return
+        }
+        endedTurnIDs.remove(turnID)
+        reattachedRunningTurnID = turnID
+        isStreaming = true
+        registeredTurnIDs.insert(turnID)
+        if liveFollowBubbleByTurnID[turnID] == nil {
+            _ = makeLiveFollowBubble(for: turnID)
+        }
+        startLiveEvents(reason: .manualReconnect)
+        guard !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            steerErrorMessage = "Wait for the running reply to finish before sending attachments."
+            return
+        }
+        await sendSteerDraft()
+    }
+
+    private func reportTurnHandleRecovery(source: String, turnID: String) {
+        errorReporter.report(
+            message: "Recovered running turn before sending",
+            component: "Chat.turnHandleRecovered",
+            errorType: .component,
+            extraData: [
+                "source": source,
+                "conversation_id": conversationID ?? "none",
+                "turn_id": turnID,
+            ],
+            bypassDedupe: true
+        )
+    }
+
+    private func reportSteerDegradedToSend(reason: String) {
+        errorReporter.report(
+            message: "Steer degraded to a normal send",
+            component: "Chat.steerDegradedToSend",
+            errorType: .component,
+            extraData: [
+                "reason": reason,
+                "conversation_id": conversationID ?? "none",
+            ],
+            bypassDedupe: true
+        )
     }
 
     private func handleSteerSubmissionResult(
