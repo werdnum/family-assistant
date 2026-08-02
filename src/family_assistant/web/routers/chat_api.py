@@ -669,6 +669,15 @@ class ChatTurnSteerRequest(BaseModel):
     prompt: str = Field(
         ..., description="Steering message to inject into the running turn"
     )
+    input_id: str | None = Field(
+        default=None,
+        description=(
+            "Client-generated identifier for this submission. The turn's echo of "
+            "the message carries it back on the ``user_input`` event, so a client "
+            "whose steer response was lost can tell whether the turn consumed "
+            "*its* message rather than an identical one from another client."
+        ),
+    )
 
 
 class ChatTurnSteerResponse(BaseModel):
@@ -1811,6 +1820,7 @@ async def api_chat_steer_turn(
         MidTurnUserInput(
             content=payload.prompt,
             user_name=_user_name_for_chat(current_user),
+            interface_message_id=payload.input_id,
         )
     )
     return ChatTurnSteerResponse(

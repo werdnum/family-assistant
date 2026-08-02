@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
+import { generateUUID } from '../utils/uuid';
 import { conversationStreamUrl, redirectToLogin } from './conversationStream';
 
 // Resume tuning for a dropped/interrupted reply stream. The producer keeps
@@ -35,7 +36,7 @@ export const streamResumeTuning = {
  * @param {Function} [options.onToolConfirmationResult] - Callback when tool confirmation result is received
  * @param {Function} [options.onError] - Callback when an error occurs (receives Error object)
  * @param {Function} [options.onComplete] - Callback when stream completes (receives { content, toolCalls, completed, turnId, streamedTurnId }). `turnId` is the id this send was kicked off with, so caller-side bookkeeping keyed at send time still matches; `streamedTurnId` is the turn actually followed, which differs only when a refused send adopted the conversation's running turn.
- * @param {Function} [options.onUserInput] - Callback when a mid-turn steering message is injected into the running turn (receives the message content). Lets the UI render the steering message as a user bubble while the turn continues.
+ * @param {Function} [options.onUserInput] - Callback when a mid-turn steering message is injected into the running turn (receives the message content and the submitting client's `input_id`, or null when it sent none). Lets the UI render the steering message as a user bubble while the turn continues, and tells a sender that this turn consumed its own submission.
  * @param {Function} [options.onCancelled] - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
  * @param {Function} [options.onReloadHistory] - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
  * @param {Function} [options.onCheckTurnActive] - Async (conversationId, turnId) => boolean: whether the server still reports this turn running. Used so a held-open resume leg held open by a concurrent turn doesn't reset the give-up streak.
@@ -255,6 +256,10 @@ export const useStreamingResponse = ({
             return ambiguous;
           };
           const steerUrl = `/api/v1/chat/turns/${encodeURIComponent(effectiveTurnId)}/steer`;
+          // Identifies this submission on the echo the turn publishes when it
+          // consumes the message, so the echo is recognised as ours rather than
+          // by matching text that another client could have sent too.
+          const steerInputId = generateUUID();
           let steerResponse;
           try {
             steerResponse = await fetch(steerUrl, {
@@ -263,6 +268,7 @@ export const useStreamingResponse = ({
               body: JSON.stringify({
                 conversation_id: resolvedConversationId,
                 prompt: adoptedSteer.prompt,
+                input_id: steerInputId,
               }),
               signal: abortControllerRef.current.signal,
             });
@@ -299,6 +305,7 @@ export const useStreamingResponse = ({
           const steerBody = await steerResponse.json().catch(() => ({}));
           pendingAdoptedEcho = {
             prompt: adoptedSteer.prompt,
+            inputId: steerInputId,
             // Absent (an older backend): fall back to the turn's start, which
             // restores the previous replay-the-whole-turn behaviour.
             afterSeq:
@@ -587,19 +594,25 @@ export const useStreamingResponse = ({
                   // A prompt we sent as a plain message and then re-routed into
                   // the running turn echoes back here, but the caller already
                   // rendered it optimistically when the send began. Swallow that
-                  // one echo so it doesn't appear twice; later steers on the
-                  // same turn (which the caller did not render) still show, and
-                  // so does an identical input the turn had already consumed
-                  // before we adopted it (seq at or below the floor).
-                  if (
+                  // one echo so it doesn't appear twice; every other input on
+                  // this turn — later steers, and anything another client sent —
+                  // carries a different id and still shows.
+                  //
+                  // An echo with no id at all comes from a backend that predates
+                  // the field (the same skew `afterSeq` covers above). Fall back
+                  // to the old text-and-cursor match there: failing to swallow it
+                  // would hold back the whole adopted reply and resend the prompt.
+                  const isOurAdoptedEcho =
                     pendingAdoptedEcho !== null &&
-                    payload.content.trim() === pendingAdoptedEcho.prompt.trim() &&
-                    typeof payload.seq === 'number' &&
-                    payload.seq > pendingAdoptedEcho.afterSeq
-                  ) {
+                    (payload.input_id
+                      ? payload.input_id === pendingAdoptedEcho.inputId
+                      : payload.content.trim() === pendingAdoptedEcho.prompt.trim() &&
+                        typeof payload.seq === 'number' &&
+                        payload.seq > pendingAdoptedEcho.afterSeq);
+                  if (isOurAdoptedEcho) {
                     pendingAdoptedEcho = null;
                   } else {
-                    onUserInput(payload.content);
+                    onUserInput(payload.content, payload.input_id ?? null);
                   }
                 }
                 continue;
@@ -988,7 +1001,7 @@ export const useStreamingResponse = ({
   //  - 'error'     : transient failure (5xx/network). The turn may still be
   //                  running and the steer may even have been accepted, so the
   //                  caller must NOT auto-resend; surface it and keep the draft.
-  const steerStream = useCallback(async ({ prompt }) => {
+  const steerStream = useCallback(async ({ prompt, inputId }) => {
     const active = activeTurnRef.current;
     if (!active) {
       return 'finished';
@@ -1011,7 +1024,13 @@ export const useStreamingResponse = ({
       // as a normal follow-up. The message still gets through; it just arrives
       // as its own turn instead of steering the running one.
       const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
-      const body = JSON.stringify({ conversation_id: active.conversationId, prompt });
+      // The same input_id on every attempt: a retry after an ambiguous failure
+      // must be recognisable as the same submission, not a second one.
+      const body = JSON.stringify({
+        conversation_id: active.conversationId,
+        prompt,
+        input_id: inputId,
+      });
       let lastWas404 = false;
       try {
         const response = await fetch(url, {

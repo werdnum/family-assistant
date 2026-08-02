@@ -870,6 +870,7 @@ class LLMStreamingLoop:
                         LLMStreamEvent(
                             type="user_input",
                             content=user_input.content,
+                            input_id=user_input.interface_message_id,
                         ),
                         UserMessage(content=user_input.content),
                     )

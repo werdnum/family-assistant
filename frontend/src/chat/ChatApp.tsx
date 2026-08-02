@@ -433,18 +433,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // without echoing them (the model was in a final text-only iteration, so the
   // loop never drained them), they're recovered as normal follow-ups rather than
   // silently lost. A list, since the user can submit several steers during one
-  // long turn.
-  const awaitingEchoSteersRef = useRef<string[]>([]);
-  // Steers we have SEEN the turn echo back, i.e. observed it consume. Distinct
-  // from the awaiting list above, which is emptied by Stop, a conversation
-  // change and the recovery drain — so "not awaiting" says nothing about
-  // delivery, while an entry here is positive evidence of it.
-  const consumedSteerEchoesRef = useRef<{ id: number; content: string }[]>([]);
-  // Monotonic id stamped on each observed echo. A steer captures the current
-  // value before it sends, and only accepts an echo stamped after that — so an
-  // identical message echoed EARLIER (the user said "continue" twice) can't be
-  // read as delivery of the later one.
-  const echoSeqRef = useRef(0);
+  // long turn. Each carries the input_id it was submitted with, which is what
+  // the turn's echo names when it consumes the message.
+  const awaitingEchoSteersRef = useRef<{ inputId: string; prompt: string }[]>([]);
+  // input_ids of steers we have SEEN the turn echo back, i.e. observed it
+  // consume. Distinct from the awaiting list above, which is emptied by Stop, a
+  // conversation change and the recovery drain — so "not awaiting" says nothing
+  // about delivery, while an entry here is positive evidence of it. Identifying
+  // submissions rather than text is what makes it evidence: an identical message
+  // from another client, or from this one earlier, has a different id.
+  const consumedSteerEchoesRef = useRef<string[]>([]);
   useEffect(() => {
     setSteerError(null);
     // Drop any queued/awaiting steers so they can't fire into the new conversation.
@@ -1014,7 +1012,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         const unEchoed = awaitingEchoSteersRef.current;
         if (unEchoed.length > 0) {
           awaitingEchoSteersRef.current = [];
-          pendingFollowupsRef.current.push(...unEchoed);
+          pendingFollowupsRef.current.push(...unEchoed.map((steer) => steer.prompt));
         }
       } else if (completed) {
         // A deliberate Stop: drop everything queued rather than restarting the
@@ -1051,7 +1049,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // A mid-turn steering message the user sent while the turn was running. Render
   // it as a user bubble just before the in-progress assistant bubble so the
   // conversation reads in order; the turn continues streaming after it.
-  const handleStreamingUserInput = useCallback((content: string) => {
+  const handleStreamingUserInput = useCallback((content: string, inputId: string | null) => {
     const assistantId = streamingMessageIdRef.current;
     const steeringMessage: Message = {
       id: `msg_${Date.now()}_steer_${Math.random().toString(36).slice(2)}`,
@@ -1069,9 +1067,23 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       next.splice(idx, 0, steeringMessage);
       return next;
     });
-    // The echo confirms the turn consumed this steer, so drop one matching
-    // awaiting-echo entry so it isn't recovered as a follow-up later.
-    const idx = awaitingEchoSteersRef.current.findIndex((s) => s.trim() === content.trim());
+    // An echo with no id comes from a backend that predates the field. Match it
+    // the old way — on the text — so a steer this turn really did consume isn't
+    // left registered and resent as a follow-up. It can't be credited as
+    // positive delivery evidence, since another client's identical message
+    // looks the same.
+    if (!inputId) {
+      const untagged = awaitingEchoSteersRef.current.findIndex(
+        (s) => s.prompt.trim() === content.trim()
+      );
+      if (untagged !== -1) {
+        awaitingEchoSteersRef.current.splice(untagged, 1);
+      }
+      return;
+    }
+    // The echo confirms the turn consumed this steer, so drop its awaiting-echo
+    // entry — it isn't recovered as a follow-up later.
+    const idx = awaitingEchoSteersRef.current.findIndex((s) => s.inputId === inputId);
     if (idx !== -1) {
       awaitingEchoSteersRef.current.splice(idx, 1);
     }
@@ -1079,8 +1091,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     // response was lost report success instead of asking the user to resend
     // something the turn already acted on. Bounded: it only has to outlive an
     // in-flight steer request, so a short tail is plenty.
-    echoSeqRef.current += 1;
-    consumedSteerEchoesRef.current.push({ id: echoSeqRef.current, content });
+    consumedSteerEchoesRef.current.push(inputId);
     if (consumedSteerEchoesRef.current.length > 20) {
       consumedSteerEchoesRef.current.shift();
     }
@@ -1283,7 +1294,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       }) => Promise<void>;
       cancelStream: () => void;
       stopTurn: () => Promise<boolean>;
-      steerStream: (params: { prompt: string }) => Promise<'accepted' | 'finished' | 'error'>;
+      steerStream: (params: {
+        prompt: string;
+        inputId: string;
+      }) => Promise<'accepted' | 'finished' | 'error'>;
       isStreaming: boolean;
     };
 
@@ -2183,25 +2197,29 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // remove, and registering afterwards would leave an already-consumed
       // prompt marked unconsumed — which terminal recovery resends, repeating
       // whatever the user asked for. Registered early, the echo removes it.
-      awaitingEchoSteersRef.current.push(prompt);
-      // Echoes already seen don't say anything about THIS submission, so only
-      // ones stamped after this point count as its delivery.
-      const echoesSeenBeforeSubmit = echoSeqRef.current;
-      const result = await steerStream({ prompt });
+      // Names this submission on the wire: the turn's echo carries the id back,
+      // so delivery is established by identity rather than by matching text that
+      // another client — or this one, earlier — could have sent too.
+      const inputId = generateUUID();
+      awaitingEchoSteersRef.current.push({ inputId, prompt });
+      const result = await steerStream({ prompt, inputId });
       if (result === 'accepted') {
         // Left registered (or already removed by its echo): if the turn ends
         // without draining it, the completion handler recovers it as a normal
         // follow-up instead of losing it.
         return 'accepted';
       }
-      const echoedIdx = consumedSteerEchoesRef.current.findIndex(
-        (echo) => echo.content === prompt && echo.id > echoesSeenBeforeSubmit
-      );
-      if (result === 'error' && echoedIdx !== -1) {
-        // Ambiguous failure, but we SAW the turn echo this prompt back, so it
-        // was delivered and the response is what got lost. Report acceptance so
-        // the composer clears; keeping the text would invite a retry that sends
-        // the instruction a second time.
+      const echoedIdx = consumedSteerEchoesRef.current.indexOf(inputId);
+      if (echoedIdx !== -1) {
+        // We SAW the turn echo this submission back, so it was delivered and
+        // only the response was lost. Report acceptance so the composer clears;
+        // keeping the text would invite a retry that sends the instruction a
+        // second time.
+        //
+        // This covers 'finished' as well as 'error': steerStream retries a lost
+        // 5xx with the same body, and the turn can drain the steer and end in
+        // the meantime, so the retry sees 409. Resending on that would repeat an
+        // instruction the assistant already acted on.
         //
         // This keys off having observed the echo, not off the registration
         // being absent: Stop, a conversation change and the recovery drain all
@@ -2210,7 +2228,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         consumedSteerEchoesRef.current.splice(echoedIdx, 1);
         return 'accepted';
       }
-      const registeredIdx = awaitingEchoSteersRef.current.lastIndexOf(prompt);
+      const registeredIdx = awaitingEchoSteersRef.current.findIndex(
+        (steer) => steer.inputId === inputId
+      );
       // Otherwise nothing will echo it, so drop the registration again: the
       // caller handles this prompt itself (resending a 'finished' one as a
       // normal message, keeping an 'error' one in the composer), and leaving it

@@ -603,11 +603,20 @@ async def _publish_llm_event(
         # the steering message as a user bubble. Persistence is handled by the
         # service save path, so this branch is display-only.
         if event.content:
+            user_input_payload: dict[str, str] = {
+                "type": "user_input",
+                "content": event.content,
+            }
+            # Present only for a client that supplied one when it steered. It
+            # identifies the submission, so the sender can recognise its own
+            # message rather than guessing from identical text.
+            if event.input_id:
+                user_input_payload["input_id"] = event.input_id
             await hub.publish(
                 conversation_id,
                 "user_input",
                 turn_id=turn_id,
-                payload={"type": "user_input", "content": event.content},
+                payload=user_input_payload,
             )
     elif event.type == "error":
         # ast-grep-ignore: no-dict-any - error event payload carries free-form error string plus optional error_id from provider; structured typing belongs to a future error-codes design, not the hub

@@ -1004,6 +1004,7 @@ async def test_steer_running_turn_injects_user_input(
     """
     user_prompt = "Steer me mid-turn"
     steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
 
     # Iteration 2: once the injected [MID-TURN USER UPDATE] is in the messages,
     # reply with final text. Listed first so it wins over the tool-call rule.
@@ -1057,7 +1058,11 @@ async def test_steer_running_turn_injects_user_input(
 
         steer = await api_test_client.post(
             f"/api/v1/chat/turns/{turn_id}/steer",
-            json={"conversation_id": conversation_id, "prompt": steer_text},
+            json={
+                "conversation_id": conversation_id,
+                "prompt": steer_text,
+                "input_id": steer_input_id,
+            },
         )
         assert steer.status_code == 200, steer.text
         assert steer.json()["accepted"] is True
@@ -1068,8 +1073,13 @@ async def test_steer_running_turn_injects_user_input(
         )
 
         events = _drain(handle)
+        # The echo names the submission it consumed, which is how the sending
+        # client recognises its own message rather than an identical one from
+        # somewhere else.
         assert any(
-            e.type == "user_input" and e.payload.get("content") == steer_text
+            e.type == "user_input"
+            and e.payload.get("content") == steer_text
+            and e.payload.get("input_id") == steer_input_id
             for e in events
         ), f"Expected a user_input event carrying the steer text, got {events}"
     finally:
