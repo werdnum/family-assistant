@@ -100,6 +100,11 @@ export const useStreamingResponse = ({
       // prompt left unconsumed at turn_ended has to be resent or it is simply
       // lost. `{ prompt, afterSeq }` — see the adoption branch.
       let pendingAdoptedEcho = null;
+      // Set when a message reached nothing at all: the kickoff was refused and
+      // the steer it was rerouted to was then rejected outright. The caller
+      // resends it unconditionally — unlike the cases below there is no doubt
+      // about delivery, so a resend cannot duplicate it.
+      let undeliveredPrompt = null;
 
       // Client-generated turn id makes the kickoff idempotent: a retried POST
       // with the same id returns the existing turn instead of starting a
@@ -245,9 +250,20 @@ export const useStreamingResponse = ({
               redirectToLogin();
               return;
             }
-            // The turn ended between the 409 and the steer, or the steer failed
-            // outright. Either way the prompt was not delivered and must not be
-            // silently dropped; the caller surfaces this and keeps the text.
+            if (steerResponse.status === 404 || steerResponse.status === 409) {
+              // The turn finished in the gap between the kickoff's 409 and this
+              // steer, so it is definitively gone. The prompt reached nothing:
+              // the kickoff was refused, the steer was rejected, and the
+              // composer has already cleared. Report it as undelivered so the
+              // caller starts it as its own turn — the conversation is idle now,
+              // so that kickoff will be accepted. Throwing here would leave the
+              // message existing nowhere at all.
+              undeliveredPrompt = adoptedSteer.prompt;
+              return;
+            }
+            // A network or 5xx failure is ambiguous — the steer may have been
+            // queued before the response failed — so it must NOT be auto-resent.
+            // Surface it and let the caller keep the text.
             throw new Error(
               `Could not deliver the message to the running turn (HTTP ${steerResponse.status})`
             );
@@ -822,6 +838,14 @@ export const useStreamingResponse = ({
           // sent itself), so the caller must resend it as a new turn or the
           // message is lost — the exact failure this whole change is about.
           unconsumedAdoptedPrompt: pendingAdoptedEcho?.prompt ?? null,
+          // A prompt that reached nothing: recover it whatever the outcome,
+          // since no turn ever saw it and no stream was followed.
+          undeliveredPrompt,
+          // True when this send followed a turn it adopted rather than one it
+          // started. The stream withholds that turn's output until it echoes
+          // our prompt, so its earlier tail is missing from the thread and has
+          // to be reconciled from persisted history when the stream ends.
+          adopted: effectiveTurnId !== kickoffTurnId,
         });
         abortControllerRef.current = null;
         activeTurnRef.current = null;

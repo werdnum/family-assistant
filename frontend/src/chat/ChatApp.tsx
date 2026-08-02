@@ -755,12 +755,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       completed = true,
       turnId,
       unconsumedAdoptedPrompt = null,
+      undeliveredPrompt = null,
+      adopted = false,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
       completed?: boolean;
       turnId?: string;
       unconsumedAdoptedPrompt?: string | null;
+      undeliveredPrompt?: string | null;
+      adopted?: boolean;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
@@ -941,6 +945,25 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       const recoverQueued = completed && !wasStopped;
       const recoverAdopted = recoverQueued && Boolean(unconsumedAdoptedPrompt);
 
+      // A prompt that reached nothing at all — the kickoff was refused and the
+      // steer it was rerouted to found the turn already gone. There is no doubt
+      // about delivery, so it is recovered regardless of how this stream ended.
+      if (undeliveredPrompt) {
+        if (turnId) {
+          setMessages((prev) => prev.filter((msg) => msg.turnId !== turnId));
+        }
+        pendingFollowupsRef.current.push(undeliveredPrompt);
+      }
+
+      // An adopted stream withheld the turn's output until it echoed our prompt,
+      // so the tail of the answer it was already giving is missing from the
+      // thread. Reconcile it from persisted history whenever such a stream ends
+      // — not only when the prompt went unconsumed, which is the narrower case
+      // handled below.
+      if (adopted && conversationId) {
+        void handleReloadHistoryRef.current?.(conversationId);
+      }
+
       if (recoverAdopted) {
         // Drop the turn's optimistic bubbles. The resend renders the prompt
         // again, and the assistant row holds nothing worth keeping: the stream
@@ -949,11 +972,8 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         if (turnId) {
           setMessages((prev) => prev.filter((msg) => msg.turnId !== turnId));
         }
-        // Reconcile what that turn actually produced from persisted history,
-        // rather than leaving the thread as though it had produced nothing.
-        if (conversationId) {
-          void handleReloadHistoryRef.current?.(conversationId);
-        }
+        // History reconciliation already happened above for every adopted
+        // stream, which covers this case too.
       }
 
       if (recoverQueued) {
@@ -985,7 +1005,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // clears abortControllerRef / activeTurnRef after onComplete returns) so
       // the follow-up turn's refs aren't clobbered and Stop/Steer target it
       // correctly.
-      if (recoverQueued) {
+      if (recoverQueued || undeliveredPrompt) {
         const followup = pendingFollowupsRef.current.shift();
         if (followup) {
           const convAtSchedule = conversationIdRef.current;

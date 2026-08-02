@@ -1295,6 +1295,78 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'starts its own turn when the adopted turn is already gone by the steer',
+    async () => {
+      // The named turn can finish between the kickoff's 409 and the steer. Then
+      // the prompt reached nothing: the kickoff was refused, the steer rejected,
+      // and the composer already cleared. The conversation is idle now, so it
+      // goes out as its own turn rather than being surfaced as a dead end.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          if (turnsPosts === 1) {
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-10',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_lostrace',
+            first_seq: 0,
+          });
+        }),
+        // The turn finished in the gap: not steerable any more.
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json(
+            { detail: 'Turn is not running; start a new turn instead.' },
+            { status: 409 }
+          )
+        ),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                sse('turn_ended', { turn_id: 'new-turn', status: 'complete', seq: 1 })
+              );
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'is the dentist still on');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      expect(kickoffPrompts[1]).toBe('is the dentist still on');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'refuses to adopt a running turn when the send carried attachments',
     async () => {
       // Steering carries text only. Adopting here would answer the prompt with
