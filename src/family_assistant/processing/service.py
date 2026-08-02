@@ -440,37 +440,55 @@ class ProcessingService:
         here really is an abandoned one and not merely a call whose result fell
         outside the window.
 
+        Every surviving result is emitted directly after its calling assistant
+        message, even if history stored it further down. The incident this
+        repairs produces exactly that separation — the rival turn persists its
+        prompt while the slow tool is still running, so the rows land as
+        ``assistant(call) → user(rival prompt) → tool(result)`` — and a provider
+        that wants the results attached to the calling turn rejects it. Moving
+        the result keeps the real output (the model can use it) instead of
+        discarding it for a placeholder; the cost is that the intervening
+        message now sorts after a result it was originally typed before.
+
         Returns the (synthesized, dropped) counts.
         """
-        # A result only answers its call if it follows it, so both facts have to
-        # be known before any message can be classified: which results are in a
-        # usable position, and therefore which calls still need one.
+        # A result only answers its call if the call came first, so both facts
+        # have to be known before any message can be classified: which results
+        # are usable, and therefore which calls still need one.
         seen_call_ids: set[str] = set()
-        answered_call_ids: set[str] = set()
-        keep_flags: list[bool] = []
+        # call id -> its result, hoisted out of the stream so it can be re-emitted
+        # at the call site. Only the first result for a call is kept; a duplicate
+        # cannot be represented and is dropped like an orphan.
+        results_by_call_id: dict[str, ToolMessage] = {}
+        dropped = 0
         for message in messages_for_llm:
-            if isinstance(message, ToolMessage):
-                answers_a_known_call = message.tool_call_id in seen_call_ids
-                keep_flags.append(answers_a_known_call)
-                if answers_a_known_call:
-                    answered_call_ids.add(message.tool_call_id)
+            if not isinstance(message, ToolMessage):
+                if isinstance(message, AssistantMessage) and message.tool_calls:
+                    seen_call_ids.update(
+                        tool_call.id for tool_call in message.tool_calls
+                    )
                 continue
-            keep_flags.append(True)
-            if isinstance(message, AssistantMessage) and message.tool_calls:
-                seen_call_ids.update(tool_call.id for tool_call in message.tool_calls)
+            if (
+                message.tool_call_id not in seen_call_ids
+                or message.tool_call_id in results_by_call_id
+            ):
+                dropped += 1
+                continue
+            results_by_call_id[message.tool_call_id] = message
 
         repaired: list[LLMMessage] = []
         synthesized = 0
-        dropped = 0
-        for message, keep in zip(messages_for_llm, keep_flags, strict=True):
-            if not keep:
-                dropped += 1
+        for message in messages_for_llm:
+            if isinstance(message, ToolMessage):
+                # Emitted at its call site below, or already counted as dropped.
                 continue
             repaired.append(message)
             if not isinstance(message, AssistantMessage) or not message.tool_calls:
                 continue
             for tool_call in message.tool_calls:
-                if tool_call.id in answered_call_ids:
+                answer = results_by_call_id.get(tool_call.id)
+                if answer is not None:
+                    repaired.append(answer)
                     continue
                 repaired.append(
                     ToolMessage(

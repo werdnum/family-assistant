@@ -931,29 +931,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       //   end, so abandon any queued/awaiting steers instead.
       const cleanCompletion = completed && !wasStopped && !lastError;
       if (cleanCompletion) {
-        // Accepted steers the turn never echoed (it finished a final text-only
-        // iteration without draining them) would otherwise be lost. Recover
-        // them as normal follow-ups.
-        const unEchoed = awaitingEchoSteersRef.current;
-        if (unEchoed.length > 0) {
-          awaitingEchoSteersRef.current = [];
-          pendingFollowupsRef.current.push(...unEchoed);
-        }
-
-        // Same recovery for a message that was refused (409), delivered to the
-        // running turn as a steer, and then never drained because that turn was
-        // already finishing. It isn't in the awaiting-echo list — the hook sent
-        // that steer, not submitSteer — so without this the send is silently
-        // lost. Drop its optimistic user bubble first: the resend renders the
-        // prompt again, and the turn it was attributed to answered something
-        // else entirely.
+        // Recover messages the turn accepted but never drained (it finished a
+        // final text-only iteration first), which would otherwise be lost, by
+        // resending them as normal follow-ups.
+        //
+        // The adopted prompt goes first: it was the send that opened this
+        // stream, so it predates every steer typed while the stream ran, and
+        // queueing it after them would replay the user's messages out of order.
+        // It is recovered separately because it isn't in the awaiting-echo list
+        // — the hook sent that steer, not submitSteer.
         if (unconsumedAdoptedPrompt) {
+          // Drop its optimistic user bubble: the resend renders the prompt
+          // again, and the turn it was attributed to answered something else.
           if (turnId) {
             setMessages((prev) =>
               prev.filter((msg) => !(msg.turnId === turnId && msg.role === 'user'))
             );
           }
           pendingFollowupsRef.current.push(unconsumedAdoptedPrompt);
+        }
+
+        const unEchoed = awaitingEchoSteersRef.current;
+        if (unEchoed.length > 0) {
+          awaitingEchoSteersRef.current = [];
+          pendingFollowupsRef.current.push(...unEchoed);
         }
 
         // Fire the next queued follow-up (a steer that hit an already-finished

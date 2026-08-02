@@ -192,6 +192,49 @@ class TestRepairUnmatchedToolCalls:
             ),
         ]
 
+    def test_late_result_is_moved_back_to_its_call(self) -> None:
+        """A result separated from its call by a rival prompt is reattached.
+
+        This is the incident's own row order: the slow tool is still running
+        when the rival turn persists its prompt, so the result lands after it.
+        Providers that want a call's results attached to the calling turn reject
+        that, and the real output is worth keeping — so it moves up to the call
+        rather than being dropped for a placeholder.
+        """
+        messages: list[LLMMessage] = [
+            UserMessage(content="OCR these scans"),
+            AssistantMessage(content=None, tool_calls=[_tool_call("call_a")]),
+            UserMessage(content="Actually, it was a dental x-ray"),
+            ToolMessage(tool_call_id="call_a", name="execute_shell", content="page 1…"),
+        ]
+
+        synthesized, dropped = ProcessingService._repair_unmatched_tool_calls(messages)
+
+        assert (synthesized, dropped) == (0, 0)
+        assert messages == [
+            UserMessage(content="OCR these scans"),
+            AssistantMessage(content=None, tool_calls=[_tool_call("call_a")]),
+            ToolMessage(tool_call_id="call_a", name="execute_shell", content="page 1…"),
+            UserMessage(content="Actually, it was a dental x-ray"),
+        ]
+        assert not _unanswered_call_ids(messages)
+
+    def test_duplicate_result_for_one_call_is_dropped(self) -> None:
+        """A call is answered exactly once; a second result cannot be placed."""
+        messages: list[LLMMessage] = [
+            AssistantMessage(content=None, tool_calls=[_tool_call("call_a")]),
+            ToolMessage(tool_call_id="call_a", name="execute_shell", content="first"),
+            ToolMessage(tool_call_id="call_a", name="execute_shell", content="second"),
+        ]
+
+        synthesized, dropped = ProcessingService._repair_unmatched_tool_calls(messages)
+
+        assert (synthesized, dropped) == (0, 1)
+        assert messages == [
+            AssistantMessage(content=None, tool_calls=[_tool_call("call_a")]),
+            ToolMessage(tool_call_id="call_a", name="execute_shell", content="first"),
+        ]
+
     def test_empty_history_is_a_no_op(self) -> None:
         messages: list[LLMMessage] = []
 
