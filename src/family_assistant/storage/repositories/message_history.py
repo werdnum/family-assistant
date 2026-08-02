@@ -46,6 +46,7 @@ from family_assistant.security.taint import (
     merge_history_taint,
     strip_legacy_labeled_echoes,
 )
+from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
@@ -1177,35 +1178,46 @@ class MessageHistoryRepository(BaseRepository):
             }
         }
 
-        try:
+        async def _insert_and_enqueue(txn: DatabaseTransaction) -> int:
+            """Persist the row and queue its indexing as one unit.
+
+            Split, an enqueue failure reaches the caller as a failed
+            ``add_message`` even though the row is already committed, so a
+            caller that retries duplicates the message; and a row whose task
+            never lands is silently absent from search for good.
+            """
             stmt = (
                 insert(message_history_table)
                 .values(**values)
                 .returning(message_history_table.c.internal_id)
             )
-            result = await self._db.execute(stmt)
-            internal_id = result.scalar_one()
+            result = await txn.execute(stmt)
+            internal_id = cast("int", result.scalar_one())
 
             self._logger.info(
                 f"Added message to history: role={role}, "
                 f"interface={interface_type}, internal_id={internal_id}"
             )
 
+            await self._enqueue_message_history_indexing_task(
+                internal_id=internal_id,
+                turn_id=turn_id,
+                db=txn,
+            )
+            return internal_id
+
+        try:
+            return await self._db.atomic(_insert_and_enqueue)
         except SQLAlchemyError as e:
             self._logger.exception(f"Failed to add message to history: {e}")
             return None
-
-        await self._enqueue_message_history_indexing_task(
-            internal_id=internal_id,
-            turn_id=turn_id,
-        )
-        return internal_id
 
     async def _enqueue_message_history_indexing_task(
         self,
         *,
         internal_id: int,
         turn_id: str | None,
+        db: DatabaseExecutor | None = None,
     ) -> None:
         """Queue indexing for newly persisted message history."""
         payload: dict[str, object] = {"limit": 50}
@@ -1214,7 +1226,7 @@ class MessageHistoryRepository(BaseRepository):
         else:
             payload["internal_id"] = internal_id
 
-        await self._db.tasks.enqueue(
+        await (db if db is not None else self._db).tasks.enqueue(
             task_id=f"index_message_history_{uuid.uuid4()}",
             task_type="index_message_history_batch",
             payload=payload,

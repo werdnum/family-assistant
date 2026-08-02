@@ -110,15 +110,26 @@ class WebChatInterface(ChatInterface):
         # saved message look like a failed send — callers would then resend or
         # retry an already-approved confirmation, causing duplicate side
         # effects. A publish failure is a programming error; let it propagate.
-        # Owner ids of the conversation, resolved while the save transaction is
-        # open so the post-commit activity ping can be scoped to them (the
-        # account-global activity channel filters subscribers by user_id).
+        # Owner ids of the conversation, resolved BEFORE the save so the
+        # post-commit activity ping can be scoped to them (the account-global
+        # activity channel filters subscribers by user_id). Resolving after the
+        # save would put a read between a committed message and this method's
+        # return: a failure there returns None for a message that was in fact
+        # delivered, and the caller resends. Ownership comes from the
+        # conversation's existing user messages, so it does not depend on the
+        # row about to be written.
         owner_ids: set[str] = set()
         try:
             clock = SystemClock()
 
             # Save message to database - SSE notification happens automatically
             db_context = Database(engine=self.database_engine)
+
+            if self.stream_hub is not None:
+                owner_ids = await db_context.message_history.get_conversation_owner_ids(
+                    conversation_id
+                )
+
             # Prepare attachment metadata if provided
             attachments: list[MessageAttachmentMetadata] | None = None
             if attachment_ids:
@@ -144,14 +155,6 @@ class WebChatInterface(ChatInterface):
                 timestamp=clock.now(),
                 attachments=attachments,
             )
-
-            # Resolve owners now (inside the txn) for the post-commit activity
-            # ping. This save carries no user_id of its own, so ownership comes
-            # from the conversation's existing user messages.
-            if saved_message is not None and self.stream_hub is not None:
-                owner_ids = await db_context.message_history.get_conversation_owner_ids(
-                    conversation_id
-                )
 
             # Notify the conversation owner about the new assistant reply.
             if saved_message is not None and self.notifier is not None:

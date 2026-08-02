@@ -29,10 +29,12 @@ from family_assistant.security.taint import (
     TaintSourceType,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.message_history import (
     MessageHistoryAccessDeniedError,
     MessageHistoryQuery,
 )
+from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
@@ -913,15 +915,21 @@ async def test_add_message_surfaces_index_enqueue_failures(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Message writes fail instead of silently losing semantic indexing."""
+    """A message write that cannot queue its indexing fails and keeps no row.
+
+    Patched on the class, not on one repository instance: the insert and the
+    enqueue share a transaction, so the enqueue runs against a transaction-bound
+    repository rather than the handle's.
+    """
 
     async def fail_enqueue(*args: object, **kwargs: object) -> None:
         _ = args, kwargs
         raise RuntimeError("queue unavailable")
 
+    monkeypatch.setattr(TasksRepository, "enqueue", fail_enqueue)
+
+    db = Database(engine=db_engine)
     with pytest.raises(RuntimeError, match="queue unavailable"):
-        db = Database(engine=db_engine)
-        monkeypatch.setattr(db.tasks, "enqueue", fail_enqueue)
         await db.message_history.add_message(
             UserMessage(content="Index me"),
             interface_type="test",
@@ -930,6 +938,14 @@ async def test_add_message_surfaces_index_enqueue_failures(
             user_id="user-a",
             processing_profile_id="default",
         )
+
+    monkeypatch.undo()
+    rows = await db.fetch_all(
+        select(message_history_table).where(
+            message_history_table.c.conversation_id == "current"
+        )
+    )
+    assert rows == [], "the message must roll back with its unqueued indexing"
 
 
 @pytest.mark.asyncio

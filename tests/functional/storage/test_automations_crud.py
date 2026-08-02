@@ -11,7 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.storage.database import Database
+from family_assistant.storage.database import Database, DatabaseExecutor
+from family_assistant.storage.repositories.schedule_automations import (
+    ScheduleAutomationsRepository,
+)
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
@@ -652,6 +655,122 @@ class TestScheduleAutomationsRepository:
         # Verify deleted
         automation = await db_context.schedule_automations.get_by_id(automation_id)
         assert automation is None
+
+    @pytest.mark.asyncio
+    async def test_delete_failure_leaves_the_queued_task_alive(
+        self,
+        db_context: Database,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A delete that fails after cancelling tasks undoes the cancellation.
+
+        Otherwise the automation survives with every queued task cancelled:
+        present in the listing, and permanently dead.
+        """
+        conversation_id = str(uuid.uuid4())
+
+        automation_id = await db_context.schedule_automations.create(
+            name="Test Auto",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "test"},
+            conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
+        )
+
+        real_cancel = ScheduleAutomationsRepository._cancel_pending_tasks
+
+        async def cancel_then_fail(
+            self: ScheduleAutomationsRepository,
+            automation_id: int,
+            db: DatabaseExecutor | None = None,
+        ) -> int:
+            await real_cancel(self, automation_id, db)
+            raise RuntimeError("delete interrupted")
+
+        monkeypatch.setattr(
+            ScheduleAutomationsRepository, "_cancel_pending_tasks", cancel_then_fail
+        )
+
+        with pytest.raises(RuntimeError, match="delete interrupted"):
+            await db_context.schedule_automations.delete(automation_id, conversation_id)
+
+        monkeypatch.undo()
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        rows = await db_context.fetch_all(
+            select(tasks_table).where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+        )
+        assert rows, "the automation's task should still be queued"
+        assert all(row["status"] == "pending" for row in rows)
+
+    @pytest.mark.asyncio
+    async def test_rejected_update_leaves_the_original_task_queued(
+        self,
+        db_context: Database,
+    ) -> None:
+        """An edit the database rejects undoes the queue re-sync it did first.
+
+        The name collision is real, not injected: the re-sync (cancel the old
+        task, enqueue one built from the new config) runs before the UPDATE
+        that the unique constraint refuses. Without a shared transaction the
+        automation keeps its old configuration while the queue holds a task
+        built from the rejected one.
+        """
+        conversation_id = str(uuid.uuid4())
+
+        await db_context.schedule_automations.create(
+            name="First Auto",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9",
+            action_type="wake_llm",
+            action_config={"context": "first"},
+            conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
+        )
+        automation_id = await db_context.schedule_automations.create(
+            name="Second Auto",
+            recurrence_rule="FREQ=DAILY;BYHOUR=10",
+            action_type="wake_llm",
+            action_config={"context": "original"},
+            conversation_id=conversation_id,
+            timezone=ZoneInfo("UTC"),
+        )
+        original_tasks = await self._automation_tasks(db_context, automation_id)
+        assert original_tasks, "creating the automation should queue a task"
+
+        # Changing action_config forces the queue re-sync; the colliding name
+        # is what makes the UPDATE that follows it fail.
+        with pytest.raises((ValueError, IntegrityError)):
+            await db_context.schedule_automations.update(
+                automation_id,
+                conversation_id,
+                name="First Auto",
+                action_config={"context": "rewritten"},
+                timezone=ZoneInfo("UTC"),
+            )
+
+        automation = await db_context.schedule_automations.get_by_id(automation_id)
+        assert automation is not None
+        assert automation["name"] == "Second Auto"
+        assert automation["action_config"].get("context") == "original"
+        assert await self._automation_tasks(db_context, automation_id) == original_tasks
+
+    @staticmethod
+    async def _automation_tasks(
+        db_context: Database, automation_id: int
+    ) -> list[tuple[str, str]]:
+        """The (task_id, status) pairs queued for an automation."""
+        rows = await db_context.fetch_all(
+            select(tasks_table)
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+            .order_by(tasks_table.c.task_id)
+        )
+        return [(row["task_id"], row["status"]) for row in rows]
 
     @pytest.mark.asyncio
     async def test_delete_wrong_conversation(self, db_context: Database) -> None:
