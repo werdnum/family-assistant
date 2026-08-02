@@ -925,22 +925,22 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       lastStreamingErrorIsUserFacingRef.current = false;
       fetchConversations();
 
-      // Recover/queue follow-ups only on a clean completion we actually saw end.
+      // Recover/queue follow-ups on any terminal outcome except a deliberate
+      // Stop, which abandons queued work by definition.
       // - completed === false: a local detach (cancelStream during navigation) —
       //   the server turn keeps running and may still drain the steer, so
       //   resending would duplicate it.
-      // - stopped/failed: the user pressed Stop, or the turn errored. Resending
-      //   an abandoned steer would restart the very interaction Stop was meant to
-      //   end, so abandon any queued/awaiting steers instead.
-      const cleanCompletion = completed && !wasStopped && !lastError;
+      // - stopped: the user asked for this interaction to end; restarting it is
+      //   the opposite of what they pressed.
+      // - failed: still recovered. Neither an accepted steer nor an adopted
+      //   prompt is persisted until the LLM loop drains it and emits the echo,
+      //   and the composer cleared its text on accept — so the client's queue
+      //   holds the user's ONLY copy, and dropping it here deletes the message.
+      //   Each recovery is resent as one new turn, so a conversation that keeps
+      //   failing drains the queue rather than looping on it.
+      const recoverQueued = completed && !wasStopped;
+      const recoverAdopted = recoverQueued && Boolean(unconsumedAdoptedPrompt);
 
-      // An adopted prompt the turn never consumed exists nowhere else: the
-      // backend only persists a steer when the LLM loop drains it, so unlike an
-      // ordinary steer there is no durable row and no draft to fall back on. It
-      // is therefore recovered on a FAILED turn too, not just a clean one —
-      // losing it is the very failure this whole path exists to prevent. A
-      // deliberate Stop still abandons it, like every other queued message.
-      const recoverAdopted = completed && !wasStopped && Boolean(unconsumedAdoptedPrompt);
       if (recoverAdopted) {
         // Drop the turn's optimistic bubbles. The resend renders the prompt
         // again, and the assistant row holds nothing worth keeping: the stream
@@ -956,17 +956,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         }
       }
 
-      if (cleanCompletion) {
-        // Recover messages the turn accepted but never drained (it finished a
-        // final text-only iteration first), which would otherwise be lost, by
-        // resending them as normal follow-ups.
-        //
+      if (recoverQueued) {
         // The adopted prompt goes first: it was the send that opened this
         // stream, so it predates every steer typed while the stream ran, and
         // queueing it after them would replay the user's messages out of order.
-        // It is recovered separately because it isn't in the awaiting-echo list
-        // — the hook sent that steer, not submitSteer.
-        if (recoverAdopted && unconsumedAdoptedPrompt) {
+        // It is tracked separately because it isn't in the awaiting-echo list —
+        // the hook sent that steer, not submitSteer.
+        if (unconsumedAdoptedPrompt) {
           pendingFollowupsRef.current.push(unconsumedAdoptedPrompt);
         }
 
@@ -976,14 +972,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           pendingFollowupsRef.current.push(...unEchoed);
         }
       } else if (completed) {
-        // Terminal but not a clean success (stopped or failed): drop any
-        // queued/awaiting steers so Stop/failure doesn't auto-start a new turn.
-        // Resending a steer into a conversation that just failed only repeats
-        // the failure, and the user still has those messages in the thread. The
-        // adopted prompt is the exception above — nothing else holds it.
+        // A deliberate Stop: drop everything queued rather than restarting the
+        // interaction the user just ended.
         awaitingEchoSteersRef.current = [];
-        pendingFollowupsRef.current =
-          recoverAdopted && unconsumedAdoptedPrompt ? [unconsumedAdoptedPrompt] : [];
+        pendingFollowupsRef.current = [];
       }
 
       // Fire the next queued follow-up (a steer that hit an already-finished
@@ -993,7 +985,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // clears abortControllerRef / activeTurnRef after onComplete returns) so
       // the follow-up turn's refs aren't clobbered and Stop/Steer target it
       // correctly.
-      if (cleanCompletion || recoverAdopted) {
+      if (recoverQueued) {
         const followup = pendingFollowupsRef.current.shift();
         if (followup) {
           const convAtSchedule = conversationIdRef.current;

@@ -878,9 +878,17 @@ export const useStreamingResponse = ({
       // a kickoff still in flight when Stop was clicked can be refused (409)
       // and adopt the conversation's running turn, which repoints this ref.
       // Cancelling the client-generated id we started with would then 404
-      // forever while the real turn kept running. Keep the last known identity
-      // when the ref has been cleared (the stream settled mid-retry).
-      active = activeTurnRef.current ?? active;
+      // forever while the real turn kept running.
+      //
+      // Only follow it WITHIN the conversation this Stop was for. The user can
+      // switch conversations during the backoff, and the ref then names an
+      // unrelated turn — cancelling that would stop a turn they never asked to
+      // stop. Keep the last known identity in that case, and when the ref has
+      // been cleared entirely (the stream settled mid-retry).
+      const live = activeTurnRef.current;
+      if (live && live.conversationId === active.conversationId) {
+        active = live;
+      }
       const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
       const body = JSON.stringify({ conversation_id: active.conversationId });
       let retryable = false;
@@ -938,9 +946,21 @@ export const useStreamingResponse = ({
       // in flight can be refused (409) and adopt the conversation's running
       // turn, repointing this ref. Retrying the id that kickoff was refused
       // under would 404 to exhaustion and demote a steer the running turn could
-      // have taken into a post-turn follow-up. Keep the last known identity if
-      // the ref has been cleared (the stream settled mid-retry).
-      active = activeTurnRef.current ?? active;
+      // have taken into a post-turn follow-up.
+      //
+      // Only follow it WITHIN the conversation this steer was typed in. The
+      // user can switch conversations during the backoff, and the ref then
+      // names a turn in another thread — delivering this prompt there would put
+      // one conversation's message into another. Give up instead; 'error' keeps
+      // the caller from auto-resending and preserves the text.
+      const live = activeTurnRef.current;
+      if (live && live.conversationId !== active.conversationId) {
+        console.warn('Turn steer abandoned: the active turn moved to another conversation.');
+        return 'error';
+      }
+      if (live) {
+        active = live;
+      }
       const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
       const body = JSON.stringify({ conversation_id: active.conversationId, prompt });
       let lastWas404 = false;
