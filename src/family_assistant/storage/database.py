@@ -31,18 +31,17 @@ import contextlib
 import contextvars
 import logging
 import random
+import sqlite3
 import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import (
     DBAPIError,
-    IntegrityError,
     InvalidRequestError,
     MultipleResultsFound,
     NoResultFound,
-    ProgrammingError,
 )
 
 if TYPE_CHECKING:
@@ -80,10 +79,8 @@ logger = logging.getLogger(__name__)
 
 # PostgreSQL SQLSTATE codes - the authoritative way to identify error types
 # See: https://www.postgresql.org/docs/current/errcodes-appendix.html
-PGCODE_IN_FAILED_SQL_TRANSACTION = "25P02"  # Transaction is aborted
-PGCODE_CHARACTER_NOT_IN_REPERTOIRE = "22021"  # Invalid byte sequence for encoding
-# Retryable: a unit of work that owns its whole transaction can simply be
-# replayed, which is what makes these worth retrying at all.
+# The only failures a replay can fix: the transaction rolled back cleanly and
+# nothing it wrote reached the database.
 PGCODE_SERIALIZATION_FAILURE = "40001"  # Concurrent transaction conflict
 PGCODE_DEADLOCK_DETECTED = "40P01"  # Two processes blocked each other
 
@@ -233,50 +230,33 @@ def sanitize_text_for_postgres(text: str | None) -> str | None:
     return text
 
 
-def _is_non_retryable_postgres_error(
-    exc: BaseException | None,
-) -> tuple[bool, Literal["transaction_aborted", "encoding_error", ""]]:
+def _is_sqlite_lock_error(orig: BaseException | None) -> bool:
+    """Whether SQLite refused the write because something else held the lock.
+
+    Reported before the transaction does any work, so a replay is safe.
     """
-    Check if an exception is a non-retryable PostgreSQL error using SQLSTATE codes.
-
-    Some PostgreSQL errors should not be retried because:
-    - They're data errors (bad encoding, constraint violations)
-    - The transaction is already aborted
-
-    Uses pgcode (SQLSTATE) which is the authoritative way to identify PostgreSQL
-    error types, rather than isinstance checks which can fail with SQLAlchemy's
-    exception wrapping.
-
-    Returns:
-        Tuple of (is_non_retryable, error_type_description)
-    """
-    if exc is None:
-        return False, ""
-
-    # asyncpg exceptions have a 'pgcode' attribute with the SQLSTATE code
-    # This is the gold standard for identifying PostgreSQL error types
-    pgcode = getattr(exc, "pgcode", None)
-    if pgcode is None:
-        return False, ""
-
-    if pgcode == PGCODE_IN_FAILED_SQL_TRANSACTION:
-        return True, "transaction_aborted"
-    if pgcode == PGCODE_CHARACTER_NOT_IN_REPERTOIRE:
-        return True, "encoding_error"
-
-    return False, ""
+    if not isinstance(orig, sqlite3.OperationalError):
+        return False
+    message = str(orig).lower()
+    return "database is locked" in message or "database table is locked" in message
 
 
 def _is_retryable(exc: DBAPIError) -> bool:
-    """Whether a failed unit of work is worth replaying."""
-    # Syntax errors and constraint violations are deterministic: a replay
-    # produces the same failure.
-    if isinstance(exc.orig, ProgrammingError | IntegrityError) or isinstance(
-        exc, ProgrammingError | IntegrityError
-    ):
-        return False
-    is_non_retryable, _ = _is_non_retryable_postgres_error(exc.orig)
-    return not is_non_retryable
+    """Whether a failed unit of work is worth replaying.
+
+    An allowlist, deliberately. ``atomic()`` replays the entire closure, so a
+    retry is only correct for failures the database guarantees rolled back:
+    PostgreSQL serialization failures and deadlocks, and SQLite lock
+    contention. Everything else is either deterministic (a replay reproduces
+    it) or of unknown outcome -- a connection dropped mid-commit above all,
+    where the server may well have committed. Replaying that would write a
+    second message-history row, or a second task under a fresh uuid, instead
+    of surfacing the uncertainty to the caller.
+    """
+    pgcode = getattr(exc.orig, "pgcode", None)
+    if pgcode is not None:
+        return pgcode in {PGCODE_SERIALIZATION_FAILURE, PGCODE_DEADLOCK_DETECTED}
+    return _is_sqlite_lock_error(exc.orig)
 
 
 @dataclass(frozen=True)
