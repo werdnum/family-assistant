@@ -1760,6 +1760,33 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return any(not row["tool_calls"] for row in rows)
 
+    async def get_undelivered_terminal_reply(
+        self,
+        turn_id: str,
+    ) -> MessageHistoryRow | None:
+        """The turn's final assistant reply, if it was never delivered.
+
+        A terminal reply carries no tool_calls (an intermediate tool-calling
+        iteration is not terminal), and ``interface_message_id`` is set only
+        once an interface has accepted it. A row matching both means generation
+        finished but delivery did not -- so a retry can resume at delivery
+        rather than running the turn again.
+        """
+        stmt = (
+            select(message_history_table)
+            .where(
+                message_history_table.c.turn_id == turn_id,
+                message_history_table.c.role == "assistant",
+                message_history_table.c.interface_message_id.is_(None),
+            )
+            .order_by(message_history_table.c.internal_id.desc())
+        )
+        rows = await self._db.fetch_all(stmt)
+        # tool_calls stores None as JSON null rather than SQL NULL, so the
+        # terminal check happens in Python (see has_terminal_reply_for_turn).
+        terminal = [row for row in rows if not row["tool_calls"]]
+        return cast("MessageHistoryRow", dict(terminal[0])) if terminal else None
+
     async def get_interface_type_for_conversation(
         self, conversation_id: str
     ) -> str | None:
