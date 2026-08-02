@@ -24,7 +24,7 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.tool_call import ToolCallFunction
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.service import ABANDONED_TOOL_CALL_RESULT
-from family_assistant.storage.context import DatabaseContext
+from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.mock_llm import LLMOutput, MatcherArgs, RuleBasedMockLLMClient
 
@@ -276,31 +276,31 @@ async def test_interrupted_tool_call_in_stored_history_is_repaired(
 
     conversation_id = "conv-interrupted-tool-call"
     interrupted_turn_at = service.clock.now() - timedelta(minutes=2)
-    async with DatabaseContext(engine=db_engine) as db_context:
-        stored: list[LLMMessage] = [
-            UserMessage(content="OCR these medical records"),
-            AssistantMessage(content=None, tool_calls=[_tool_call("call_running")]),
-        ]
-        for index, message in enumerate(stored):
-            await db_context.message_history.add_message(
-                message,
-                interface_type="web",
-                conversation_id=conversation_id,
-                timestamp=interrupted_turn_at + timedelta(seconds=index),
-                turn_id="turn-interrupted",
-                processing_profile_id="interrupted_turn_profile",
-            )
-
-        result = await service.handle_chat_interaction(
-            db_context=db_context,
+    db_context = Database(engine=db_engine)
+    stored: list[LLMMessage] = [
+        UserMessage(content="OCR these medical records"),
+        AssistantMessage(content=None, tool_calls=[_tool_call("call_running")]),
+    ]
+    for index, message in enumerate(stored):
+        await db_context.message_history.add_message(
+            message,
             interface_type="web",
             conversation_id=conversation_id,
-            trigger_content_parts=[
-                {"type": "text", "text": "Ah, it was a dental x-ray finding"}
-            ],
-            trigger_interface_message_id=None,
-            user_name="Test User",
+            timestamp=interrupted_turn_at + timedelta(seconds=index),
+            turn_id="turn-interrupted",
+            processing_profile_id="interrupted_turn_profile",
         )
+
+    result = await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id=conversation_id,
+        trigger_content_parts=[
+            {"type": "text", "text": "Ah, it was a dental x-ray finding"}
+        ],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
 
     assert result.text_reply == "Understood."
     assert _unanswered_call_ids(seen_messages) == set()
