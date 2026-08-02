@@ -2125,6 +2125,9 @@ final class ChatViewModel {
                 return
             }
             if hadPendingStop {
+                rollbackOptimisticSummaryIfUnowned(
+                    conversationID: id, turnID: turnID, to: previousSummary
+                )
                 detachPendingSteers(pendingSteers, requeue: false)
                 await stopTurn()
                 return

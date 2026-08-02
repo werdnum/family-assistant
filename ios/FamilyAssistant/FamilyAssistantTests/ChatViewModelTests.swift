@@ -2008,6 +2008,10 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(steerRequests.value, 0)
         XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
+        XCTAssertFalse(
+            model.conversations.contains { $0.conversationID == "web_conv_conflict_queued_stop" },
+            "A rejected rival send must not leave a phantom summary when Stop wins recovery."
+        )
     }
 
     func testQueuedFollowUpPreflightPreservesNewerDraftAndRequeuesFollowUp() async throws {
