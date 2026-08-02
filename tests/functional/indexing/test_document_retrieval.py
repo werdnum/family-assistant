@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.indexing.ingestion import process_document_ingestion_request
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.vector import add_embedding
 from family_assistant.tools.documents import (
     get_full_document_content_tool,
@@ -505,3 +506,43 @@ class TestDocumentRetrieval:
         assert doc_result["file_path"] is not None
         assert "path_test.pdf" in doc_result["file_path"]
         assert await anyio.Path(doc_result["file_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_ingestion_leaves_no_document_when_the_task_cannot_be_queued(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A document that cannot be queued for processing is not left behind.
+
+    Committed on its own, it would never be indexed, and the retry that would
+    fix it collides with the source identity already in the table.
+    """
+
+    async def fail_enqueue(*args: object, **kwargs: object) -> None:
+        _ = args, kwargs
+        raise RuntimeError("queue unavailable")
+
+    monkeypatch.setattr(TasksRepository, "enqueue", fail_enqueue)
+
+    db_context = Database(db_engine)
+    with tempfile.TemporaryDirectory() as storage_dir:
+        result = await process_document_ingestion_request(
+            db_context=db_context,
+            document_storage_path=pathlib.Path(storage_dir),
+            source_type="test_doc",
+            source_id="unqueueable_001",
+            source_uri="file://unqueueable.txt",
+            title="Unqueueable",
+            content_parts={"text": "some content"},
+        )
+
+    assert result.get("document_id") is None
+    assert result.get("task_enqueued") is False
+
+    monkeypatch.undo()
+    rows = await db_context.fetch_all(
+        text("SELECT id FROM documents WHERE source_id = :source_id"),
+        {"source_id": "unqueueable_001"},
+    )
+    assert rows == [], "the document must roll back with its unqueued task"

@@ -15,7 +15,7 @@ from family_assistant.indexing.types import IngestionResult
 
 # storage functions now accessed via Database
 if TYPE_CHECKING:
-    from family_assistant.storage.database import Database
+    from family_assistant.storage.database import Database, DatabaseTransaction
 
 logger = logging.getLogger(__name__)
 
@@ -152,50 +152,43 @@ async def process_document_ingestion_request(
             file_path=file_ref,
         )
 
-        document_id: int = await db_context.vector.add_document(
-            doc=doc_for_storage,
-        )
-        logger.info(f"Stored document record for {source_id}, got DB ID: {document_id}")
+        async def _store_and_enqueue(txn: "DatabaseTransaction") -> tuple[int, str]:
+            """Create the document record and queue its processing as one unit.
 
-        # Enqueue Background Task for Embedding
-        task_payload = {
-            "document_id": document_id,
-            "content_parts": content_parts,
-            "file_ref": file_ref,
-            "mime_type": detected_mime_type,
-            "original_filename": original_filename_for_task,
-            "url_to_scrape": url_to_scrape,
-        }
-        task_id = f"index-doc-{document_id}-{uuid.uuid4()}"
-        task_enqueued = False
-        try:
-            await db_context.tasks.enqueue(
+            Split, a failed enqueue leaves a committed document with no task
+            behind it: never indexed, and the retry that would fix it collides
+            with the source identity already in the table.
+            """
+            document_id: int = await txn.vector.add_document(
+                doc=doc_for_storage,
+            )
+            logger.info(
+                f"Stored document record for {source_id}, got DB ID: {document_id}"
+            )
+
+            task_id = f"index-doc-{document_id}-{uuid.uuid4()}"
+            await txn.tasks.enqueue(
                 task_id=task_id,
                 task_type="process_uploaded_document",
-                payload=task_payload,
+                payload={
+                    "document_id": document_id,
+                    "content_parts": content_parts,
+                    "file_ref": file_ref,
+                    "mime_type": detected_mime_type,
+                    "original_filename": original_filename_for_task,
+                    "url_to_scrape": url_to_scrape,
+                },
             )
-            task_enqueued = True
-            logger.info(
-                f"Enqueued task '{task_id}' to process document ID {document_id}"
-            )
-            return {
-                "message": "Document received and accepted for processing.",
-                "document_id": document_id,
-                "task_enqueued": task_enqueued,  # Use the variable
-                "error_detail": None,
-            }
-        except Exception as task_err:
-            logger.exception(
-                f"Failed to enqueue indexing task for document ID {document_id}: {task_err}"
-            )
-            return {
-                "message": (
-                    "Document record stored, but failed to enqueue indexing task."
-                ),
-                "document_id": document_id,
-                "task_enqueued": False,
-                "error_detail": str(task_err),
-            }
+            return document_id, task_id
+
+        document_id, task_id = await db_context.atomic(_store_and_enqueue)
+        logger.info(f"Enqueued task '{task_id}' to process document ID {document_id}")
+        return {
+            "message": "Document received and accepted for processing.",
+            "document_id": document_id,
+            "task_enqueued": True,
+            "error_detail": None,
+        }
 
     except (
         ValueError,
