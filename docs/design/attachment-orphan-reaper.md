@@ -1,0 +1,66 @@
+# Reaping unreferenced attachments
+
+## Problem
+
+The web client uploads an attachment first (`POST /api/attachments/upload`) and only afterwards
+sends the message that references it. The upload commits an `attachment_metadata` row and writes the
+file immediately, so every send that never produces a persisted message leaves both behind: the user
+closes the tab after attaching, the kickoff fails, the network drops, or the conversation already
+has a running turn and the send is refused with 409.
+
+Nothing collected those rows. `AttachmentRegistry.cleanup_orphaned_attachments` builds its
+"referenced" set from *every* row in `attachment_metadata`, so it can only delete files that have no
+row at all — an abandoned upload has a row, and keeps it forever. It also had no caller.
+
+## Approach
+
+A reaper that works on the state that actually decides whether an attachment is live: a metadata row
+nothing references, older than a grace period. That covers every route to the orphan — the turn
+guard's 409, an abandoned compose, a failed kickoff — rather than the one route that prompted it.
+
+### What counts as referenced
+
+Candidates are restricted to `source_type = "user"`, which is exactly the class of rows the upload
+endpoint and the interface handlers create. Tool-, script- and email-sourced rows are reachable from
+delegation runs, scripts, and `received_emails.attachment_info`, and are never candidates, so the
+reaper does not need to understand those reference sets.
+
+A candidate row is referenced when any of the following holds:
+
+- `attachment_metadata.message_id` is set;
+- some `message_history.attachments` entry names its `attachment_id` — this is the reference the
+  send path actually writes, since nothing back-fills `message_id` for user attachments;
+- some `notes.attachment_ids` entry names it — the notes tool can attach an uploaded file to a note
+  that outlives the message that carried it.
+
+Both JSON checks are dialect-specific (`jsonb_array_elements` on PostgreSQL, `json_each` on SQLite),
+following the pattern already used for note visibility labels.
+
+### Grace period
+
+A row is only a candidate once it is older than the grace period (24 hours by default), so an
+in-progress compose is never collected out from under the user, and neither is an upload whose send
+is still sitting in the worker queue.
+
+### Ordering and cost
+
+The reaper deletes rows first and unlinks files afterwards, matching `delete_attachment`: a file
+without a row is collectable, a row without a file is a broken attachment. The reference scan runs
+only when a candidate exists, which is the uncommon case, so the usual nightly pass is a single
+indexed lookup that returns nothing.
+
+Each pass is bounded by a batch limit; a backlog drains over successive runs rather than in one long
+transaction.
+
+### `cleanup_orphaned_attachments`
+
+It is kept, with the narrower job it actually does: deleting files that have no metadata row at all
+— leftovers from a store that committed the file but not the row, and the files of rows the reaper
+has just deleted if an unlink failed. It now runs as the second phase of the same task, and only
+considers files older than the grace period, so an upload writing its file while the sweep runs is
+not collected before its row commits.
+
+## Delivery
+
+`attachment_cleanup` is a system task registered alongside the other cleanups and scheduled daily at
+3am local, with a 24-hour grace period.

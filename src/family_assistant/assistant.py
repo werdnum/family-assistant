@@ -105,6 +105,7 @@ from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
     ReindexDocumentPayload,
     TaskWorker,
+    handle_attachment_cleanup,
     handle_completed_automation_cleanup,
     handle_confirmation_tool_execution,
     handle_llm_callback,
@@ -1836,6 +1837,24 @@ class Assistant:
             except Exception as e:
                 logger.warning(f"Completed automation cleanup task setup: {e}")
 
+            # Upsert the unreferenced attachment reaper. Uploads commit their
+            # row before the message that references them exists, so a send
+            # that never persists a message leaves the row and file behind.
+            try:
+                await db_ctx.tasks.enqueue(
+                    task_id="system_attachment_cleanup_daily",
+                    task_type="attachment_cleanup",
+                    payload={"grace_hours": 24},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,
+                )
+                logger.info(
+                    f"Attachment cleanup task scheduled for {next_3am_local} ({local_tz})"
+                )
+            except Exception as e:
+                logger.warning(f"Attachment cleanup task setup: {e}")
+
             try:
                 await enqueue_message_history_backfill_task(db_ctx)
                 logger.info("Message history backfill task scheduled")
@@ -1945,6 +1964,7 @@ class Assistant:
         worker.register_task_handler(
             "completed_automation_cleanup", handle_completed_automation_cleanup
         )
+        worker.register_task_handler("attachment_cleanup", handle_attachment_cleanup)
         worker.register_task_handler("reindex_document", self.handle_reindex_document)
         logger.info(f"Registered task handlers for worker {worker.worker_id}")
         return worker
