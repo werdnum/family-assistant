@@ -86,3 +86,14 @@ not collected before its row commits.
 
 `attachment_cleanup` is a system task registered alongside the other cleanups and scheduled daily at
 3am local, with a 24-hour grace period.
+
+Scheduling it surfaced a bug in the shared machinery: a system task keeps one row across occurrences
+(both the recurrence and the startup setup re-enqueue under the same `system_...` id), and the
+upsert updated the schedule and payload but not the status. A row marked `done` by its first run
+therefore stayed `done`, and dequeue — which selects pending, or stale processing, rows — never
+picked it up again. Every recurring system task ran exactly once.
+
+The upsert now hands a finished row back to the queue: a row in a terminal status (`done`, `failed`)
+is reset to `pending` with its retry count and locks cleared, while a row still `pending` or
+`processing` keeps those columns, so a startup upsert cannot resurrect an occurrence a worker is
+running or reset one that is mid-retry.
