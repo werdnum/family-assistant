@@ -295,6 +295,43 @@ class TestReapUnreferencedAttachments:
         assert not await _row_exists(db_context, abandoned)
 
     @pytest.mark.asyncio
+    async def test_orphans_beyond_the_first_page_are_reached(
+        self, registry_and_db: tuple[AttachmentRegistry, Database]
+    ) -> None:
+        """Paging walks past whole pages of referenced candidates."""
+        registry, db_context = registry_and_db
+        registry.REAP_PAGE_SIZE = 2
+        for index in range(4):
+            sent = await _upload(
+                registry,
+                db_context,
+                age=timedelta(days=10),
+                filename=f"sent-{index}.png",
+            )
+            await add_message_to_history(
+                db_context,
+                interface_type="web",
+                conversation_id=CONVERSATION,
+                interface_message_id=None,
+                turn_id=None,
+                thread_root_id=None,
+                timestamp=datetime.now(UTC),
+                role="user",
+                content="here is a photo",
+                attachments=[{"type": "image", "attachment_id": sent}],
+            )
+        abandoned = await _upload(
+            registry, db_context, age=timedelta(days=2), filename="abandoned.png"
+        )
+
+        reaped = await registry.reap_unreferenced_attachments(
+            db_context, grace_period=GRACE
+        )
+
+        assert reaped == 1
+        assert not await _row_exists(db_context, abandoned)
+
+    @pytest.mark.asyncio
     async def test_batch_limit_bounds_one_pass(
         self, registry_and_db: tuple[AttachmentRegistry, Database]
     ) -> None:

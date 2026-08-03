@@ -291,6 +291,11 @@ async def _clear_email_attachment_id(
 class AttachmentRegistry:
     """Registry for managing attachment metadata and file storage."""
 
+    # Candidates examined per reference scan while reaping. Each page costs one
+    # pass over the message and note JSON, so this trades a larger page against
+    # holding more ids in one IN list.
+    REAP_PAGE_SIZE: int = 500
+
     def __init__(
         self,
         storage_path: str,
@@ -937,56 +942,59 @@ class AttachmentRegistry:
         (delegation runs, scripts, ``received_emails.attachment_info``), so
         they are never collected.
 
+        Candidates are walked oldest-first in pages, and each page's references
+        are resolved with one scan of the message and note JSON rather than a
+        correlated subquery per row. Nothing back-fills
+        ``attachment_metadata.message_id``, so every upload a message
+        references stays a candidate forever; the limit therefore bounds rows
+        actually collected, and paging keeps a pass that collects nothing to
+        one scan per page instead of one per historical attachment.
+
         Args:
             db_context: DatabaseExecutor context
             grace_period: Rows younger than this are left alone, so an
                 in-progress compose is not collected out from under the user.
             limit: Maximum rows collected in one pass; a backlog drains over
-                successive passes rather than in one long transaction. The
-                exclusions are applied before the limit, so a deployment with
-                many sent-but-unlinked uploads still reaches its orphans.
+                successive passes rather than in one long transaction.
 
         Returns:
             Number of attachments deleted
         """
         cutoff = datetime.now(UTC) - grace_period
-        dialect_name = db_context.dialect_name
-        attachment_id_column = attachment_metadata_table.c.attachment_id
-        orphan_query = (
-            select(
-                attachment_id_column,
-                attachment_metadata_table.c.storage_path,
-            )
-            .where(
-                and_(
-                    attachment_metadata_table.c.source_type == "user",
-                    attachment_metadata_table.c.message_id.is_(None),
-                    attachment_metadata_table.c.created_at < cutoff,
-                    ~self._message_reference_exists(dialect_name, attachment_id_column),
-                    ~self._note_reference_exists(dialect_name, attachment_id_column),
-                )
-            )
-            .order_by(attachment_metadata_table.c.created_at)
-            .limit(limit)
-        )
-        orphan_rows = await db_context.fetch_all(orphan_query)
-        if not orphan_rows:
-            return 0
+        orphans: dict[str, str | None] = {}
+        cursor: tuple[datetime, str] | None = None
 
-        stored_paths = {
-            row["attachment_id"]: row["storage_path"] for row in orphan_rows
-        }
+        while len(orphans) < limit:
+            page = await db_context.fetch_all(
+                self._candidate_page_query(cutoff, cursor, self.REAP_PAGE_SIZE)
+            )
+            if not page:
+                break
+            cursor = (page[-1]["created_at"], page[-1]["attachment_id"])
+
+            referenced = await self._referenced_attachment_ids(
+                db_context, [row["attachment_id"] for row in page]
+            )
+            for row in page:
+                if row["attachment_id"] in referenced:
+                    continue
+                orphans[row["attachment_id"]] = row["storage_path"]
+                if len(orphans) == limit:
+                    break
+
+        if not orphans:
+            return 0
 
         await db_context.execute(
             delete(attachment_metadata_table).where(
-                attachment_id_column.in_(list(stored_paths))
+                attachment_metadata_table.c.attachment_id.in_(list(orphans))
             )
         )
 
         # Files are unlinked only once the rows are gone, since the unlink
         # cannot be rolled back. A file left behind by a failed unlink is
         # collected by ``cleanup_orphaned_attachments``.
-        for attachment_id, stored_path in stored_paths.items():
+        for attachment_id, stored_path in orphans.items():
             self._delete_attachment_file(
                 attachment_id,
                 stored_path=stored_path,
@@ -994,66 +1002,124 @@ class AttachmentRegistry:
             )
 
         logger.info(
-            f"Reaped {len(stored_paths)} unreferenced attachments "
-            f"older than {grace_period}"
+            f"Reaped {len(orphans)} unreferenced attachments older than {grace_period}"
         )
-        return len(stored_paths)
+        return len(orphans)
 
     @staticmethod
-    def _message_reference_exists(
-        dialect_name: str, attachment_id_column: ColumnElement[str]
-    ) -> ColumnElement[bool]:
-        """SQL condition: some message's attachments name this attachment.
+    def _candidate_page_query(
+        cutoff: datetime,
+        cursor: tuple[datetime, str] | None,
+        page_size: int,
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """One page of reapable candidates, keyed on ``(created_at, id)``.
+
+        The keyset cursor rather than an OFFSET means a page costs the same
+        whether it is the first or the hundredth, and deleting rows from an
+        earlier page cannot shift a later one past the reader.
+        """
+        conditions = [
+            attachment_metadata_table.c.source_type == "user",
+            attachment_metadata_table.c.message_id.is_(None),
+            attachment_metadata_table.c.created_at < cutoff,
+        ]
+        if cursor is not None:
+            conditions.append(
+                sa.tuple_(
+                    attachment_metadata_table.c.created_at,
+                    attachment_metadata_table.c.attachment_id,
+                )
+                > sa.tuple_(sa.literal(cursor[0]), sa.literal(cursor[1]))
+            )
+
+        return (
+            select(
+                attachment_metadata_table.c.attachment_id,
+                attachment_metadata_table.c.storage_path,
+                attachment_metadata_table.c.created_at,
+            )
+            .where(and_(*conditions))
+            .order_by(
+                attachment_metadata_table.c.created_at,
+                attachment_metadata_table.c.attachment_id,
+            )
+            .limit(page_size)
+        )
+
+    async def _referenced_attachment_ids(
+        self, db_context: DatabaseExecutor, attachment_ids: list[str]
+    ) -> set[str]:
+        """Return the subset of ``attachment_ids`` some message or note names.
+
+        Nothing back-fills ``attachment_metadata.message_id`` for user
+        attachments, so the message reference lives in the
+        ``message_history.attachments`` JSON; the notes tool records its own
+        references in ``notes.attachment_ids``.
+        """
+        if not attachment_ids:
+            return set()
+
+        referenced: set[str] = set()
+        for query in (
+            self._message_reference_query(db_context.dialect_name, attachment_ids),
+            self._note_reference_query(db_context.dialect_name, attachment_ids),
+        ):
+            rows = await db_context.fetch_all(query)
+            referenced.update(
+                row["attachment_id"] for row in rows if row["attachment_id"]
+            )
+        return referenced
+
+    @staticmethod
+    def _message_reference_query(
+        dialect_name: str,
+        attachment_ids: list[str],
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """Query yielding the given ids that appear in a message's attachments.
 
         ``message_history.attachments`` holds a JSON array of objects keyed by
-        ``attachment_id``, and nothing back-fills
-        ``attachment_metadata.message_id`` for user attachments, so this JSON is
-        where the send path's reference actually lives. A row whose value is not
-        an array (including the ``NULL`` of a message with no attachments) is
-        read as an empty array rather than being allowed to fail expansion.
+        ``attachment_id``. A row whose value is not an array (including the
+        ``NULL`` of a message with no attachments) is expanded as an empty
+        array rather than being allowed to fail expansion.
         """
         attachments = message_history_table.c.attachments
         if dialect_name == "postgresql":
-            return sa.exists(
-                sa
-                .select(sa.literal(1))
-                .select_from(message_history_table)
-                .where(
-                    sa.and_(
-                        sa.func.jsonb_typeof(attachments) == "array",
-                        attachments.op("@>")(
-                            sa.func.jsonb_build_array(
-                                sa.func.jsonb_build_object(
-                                    "attachment_id", attachment_id_column
-                                )
-                            )
-                        ),
-                    )
-                )
+            array_value = sa.case(
+                (sa.func.jsonb_typeof(attachments) == "array", attachments),
+                else_=sa.cast(sa.literal("[]"), JSONB),
+            )
+            elements = sa.func.jsonb_array_elements(array_value).table_valued(
+                "value", joins_implicitly=True
+            )
+            attachment_id_expr = sa.func.jsonb_extract_path_text(
+                elements.c.value, "attachment_id"
+            )
+        else:
+            array_value = sa.case(
+                (sa.func.json_type(attachments) == "array", attachments),
+                else_=sa.literal("[]"),
+            )
+            elements = sa.func.json_each(array_value).table_valued(
+                "value", joins_implicitly=True
+            )
+            attachment_id_expr = sa.func.json_extract(
+                elements.c.value, "$.attachment_id"
             )
 
-        array_value = sa.case(
-            (sa.func.json_type(attachments) == "array", attachments),
-            else_=sa.literal("[]"),
-        )
-        elements = sa.func.json_each(array_value).table_valued(
-            "value", joins_implicitly=True
-        )
-        return sa.exists(
+        return (
             sa
-            .select(sa.literal(1))
+            .select(attachment_id_expr.label("attachment_id"))
             .select_from(message_history_table)
-            .where(
-                sa.func.json_extract(elements.c.value, "$.attachment_id")
-                == attachment_id_column
-            )
+            .where(attachment_id_expr.in_(attachment_ids))
+            .distinct()
         )
 
     @staticmethod
-    def _note_reference_exists(
-        dialect_name: str, attachment_id_column: ColumnElement[str]
-    ) -> ColumnElement[bool]:
-        """SQL condition: some note's attachment ids name this attachment.
+    def _note_reference_query(
+        dialect_name: str,
+        attachment_ids: list[str],
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """Query yielding the given ids that appear in a note's attachment ids.
 
         ``notes.attachment_ids`` holds a JSON array of attachment id strings.
         The notes tool can attach an uploaded file to a note that outlives the
@@ -1061,25 +1127,21 @@ class AttachmentRegistry:
         """
         note_attachments = notes_table.c.attachment_ids
         if dialect_name == "postgresql":
-            return sa.exists(
-                sa
-                .select(sa.literal(1))
-                .select_from(notes_table)
-                .where(
-                    sa.cast(note_attachments, JSONB).op("@>")(
-                        sa.func.jsonb_build_array(attachment_id_column)
-                    )
-                )
+            elements = sa.func.jsonb_array_elements_text(
+                sa.cast(note_attachments, JSONB)
+            ).table_valued("value", joins_implicitly=True)
+        else:
+            elements = sa.func.json_each(note_attachments).table_valued(
+                "value", joins_implicitly=True
             )
+        attachment_id_expr = elements.c.value
 
-        elements = sa.func.json_each(note_attachments).table_valued(
-            "value", joins_implicitly=True
-        )
-        return sa.exists(
+        return (
             sa
-            .select(sa.literal(1))
+            .select(attachment_id_expr.label("attachment_id"))
             .select_from(notes_table)
-            .where(elements.c.value == attachment_id_column)
+            .where(attachment_id_expr.in_(attachment_ids))
+            .distinct()
         )
 
     async def update_attachment_conversation(

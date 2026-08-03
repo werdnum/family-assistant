@@ -33,12 +33,27 @@ A candidate row is referenced when any of the following holds:
 - some `notes.attachment_ids` entry names it — the notes tool can attach an uploaded file to a note
   that outlives the message that carried it.
 
-Both JSON checks are dialect-specific (`@>` containment on PostgreSQL, `json_each` on SQLite),
-following the pattern already used for note visibility labels, and both are expressed as
-`NOT EXISTS` conditions on the candidate query rather than filtered afterwards. That ordering is
-load-bearing: nothing back-fills `message_id`, so every upload a message references stays in the
-candidate columns forever. Applying the batch limit before the exclusion would let the oldest of
-those fill each pass, and the orphans behind them would never be reached.
+Both JSON checks are dialect-specific (`jsonb_array_elements` on PostgreSQL, `json_each` on SQLite),
+following the pattern already used for note visibility labels.
+
+### Paging, and why the limit is not applied first
+
+Nothing back-fills `message_id`, so every upload a message references stays in the candidate columns
+forever — the candidate set is "every user attachment ever", not "the orphans". Two things follow,
+and the reaper has to satisfy both at once:
+
+- The batch limit has to bound rows *collected*, not rows *examined*. Limiting candidates first
+  would let the oldest sent uploads fill every pass, and the orphans behind them would never be
+  reached.
+- The reference check has to be a scan per page, not a correlated subquery per candidate. The JSON
+  columns are unindexed, so a `NOT EXISTS` per candidate row makes a pass that collects nothing cost
+  one message-history scan per historical attachment.
+
+So candidates are walked oldest-first in keyset pages of `REAP_PAGE_SIZE`, each page's references
+resolved with one scan of the message JSON and one of the note JSON, and paging continues until the
+limit is filled or the candidates run out. A keyset cursor on `(created_at, attachment_id)` rather
+than an OFFSET keeps a late page as cheap as the first, and stops a deletion from an earlier page
+shifting a later one past the reader.
 
 ### Grace period
 
