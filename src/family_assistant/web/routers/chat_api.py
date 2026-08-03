@@ -1836,11 +1836,21 @@ async def api_chat_steer_turn(
             interface_message_id=payload.input_id,
         )
     )
-    if payload.input_id is not None:
+    if payload.input_id is not None and turn.status == "running":
         # Recorded on the turn, which outlives the controller, so a retry that
         # arrives after the turn ends is still recognised as already delivered.
         # setdefault, not assignment: a retry the controller deduped must keep
         # the floor its first attempt was given.
+        #
+        # Re-checked after the enqueue, because the producer can finish between
+        # the status check above and this point — the message then sits on a
+        # controller nobody will drain. Recording it anyway would have a later
+        # retry told "delivered" for something that will never be acted on;
+        # leaving it unrecorded lets that retry take the 409 that starts a new
+        # turn. This narrows the window rather than closing it: a turn can also
+        # be inside its final, tool-free iteration, past the drain but not yet
+        # ended. The client's un-echoed-steer recovery is the guarantee there,
+        # which is why an echo — not this 200 — is what settles a submission.
         turn.accepted_steer_inputs.setdefault(payload.input_id, queued_after_seq)
     if not queued:
         # A retry that raced the turn rather than outliving it: the controller

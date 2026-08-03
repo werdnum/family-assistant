@@ -38,6 +38,7 @@ from family_assistant.llm.messages import (
     UserMessage,
     text_content,
 )
+from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -1304,6 +1305,80 @@ async def test_retried_steer_after_the_turn_ends_is_still_accepted(
         },
     )
     assert unknown.status_code == 409, unknown.text
+
+
+async def test_steer_that_lands_as_the_turn_ends_is_not_recorded_as_delivered(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The turn can finish between the running check and the enqueue.
+
+    The message then sits on a controller nobody will drain. Recording it as
+    accepted would have a later retry told it was delivered, when no echo and no
+    persisted row can ever exist; leaving it unrecorded lets that retry take the
+    409 that starts a new turn instead.
+    """
+    user_prompt = "Steer me at the buzzer"
+    steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
+
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("All done."),
+    ))
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerbuzzer_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    # Reopen the window the race leaves: the endpoint sees a running turn, and
+    # the producer finishes while the enqueue is in flight.
+    turn = hub.get_turn(conversation_id, turn_id)
+    assert turn is not None
+    controller = WebMidTurnController()
+    turn.mid_turn_controller = controller
+    turn.status = "running"
+
+    original_add_input = controller.add_input
+
+    async def end_turn_mid_enqueue(user_input: MidTurnUserInput) -> bool:
+        turn.status = "complete"
+        return await original_add_input(user_input)
+
+    monkeypatch.setattr(controller, "add_input", end_turn_mid_enqueue)
+
+    body = {
+        "conversation_id": conversation_id,
+        "prompt": steer_text,
+        "input_id": steer_input_id,
+    }
+    raced = await api_test_client.post(f"/api/v1/chat/turns/{turn_id}/steer", json=body)
+    assert raced.status_code == 200, raced.text
+    assert steer_input_id not in turn.accepted_steer_inputs, (
+        "A message queued onto a controller that will never be drained must not "
+        "be recorded as delivered"
+    )
+
+    # So the retry is refused rather than told it landed, and the client starts
+    # a new turn with it.
+    retry = await api_test_client.post(f"/api/v1/chat/turns/{turn_id}/steer", json=body)
+    assert retry.status_code == 409, retry.text
 
 
 async def test_steer_finished_turn_returns_409(
