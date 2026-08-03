@@ -376,9 +376,10 @@ Replays buffered events with `seq >= from_seq`, then tails live events.
   `{"request_id": "...", "approved": true | false}`.
 - `error` - Error occurred: `{"error": "message", "error_id": "..."}`
 - `message` - Content-free "new messages were persisted" nudge published outside the token stream
-  (e.g. by the non-streaming `/send_message` path or a reply delivered from another interface):
+  (e.g. a reply delivered from another interface, such as a scheduled callback):
   `{"new_messages": true}`. A follow client reacts by reloading conversation history rather than
-  rendering tokens.
+  rendering tokens. A `/send_message` turn does not publish one — its `turn_ended` already tells a
+  follower to reload.
 - `turn_ended` - The turn finished: `{"status": "complete" | "failed", "reasoning_info": {...}}`.
   After handling this, a client should `POST /ack` with its `seq`.
 - `heartbeat` - Keep-alive on `follow=true` (and idle non-follow) streams: `{}`.

@@ -61,6 +61,8 @@ from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
     from family_assistant.web.conversation_stream_hub import (
+        ActivitySubscriptionHandle,
+        ConversationActivity,
         StreamEvent,
         SubscriptionHandle,
     )
@@ -120,6 +122,15 @@ def _turn_complete(
         return turn is not None and turn.status == "complete"
 
     return _check
+
+
+def _drain_activity(
+    handle: "ActivitySubscriptionHandle",
+) -> "list[ConversationActivity]":
+    pings = []
+    while not handle.queue.empty():
+        pings.append(handle.queue.get_nowait())
+    return pings
 
 
 def _drain(handle: "SubscriptionHandle") -> "list[StreamEvent]":
@@ -1930,3 +1941,47 @@ async def test_failed_send_message_releases_its_reservation(
         },
     )
     assert retry.status_code == 200, retry.text
+
+
+async def test_send_message_signals_followers_once(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+) -> None:
+    """One completed send is one reload signal, not two.
+
+    The reservation's ``turn_ended`` is what tells a follower the reply landed:
+    the web and iOS follow-streams treat it exactly as they treat a content-free
+    ``message`` nudge (refetch history, refresh the list, ack the seq), and
+    ``end_turn`` broadcasts the account-global activity ping with it. Publishing
+    a ``message`` nudge as well would have every connected client fetch history
+    and the conversation list twice per send.
+    """
+    user_prompt = "Tell the followers once"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    conversation_id = f"conv_sendnudge_{uuid.uuid4().hex[:8]}"
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    handle = await hub.subscribe(conversation_id, from_seq=0)
+    activity = hub.subscribe_activity("test_user")
+    try:
+        sent = await api_test_client.post(
+            "/api/v1/chat/send_message",
+            json={
+                "conversation_id": conversation_id,
+                "prompt": user_prompt,
+                "interface_type": "web",
+            },
+        )
+        assert sent.status_code == 200, sent.text
+
+        events = _drain(handle)
+    finally:
+        hub.unsubscribe(conversation_id, handle.queue)
+        hub.unsubscribe_activity(activity.queue)
+
+    assert [event.type for event in events] == ["turn_started", "turn_ended"]
+    assert [item.reason for item in _drain_activity(activity)] == ["turn_ended"]

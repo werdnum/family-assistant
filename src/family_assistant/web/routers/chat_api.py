@@ -99,13 +99,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
 
-# Strong references to fire-and-forget post-commit hub publishes (activity ping
-# + per-conversation message tickle) so the event loop doesn't garbage-collect
-# them before they run. Heterogeneous result types (publish -> StreamEvent,
-# publish_activity -> None), so the element type is Task[Any].
-_ACTIVITY_PUBLISH_TASKS: set[asyncio.Task[Any]] = set()
-
-
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
 
 
@@ -2357,39 +2350,14 @@ async def api_chat_send_message(
                     elif isinstance(tc, dict):
                         tool_calls_response.append(tc)
 
-        # This non-streaming path publishes no deltas, so a second device of the
-        # same user with an open follow-stream has nothing to render the reply
-        # from. Nudge other clients now that this request's writes are durable:
-        # the reply is committed by the time the persisting call returns, so a
-        # follower that refetches /messages sees it. Two nudges: a
-        # per-conversation ``message`` event (the same content-free nudge
-        # WebChatInterface uses) so a client already following THIS thread
-        # reloads its history, and an account-global activity ping so the
-        # conversation surfaces/bumps in the owner's list on a second
-        # tab/device. The reservation's ``turn_ended`` follows on exit; it tells
-        # a follower the conversation is free again, not what was said.
-        activity_loop = asyncio.get_running_loop()
-
-        def _publish_send_nudges() -> None:
-            message_task = activity_loop.create_task(
-                hub.publish(
-                    conversation_id,
-                    "message",
-                    turn_id=None,
-                    payload={"conversation_id": conversation_id, "new_messages": True},
-                )
-            )
-            _ACTIVITY_PUBLISH_TASKS.add(message_task)
-            message_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
-
-            activity_task = activity_loop.create_task(
-                hub.publish_activity(conversation_id, user_id=user_id, reason="message")
-            )
-            _ACTIVITY_PUBLISH_TASKS.add(activity_task)
-            activity_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
-
-        _publish_send_nudges()
-
+        # A follower of this conversation learns about the reply from the
+        # reservation's ``turn_ended``, published as the ``async with`` exits:
+        # the web and iOS follow-streams treat it exactly as they treat the
+        # content-free ``message`` nudge — refetch history, refresh the
+        # conversation list, ack the seq — and ``end_turn`` broadcasts the
+        # account-global activity ping alongside it. Publishing a ``message``
+        # nudge here as well would have every connected client fetch history and
+        # the conversation list twice per send.
         reservation.mark_complete()
         return ChatMessageResponse(
             reply=final_reply_content,  # Back to original field name
