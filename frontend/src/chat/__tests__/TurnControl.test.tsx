@@ -1584,6 +1584,70 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'hands back an adopted prompt when the stream never sees the turn end',
+    async () => {
+      // The adopted prompt is the one message with no copy anywhere: the
+      // backend persists a steer only once the loop drains it, the composer has
+      // cleared, and the history reload this path triggers replaces its
+      // optimistic bubble. If the stream gives up before the echo, it has to
+      // come back to the user.
+      const originalTuning = { ...streamResumeTuning };
+      let turnsPosts = 0;
+      try {
+        streamResumeTuning.livenessMs = 0;
+        streamResumeTuning.initialDelayMs = 1;
+        streamResumeTuning.maxDelayMs = 2;
+
+        server.use(
+          http.post('/api/v1/chat/turns', () => {
+            turnsPosts += 1;
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-16',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }),
+          http.post('/api/v1/chat/turns/:turnId/steer', () =>
+            HttpResponse.json({ accepted: true, queued_after_seq: 4 })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+            HttpResponse.json({ messages: [] })
+          ),
+          // Every leg fails, so the adopted turn is followed and then lost
+          // without its echo or a turn_ended ever arriving.
+          http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
+            HttpResponse.json({ detail: 'upstream error' }, { status: 503 })
+          )
+        );
+
+        const user = userEvent.setup();
+        await renderChatApp({ waitForReady: true });
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'and the dentist too');
+        await user.keyboard('{Enter}');
+
+        await waitFor(() => {
+          expect(
+            screen.getByText(/Couldn't confirm the assistant received this/i)
+          ).toBeInTheDocument();
+        }, WAIT);
+        expect(screen.getByText(/and the dentist too/)).toBeInTheDocument();
+        // Handed back, not resent for the user.
+        expect(turnsPosts).toBe(1);
+      } finally {
+        Object.assign(streamResumeTuning, originalTuning);
+      }
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'never lets a retrying Stop land on a turn the user started later',
     async () => {
       // A Stop that is still retrying when its turn finishes must not follow the

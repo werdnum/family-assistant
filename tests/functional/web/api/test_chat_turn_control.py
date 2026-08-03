@@ -1285,6 +1285,13 @@ async def test_retried_steer_after_the_turn_ends_is_still_accepted(
     )
     assert late_retry.status_code == 200, late_retry.text
     assert late_retry.json()["accepted"] is True
+    # The floor the FIRST attempt was given, not the current head: the turn has
+    # published this message's echo (and its whole reply) since, and a client
+    # replaying from the head would start after the event it is waiting for.
+    assert (
+        late_retry.json()["queued_after_seq"] == accepted.json()["queued_after_seq"]
+    ), "A retry must be told the cursor its submission was queued behind"
+    assert late_retry.json()["queued_after_seq"] < hub.latest_seq(conversation_id)
 
     # A message the turn never saw still gets the 409 that tells the client to
     # start a new turn.

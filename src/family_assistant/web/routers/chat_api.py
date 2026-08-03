@@ -1805,18 +1805,18 @@ async def api_chat_steer_turn(
     turn = hub.get_turn(payload.conversation_id, turn_id)
     if turn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if (
-        payload.input_id is not None
-        and payload.input_id in turn.accepted_steer_input_ids
-    ):
+    if payload.input_id is not None and payload.input_id in turn.accepted_steer_inputs:
         # A retry of a submission this turn already accepted, arriving after it
         # finished. Answering 409 would send the client down the resend path and
-        # repeat an instruction the turn has already acted on.
+        # repeat an instruction the turn has already acted on. It gets the floor
+        # the original request was told, not the current head: the turn may have
+        # published this message's echo since, and a client replaying from the
+        # head would start after the very event it is waiting for.
         return ChatTurnSteerResponse(
             turn_id=turn_id,
             conversation_id=payload.conversation_id,
             accepted=True,
-            queued_after_seq=hub.latest_seq(payload.conversation_id),
+            queued_after_seq=turn.accepted_steer_inputs[payload.input_id],
         )
     controller = turn.mid_turn_controller
     if turn.status != "running" or not isinstance(controller, WebMidTurnController):
@@ -1839,7 +1839,9 @@ async def api_chat_steer_turn(
     if payload.input_id is not None:
         # Recorded on the turn, which outlives the controller, so a retry that
         # arrives after the turn ends is still recognised as already delivered.
-        turn.accepted_steer_input_ids.add(payload.input_id)
+        # setdefault, not assignment: a retry the controller deduped must keep
+        # the floor its first attempt was given.
+        turn.accepted_steer_inputs.setdefault(payload.input_id, queued_after_seq)
     if not queued:
         # A retry that raced the turn rather than outliving it: the controller
         # is still live and had already taken this submission. Answering 200

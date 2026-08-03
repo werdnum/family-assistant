@@ -994,8 +994,21 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // steer failure does. Leaving it registered is the one clearly wrong
       // option — it fires against whatever turn completes next, out of order and
       // possibly hours later.
-      if (reconciledWithoutEnd && awaitingEchoSteersRef.current.length > 0) {
-        const unresolved = awaitingEchoSteersRef.current.map((steer) => steer.prompt);
+      //
+      // The adopted prompt is in the same position and is the more damaging of
+      // the two: it is not in the awaiting-echo list (the hook steered it, not
+      // submitSteer), the clean-completion recovery below never runs on this
+      // path, and the history reload that follows replaces its optimistic
+      // bubble — so without this it exists nowhere at all. It goes first, since
+      // it is the send that opened the stream.
+      const unresolvedOnGiveUp = reconciledWithoutEnd
+        ? [
+            ...(unconsumedAdoptedPrompt ? [unconsumedAdoptedPrompt] : []),
+            ...awaitingEchoSteersRef.current.map((steer) => steer.prompt),
+          ]
+        : [];
+      if (unresolvedOnGiveUp.length > 0) {
+        const unresolved = unresolvedOnGiveUp;
         awaitingEchoSteersRef.current = [];
         // Surfaced above the composer rather than as a message: this path
         // reloads persisted history immediately afterwards, which replaces the
