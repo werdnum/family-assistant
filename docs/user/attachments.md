@@ -97,6 +97,11 @@ isn't a wall between your own conversations.
 
 If you want something genuinely out of reach, delete it rather than relying on starting a new chat.
 
+**Files you attach but never send:** attaching a file uploads it straight away, before you send the
+message. If you close the tab, or the send doesn't go through, that upload is cleared out
+automatically about a day later. Anything that reached the assistant — in a message, or attached to
+a note — stays.
+
 ## Sending attachments to other people
 
 The assistant can forward an attachment to another known user — "send this image to John" — as part

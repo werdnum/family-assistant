@@ -5,10 +5,11 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import and_, insert, or_, select, update
+from sqlalchemy import and_, case, insert, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
+from sqlalchemy.sql.elements import ColumnElement
 
 from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.repositories.base import BaseRepository
@@ -16,6 +17,42 @@ from family_assistant.storage.tasks import notify_workers, tasks_table
 from family_assistant.storage.types import TaskDict
 
 logger = logging.getLogger(__name__)
+
+# Statuses a system task's row can be in when it has finished with the
+# occurrence it holds, and so can be handed the next one.
+TERMINAL_TASK_STATUSES = ("done", "failed")
+
+
+def _revive_if_terminal(
+    column_name: str,
+    revived_value: object,
+) -> ColumnElement[Any]:
+    """An UPDATE value that resets a finished occurrence and leaves others alone.
+
+    A system task keeps one row across occurrences, so the upsert that schedules
+    the next one has to hand that row back to the queue: without this the row
+    stays ``done`` after its first run and dequeue, which selects only pending
+    (or stale processing) rows, never picks it up again.
+
+    A row that is still ``pending`` or ``processing`` keeps its value — a
+    startup upsert must not resurrect an occurrence a worker is running, or
+    reset the retry count of one that is mid-retry.
+    """
+    return case(
+        (tasks_table.c.status.in_(TERMINAL_TASK_STATUSES), revived_value),
+        else_=tasks_table.c[column_name],
+    )
+
+
+def _revived_occurrence_values() -> dict[str, ColumnElement[Any]]:
+    """The columns an upserted system task resets when its occurrence is over."""
+    return {
+        "status": _revive_if_terminal("status", "pending"),
+        "retry_count": _revive_if_terminal("retry_count", 0),
+        "locked_by": _revive_if_terminal("locked_by", null()),
+        "locked_at": _revive_if_terminal("locked_at", null()),
+        "error": _revive_if_terminal("error", null()),
+    }
 
 
 class TasksRepository(BaseRepository):
@@ -97,6 +134,7 @@ class TasksRepository(BaseRepository):
                         "payload": stmt.excluded.payload,
                         "max_retries": stmt.excluded.max_retries,
                         "recurrence_rule": stmt.excluded.recurrence_rule,
+                        **_revived_occurrence_values(),
                     }
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["task_id"],  # The unique constraint column
@@ -112,6 +150,7 @@ class TasksRepository(BaseRepository):
                             payload=payload,
                             max_retries=max_task_retries,
                             recurrence_rule=recurrence_rule,
+                            **_revived_occurrence_values(),
                         )
                     )
                     result = await txn.execute(update_stmt)

@@ -13,13 +13,15 @@ import logging
 import mimetypes
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import aiofiles
+import sqlalchemy as sa
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import and_, delete, insert, or_, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import (
@@ -31,10 +33,16 @@ from family_assistant.storage.email import (
     parse_attachment_infos_with_raw,
     received_emails_table,
 )
+from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.notes import notes_table
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
     from sqlalchemy.sql.elements import ColumnElement
+
+# How long an unreferenced attachment is left alone before it is collected, so
+# an upload whose message is still being composed (or still queued) survives.
+DEFAULT_ATTACHMENT_GRACE_PERIOD = timedelta(hours=24)
 
 
 class AttachmentRegistryConfig(TypedDict, total=False):
@@ -282,6 +290,11 @@ async def _clear_email_attachment_id(
 
 class AttachmentRegistry:
     """Registry for managing attachment metadata and file storage."""
+
+    # Candidates examined per reference scan while reaping. Each page costs one
+    # pass over the message and note JSON, so this trades a larger page against
+    # holding more ids in one IN list.
+    REAP_PAGE_SIZE: int = 500
 
     def __init__(
         self,
@@ -879,24 +892,265 @@ class AttachmentRegistry:
                 f"Background access time update failed for {attachment_id}: {e}"
             )
 
-    async def cleanup_orphaned_attachments(self, db_context: DatabaseExecutor) -> int:
-        """
-        Clean up file system attachments that are no longer referenced in the database.
-        Uses AttachmentService to clean up orphaned files based on current database references.
+    async def cleanup_orphaned_attachments(
+        self,
+        db_context: DatabaseExecutor,
+        *,
+        min_age: timedelta = DEFAULT_ATTACHMENT_GRACE_PERIOD,
+    ) -> int:
+        """Delete registry-managed files that have no ``attachment_metadata`` row.
+
+        This is the file-level half of attachment cleanup: it collects files a
+        store wrote before its row was committed, and the files of rows deleted
+        without their unlink succeeding. Rows nothing references are collected
+        by :meth:`reap_unreferenced_attachments`, which runs first — every row
+        that survives it is by definition still referenced, so "has a row" is
+        the right liveness test here.
+
+        The traversal walks the whole store, which is unbounded in the number
+        of files and entirely blocking, so it runs on a worker thread: a task
+        worker shares the server's event loop, and holding it through a large
+        store would stall web and Telegram traffic — and the handler timeout
+        that is supposed to catch exactly that.
 
         Args:
             db_context: DatabaseExecutor context
+            min_age: Only files older than this are collected, so an upload
+                writing its file while the sweep runs is not deleted before it
+                gets to commit its row.
 
         Returns:
-            Number of attachments cleaned up
+            Number of files deleted
         """
-        # Get attachment IDs that are still referenced in the database
         referenced_query = select(attachment_metadata_table.c.attachment_id).distinct()
         referenced_rows = await db_context.fetch_all(referenced_query)
         referenced_ids = {row["attachment_id"] for row in referenced_rows}
 
-        # Clean up orphaned files directly
-        return self._cleanup_orphaned_files(referenced_ids)
+        return await asyncio.to_thread(
+            self._cleanup_orphaned_files, referenced_ids, min_age=min_age
+        )
+
+    async def reap_unreferenced_attachments(
+        self,
+        db_context: DatabaseExecutor,
+        *,
+        grace_period: timedelta = DEFAULT_ATTACHMENT_GRACE_PERIOD,
+        limit: int = 500,
+    ) -> int:
+        """Delete user attachments that nothing references, with their files.
+
+        An upload commits its row before the message that would reference it
+        exists, so every send that never persists a message — an abandoned
+        compose, a failed kickoff, a refused concurrent turn — leaves the row
+        and file behind. Rows older than ``grace_period`` that no message and
+        no note names are collected here.
+
+        Only ``source_type="user"`` rows are candidates. Tool, script and email
+        attachments are referenced from places this reaper does not read
+        (delegation runs, scripts, ``received_emails.attachment_info``), so
+        they are never collected.
+
+        Candidates are walked oldest-first in pages, and each page's references
+        are resolved with one scan of the message and note JSON rather than a
+        correlated subquery per row. Nothing back-fills
+        ``attachment_metadata.message_id``, so every upload a message
+        references stays a candidate forever; the limit therefore bounds rows
+        actually collected, and paging keeps a pass that collects nothing to
+        one scan per page instead of one per historical attachment.
+
+        Args:
+            db_context: DatabaseExecutor context
+            grace_period: Rows younger than this are left alone, so an
+                in-progress compose is not collected out from under the user.
+            limit: Maximum rows collected in one pass; a backlog drains over
+                successive passes rather than in one long transaction.
+
+        Returns:
+            Number of attachments deleted
+        """
+        cutoff = datetime.now(UTC) - grace_period
+        orphans: dict[str, str | None] = {}
+        cursor: tuple[datetime, str] | None = None
+
+        while len(orphans) < limit:
+            page = await db_context.fetch_all(
+                self._candidate_page_query(cutoff, cursor, self.REAP_PAGE_SIZE)
+            )
+            if not page:
+                break
+            cursor = (page[-1]["created_at"], page[-1]["attachment_id"])
+
+            referenced = await self._referenced_attachment_ids(
+                db_context, [row["attachment_id"] for row in page]
+            )
+            for row in page:
+                if row["attachment_id"] in referenced:
+                    continue
+                orphans[row["attachment_id"]] = row["storage_path"]
+                if len(orphans) == limit:
+                    break
+
+        if not orphans:
+            return 0
+
+        await db_context.execute(
+            delete(attachment_metadata_table).where(
+                attachment_metadata_table.c.attachment_id.in_(list(orphans))
+            )
+        )
+
+        # Files are unlinked only once the rows are gone, since the unlink
+        # cannot be rolled back. A file left behind by a failed unlink is
+        # collected by ``cleanup_orphaned_attachments``.
+        for attachment_id, stored_path in orphans.items():
+            self._delete_attachment_file(
+                attachment_id,
+                stored_path=stored_path,
+                source_type="user",
+            )
+
+        logger.info(
+            f"Reaped {len(orphans)} unreferenced attachments older than {grace_period}"
+        )
+        return len(orphans)
+
+    @staticmethod
+    def _candidate_page_query(
+        cutoff: datetime,
+        cursor: tuple[datetime, str] | None,
+        page_size: int,
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """One page of reapable candidates, keyed on ``(created_at, id)``.
+
+        The keyset cursor rather than an OFFSET means a page costs the same
+        whether it is the first or the hundredth, and deleting rows from an
+        earlier page cannot shift a later one past the reader.
+        """
+        conditions = [
+            attachment_metadata_table.c.source_type == "user",
+            attachment_metadata_table.c.message_id.is_(None),
+            attachment_metadata_table.c.created_at < cutoff,
+        ]
+        if cursor is not None:
+            conditions.append(
+                sa.tuple_(
+                    attachment_metadata_table.c.created_at,
+                    attachment_metadata_table.c.attachment_id,
+                )
+                > sa.tuple_(sa.literal(cursor[0]), sa.literal(cursor[1]))
+            )
+
+        return (
+            select(
+                attachment_metadata_table.c.attachment_id,
+                attachment_metadata_table.c.storage_path,
+                attachment_metadata_table.c.created_at,
+            )
+            .where(and_(*conditions))
+            .order_by(
+                attachment_metadata_table.c.created_at,
+                attachment_metadata_table.c.attachment_id,
+            )
+            .limit(page_size)
+        )
+
+    async def _referenced_attachment_ids(
+        self, db_context: DatabaseExecutor, attachment_ids: list[str]
+    ) -> set[str]:
+        """Return the subset of ``attachment_ids`` some message or note names.
+
+        Nothing back-fills ``attachment_metadata.message_id`` for user
+        attachments, so the message reference lives in the
+        ``message_history.attachments`` JSON; the notes tool records its own
+        references in ``notes.attachment_ids``.
+        """
+        if not attachment_ids:
+            return set()
+
+        referenced: set[str] = set()
+        for query in (
+            self._message_reference_query(db_context.dialect_name, attachment_ids),
+            self._note_reference_query(db_context.dialect_name, attachment_ids),
+        ):
+            rows = await db_context.fetch_all(query)
+            referenced.update(
+                row["attachment_id"] for row in rows if row["attachment_id"]
+            )
+        return referenced
+
+    @staticmethod
+    def _message_reference_query(
+        dialect_name: str,
+        attachment_ids: list[str],
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """Query yielding the given ids that appear in a message's attachments.
+
+        ``message_history.attachments`` holds a JSON array of objects keyed by
+        ``attachment_id``. A row whose value is not an array (including the
+        ``NULL`` of a message with no attachments) is expanded as an empty
+        array rather than being allowed to fail expansion.
+        """
+        attachments = message_history_table.c.attachments
+        if dialect_name == "postgresql":
+            array_value = sa.case(
+                (sa.func.jsonb_typeof(attachments) == "array", attachments),
+                else_=sa.cast(sa.literal("[]"), JSONB),
+            )
+            elements = sa.func.jsonb_array_elements(array_value).table_valued(
+                "value", joins_implicitly=True
+            )
+            attachment_id_expr = sa.func.jsonb_extract_path_text(
+                elements.c.value, "attachment_id"
+            )
+        else:
+            array_value = sa.case(
+                (sa.func.json_type(attachments) == "array", attachments),
+                else_=sa.literal("[]"),
+            )
+            elements = sa.func.json_each(array_value).table_valued(
+                "value", joins_implicitly=True
+            )
+            attachment_id_expr = sa.func.json_extract(
+                elements.c.value, "$.attachment_id"
+            )
+
+        return (
+            sa
+            .select(attachment_id_expr.label("attachment_id"))
+            .select_from(message_history_table)
+            .where(attachment_id_expr.in_(attachment_ids))
+            .distinct()
+        )
+
+    @staticmethod
+    def _note_reference_query(
+        dialect_name: str,
+        attachment_ids: list[str],
+    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
+        """Query yielding the given ids that appear in a note's attachment ids.
+
+        ``notes.attachment_ids`` holds a JSON array of attachment id strings.
+        The notes tool can attach an uploaded file to a note that outlives the
+        message that carried it.
+        """
+        note_attachments = notes_table.c.attachment_ids
+        if dialect_name == "postgresql":
+            elements = sa.func.jsonb_array_elements_text(
+                sa.cast(note_attachments, JSONB)
+            ).table_valued("value", joins_implicitly=True)
+        else:
+            elements = sa.func.json_each(note_attachments).table_valued(
+                "value", joins_implicitly=True
+            )
+        attachment_id_expr = elements.c.value
+
+        return (
+            sa
+            .select(attachment_id_expr.label("attachment_id"))
+            .select_from(notes_table)
+            .where(attachment_id_expr.in_(attachment_ids))
+            .distinct()
+        )
 
     async def update_attachment_conversation(
         self,
@@ -1590,17 +1844,25 @@ class AttachmentRegistry:
             return False
         return True
 
-    def _cleanup_orphaned_files(self, referenced_attachment_ids: set[str]) -> int:
+    def _cleanup_orphaned_files(
+        self,
+        referenced_attachment_ids: set[str],
+        *,
+        min_age: timedelta = DEFAULT_ATTACHMENT_GRACE_PERIOD,
+    ) -> int:
         """
         Clean up attachment files that are no longer referenced in the database.
 
         Args:
             referenced_attachment_ids: Set of attachment IDs that are still referenced
+            min_age: Only files last modified longer ago than this are deleted,
+                so a file whose row has not been committed yet survives.
 
         Returns:
             Number of files deleted
         """
         deleted_count = 0
+        cutoff = datetime.now(UTC) - min_age
 
         # Iterate through hash-prefixed directories (00-ff)
         for hash_dir in self.storage_path.glob("*/"):
@@ -1615,15 +1877,30 @@ class AttachmentRegistry:
                 file_stem = file_path.stem
                 try:
                     uuid.UUID(file_stem)  # Validate it's a UUID
-                    if file_stem not in referenced_attachment_ids:
-                        file_path.unlink()
-                        deleted_count += 1
-                        logger.info(f"Deleted orphaned attachment: {file_stem}")
-                except (ValueError, OSError) as e:
-                    logger.warning(
-                        f"Skipping non-UUID file or deletion error: {file_path}: {e}"
-                    )
+                except ValueError:
+                    logger.warning(f"Skipping non-UUID file: {file_path}")
                     continue
+
+                if file_stem in referenced_attachment_ids:
+                    continue
+
+                try:
+                    stat_result = file_path.stat()
+                except OSError as e:
+                    logger.warning(f"Skipping unreadable file {file_path}: {e}")
+                    continue
+
+                if datetime.fromtimestamp(stat_result.st_mtime, tz=UTC) >= cutoff:
+                    continue
+
+                try:
+                    file_path.unlink()
+                except OSError as e:
+                    logger.warning(f"Failed to delete orphaned file {file_path}: {e}")
+                    continue
+
+                deleted_count += 1
+                logger.info(f"Deleted orphaned attachment: {file_stem}")
 
         logger.info(f"Cleaned up {deleted_count} orphaned attachment files")
         return deleted_count

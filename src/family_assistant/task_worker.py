@@ -349,6 +349,13 @@ class CompletedAutomationCleanupPayload(TypedDict, total=False):
     retention_hours: int
 
 
+class AttachmentCleanupPayload(TypedDict, total=False):
+    """Payload for attachment_cleanup tasks."""
+
+    grace_hours: int
+    limit: int
+
+
 class ScheduleAutomationAdvancePayload(TypedDict, total=False):
     """Payload for retryable schedule automation advancement tasks."""
 
@@ -3858,6 +3865,49 @@ async def handle_completed_automation_cleanup(
         raise
 
 
+async def handle_attachment_cleanup(
+    exec_context: ToolExecutionContext,
+    payload: AttachmentCleanupPayload,
+) -> None:
+    """Task handler for collecting attachments nothing references.
+
+    An upload commits its row and file before the message that would reference
+    it exists, so a send that never persists a message leaves both behind. This
+    reaps those rows with their files, then sweeps files that have no row at
+    all.
+
+    Payload can include:
+        grace_hours: Override the default 24-hour grace period
+        limit: Override the default per-pass row limit
+    """
+    registry = exec_context.attachment_registry
+    if registry is None:
+        # Returning here would record a successful pass that collected nothing,
+        # every day, while files accumulate. The missing registry is a broken
+        # worker configuration, so fail and let the task retry surface it.
+        raise RuntimeError(
+            "Attachment cleanup requires an attachment registry on the "
+            "execution context, but none was configured"
+        )
+
+    grace_period = timedelta(hours=int(payload.get("grace_hours", 24)))
+    limit = int(payload.get("limit", 500))
+
+    logger.info(f"Starting attachment cleanup (grace period: {grace_period})")
+
+    reaped = await registry.reap_unreferenced_attachments(
+        exec_context.db_context, grace_period=grace_period, limit=limit
+    )
+    files_deleted = await registry.cleanup_orphaned_attachments(
+        exec_context.db_context, min_age=grace_period
+    )
+
+    logger.info(
+        f"Attachment cleanup completed. Reaped {reaped} unreferenced "
+        f"attachments and deleted {files_deleted} files without a row."
+    )
+
+
 async def _process_script_wake_llm(
     exec_context: ToolExecutionContext,
     wake_contexts: list[WakeRequest],
@@ -4991,6 +5041,7 @@ __all__ = [
     "SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE",
     "TaskWorker",
     "build_script_confirmation_callback",
+    "handle_attachment_cleanup",
     "handle_confirmation_tool_execution",
     "handle_llm_callback",
     "handle_log_message",
