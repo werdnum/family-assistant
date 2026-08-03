@@ -907,6 +907,12 @@ class AttachmentRegistry:
         that survives it is by definition still referenced, so "has a row" is
         the right liveness test here.
 
+        The traversal walks the whole store, which is unbounded in the number
+        of files and entirely blocking, so it runs on a worker thread: a task
+        worker shares the server's event loop, and holding it through a large
+        store would stall web and Telegram traffic — and the handler timeout
+        that is supposed to catch exactly that.
+
         Args:
             db_context: DatabaseExecutor context
             min_age: Only files older than this are collected, so an upload
@@ -920,7 +926,9 @@ class AttachmentRegistry:
         referenced_rows = await db_context.fetch_all(referenced_query)
         referenced_ids = {row["attachment_id"] for row in referenced_rows}
 
-        return self._cleanup_orphaned_files(referenced_ids, min_age=min_age)
+        return await asyncio.to_thread(
+            self._cleanup_orphaned_files, referenced_ids, min_age=min_age
+        )
 
     async def reap_unreferenced_attachments(
         self,
