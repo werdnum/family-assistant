@@ -769,6 +769,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       undeliveredPrompt = null,
       adopted = false,
       kickoffFailed = false,
+      reconciledWithoutEnd = false,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
@@ -778,6 +779,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       undeliveredPrompt?: string | null;
       adopted?: boolean;
       kickoffFailed?: boolean;
+      reconciledWithoutEnd?: boolean;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
@@ -978,6 +980,31 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         // kickoff was still in flight lands here first, and appending would
         // replay the user's messages in the wrong order.
         pendingFollowupsRef.current.unshift(undeliveredPrompt);
+      }
+
+      // The stream stopped following this turn without seeing it end, so the
+      // echo that would have settled an accepted steer will never arrive. The
+      // turn may have drained it (it is persisted, and history now shows it) or
+      // died first (it exists nowhere) — and the client cannot tell which, since
+      // the events that would say so are exactly what it lost.
+      //
+      // Neither guess is safe: resending duplicates an instruction the assistant
+      // may already have acted on, dropping deletes a message the composer
+      // cleared. So hand the text back and let the user decide, as the ambiguous
+      // steer failure does. Leaving it registered is the one clearly wrong
+      // option — it fires against whatever turn completes next, out of order and
+      // possibly hours later.
+      if (reconciledWithoutEnd && awaitingEchoSteersRef.current.length > 0) {
+        const unresolved = awaitingEchoSteersRef.current.map((steer) => steer.prompt);
+        awaitingEchoSteersRef.current = [];
+        // Surfaced above the composer rather than as a message: this path
+        // reloads persisted history immediately afterwards, which replaces the
+        // thread wholesale and would drop a locally appended bubble.
+        setSteerError(
+          `Couldn't confirm the assistant received ${
+            unresolved.length === 1 ? 'this' : 'these'
+          }. Check the reply, then send again if missed: ${unresolved.join(' / ')}`
+        );
       }
 
       // An adopted stream withheld the turn's output until it echoed our prompt,
@@ -2011,6 +2038,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // a no-content spinner with an error) without touching a concurrent turn's
       // live spinner. effectiveTurnId in the hook is this same id.
       const turnId = generateUUID();
+      // A steer error from the previous turn has been read by now — the user is
+      // sending again, which is what it asked them to consider.
+      setSteerError(null);
       const userMessage: Message = {
         id: `msg_${Date.now()}`,
         role: 'user',

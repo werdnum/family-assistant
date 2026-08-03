@@ -70,6 +70,11 @@ export const useStreamingResponse = ({
   // the turn_ended(cancelled) event, so this is the only record that the user
   // asked for the interaction to end.
   const stopRequestedRef = useRef(false);
+  // The one identity change a request in flight is allowed to follow: a kickoff
+  // refused with 409 continues as the conversation's running turn. Recorded as
+  // the exact pair so a retry follows THAT transition and nothing else — a
+  // later, unrelated turn in the same conversation must not inherit a Stop.
+  const adoptionRedirectRef = useRef(null);
 
   const sendStreamingMessage = useCallback(
     async ({
@@ -82,6 +87,7 @@ export const useStreamingResponse = ({
     }) => {
       setIsStreaming(true);
       stopRequestedRef.current = false;
+      adoptionRedirectRef.current = null;
       abortControllerRef.current = new AbortController();
 
       let currentMessage = '';
@@ -118,6 +124,11 @@ export const useStreamingResponse = ({
       // with completed: false, but only the first means nothing is running
       // server-side and the caller's queue should keep moving.
       let streamStarted = false;
+      // Set when the stream stopped following this turn without ever seeing it
+      // end — a bounded resume gave up, or the hub had evicted its events (410).
+      // Persisted history becomes the record of what happened, so anything the
+      // client was still waiting to observe on the stream will never be observed.
+      let reconciledWithoutEnd = false;
 
       // Client-generated turn id makes the kickoff idempotent: a retried POST
       // with the same id returns the existing turn instead of starting a
@@ -246,6 +257,11 @@ export const useStreamingResponse = ({
           resolvedConversationId = conversationId;
           activeTurnRef.current = {
             turnId: effectiveTurnId,
+            conversationId: resolvedConversationId,
+          };
+          adoptionRedirectRef.current = {
+            from: kickoffTurnId,
+            to: effectiveTurnId,
             conversationId: resolvedConversationId,
           };
           // The text has to come back with any ambiguous failure: the kickoff
@@ -417,6 +433,7 @@ export const useStreamingResponse = ({
               // path (errorIfNoReply + turnId): if active_turns shows it running
               // we wait for its turn_ended, if a reply is persisted we show it,
               // and only a finished turn with no reply surfaces the marker.
+              reconciledWithoutEnd = true;
               onReloadHistory(resolvedConversationId, {
                 errorIfNoReply: true,
                 turnId: effectiveTurnId,
@@ -859,6 +876,7 @@ export const useStreamingResponse = ({
           // reconcile fetch itself fails — we have tried hard and the optimistic
           // partial (if any) is not proof the reply finished. (A 410 reconcile,
           // by contrast, did NOT exhaust the loop and routes without this flag.)
+          reconciledWithoutEnd = true;
           onReloadHistory(resolvedConversationId, {
             errorIfNoReply: true,
             turnId: effectiveTurnId,
@@ -905,6 +923,11 @@ export const useStreamingResponse = ({
           // our prompt, so its earlier tail is missing from the thread and has
           // to be reconciled from persisted history when the stream ends.
           adopted: effectiveTurnId !== kickoffTurnId,
+          // The stream stopped following this turn without seeing it end, so
+          // nothing it was still waiting to observe (a steer's echo) ever will
+          // be. The caller has to settle that here rather than carry it into an
+          // unrelated later turn.
+          reconciledWithoutEnd,
         });
         abortControllerRef.current = null;
         activeTurnRef.current = null;
@@ -964,14 +987,19 @@ export const useStreamingResponse = ({
       // Cancelling the client-generated id we started with would then 404
       // forever while the real turn kept running.
       //
-      // Only follow it WITHIN the conversation this Stop was for. The user can
-      // switch conversations during the backoff, and the ref then names an
-      // unrelated turn — cancelling that would stop a turn they never asked to
-      // stop. Keep the last known identity in that case, and when the ref has
-      // been cleared entirely (the stream settled mid-retry).
-      const live = activeTurnRef.current;
-      if (live && live.conversationId === active.conversationId) {
-        active = live;
+      // Follow ONLY that adoption, identified by the exact turn pair. Following
+      // the live ref generally would be wrong twice over: the user can switch
+      // conversations during the backoff, and — even in this conversation — the
+      // turn being cancelled can finish and the user start another, which a
+      // pending Stop would then cancel instead. Keep the last known identity in
+      // both cases, and when the ref has been cleared (the stream settled).
+      const redirect = adoptionRedirectRef.current;
+      if (
+        redirect &&
+        redirect.from === active.turnId &&
+        redirect.conversationId === active.conversationId
+      ) {
+        active = { turnId: redirect.to, conversationId: redirect.conversationId };
       }
       const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
       const body = JSON.stringify({ conversation_id: active.conversationId });

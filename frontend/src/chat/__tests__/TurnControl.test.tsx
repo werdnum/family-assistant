@@ -5,7 +5,7 @@ import { vi } from 'vitest';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
-import { useStreamingResponse } from '../useStreamingResponse.js';
+import { streamResumeTuning, useStreamingResponse } from '../useStreamingResponse.js';
 
 // A controllable SSE stream: the handler emits turn_started and then parks,
 // handing its controller to the test so it can drive cancelled / user_input
@@ -1474,6 +1474,176 @@ describe('Web turn control (Stop / Steer)', () => {
       // Nothing to recover: the send is abandoned with the turn it joined.
       expect(completions).toHaveLength(1);
       expect(completions[0].undeliveredPrompt).toBeNull();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'hands back an accepted steer when the stream never sees the turn end',
+    async () => {
+      // The stream gave up before the turn echoed this steer, so whether the
+      // turn drained it is unknowable from here: resending could repeat an
+      // instruction the assistant already acted on, dropping would delete a
+      // message the composer cleared. Hand the text back instead — and settle it
+      // now, rather than leaving it to fire against some later turn.
+      const originalTuning = { ...streamResumeTuning };
+      let turnsPosts = 0;
+      try {
+        streamResumeTuning.livenessMs = 0;
+        streamResumeTuning.initialDelayMs = 1;
+        streamResumeTuning.maxDelayMs = 2;
+
+        const encoder = new TextEncoder();
+        const turnIdRef = { current: '' };
+        const conversationIdRef = { current: '' };
+        let streamLegs = 0;
+        let resolveFirstLeg: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+        const firstLeg = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+          resolveFirstLeg = r;
+        });
+
+        server.use(
+          http.post('/api/v1/chat/turns', async ({ request }) => {
+            turnsPosts += 1;
+            const body = (await request.json()) as {
+              turn_id: string;
+              conversation_id?: string;
+            };
+            turnIdRef.current = body.turn_id;
+            conversationIdRef.current = body.conversation_id || 'web_conv_giveup';
+            return HttpResponse.json({
+              turn_id: body.turn_id,
+              conversation_id: conversationIdRef.current,
+              first_seq: 0,
+            });
+          }),
+          http.post('/api/v1/chat/turns/:turnId/steer', () =>
+            HttpResponse.json({ accepted: true, queued_after_seq: 0 })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+            HttpResponse.json({ messages: [] })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+            if (String(params.conversationId) !== conversationIdRef.current) {
+              return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
+                headers: { 'Content-Type': 'text/event-stream' },
+              });
+            }
+            streamLegs += 1;
+            if (streamLegs === 1) {
+              return new HttpResponse(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+                      )
+                    );
+                    resolveFirstLeg(controller);
+                  },
+                }),
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              );
+            }
+            // Every resume fails, so the bounded loop gives up without ever
+            // seeing turn_ended.
+            return HttpResponse.json({ detail: 'upstream error' }, { status: 503 });
+          })
+        );
+
+        const user = userEvent.setup();
+        await renderChatApp({ waitForReady: true });
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'Plan my week');
+        await user.keyboard('{Enter}');
+
+        const controller = await firstLeg;
+        const steerInput = screen.getByTestId('chat-input');
+        await user.type(steerInput, 'and book the dentist');
+        await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+        await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+        // The connection drops with the steer accepted but never echoed.
+        controller.close();
+
+        // The text comes back to the user rather than being resent for them,
+        // and it survives the history reload this path triggers.
+        await waitFor(() => {
+          expect(
+            screen.getByText(/Couldn't confirm the assistant received this/i)
+          ).toBeInTheDocument();
+        }, WAIT);
+        expect(screen.getByText(/and book the dentist/)).toBeInTheDocument();
+        expect(turnsPosts).toBe(1);
+      } finally {
+        Object.assign(streamResumeTuning, originalTuning);
+      }
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'never lets a retrying Stop land on a turn the user started later',
+    async () => {
+      // A Stop that is still retrying when its turn finishes must not follow the
+      // conversation onto whatever turn comes next: the user asked to stop the
+      // message they were looking at, not the one they sent afterwards. Only the
+      // kickoff-to-adopted-turn transition is followed, and this is not it.
+      const cancelledTurnIds: string[] = [];
+      let secondSendStarted = false;
+      let startSecondSend: () => void = () => {};
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as { turn_id: string };
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: 'web_conv_stop_pin',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/cancel', ({ params }) => {
+          cancelledTurnIds.push(String(params.turnId));
+          // After the first attempt the user sends again, so the live-turn ref
+          // moves to a turn this Stop was never about.
+          if (!secondSendStarted) {
+            secondSendStarted = true;
+            startSecondSend();
+          }
+          return new HttpResponse(null, { status: 503 });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start() {
+              // Parked: both turns stay live for the duration.
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const { result } = renderHook(() => useStreamingResponse({}));
+      void result.current.sendStreamingMessage({
+        prompt: 'the first thing',
+        conversationId: 'web_conv_stop_pin',
+        turnId: 'turn-first',
+      });
+      await waitFor(() => expect(result.current.isStreaming).toBe(true), WAIT);
+
+      startSecondSend = () => {
+        void result.current.sendStreamingMessage({
+          prompt: 'the second thing',
+          conversationId: 'web_conv_stop_pin',
+          turnId: 'turn-second',
+        });
+      };
+
+      // Every attempt is refused, so the retries run to exhaustion.
+      await expect(result.current.stopTurn()).resolves.toBe(false);
+
+      expect(cancelledTurnIds.length).toBeGreaterThan(1);
+      expect(new Set(cancelledTurnIds)).toEqual(new Set(['turn-first']));
     },
     { timeout: 30000 }
   );

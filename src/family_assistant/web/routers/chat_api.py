@@ -1816,13 +1816,23 @@ async def api_chat_steer_turn(
     # echo of this message is published strictly after it, while every event
     # already on the stream sits at or below it.
     queued_after_seq = hub.latest_seq(payload.conversation_id)
-    await controller.add_input(
+    queued = await controller.add_input(
         MidTurnUserInput(
             content=payload.prompt,
             user_name=_user_name_for_chat(current_user),
             interface_message_id=payload.input_id,
         )
     )
+    if not queued:
+        # A retry of a submission this turn already accepted. Answering 200
+        # without queueing it again is what the client is asking for: it is
+        # retrying because the first response was lost, not because it wants to
+        # say the same thing twice.
+        logger.info(
+            "Steer input %s already queued for turn %s; not queueing it again",
+            payload.input_id,
+            turn_id,
+        )
     return ChatTurnSteerResponse(
         turn_id=turn_id,
         conversation_id=payload.conversation_id,

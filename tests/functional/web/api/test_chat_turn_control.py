@@ -1105,6 +1105,103 @@ async def test_steer_running_turn_injects_user_input(
     ), "Steering message must persist as raw text, not the internal wrapper"
 
 
+async def test_retried_steer_with_the_same_input_id_is_queued_once(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client whose steer response was lost retries with the same input_id.
+
+    The turn must act on the message once: queueing both copies would feed the
+    instruction to the model twice and can repeat whatever tool work it asks
+    for. Both requests answer 200, since the retry is asking whether its message
+    landed, not to say the same thing twice.
+    """
+    user_prompt = "Steer me twice"
+    steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
+
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        _reply("Okay, focusing on tomorrow."),
+    ))
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        LLMOutput(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_steer_twice",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerdup_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    handle = await hub.subscribe(conversation_id, from_seq=0)
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        body = {
+            "conversation_id": conversation_id,
+            "prompt": steer_text,
+            "input_id": steer_input_id,
+        }
+        first = await api_test_client.post(
+            f"/api/v1/chat/turns/{turn_id}/steer", json=body
+        )
+        # The retry a lost response provokes, byte-identical to the first.
+        second = await api_test_client.post(
+            f"/api/v1/chat/turns/{turn_id}/steer", json=body
+        )
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert second.json()["accepted"] is True
+
+        release.set()
+        await wait_for_condition(
+            _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+        )
+
+        events = _drain(handle)
+        echoes = [
+            event
+            for event in events
+            if event.type == "user_input"
+            and event.payload.get("input_id") == steer_input_id
+        ]
+        assert len(echoes) == 1, f"Expected the steer to be consumed once, got {echoes}"
+    finally:
+        hub.unsubscribe(conversation_id, handle.queue)
+
+
 async def test_steer_finished_turn_returns_409(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,

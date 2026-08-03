@@ -254,8 +254,11 @@ const ThreadWelcomeSuggestions: React.FC = () => {
   );
 };
 
-// Transient steer failure, shown just above the composer (the composer keeps
-// its text so the user can retry). Rendered only while a turn is running.
+// A steer that failed or could not be confirmed, shown just above the composer
+// (which keeps its text so the user can retry). Deliberately NOT gated on the
+// turn still running: a turn whose stream gave up reports back here with the
+// text it could not confirm, and that has to stay readable after the turn ends.
+// Cleared when the user sends, steers again, or switches conversation.
 const SteerError: React.FC = () => {
   const controls = useChatControls();
   if (!controls?.steerError) {
@@ -312,9 +315,7 @@ const Composer: React.FC = () => {
 
   return (
     <ComposerPrimitive.Root className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
-      <ThreadPrimitive.If running>
-        <SteerError />
-      </ThreadPrimitive.If>
+      <SteerError />
       {/* Steering sends text only, so attachments can't ride along on a steer.
           Hide the attachment UI while a turn runs to avoid a picked file being
           silently ignored by the steer and then sent with the next message. */}
