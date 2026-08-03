@@ -5,7 +5,9 @@ import json
 import logging
 import mimetypes
 import uuid
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -61,6 +63,7 @@ from family_assistant.web.conversation_stream_hub import (
     StreamEvent,
     TurnAlreadyExistsError,
     TurnRecord,
+    TurnStatus,
 )
 from family_assistant.web.dependencies import (
     get_attachment_registry,
@@ -95,13 +98,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 chat_api_router = APIRouter()
-
-# Strong references to fire-and-forget post-commit hub publishes (activity ping
-# + per-conversation message tickle) so the event loop doesn't garbage-collect
-# them before they run. Heterogeneous result types (publish -> StreamEvent,
-# publish_activity -> None), so the element type is Task[Any].
-_ACTIVITY_PUBLISH_TASKS: set[asyncio.Task[Any]] = set()
-
 
 _TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
 
@@ -723,9 +719,15 @@ def _running_turn_conflict(
 ) -> HTTPException:
     """Build the 409 that refuses a rival turn and names the running one.
 
-    Raised from two places — the early check in ``POST /turns`` and the
-    authoritative one inside ``start_turn`` — so the client sees one shape
-    regardless of where the rival lost.
+    Raised from three places — the early check in ``POST /turns``, the
+    authoritative one inside ``start_turn``, and the reservation taken by
+    ``POST /send_message`` — so the client sees one shape regardless of where
+    the rival lost, and regardless of which endpoint holds the conversation.
+
+    A running turn started by ``/send_message`` carries no mid-turn controller,
+    so steering it answers 409 and the client falls back to holding the prompt.
+    That is the intended outcome: a non-streaming turn is short-lived and has no
+    event stream to carry a steer echo, so its rivals wait rather than steer.
     """
     logger.info(
         "Rejecting turn %s: conversation %s already has running turn %s.",
@@ -747,6 +749,122 @@ def _running_turn_conflict(
             "active_turn_first_seq": running_turn.first_seq,
         },
     )
+
+
+def _duplicate_turn_conflict(
+    conversation_id: str, turn_id: str, existing_turn: TurnRecord
+) -> HTTPException:
+    """Build the 409 that refuses a ``turn_id`` this process already finished.
+
+    ``POST /send_message`` is idempotent on ``turn_id`` via the persisted reply,
+    so a retry of a turn that produced one never reaches here. What does is a
+    retry of a turn that ended WITHOUT a reply (it failed, or it was a streaming
+    turn of the same id that failed): re-driving it under the same id would
+    collide with the finished record, so the client is told to retry under a new
+    one rather than being handed a misleading "a turn is running" conflict.
+    """
+    logger.info(
+        "Rejecting send_message turn %s in conversation %s: turn id already used "
+        "(status=%s).",
+        turn_id,
+        conversation_id,
+        existing_turn.status,
+    )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": (
+                "This turn id has already been used and produced no reply. "
+                "Retry with a new turn id."
+            ),
+            "turn_id": turn_id,
+            "turn_status": existing_turn.status,
+        },
+    )
+
+
+@dataclass(slots=True)
+class _NonStreamingTurnReservation:
+    """Mutable outcome handle for a ``/send_message`` hub reservation.
+
+    The turn is assumed to have failed until the endpoint says otherwise, so an
+    exception (or a return path that never reached the reply) ends the hub turn
+    with a terminal ``failed`` status rather than leaving it wedged at
+    ``running`` and blocking the conversation.
+    """
+
+    turn: TurnRecord
+    status: TurnStatus = "failed"
+    error: str | None = "An internal error occurred."
+
+    def mark_complete(self) -> None:
+        """Record that the turn produced a reply."""
+        self.status = "complete"
+        self.error = None
+
+
+@asynccontextmanager
+async def _reserve_non_streaming_turn(
+    hub: ConversationStreamHub,
+    conversation_id: str,
+    *,
+    turn_id: str,
+    user_id: str,
+) -> AsyncIterator[_NonStreamingTurnReservation]:
+    """Hold the one-turn-per-conversation reservation across a non-streaming send.
+
+    ``POST /send_message`` drives a full LLM loop over the same history as the
+    streaming path, so it must take the same reservation: two loops on one
+    conversation interleave their writes, and a turn that rebuilds history while
+    another's tool call is in flight answers that call with the "abandoned"
+    placeholder even though the real result is about to be written.
+
+    The record is created before any of the turn's work, ended with a terminal
+    status in a ``finally`` (so a failure or a client disconnect mid-turn
+    releases it), and then discarded — it exists only as the reservation, and
+    keeping it would burn its ``turn_id`` for retries.
+    """
+    try:
+        turn = await hub.start_turn(
+            conversation_id,
+            turn_id=turn_id,
+            user_id=user_id,
+            started_at=datetime.now(UTC),
+            reject_if_running=True,
+        )
+    except ConversationTurnRunningError as exc:
+        raise _running_turn_conflict(conversation_id, turn_id, exc.turn) from exc
+    except TurnAlreadyExistsError as exc:
+        if exc.turn.user_id != user_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+        if exc.turn.status == "running":
+            # A concurrent request carrying the same turn_id is still driving it.
+            raise _running_turn_conflict(conversation_id, turn_id, exc.turn) from exc
+        raise _duplicate_turn_conflict(conversation_id, turn_id, exc.turn) from exc
+
+    reservation = _NonStreamingTurnReservation(turn=turn)
+    try:
+        yield reservation
+    except asyncio.CancelledError:
+        # The client hung up (an App Intent timing out, say). The turn stopped
+        # where it stood; say so rather than reporting a failure.
+        reservation.status = "cancelled"
+        reservation.error = None
+        raise
+    finally:
+        # ``discard_turn`` sits in its own ``finally``: if ``end_turn`` is
+        # interrupted (it can await a contended lock while this task is being
+        # cancelled), the record must still be released or the conversation
+        # would refuse every later turn.
+        try:
+            await hub.end_turn(
+                conversation_id,
+                turn_id=turn_id,
+                status=reservation.status,
+                error=reservation.error,
+            )
+        finally:
+            await hub.discard_turn(conversation_id, turn_id)
 
 
 # Lifecycle/control frames that an ``event_types`` allow-list must never filter
@@ -2001,10 +2119,12 @@ async def api_chat_send_message(
     # turn_id idempotency (minimal): the client may supply a UUID so a retried
     # /send_message returns the already-persisted reply instead of re-driving
     # the LLM and double-persisting. Mirrors /turns — in-memory hub fast path
-    # plus durable DB fallback — but without the hub turn lifecycle.
+    # plus durable DB fallback. The hub turn taken below is the reservation, not
+    # the idempotency record: it is discarded when the send ends, so a turn that
+    # produced a reply is recognised from the database rather than from memory.
     response_turn_id = payload.turn_id or str(uuid.uuid4())
+    hub = _get_hub(request)
     if payload.turn_id is not None:
-        hub = _get_hub(request)
         existing_turn = hub.get_turn(conversation_id, payload.turn_id)
         if existing_turn is not None and existing_turn.user_id != user_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -2053,214 +2173,199 @@ async def api_chat_send_message(
             f"API chat request (no profile_id specified). Using default profile: '{default_processing_service.service_config.id}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
         )
 
-    # Process user attachments if present
-    trigger_content_parts: list[ContentPartDict] = [
-        {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
-    ]
-    trigger_attachments: list[MessageAttachmentMetadata] | None = None
+    # One turn at a time per conversation: hold the same hub reservation the
+    # streaming path takes, so a non-streaming send (an iOS App Intent, Siri, or
+    # an API client) cannot drive a second LLM loop over a history a running turn
+    # is still writing to. Rivals in either direction get the same 409.
+    async with _reserve_non_streaming_turn(
+        hub, conversation_id, turn_id=response_turn_id, user_id=user_id
+    ) as reservation:
+        # Process user attachments if present
+        trigger_content_parts: list[ContentPartDict] = [
+            {"type": "text", "text": payload.prompt}  # type: ignore[typeddict-item]  # Runtime dict matches TypedDict structure
+        ]
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None
 
-    if payload.attachments:
-        # Only get attachment registry when we actually have attachments
-        attachment_registry = await get_attachment_registry(request)
-        trigger_content_parts, trigger_attachments = await _process_user_attachments(
-            payload,
-            conversation_id,
-            attachment_registry,
-            db_context,
-            current_user["user_identifier"],
-        )
-
-    # Determine interface type - default to "api" if not specified
-    interface_type = payload.interface_type or "api"
-
-    # Call the new centralized interaction handler
-    # user_name surfaces in the system prompt and message history, so derive it
-    # from the authenticated user rather than a generic placeholder.
-    user_name_for_api = _user_name_for_chat(current_user)
-
-    # Get chat_interfaces registry from app state for cross-interface messaging
-    chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
-    confirmation_ui_managers = getattr(
-        request.app.state,
-        "confirmation_ui_managers",
-        None,
-    )
-
-    # Non-streaming callers (e.g. iOS App Intents / Siri) cannot wait on a live
-    # confirmation channel, so a tool needing approval records a durable pending
-    # confirmation the user can approve later from another client (the
-    # confirmation service push-notifies them). The deferred tool result tells
-    # the model the action is awaiting approval so the reply reflects that.
-    api_confirmation_service = _get_confirmation_service(request)
-
-    async def api_confirmation_callback(
-        interface_type: str,
-        conversation_id: str,
-        turn_id: str | None,
-        tool_name: str,
-        call_id: str,
-        # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
-        tool_args: dict[str, Any],
-        timeout_seconds: float,
-        context: ToolExecutionContext,
-    ) -> ConfirmationOutcome:
-        taint_state_json = (
-            context.taint_tracker.snapshot().to_metadata()
-            if context.taint_tracker is not None
-            else None
-        )
-        durable_request = await create_durable_confirmation(
-            confirmation_service=api_confirmation_service,
-            db_context=context.db_context,
-            target_user_id=current_user["user_identifier"],
-            tool_name=tool_name,
-            tool_call_id=call_id,
-            tool_args=tool_args,
-            confirmation_prompt=(
-                f"Do you want to execute '{tool_name}' with these parameters?"
-            ),
-            timeout_seconds=timeout_seconds,
-            turn_id=turn_id,
-            now=datetime.now(UTC),
-            processing_profile_id=context.processing_profile_id,
-            origin_interface_type=context.interface_type,
-            origin_conversation_id=context.conversation_id,
-            taint_state_json=taint_state_json,
-        )
-        return ConfirmationOutcome(
-            kind="completed",
-            result=(
-                f"I've requested your approval to run '{tool_name}' "
-                f"(request {durable_request['id']}). It hasn't run yet — approve it "
-                "from your pending confirmations to continue."
-            ),
-        )
-
-    result = await selected_processing_service.handle_chat_interaction(
-        db_context=db_context,
-        interface_type=interface_type,  # Use the interface_type from request or default "api"
-        conversation_id=conversation_id,
-        trigger_content_parts=trigger_content_parts,
-        trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
-        user_name=user_name_for_api,
-        user_id=current_user["user_identifier"],
-        replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
-        chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
-        chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
-        confirmation_ui_managers=confirmation_ui_managers,
-        request_confirmation_callback=api_confirmation_callback,
-        trigger_attachments=trigger_attachments,  # Pass attachment metadata
-        turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
-    )
-
-    final_reply_content = result.text_reply
-    final_assistant_message_internal_id = result.assistant_message_internal_id
-    _final_reasoning_info = result.reasoning_info  # Not used by API response
-    error_traceback = result.error_traceback
-    _response_attachment_ids = result.attachment_ids  # Not yet included in API response
-
-    if error_traceback:
-        logger.error(
-            f"Error processing API chat request for Conversation ID {conversation_id}: {error_traceback}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing request: {error_traceback if getattr(request.app.state, 'debug_mode', False) else 'An internal error occurred.'}",
-        )
-
-    if final_reply_content is None:
-        logger.error(
-            f"No final assistant reply content found for API chat. Conversation ID: {conversation_id}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Assistant did not provide a textual reply.",
-        )
-
-    # Fetch recent messages to get tool_calls if any
-    tool_calls_response = None
-    if final_assistant_message_internal_id:
-        # Get recent messages from this conversation
-        recent_messages = await db_context.message_history.get_recent(
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            limit=5,  # Get last few messages
-            max_age=timedelta(minutes=5),
-        )
-        # Find the most recent assistant message (repository returns typed LLMMessage objects)
-        # Note: Cannot match by internal_id since typed messages don't include database metadata
-        # Use the most recent AssistantMessage from the list
-        assistant_msg = next(
+        if payload.attachments:
+            # Only get attachment registry when we actually have attachments
+            attachment_registry = await get_attachment_registry(request)
             (
-                msg
-                for msg in reversed(recent_messages)
-                if isinstance(msg, AssistantMessage) and msg.tool_calls
-            ),
+                trigger_content_parts,
+                trigger_attachments,
+            ) = await _process_user_attachments(
+                payload,
+                conversation_id,
+                attachment_registry,
+                db_context,
+                current_user["user_identifier"],
+            )
+
+        # Determine interface type - default to "api" if not specified
+        interface_type = payload.interface_type or "api"
+
+        # Call the new centralized interaction handler
+        # user_name surfaces in the system prompt and message history, so derive it
+        # from the authenticated user rather than a generic placeholder.
+        user_name_for_api = _user_name_for_chat(current_user)
+
+        # Get chat_interfaces registry from app state for cross-interface messaging
+        chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
+        confirmation_ui_managers = getattr(
+            request.app.state,
+            "confirmation_ui_managers",
             None,
         )
-        if assistant_msg and assistant_msg.tool_calls:
-            # Convert ToolCallItem objects to dicts for API response
-            tool_calls_response = []
-            for tc in assistant_msg.tool_calls:
-                if isinstance(tc, ToolCallItem):
-                    # Ensure arguments is a JSON string
-                    args = tc.function.arguments
-                    if not isinstance(args, str):
-                        args = json.dumps(args)
-                    tool_calls_response.append({
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": args,
-                        },
-                    })
-                elif isinstance(tc, dict):
-                    tool_calls_response.append(tc)
 
-    # This non-streaming path persists the reply but never published to the hub,
-    # so a second device of the same user with an open follow-stream wouldn't
-    # reload. Publish a content-free `message` event (the same nudge
-    # WebChatInterface uses) so open follow-streams refetch history.
-    # Nudge other clients now that this request's writes are durable: the reply
-    # is committed by the time the persisting call returns, so a follower that
-    # refetches /messages sees it. Two nudges: a per-conversation ``message`` event so a client
-    # already following THIS thread reloads its history, and an account-global
-    # activity ping so the conversation surfaces/bumps in the owner's list on a
-    # second tab/device (this non-streaming path has no start_turn/end_turn
-    # lifecycle of its own).
-    send_hub = _get_hub(request)
-    activity_loop = asyncio.get_running_loop()
+        # Non-streaming callers (e.g. iOS App Intents / Siri) cannot wait on a live
+        # confirmation channel, so a tool needing approval records a durable pending
+        # confirmation the user can approve later from another client (the
+        # confirmation service push-notifies them). The deferred tool result tells
+        # the model the action is awaiting approval so the reply reflects that.
+        api_confirmation_service = _get_confirmation_service(request)
 
-    def _publish_send_nudges() -> None:
-        message_task = activity_loop.create_task(
-            send_hub.publish(
-                conversation_id,
-                "message",
-                turn_id=None,
-                payload={"conversation_id": conversation_id, "new_messages": True},
+        async def api_confirmation_callback(
+            interface_type: str,
+            conversation_id: str,
+            turn_id: str | None,
+            tool_name: str,
+            call_id: str,
+            # ast-grep-ignore: no-dict-any - Tool arguments vary per tool and cannot be statically typed
+            tool_args: dict[str, Any],
+            timeout_seconds: float,
+            context: ToolExecutionContext,
+        ) -> ConfirmationOutcome:
+            taint_state_json = (
+                context.taint_tracker.snapshot().to_metadata()
+                if context.taint_tracker is not None
+                else None
             )
-        )
-        _ACTIVITY_PUBLISH_TASKS.add(message_task)
-        message_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
-
-        activity_task = activity_loop.create_task(
-            send_hub.publish_activity(
-                conversation_id, user_id=user_id, reason="message"
+            durable_request = await create_durable_confirmation(
+                confirmation_service=api_confirmation_service,
+                db_context=context.db_context,
+                target_user_id=current_user["user_identifier"],
+                tool_name=tool_name,
+                tool_call_id=call_id,
+                tool_args=tool_args,
+                confirmation_prompt=(
+                    f"Do you want to execute '{tool_name}' with these parameters?"
+                ),
+                timeout_seconds=timeout_seconds,
+                turn_id=turn_id,
+                now=datetime.now(UTC),
+                processing_profile_id=context.processing_profile_id,
+                origin_interface_type=context.interface_type,
+                origin_conversation_id=context.conversation_id,
+                taint_state_json=taint_state_json,
             )
+            return ConfirmationOutcome(
+                kind="completed",
+                result=(
+                    f"I've requested your approval to run '{tool_name}' "
+                    f"(request {durable_request['id']}). It hasn't run yet — approve it "
+                    "from your pending confirmations to continue."
+                ),
+            )
+
+        result = await selected_processing_service.handle_chat_interaction(
+            db_context=db_context,
+            interface_type=interface_type,  # Use the interface_type from request or default "api"
+            conversation_id=conversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_interface_message_id=None,  # API prompts don't have a prior interface ID
+            user_name=user_name_for_api,
+            user_id=current_user["user_identifier"],
+            replied_to_interface_id=None,  # payload.replied_to_message_id is not available on ChatPromptRequest
+            chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
+            chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
+            confirmation_ui_managers=confirmation_ui_managers,
+            request_confirmation_callback=api_confirmation_callback,
+            trigger_attachments=trigger_attachments,  # Pass attachment metadata
+            turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
         )
-        _ACTIVITY_PUBLISH_TASKS.add(activity_task)
-        activity_task.add_done_callback(_ACTIVITY_PUBLISH_TASKS.discard)
 
-    _publish_send_nudges()
+        final_reply_content = result.text_reply
+        final_assistant_message_internal_id = result.assistant_message_internal_id
+        _final_reasoning_info = result.reasoning_info  # Not used by API response
+        error_traceback = result.error_traceback
+        _response_attachment_ids = (
+            result.attachment_ids
+        )  # Not yet included in API response
 
-    return ChatMessageResponse(
-        reply=final_reply_content,  # Back to original field name
-        conversation_id=conversation_id,  # Return the used/generated conversation_id
-        turn_id=response_turn_id,  # Return the turn_id generated for the response model
-        attachments=trigger_attachments,  # Include processed attachments in response
-        tool_calls=tool_calls_response,  # Include tool calls if any
-    )
+        if error_traceback:
+            logger.error(
+                f"Error processing API chat request for Conversation ID {conversation_id}: {error_traceback}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error processing request: {error_traceback if getattr(request.app.state, 'debug_mode', False) else 'An internal error occurred.'}",
+            )
+
+        if final_reply_content is None:
+            logger.error(
+                f"No final assistant reply content found for API chat. Conversation ID: {conversation_id}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Assistant did not provide a textual reply.",
+            )
+
+        # Fetch recent messages to get tool_calls if any
+        tool_calls_response = None
+        if final_assistant_message_internal_id:
+            # Get recent messages from this conversation
+            recent_messages = await db_context.message_history.get_recent(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                limit=5,  # Get last few messages
+                max_age=timedelta(minutes=5),
+            )
+            # Find the most recent assistant message (repository returns typed LLMMessage objects)
+            # Note: Cannot match by internal_id since typed messages don't include database metadata
+            # Use the most recent AssistantMessage from the list
+            assistant_msg = next(
+                (
+                    msg
+                    for msg in reversed(recent_messages)
+                    if isinstance(msg, AssistantMessage) and msg.tool_calls
+                ),
+                None,
+            )
+            if assistant_msg and assistant_msg.tool_calls:
+                # Convert ToolCallItem objects to dicts for API response
+                tool_calls_response = []
+                for tc in assistant_msg.tool_calls:
+                    if isinstance(tc, ToolCallItem):
+                        # Ensure arguments is a JSON string
+                        args = tc.function.arguments
+                        if not isinstance(args, str):
+                            args = json.dumps(args)
+                        tool_calls_response.append({
+                            "id": tc.id,
+                            "type": tc.type,
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": args,
+                            },
+                        })
+                    elif isinstance(tc, dict):
+                        tool_calls_response.append(tc)
+
+        # A follower of this conversation learns about the reply from the
+        # reservation's ``turn_ended``, published as the ``async with`` exits:
+        # the web and iOS follow-streams treat it exactly as they treat the
+        # content-free ``message`` nudge — refetch history, refresh the
+        # conversation list, ack the seq — and ``end_turn`` broadcasts the
+        # account-global activity ping alongside it. Publishing a ``message``
+        # nudge here as well would have every connected client fetch history and
+        # the conversation list twice per send.
+        reservation.mark_complete()
+        return ChatMessageResponse(
+            reply=final_reply_content,  # Back to original field name
+            conversation_id=conversation_id,  # Return the used/generated conversation_id
+            turn_id=response_turn_id,  # Return the turn_id generated for the response model
+            attachments=trigger_attachments,  # Include processed attachments in response
+            tool_calls=tool_calls_response,  # Include tool calls if any
+        )
 
 
 @chat_api_router.get("/v1/chat/conversations")

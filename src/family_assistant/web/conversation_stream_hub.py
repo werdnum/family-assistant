@@ -350,6 +350,38 @@ class ConversationStreamHub:
         for turn in prunable[:excess]:
             state.turns.pop(turn.turn_id, None)
 
+    async def discard_turn(self, conversation_id: str, turn_id: str) -> None:
+        """Forget a turn record entirely, releasing its ``turn_id``.
+
+        For turns whose record exists only to hold the one-turn-per-conversation
+        reservation — the non-streaming ``POST /send_message`` path, which has no
+        producer task, no buffered deltas to replay and no ack to wait for. Once
+        such a turn has ended, keeping its record would make its ``turn_id``
+        permanently unusable: ``start_turn`` refuses a duplicate id, so a client
+        retrying a turn that failed without persisting a reply could never
+        re-drive it. Streaming turns are NOT discarded here — their records own
+        the hub's only strong reference to the producer task and are aged out by
+        ``_prune_completed_turns`` instead.
+
+        No-op for an unknown conversation or turn, so it is safe in a ``finally``
+        that may run after the record was already dropped.
+        """
+        state = self._get_state(conversation_id)
+        if state is None:
+            return
+        async with state.lock:
+            turn = state.turns.get(turn_id)
+            if turn is None:
+                return
+            if turn.task is not None and not turn.task.done():
+                logger.warning(
+                    "Refusing to discard turn %s in conv=%s: producer task still live",
+                    turn_id,
+                    conversation_id,
+                )
+                return
+            del state.turns[turn_id]
+
     def get_turn(self, conversation_id: str, turn_id: str) -> TurnRecord | None:
         """Return a turn record by id, or None if not in the hub."""
         state = self._get_state(conversation_id)
