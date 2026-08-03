@@ -1805,6 +1805,19 @@ async def api_chat_steer_turn(
     turn = hub.get_turn(payload.conversation_id, turn_id)
     if turn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if (
+        payload.input_id is not None
+        and payload.input_id in turn.accepted_steer_input_ids
+    ):
+        # A retry of a submission this turn already accepted, arriving after it
+        # finished. Answering 409 would send the client down the resend path and
+        # repeat an instruction the turn has already acted on.
+        return ChatTurnSteerResponse(
+            turn_id=turn_id,
+            conversation_id=payload.conversation_id,
+            accepted=True,
+            queued_after_seq=hub.latest_seq(payload.conversation_id),
+        )
     controller = turn.mid_turn_controller
     if turn.status != "running" or not isinstance(controller, WebMidTurnController):
         raise HTTPException(
@@ -1823,9 +1836,14 @@ async def api_chat_steer_turn(
             interface_message_id=payload.input_id,
         )
     )
+    if payload.input_id is not None:
+        # Recorded on the turn, which outlives the controller, so a retry that
+        # arrives after the turn ends is still recognised as already delivered.
+        turn.accepted_steer_input_ids.add(payload.input_id)
     if not queued:
-        # A retry of a submission this turn already accepted. Answering 200
-        # without queueing it again is what the client is asking for: it is
+        # A retry that raced the turn rather than outliving it: the controller
+        # is still live and had already taken this submission. Answering 200
+        # without queueing it again is what the client is asking for — it is
         # retrying because the first response was lost, not because it wants to
         # say the same thing twice.
         logger.info(

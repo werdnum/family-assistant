@@ -138,6 +138,15 @@ class TurnRecord:
     # endpoints look this up to request a graceful interrupt or inject a
     # mid-turn user message. Cleared alongside ``task`` when the producer ends.
     mid_turn_controller: "MidTurnInputProvider | None" = None
+    # ``input_id``s of steering messages this turn has accepted. Held on the
+    # record rather than only on the controller because the controller is
+    # dropped the moment the producer finishes, while the record lingers: a
+    # client retrying a steer whose response was lost can arrive after the turn
+    # ended, and answering that 409 would have it resend an instruction the turn
+    # already acted on. Append-only, and read only once the turn is no longer
+    # running -- while it runs the controller's own lock-guarded set is what
+    # makes accept-or-drop atomic.
+    accepted_steer_input_ids: set[str] = field(default_factory=set)
     # Invoked by the done-callback safety net if the producer task finished while
     # the turn was still 'running' AND it was cancelled (a Stop before the
     # producer's first slice). Lets the web layer persist a durable stopped

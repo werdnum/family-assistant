@@ -1202,6 +1202,103 @@ async def test_retried_steer_with_the_same_input_id_is_queued_once(
         hub.unsubscribe(conversation_id, handle.queue)
 
 
+async def test_retried_steer_after_the_turn_ends_is_still_accepted(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A steer retry can outlive the turn it was sent to.
+
+    The controller holding the accepted ids is dropped when the producer
+    finishes, so recognition has to live on the turn record. Refusing the retry
+    with 409 would send the client down the resend path and repeat an
+    instruction the turn already acted on.
+    """
+    user_prompt = "Steer me then finish"
+    steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
+
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        _reply("Okay, focusing on tomorrow."),
+    ))
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        LLMOutput(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_steer_late",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerlate_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await asyncio.wait_for(started.wait(), timeout=5.0)
+
+    body = {
+        "conversation_id": conversation_id,
+        "prompt": steer_text,
+        "input_id": steer_input_id,
+    }
+    accepted = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/steer", json=body
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    release.set()
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    # The retry arrives once the turn is over and its controller is gone.
+    late_retry = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/steer", json=body
+    )
+    assert late_retry.status_code == 200, late_retry.text
+    assert late_retry.json()["accepted"] is True
+
+    # A message the turn never saw still gets the 409 that tells the client to
+    # start a new turn.
+    unknown = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/steer",
+        json={
+            "conversation_id": conversation_id,
+            "prompt": "and one more thing",
+            "input_id": f"input_{uuid.uuid4().hex[:8]}",
+        },
+    )
+    assert unknown.status_code == 409, unknown.text
+
+
 async def test_steer_finished_turn_returns_409(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,
