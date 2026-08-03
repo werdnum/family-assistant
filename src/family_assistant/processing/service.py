@@ -1381,7 +1381,18 @@ class ProcessingService:
                         ),
                         taint_tracker=taint_tracker,
                     ):
-                        yield event  # noqa: ASYNC119
+                        # A ``user_input`` echo is the client's proof that its
+                        # steering message was delivered: seeing one is what
+                        # stops it tracking the message for recovery. Publishing
+                        # it before the row is written would let a failed write
+                        # clear the client's only copy -- the message would exist
+                        # nowhere, having been neither persisted nor acted on. So
+                        # this one event is published after its save; everything
+                        # else streams first, since the reply should not wait on
+                        # a database round trip.
+                        publish_after_save = event.type == "user_input"
+                        if not publish_after_save:
+                            yield event  # noqa: ASYNC119
 
                         # Save messages as they're generated
                         if stream_msg is not None:
@@ -1430,6 +1441,9 @@ class ProcessingService:
                                 reasoning_info=reasoning_info_for_stream,
                                 attachments=response_attachments,
                             )
+
+                        if publish_after_save:
+                            yield event  # noqa: ASYNC119
 
                 except Exception as e:
                     span.set_status(StatusCode.ERROR, str(e))

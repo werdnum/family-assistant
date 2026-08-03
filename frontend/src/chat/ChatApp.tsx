@@ -1073,7 +1073,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // clears abortControllerRef / activeTurnRef after onComplete returns) so
       // the follow-up turn's refs aren't clobbered and Stop/Steer target it
       // correctly.
-      if (recoverQueued || undeliveredPrompt || terminalKickoffFailure) {
+      //
+      // reconciledWithoutEnd counts too: a steer that got 404/409 while this
+      // stream was still on screen was queued here as a normal follow-up, and
+      // if the stream then gives up none of the other three fire. Unlike the
+      // handback above, these need no user decision — a 404/409 means the steer
+      // reached no turn at all, so sending it is unambiguous.
+      if (recoverQueued || undeliveredPrompt || terminalKickoffFailure || reconciledWithoutEnd) {
         const followup = pendingFollowupsRef.current.shift();
         if (followup) {
           const convAtSchedule = conversationIdRef.current;

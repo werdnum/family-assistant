@@ -1648,6 +1648,111 @@ describe('Web turn control (Stop / Steer)', () => {
   );
 
   it(
+    'sends a queued follow-up even when the stream it was queued behind gives up',
+    async () => {
+      // A steer that hit an already-finished turn is queued as a normal
+      // follow-up rather than sent immediately, so it doesn't race the stream
+      // that is still settling. If that stream then gives up, nothing else
+      // drains the queue — and unlike an un-echoed steer this one is not
+      // ambiguous: a 409 means it reached no turn, so it is simply sent.
+      const originalTuning = { ...streamResumeTuning };
+      const kickoffPrompts: string[] = [];
+      try {
+        streamResumeTuning.livenessMs = 0;
+        streamResumeTuning.initialDelayMs = 1;
+        streamResumeTuning.maxDelayMs = 2;
+
+        const encoder = new TextEncoder();
+        const turnIdRef = { current: '' };
+        const conversationIdRef = { current: '' };
+        let streamLegs = 0;
+        let resolveFirstLeg: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+        const firstLeg = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+          resolveFirstLeg = r;
+        });
+
+        server.use(
+          http.post('/api/v1/chat/turns', async ({ request }) => {
+            const body = (await request.json()) as {
+              turn_id: string;
+              conversation_id?: string;
+              prompt: string;
+            };
+            kickoffPrompts.push(body.prompt);
+            turnIdRef.current = body.turn_id;
+            conversationIdRef.current = body.conversation_id || 'web_conv_drain';
+            return HttpResponse.json({
+              turn_id: body.turn_id,
+              conversation_id: conversationIdRef.current,
+              first_seq: 0,
+            });
+          }),
+          // The turn finished between typing and submitting: not steerable, so
+          // the client queues the text as a follow-up.
+          http.post('/api/v1/chat/turns/:turnId/steer', () =>
+            HttpResponse.json(
+              { detail: 'Turn is not running; start a new turn instead.' },
+              { status: 409 }
+            )
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+            HttpResponse.json({ messages: [] })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+            if (String(params.conversationId) !== conversationIdRef.current) {
+              return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
+                headers: { 'Content-Type': 'text/event-stream' },
+              });
+            }
+            streamLegs += 1;
+            if (streamLegs === 1) {
+              return new HttpResponse(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+                      )
+                    );
+                    resolveFirstLeg(controller);
+                  },
+                }),
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              );
+            }
+            // The follow-up's own turn (and every resume of the first) fails.
+            return HttpResponse.json({ detail: 'upstream error' }, { status: 503 });
+          })
+        );
+
+        const user = userEvent.setup();
+        await renderChatApp({ waitForReady: true });
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'Plan my week');
+        await user.keyboard('{Enter}');
+
+        const controller = await firstLeg;
+        const steerInput = screen.getByTestId('chat-input');
+        await user.type(steerInput, 'and book the dentist');
+        await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+        // Accepted as a queued follow-up: the composer clears.
+        await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+        // The stream this follow-up was queued behind now gives up.
+        controller.close();
+
+        await waitFor(() => {
+          expect(kickoffPrompts).toContain('and book the dentist');
+        }, WAIT);
+      } finally {
+        Object.assign(streamResumeTuning, originalTuning);
+      }
+    },
+    { timeout: 30000 }
+  );
+
+  it(
     'never lets a retrying Stop land on a turn the user started later',
     async () => {
       // A Stop that is still retrying when its turn finishes must not follow the
