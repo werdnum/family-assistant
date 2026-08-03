@@ -1852,8 +1852,10 @@ class Assistant:
                 logger.info(
                     f"Attachment cleanup task scheduled for {next_3am_local} ({local_tz})"
                 )
-            except Exception as e:
-                logger.warning(f"Attachment cleanup task setup: {e}")
+            except Exception:
+                # The enqueue upserts, so a failure here is a real one, and it
+                # leaves the reaper with no caller until the next restart.
+                logger.exception("Attachment cleanup task setup failed")
 
             try:
                 await enqueue_message_history_backfill_task(db_ctx)

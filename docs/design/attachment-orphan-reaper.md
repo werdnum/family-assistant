@@ -33,8 +33,12 @@ A candidate row is referenced when any of the following holds:
 - some `notes.attachment_ids` entry names it — the notes tool can attach an uploaded file to a note
   that outlives the message that carried it.
 
-Both JSON checks are dialect-specific (`jsonb_array_elements` on PostgreSQL, `json_each` on SQLite),
-following the pattern already used for note visibility labels.
+Both JSON checks are dialect-specific (`@>` containment on PostgreSQL, `json_each` on SQLite),
+following the pattern already used for note visibility labels, and both are expressed as
+`NOT EXISTS` conditions on the candidate query rather than filtered afterwards. That ordering is
+load-bearing: nothing back-fills `message_id`, so every upload a message references stays in the
+candidate columns forever. Applying the batch limit before the exclusion would let the oldest of
+those fill each pass, and the orphans behind them would never be reached.
 
 ### Grace period
 
@@ -49,8 +53,11 @@ without a row is collectable, a row without a file is a broken attachment. The r
 only when a candidate exists, which is the uncommon case, so the usual nightly pass is a single
 indexed lookup that returns nothing.
 
-Each pass is bounded by a batch limit; a backlog drains over successive runs rather than in one long
-transaction.
+Each pass is bounded by a batch limit on the rows collected — orphans, not candidates — so a backlog
+drains over successive runs rather than in one long transaction.
+
+A missing attachment registry fails the task rather than returning quietly: a pass that collects
+nothing every day while files accumulate should look like the broken worker configuration it is.
 
 ### `cleanup_orphaned_attachments`
 

@@ -253,6 +253,48 @@ class TestReapUnreferencedAttachments:
         assert _file_exists(registry, metadata.attachment_id)
 
     @pytest.mark.asyncio
+    async def test_sent_uploads_do_not_starve_the_limit(
+        self, registry_and_db: tuple[AttachmentRegistry, Database]
+    ) -> None:
+        """Older sent uploads must not consume the pass's budget.
+
+        Nothing back-fills ``message_id``, so every upload a message references
+        stays in the candidate columns forever. If the limit were applied before
+        the reference exclusion, the oldest of those would fill it on every pass
+        and the orphan behind them would never be reached.
+        """
+        registry, db_context = registry_and_db
+        for index in range(3):
+            sent = await _upload(
+                registry,
+                db_context,
+                age=timedelta(days=10),
+                filename=f"sent-{index}.png",
+            )
+            await add_message_to_history(
+                db_context,
+                interface_type="web",
+                conversation_id=CONVERSATION,
+                interface_message_id=None,
+                turn_id=None,
+                thread_root_id=None,
+                timestamp=datetime.now(UTC),
+                role="user",
+                content="here is a photo",
+                attachments=[{"type": "image", "attachment_id": sent}],
+            )
+        abandoned = await _upload(
+            registry, db_context, age=timedelta(days=2), filename="abandoned.png"
+        )
+
+        reaped = await registry.reap_unreferenced_attachments(
+            db_context, grace_period=GRACE, limit=2
+        )
+
+        assert reaped == 1
+        assert not await _row_exists(db_context, abandoned)
+
+    @pytest.mark.asyncio
     async def test_batch_limit_bounds_one_pass(
         self, registry_and_db: tuple[AttachmentRegistry, Database]
     ) -> None:

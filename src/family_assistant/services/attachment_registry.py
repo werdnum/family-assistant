@@ -942,15 +942,19 @@ class AttachmentRegistry:
             grace_period: Rows younger than this are left alone, so an
                 in-progress compose is not collected out from under the user.
             limit: Maximum rows collected in one pass; a backlog drains over
-                successive passes rather than in one long transaction.
+                successive passes rather than in one long transaction. The
+                exclusions are applied before the limit, so a deployment with
+                many sent-but-unlinked uploads still reaches its orphans.
 
         Returns:
             Number of attachments deleted
         """
         cutoff = datetime.now(UTC) - grace_period
-        candidate_query = (
+        dialect_name = db_context.dialect_name
+        attachment_id_column = attachment_metadata_table.c.attachment_id
+        orphan_query = (
             select(
-                attachment_metadata_table.c.attachment_id,
+                attachment_id_column,
                 attachment_metadata_table.c.storage_path,
             )
             .where(
@@ -958,145 +962,124 @@ class AttachmentRegistry:
                     attachment_metadata_table.c.source_type == "user",
                     attachment_metadata_table.c.message_id.is_(None),
                     attachment_metadata_table.c.created_at < cutoff,
+                    ~self._message_reference_exists(dialect_name, attachment_id_column),
+                    ~self._note_reference_exists(dialect_name, attachment_id_column),
                 )
             )
             .order_by(attachment_metadata_table.c.created_at)
             .limit(limit)
         )
-        candidate_rows = await db_context.fetch_all(candidate_query)
-        if not candidate_rows:
+        orphan_rows = await db_context.fetch_all(orphan_query)
+        if not orphan_rows:
             return 0
 
         stored_paths = {
-            row["attachment_id"]: row["storage_path"] for row in candidate_rows
+            row["attachment_id"]: row["storage_path"] for row in orphan_rows
         }
-        referenced = await self._referenced_attachment_ids(
-            db_context, list(stored_paths)
-        )
-        orphan_ids = [
-            attachment_id
-            for attachment_id in stored_paths
-            if attachment_id not in referenced
-        ]
-        if not orphan_ids:
-            return 0
 
         await db_context.execute(
             delete(attachment_metadata_table).where(
-                attachment_metadata_table.c.attachment_id.in_(orphan_ids)
+                attachment_id_column.in_(list(stored_paths))
             )
         )
 
         # Files are unlinked only once the rows are gone, since the unlink
         # cannot be rolled back. A file left behind by a failed unlink is
         # collected by ``cleanup_orphaned_attachments``.
-        for attachment_id in orphan_ids:
+        for attachment_id, stored_path in stored_paths.items():
             self._delete_attachment_file(
                 attachment_id,
-                stored_path=stored_paths[attachment_id],
+                stored_path=stored_path,
                 source_type="user",
             )
 
         logger.info(
-            f"Reaped {len(orphan_ids)} unreferenced attachments "
+            f"Reaped {len(stored_paths)} unreferenced attachments "
             f"older than {grace_period}"
         )
-        return len(orphan_ids)
-
-    async def _referenced_attachment_ids(
-        self, db_context: DatabaseExecutor, attachment_ids: list[str]
-    ) -> set[str]:
-        """Return the subset of ``attachment_ids`` some message or note names.
-
-        Nothing back-fills ``attachment_metadata.message_id`` for user
-        attachments, so the message reference lives in the
-        ``message_history.attachments`` JSON; the notes tool records its own
-        references in ``notes.attachment_ids``.
-        """
-        if not attachment_ids:
-            return set()
-
-        referenced: set[str] = set()
-        for query in (
-            self._message_reference_query(db_context.dialect_name, attachment_ids),
-            self._note_reference_query(db_context.dialect_name, attachment_ids),
-        ):
-            rows = await db_context.fetch_all(query)
-            referenced.update(
-                row["attachment_id"] for row in rows if row["attachment_id"]
-            )
-        return referenced
+        return len(stored_paths)
 
     @staticmethod
-    def _message_reference_query(
-        dialect_name: str,
-        attachment_ids: list[str],
-    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
-        """Query yielding the given ids that appear in a message's attachments.
+    def _message_reference_exists(
+        dialect_name: str, attachment_id_column: ColumnElement[str]
+    ) -> ColumnElement[bool]:
+        """SQL condition: some message's attachments name this attachment.
 
         ``message_history.attachments`` holds a JSON array of objects keyed by
-        ``attachment_id``. A row whose value is not an array (including the
-        ``NULL`` of a message with no attachments) is expanded as an empty
-        array rather than being allowed to fail expansion.
+        ``attachment_id``, and nothing back-fills
+        ``attachment_metadata.message_id`` for user attachments, so this JSON is
+        where the send path's reference actually lives. A row whose value is not
+        an array (including the ``NULL`` of a message with no attachments) is
+        read as an empty array rather than being allowed to fail expansion.
         """
         attachments = message_history_table.c.attachments
         if dialect_name == "postgresql":
-            array_value = sa.case(
-                (sa.func.jsonb_typeof(attachments) == "array", attachments),
-                else_=sa.cast(sa.literal("[]"), JSONB),
-            )
-            elements = sa.func.jsonb_array_elements(array_value).table_valued(
-                "value", joins_implicitly=True
-            )
-            attachment_id_expr = sa.func.jsonb_extract_path_text(
-                elements.c.value, "attachment_id"
-            )
-        else:
-            array_value = sa.case(
-                (sa.func.json_type(attachments) == "array", attachments),
-                else_=sa.literal("[]"),
-            )
-            elements = sa.func.json_each(array_value).table_valued(
-                "value", joins_implicitly=True
-            )
-            attachment_id_expr = sa.func.json_extract(
-                elements.c.value, "$.attachment_id"
+            return sa.exists(
+                sa
+                .select(sa.literal(1))
+                .select_from(message_history_table)
+                .where(
+                    sa.and_(
+                        sa.func.jsonb_typeof(attachments) == "array",
+                        attachments.op("@>")(
+                            sa.func.jsonb_build_array(
+                                sa.func.jsonb_build_object(
+                                    "attachment_id", attachment_id_column
+                                )
+                            )
+                        ),
+                    )
+                )
             )
 
-        return (
+        array_value = sa.case(
+            (sa.func.json_type(attachments) == "array", attachments),
+            else_=sa.literal("[]"),
+        )
+        elements = sa.func.json_each(array_value).table_valued(
+            "value", joins_implicitly=True
+        )
+        return sa.exists(
             sa
-            .select(attachment_id_expr.label("attachment_id"))
+            .select(sa.literal(1))
             .select_from(message_history_table)
-            .where(attachment_id_expr.in_(attachment_ids))
-            .distinct()
+            .where(
+                sa.func.json_extract(elements.c.value, "$.attachment_id")
+                == attachment_id_column
+            )
         )
 
     @staticmethod
-    def _note_reference_query(
-        dialect_name: str,
-        attachment_ids: list[str],
-    ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
-        """Query yielding the given ids that appear in a note's attachment ids.
+    def _note_reference_exists(
+        dialect_name: str, attachment_id_column: ColumnElement[str]
+    ) -> ColumnElement[bool]:
+        """SQL condition: some note's attachment ids name this attachment.
 
         ``notes.attachment_ids`` holds a JSON array of attachment id strings.
+        The notes tool can attach an uploaded file to a note that outlives the
+        message that carried it.
         """
         note_attachments = notes_table.c.attachment_ids
         if dialect_name == "postgresql":
-            elements = sa.func.jsonb_array_elements_text(
-                sa.cast(note_attachments, JSONB)
-            ).table_valued("value", joins_implicitly=True)
-        else:
-            elements = sa.func.json_each(note_attachments).table_valued(
-                "value", joins_implicitly=True
+            return sa.exists(
+                sa
+                .select(sa.literal(1))
+                .select_from(notes_table)
+                .where(
+                    sa.cast(note_attachments, JSONB).op("@>")(
+                        sa.func.jsonb_build_array(attachment_id_column)
+                    )
+                )
             )
-        attachment_id_expr = elements.c.value
 
-        return (
+        elements = sa.func.json_each(note_attachments).table_valued(
+            "value", joins_implicitly=True
+        )
+        return sa.exists(
             sa
-            .select(attachment_id_expr.label("attachment_id"))
+            .select(sa.literal(1))
             .select_from(notes_table)
-            .where(attachment_id_expr.in_(attachment_ids))
-            .distinct()
+            .where(elements.c.value == attachment_id_column)
         )
 
     async def update_attachment_conversation(

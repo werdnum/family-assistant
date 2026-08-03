@@ -3882,8 +3882,13 @@ async def handle_attachment_cleanup(
     """
     registry = exec_context.attachment_registry
     if registry is None:
-        logger.warning("Attachment cleanup skipped: no attachment registry available")
-        return
+        # Returning here would record a successful pass that collected nothing,
+        # every day, while files accumulate. The missing registry is a broken
+        # worker configuration, so fail and let the task retry surface it.
+        raise RuntimeError(
+            "Attachment cleanup requires an attachment registry on the "
+            "execution context, but none was configured"
+        )
 
     grace_period = timedelta(hours=int(payload.get("grace_hours", 24)))
     limit = int(payload.get("limit", 500))
