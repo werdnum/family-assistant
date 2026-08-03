@@ -280,6 +280,61 @@ async def test_stream_persists_errors_as_error_messages(db_engine: AsyncEngine) 
     assert any(isinstance(message, ErrorMessage) for message in saved_messages)
 
 
+async def test_steer_echo_is_published_only_after_it_is_persisted(
+    db_engine: AsyncEngine,
+) -> None:
+    """A user_input echo must not reach the client before its row is written.
+
+    The web client treats the echo as proof its steering message was delivered
+    and stops tracking it for recovery. Publishing before the save would let a
+    failed write leave the message existing nowhere -- neither persisted nor
+    acted on, and no longer recoverable by the sender.
+    """
+    service = _make_service()
+    steer_text = "actually, focus on tomorrow"
+
+    async def fake_process_message_stream(
+        **kwargs: object,
+    ) -> AsyncIterator[tuple[LLMStreamEvent, UserMessage | AssistantMessage | None]]:
+        yield (
+            LLMStreamEvent(type="user_input", content=steer_text, input_id="input-1"),
+            UserMessage(content=steer_text),
+        )
+        yield (
+            LLMStreamEvent(type="content", content="done"),
+            AssistantMessage(content="done"),
+        )
+
+    service.process_message_stream = fake_process_message_stream  # type: ignore[method-assign]
+
+    original_save = service._save_history_message
+
+    async def failing_save(*args: object, **kwargs: object) -> object:
+        message = kwargs.get("message")
+        if isinstance(message, UserMessage) and message.content == steer_text:
+            raise RuntimeError("history write failed")
+        return await original_save(*args, **kwargs)  # type: ignore[arg-type]
+
+    service._save_history_message = failing_save  # type: ignore[method-assign]
+
+    events: list[LLMStreamEvent] = []
+    async for event in service.handle_chat_interaction_stream(
+        db_context=Database(db_engine),
+        interface_type="test",
+        conversation_id="conv_steer_echo_order",
+        trigger_content_parts=[{"type": "text", "text": "hello"}],
+        trigger_interface_message_id="msg-echo",
+        user_name="tester",
+    ):
+        events.append(event)
+
+    assert not any(event.type == "user_input" for event in events), (
+        "The echo was published even though its row was never written, so the "
+        "client would treat an unpersisted message as delivered"
+    )
+    assert any(event.type == "error" for event in events)
+
+
 @pytest.mark.no_db
 def test_llm_loop_infers_attachment_types_from_mime_type() -> None:
     service = _make_service()

@@ -832,6 +832,10 @@ class LLMStreamEvent:
     tool_call_id: str | None = None  # For correlating tool results
     tool_result: str | None = None  # For tool execution results
     error: str | None = None  # For error messages
+    # For correlating a ``user_input`` echo with the submission that produced it:
+    # the originating interface's identifier for the steering message, when it
+    # supplied one.
+    input_id: str | None = None
     metadata: StreamEventMetadata | None = None
 
 

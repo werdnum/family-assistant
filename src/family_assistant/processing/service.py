@@ -74,6 +74,17 @@ tracer = trace.get_tracer(__name__)
 # real timestamp or context block, which would hide the boundary.
 _VOLATILE_PROBE = "\x00\x00per-turn-probe\x00\x00"
 
+# Stand-in result for a tool call whose real result was never recorded, so the
+# history stays representable to providers that require every call to be
+# answered. Worded for the model: it says what is and is not known, because the
+# tool may well have run to completion after the turn that called it went away.
+ABANDONED_TOOL_CALL_RESULT = (
+    "Error: no result was recorded for this tool call. The turn that made it "
+    "ended before the tool returned, so whether it took effect is unknown. "
+    "Re-run it if you need the result, and check for side effects first if "
+    "re-running it would not be safe to do twice."
+)
+
 
 def _common_prefix_len(left: str, right: str) -> int | None:
     """Length of the longest common prefix of two strings, or None if empty."""
@@ -406,6 +417,89 @@ class ProcessingService:
             else:
                 break
         return pruned_count
+
+    @staticmethod
+    def _repair_unmatched_tool_calls(
+        messages_for_llm: list[LLMMessage],
+    ) -> tuple[int, int]:
+        """Pair every tool call left in the history with exactly one result.
+
+        History can contain an assistant tool call whose result was never
+        written: a turn that is interrupted while a tool is still running
+        persists the call as soon as the model emits it, and the result only
+        lands when the tool finishes. A client that starts a second turn on
+        that conversation meanwhile replays the gap, which providers that
+        validate the pairing reject outright — OpenAI's Responses API fails the
+        whole request with "No tool output found for function call".
+
+        Synthesize a placeholder result for each unmatched call so the model
+        can see that the call was abandoned rather than silently losing it, and
+        drop tool results whose call is missing, which cannot be represented at
+        all. Truncation of the history window is handled before this by
+        :meth:`_prune_leading_invalid_messages`, so an unmatched call reaching
+        here really is an abandoned one and not merely a call whose result fell
+        outside the window.
+
+        Every surviving result is emitted directly after its calling assistant
+        message, even if history stored it further down. The incident this
+        repairs produces exactly that separation — the rival turn persists its
+        prompt while the slow tool is still running, so the rows land as
+        ``assistant(call) → user(rival prompt) → tool(result)`` — and a provider
+        that wants the results attached to the calling turn rejects it. Moving
+        the result keeps the real output (the model can use it) instead of
+        discarding it for a placeholder; the cost is that the intervening
+        message now sorts after a result it was originally typed before.
+
+        Returns the (synthesized, dropped) counts.
+        """
+        # A result only answers its call if the call came first, so both facts
+        # have to be known before any message can be classified: which results
+        # are usable, and therefore which calls still need one.
+        seen_call_ids: set[str] = set()
+        # call id -> its result, hoisted out of the stream so it can be re-emitted
+        # at the call site. Only the first result for a call is kept; a duplicate
+        # cannot be represented and is dropped like an orphan.
+        results_by_call_id: dict[str, ToolMessage] = {}
+        dropped = 0
+        for message in messages_for_llm:
+            if not isinstance(message, ToolMessage):
+                if isinstance(message, AssistantMessage) and message.tool_calls:
+                    seen_call_ids.update(
+                        tool_call.id for tool_call in message.tool_calls
+                    )
+                continue
+            if (
+                message.tool_call_id not in seen_call_ids
+                or message.tool_call_id in results_by_call_id
+            ):
+                dropped += 1
+                continue
+            results_by_call_id[message.tool_call_id] = message
+
+        repaired: list[LLMMessage] = []
+        synthesized = 0
+        for message in messages_for_llm:
+            if isinstance(message, ToolMessage):
+                # Emitted at its call site below, or already counted as dropped.
+                continue
+            repaired.append(message)
+            if not isinstance(message, AssistantMessage) or not message.tool_calls:
+                continue
+            for tool_call in message.tool_calls:
+                answer = results_by_call_id.get(tool_call.id)
+                if answer is not None:
+                    repaired.append(answer)
+                    continue
+                repaired.append(
+                    ToolMessage(
+                        tool_call_id=tool_call.id,
+                        name=tool_call.function.name,
+                        content=ABANDONED_TOOL_CALL_RESULT,
+                    )
+                )
+                synthesized += 1
+        messages_for_llm[:] = repaired
+        return synthesized, dropped
 
     def render_available_service_profiles(self) -> str:
         """Render the catalog of delegatable service profiles.
@@ -801,6 +895,16 @@ class ProcessingService:
         pruned_count = self._prune_leading_invalid_messages(messages_for_llm)
         if pruned_count > 0:
             logger.warning("Pruned %d leading messages from LLM history.", pruned_count)
+        synthesized, dropped = self._repair_unmatched_tool_calls(messages_for_llm)
+        if synthesized or dropped:
+            logger.warning(
+                "Repaired unmatched tool calls in LLM history for conversation %s: "
+                "%d abandoned call(s) given a placeholder result, %d orphaned "
+                "result(s) dropped.",
+                conversation_id,
+                synthesized,
+                dropped,
+            )
 
         aggregated_other_context_str = await self.context_preparer.aggregate_context()
         context_taint_sources = (
@@ -1277,7 +1381,18 @@ class ProcessingService:
                         ),
                         taint_tracker=taint_tracker,
                     ):
-                        yield event  # noqa: ASYNC119
+                        # A ``user_input`` echo is the client's proof that its
+                        # steering message was delivered: seeing one is what
+                        # stops it tracking the message for recovery. Publishing
+                        # it before the row is written would let a failed write
+                        # clear the client's only copy -- the message would exist
+                        # nowhere, having been neither persisted nor acted on. So
+                        # this one event is published after its save; everything
+                        # else streams first, since the reply should not wait on
+                        # a database round trip.
+                        publish_after_save = event.type == "user_input"
+                        if not publish_after_save:
+                            yield event  # noqa: ASYNC119
 
                         # Save messages as they're generated
                         if stream_msg is not None:
@@ -1326,6 +1441,9 @@ class ProcessingService:
                                 reasoning_info=reasoning_info_for_stream,
                                 attachments=response_attachments,
                             )
+
+                        if publish_after_save:
+                            yield event  # noqa: ASYNC119
 
                 except Exception as e:
                     span.set_status(StatusCode.ERROR, str(e))

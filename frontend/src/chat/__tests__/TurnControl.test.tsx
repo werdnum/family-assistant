@@ -1,10 +1,11 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
 import { resetLocalStorageMock } from '../../test/mocks/localStorageMock';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
+import { streamResumeTuning, useStreamingResponse } from '../useStreamingResponse.js';
 
 // A controllable SSE stream: the handler emits turn_started and then parks,
 // handing its controller to the test so it can drive cancelled / user_input
@@ -53,6 +54,58 @@ function installOpenStream(): {
   );
 
   return { ready, turnIdRef };
+}
+
+// installOpenStream serves any conversation, so a stray stream request left over
+// from an earlier test can resolve its controller — and the test then enqueues
+// events into a stream nothing is reading. This variant hands back only the
+// stream belonging to the kickoff it saw, and parks anything else.
+function installOwnOpenStream(): {
+  ready: Promise<ReadableStreamDefaultController<Uint8Array>>;
+  turnIdRef: { current: string };
+  turnsPostsRef: { current: number };
+} {
+  const encoder = new TextEncoder();
+  const turnIdRef = { current: 'mock-turn' };
+  const conversationIdRef = { current: '' };
+  const turnsPostsRef = { current: 0 };
+  let resolveController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+  const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
+    resolveController = resolve;
+  });
+
+  server.use(
+    http.post('/api/v1/chat/turns', async ({ request }) => {
+      turnsPostsRef.current += 1;
+      const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+      turnIdRef.current = body.turn_id;
+      conversationIdRef.current = body.conversation_id || `web_conv_${Date.now()}`;
+      return HttpResponse.json({
+        turn_id: body.turn_id,
+        conversation_id: conversationIdRef.current,
+        first_seq: 0,
+      });
+    }),
+    http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+      const mine = String(params.conversationId) === conversationIdRef.current;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (!mine) {
+            return;
+          }
+          controller.enqueue(
+            encoder.encode(
+              `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+            )
+          );
+          resolveController(controller);
+        },
+      });
+      return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+    })
+  );
+
+  return { ready, turnIdRef, turnsPostsRef };
 }
 
 const enc = new TextEncoder();
@@ -129,10 +182,14 @@ describe('Web turn control (Stop / Steer)', () => {
     'Steer input injects a mid-turn message and renders the steering bubble',
     async () => {
       const { ready, turnIdRef } = installOpenStream();
-      let steerBody: { conversation_id: string; prompt: string } | null = null;
+      let steerBody: { conversation_id: string; prompt: string; input_id: string } | null = null;
       server.use(
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
-          steerBody = (await request.json()) as { conversation_id: string; prompt: string };
+          steerBody = (await request.json()) as {
+            conversation_id: string;
+            prompt: string;
+            input_id: string;
+          };
           return HttpResponse.json({
             turn_id: turnIdRef.current,
             conversation_id: steerBody.conversation_id,
@@ -162,10 +219,15 @@ describe('Web turn control (Stop / Steer)', () => {
       expect(steerBody!.prompt).toBe('focus on tomorrow');
       expect(steerBody!.conversation_id).toBeTruthy();
 
-      // The server echoes the injected message as a user_input event; it should
-      // render as a user bubble mid-stream.
+      // The server echoes the injected message as a user_input event, naming the
+      // submission it consumed; it should render as a user bubble mid-stream.
       controller.enqueue(
-        sse('user_input', { turn_id: turnIdRef.current, content: 'focus on tomorrow', seq: 1 })
+        sse('user_input', {
+          turn_id: turnIdRef.current,
+          content: 'focus on tomorrow',
+          input_id: steerBody!.input_id,
+          seq: 1,
+        })
       );
 
       await waitFor(() => {
@@ -190,6 +252,7 @@ describe('Web turn control (Stop / Steer)', () => {
       const { ready, turnIdRef } = installOpenStream();
       let turnsPosts = 0;
       let steerPosts = 0;
+      let steerInputId = '';
       server.use(
         http.post('/api/v1/chat/turns', async ({ request }) => {
           turnsPosts += 1;
@@ -203,7 +266,8 @@ describe('Web turn control (Stop / Steer)', () => {
         }),
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
           steerPosts += 1;
-          const body = (await request.json()) as { conversation_id: string };
+          const body = (await request.json()) as { conversation_id: string; input_id: string };
+          steerInputId = body.input_id;
           return HttpResponse.json({
             turn_id: turnIdRef.current,
             conversation_id: body.conversation_id,
@@ -243,7 +307,12 @@ describe('Web turn control (Stop / Steer)', () => {
       // Echo the steer as a user_input event so it counts as delivered; without
       // this the un-echoed-steer recovery would re-send it as a fresh turn.
       controller.enqueue(
-        sse('user_input', { turn_id: turnIdRef.current, content: 'focus on tomorrow', seq: 1 })
+        sse('user_input', {
+          turn_id: turnIdRef.current,
+          content: 'focus on tomorrow',
+          input_id: steerInputId,
+          seq: 1,
+        })
       );
       controller.enqueue(
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
@@ -259,10 +328,12 @@ describe('Web turn control (Stop / Steer)', () => {
     async () => {
       const { ready, turnIdRef } = installOpenStream();
       let steerPosts = 0;
+      let steerInputId = '';
       server.use(
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
           steerPosts += 1;
-          const body = (await request.json()) as { conversation_id: string };
+          const body = (await request.json()) as { conversation_id: string; input_id: string };
+          steerInputId = body.input_id;
           return HttpResponse.json({
             turn_id: turnIdRef.current,
             conversation_id: body.conversation_id,
@@ -296,7 +367,12 @@ describe('Web turn control (Stop / Steer)', () => {
       }, WAIT);
 
       controller.enqueue(
-        sse('user_input', { turn_id: turnIdRef.current, content: 'focus on tomorrow', seq: 1 })
+        sse('user_input', {
+          turn_id: turnIdRef.current,
+          content: 'focus on tomorrow',
+          input_id: steerInputId,
+          seq: 1,
+        })
       );
       controller.enqueue(
         sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
@@ -600,6 +676,7 @@ describe('Web turn control (Stop / Steer)', () => {
       const { ready, turnIdRef } = installOpenStream();
       let steerCalls = 0;
       let turnsPosts = 0;
+      const steerInputIds: string[] = [];
       server.use(
         http.post('/api/v1/chat/turns', async ({ request }) => {
           turnsPosts += 1;
@@ -613,7 +690,8 @@ describe('Web turn control (Stop / Steer)', () => {
         }),
         http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
           steerCalls += 1;
-          const body = (await request.json()) as { conversation_id: string };
+          const body = (await request.json()) as { conversation_id: string; input_id: string };
+          steerInputIds.push(body.input_id);
           if (steerCalls === 1) {
             return HttpResponse.json({ detail: 'not found' }, { status: 404 });
           }
@@ -643,8 +721,16 @@ describe('Web turn control (Stop / Steer)', () => {
         expect(steerCalls).toBeGreaterThanOrEqual(2);
       }, WAIT);
 
+      // Both attempts carry the same id: a retry is the same submission, so the
+      // echo of either one settles it.
+      expect(new Set(steerInputIds).size).toBe(1);
       controller.enqueue(
-        sse('user_input', { turn_id: turnIdRef.current, content: 'focus on tomorrow', seq: 1 })
+        sse('user_input', {
+          turn_id: turnIdRef.current,
+          content: 'focus on tomorrow',
+          input_id: steerInputIds[0],
+          seq: 1,
+        })
       );
       await waitFor(() => {
         expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
@@ -762,6 +848,1638 @@ describe('Web turn control (Stop / Steer)', () => {
       await waitFor(() => {
         expect(turnsPosts).toBe(3);
       }, WAIT);
+    },
+    { timeout: 30000 }
+  );
+
+  // A send that arrives while the conversation already has a running turn is
+  // refused with 409. The client only gets there having lost track of that turn
+  // (its stream dropped, the tab was hidden and resumed), so the message is the
+  // steer it meant to send — it must reach the running turn, not raise an error.
+  function installConflictingTurn(
+    runningTurnId: string,
+    runningTurnFirstSeq: number,
+    // Stream head when the steer is queued, as the real endpoint reports it.
+    // The turn's echo of the adopted prompt is published after this seq.
+    queuedAfterSeq = runningTurnFirstSeq
+  ): {
+    ready: Promise<ReadableStreamDefaultController<Uint8Array>>;
+    steerBodies: Array<{ conversation_id: string; prompt: string; input_id: string }>;
+    steeredTurnIds: string[];
+    streamFromSeqs: Array<string | null>;
+  } {
+    const encoder = new TextEncoder();
+    const steerBodies: Array<{ conversation_id: string; prompt: string; input_id: string }> = [];
+    const steeredTurnIds: string[] = [];
+    const streamFromSeqs: Array<string | null> = [];
+    let resolveController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+    const ready = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
+      resolveController = resolve;
+    });
+
+    server.use(
+      http.post('/api/v1/chat/turns', () =>
+        HttpResponse.json(
+          {
+            detail: {
+              message: 'This conversation already has a running turn.',
+              active_turn_id: runningTurnId,
+              active_turn_first_seq: runningTurnFirstSeq,
+            },
+          },
+          { status: 409 }
+        )
+      ),
+      http.post('/api/v1/chat/turns/:turnId/steer', async ({ request, params }) => {
+        steeredTurnIds.push(String(params.turnId));
+        steerBodies.push(
+          (await request.json()) as {
+            conversation_id: string;
+            prompt: string;
+            input_id: string;
+          }
+        );
+        return HttpResponse.json({ accepted: true, queued_after_seq: queuedAfterSeq });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', ({ request }) => {
+        streamFromSeqs.push(new URL(request.url).searchParams.get('from_seq'));
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_started\ndata: ${JSON.stringify({
+                  turn_id: runningTurnId,
+                  seq: runningTurnFirstSeq,
+                })}\n\n`
+              )
+            );
+            resolveController(controller);
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      })
+    );
+
+    return { ready, steerBodies, steeredTurnIds, streamFromSeqs };
+  }
+
+  it(
+    'a send refused by a running turn is delivered to that turn and follows it',
+    async () => {
+      const { ready, steerBodies, steeredTurnIds, streamFromSeqs } = installConflictingTurn(
+        'running-turn-1',
+        7
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Ah it was a dental x-ray');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(steerBodies).toHaveLength(1);
+      }, WAIT);
+      expect(steerBodies[0].prompt).toBe('Ah it was a dental x-ray');
+      expect(steeredTurnIds[0]).toBe('running-turn-1');
+
+      // Followed from just after the steer was queued (queued_after_seq 7),
+      // so the bubble shows what the turn does in response to this message
+      // rather than replaying the work it had already done.
+      const controller = await ready;
+      expect(streamFromSeqs[0]).toBe('8');
+
+      // The running turn echoes the steer back. The composer already rendered
+      // this prompt optimistically when it was sent, so the echo must not
+      // produce a second copy of it.
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: 'running-turn-1',
+          content: 'Ah it was a dental x-ray',
+          input_id: steerBodies[0].input_id,
+          seq: 8,
+        })
+      );
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-1', content: 'Got it, dental.', seq: 9 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Got it, dental.')).toBeInTheDocument();
+      }, WAIT);
+      // Scoped to the message bubbles: the prompt also appears in the sidebar
+      // as the conversation's last-message preview.
+      const promptBubbles = screen
+        .getAllByTestId('user-message-content')
+        .filter((el) => el.textContent?.includes('Ah it was a dental x-ray'));
+      expect(promptBubbles).toHaveLength(1);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-1', status: 'complete', seq: 10 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'a later steer on an adopted turn still renders its own bubble',
+    async () => {
+      // Only the adopted send's own echo is swallowed; the dedupe must not eat
+      // every subsequent user_input on that turn.
+      const { ready, steerBodies } = installConflictingTurn('running-turn-2', 3);
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'adopted prompt');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      await waitFor(() => expect(steerBodies).toHaveLength(1), WAIT);
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: 'running-turn-2',
+          content: 'adopted prompt',
+          input_id: steerBodies[0].input_id,
+          seq: 4,
+        })
+      );
+      // A second input the client did not submit — another interface's steer, so
+      // it carries no id of ours and must render.
+      controller.enqueue(
+        sse('user_input', { turn_id: 'running-turn-2', content: 'and one more thing', seq: 5 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('and one more thing')).toBeInTheDocument();
+      }, WAIT);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-2', status: 'complete', seq: 6 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'follows an adopted turn from the steer, not from the work it had already done',
+    async () => {
+      // The adopted turn has usually been running a while. Replaying it from
+      // its first event would pour that earlier answer into the bubble the
+      // composer just opened for THIS message — showing the previous reply
+      // again beneath it, and twice over when history had already rendered it.
+      // The turn began at seq 3 but the steer was queued at seq 5.
+      const { ready, steerBodies, streamFromSeqs } = installConflictingTurn('running-turn-3', 3, 5);
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'continue');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      expect(streamFromSeqs[0]).toBe('6');
+
+      // Everything from here is the turn's response to the adopted message: its
+      // echo (swallowed, already rendered optimistically) and the new text.
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: 'running-turn-3',
+          content: 'continue',
+          input_id: steerBodies[0].input_id,
+          seq: 6,
+        })
+      );
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-3', content: 'Carrying on.', seq: 7 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Carrying on.')).toBeInTheDocument();
+      }, WAIT);
+      const bubbles = screen
+        .getAllByTestId('user-message-content')
+        .filter((el) => el.textContent?.includes('continue'));
+      expect(bubbles).toHaveLength(1);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-3', status: 'complete', seq: 8 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'resends an adopted message the turn ended without ever consuming',
+    async () => {
+      // The adopted turn can already be streaming its final, tool-free response
+      // when the steer lands, in which case the LLM loop breaks before its
+      // drain and the message is never seen. Nothing else tracks it — the
+      // awaiting-echo list only covers steers the composer sent — so the turn
+      // has to end by resending it, or the send is silently lost.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+      let resolveAdopted: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const adoptedReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+        resolveAdopted = r;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          // Only the first send collides with the running turn; the recovery
+          // kickoff finds the conversation free.
+          if (turnsPosts === 1) {
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-7',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_unconsumed',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ accepted: true, queued_after_seq: 4 })
+        ),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              resolveAdopted(controller);
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'and the dentist too');
+      await user.keyboard('{Enter}');
+
+      // The adopted turn finishes without ever echoing the steered prompt.
+      const controller = await adoptedReady;
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-7', status: 'complete', seq: 5 })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      expect(kickoffPrompts[1]).toBe('and the dentist too');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'holds back the adopted turn output until it echoes the new prompt',
+    async () => {
+      // queued_after_seq marks when the steer was queued, not when the turn got
+      // to it: the turn keeps finishing the response already in flight. Those
+      // events answer the PREVIOUS message, so they must not land in the bubble
+      // the composer just opened for this one.
+      const { ready, steerBodies } = installConflictingTurn('running-turn-8', 2, 4);
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'what about the dentist');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      // Tail of the answer that was already streaming when we adopted the turn.
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-8', content: 'FROM THE OLD ANSWER', seq: 5 })
+      );
+      // The turn reaches our message, then answers it.
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: 'running-turn-8',
+          content: 'what about the dentist',
+          input_id: steerBodies[0].input_id,
+          seq: 6,
+        })
+      );
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-8', content: 'Dentist is Thursday.', seq: 7 })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Dentist is Thursday.')).toBeInTheDocument();
+      }, WAIT);
+      expect(screen.queryByText(/FROM THE OLD ANSWER/)).toBeNull();
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-8', status: 'complete', seq: 8 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'resends an unconsumed adopted message even when the turn fails',
+    async () => {
+      // A failed turn abandons ordinary steers — resending them just repeats the
+      // failure and the user still has them in the thread. The adopted prompt is
+      // different: the backend only persists a steer once the loop drains it, so
+      // an unconsumed one exists nowhere at all and dropping it loses the send.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+      let resolveAdopted: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const adoptedReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+        resolveAdopted = r;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          if (turnsPosts === 1) {
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-9',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_failed_adopt',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ accepted: true, queued_after_seq: 4 })
+        ),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              resolveAdopted(controller);
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'and the dentist too');
+      await user.keyboard('{Enter}');
+
+      const controller = await adoptedReady;
+      controller.enqueue(
+        sse('turn_ended', {
+          turn_id: 'running-turn-9',
+          status: 'failed',
+          error: 'The assistant stopped unexpectedly.',
+          seq: 5,
+        })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      expect(kickoffPrompts[1]).toBe('and the dentist too');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'resends an accepted steer the turn never echoed before failing',
+    async () => {
+      // submitSteer clears the composer on accept, and the backend only
+      // persists a steer once the loop drains it and emits the echo. A failed
+      // turn that never drained it therefore leaves the client's queue holding
+      // the user's only copy — dropping it deletes the message.
+      const { ready, turnIdRef } = installOpenStream();
+      let turnsPosts = 0;
+      const kickoffPrompts: string[] = [];
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          turnIdRef.current = body.turn_id;
+          kickoffPrompts.push(body.prompt);
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_steerfail',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () => HttpResponse.json({ accepted: true }))
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'and book the dentist');
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+      // The turn fails without ever echoing the steer.
+      controller.enqueue(
+        sse('turn_ended', {
+          turn_id: turnIdRef.current,
+          status: 'failed',
+          error: 'The assistant stopped unexpectedly.',
+          seq: 1,
+        })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      expect(kickoffPrompts[1]).toBe('and book the dentist');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'keeps a retrying steer pinned to the turn it was submitted against',
+    async () => {
+      // The retry loop must not follow the live-turn ref. It moves for reasons
+      // unrelated to this steer — another conversation being opened, or a turn
+      // ending and the recovery queue starting a new one carrying this very
+      // prompt — and following it would deliver the message into the wrong
+      // thread or into a turn that is already sending it.
+      const steeredTurnIds: string[] = [];
+      const { result } = renderHook(() => useStreamingResponse({}));
+
+      server.use(
+        http.post('/api/v1/chat/turns/:turnId/steer', ({ params }) => {
+          steeredTurnIds.push(String(params.turnId));
+          // Retryable, so the loop backs off and re-reads the identity.
+          return new HttpResponse(null, { status: 404 });
+        }),
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as { turn_id: string; conversation_id?: string };
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_other',
+            first_seq: 0,
+          });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(sse('turn_started', { turn_id: 'other-turn', seq: 0 }));
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      // A turn is running in conversation A; the steer starts against it.
+      void result.current.sendStreamingMessage({
+        prompt: 'first',
+        conversationId: 'web_conv_A',
+        turnId: 'turn-in-A',
+      });
+      await waitFor(() => expect(result.current.isStreaming).toBe(true), WAIT);
+      const steering = result.current.steerStream({ prompt: "A's message" });
+
+      // Mid-backoff the user switches to conversation B and sends there, which
+      // repoints the live-turn ref at an unrelated turn.
+      await waitFor(() => expect(steeredTurnIds.length).toBeGreaterThan(0), WAIT);
+      void result.current.sendStreamingMessage({
+        prompt: 'second',
+        conversationId: 'web_conv_B',
+        turnId: 'turn-in-B',
+      });
+
+      // Every attempt went to the turn the steer was typed against, and the
+      // exhausted 404s report 'finished' — the caller resends it as a normal
+      // message rather than it landing somewhere it doesn't belong.
+      await expect(steering).resolves.toBe('finished');
+      expect(steeredTurnIds.length).toBeGreaterThan(0);
+      expect(new Set(steeredTurnIds)).toEqual(new Set(['turn-in-A']));
+      result.current.cancelStream();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'does not resend an adopted prompt the user stopped before it was placed',
+    async () => {
+      // Stop pressed after the kickoff adopted the running turn but before the
+      // steer landed: the cancel wins, so /steer answers 409. No stream ever
+      // opened, so nothing will report turn_ended(cancelled) — and resending
+      // would restart the very interaction the user just ended.
+      let releaseSteer: () => void = () => {};
+      const steerGate = new Promise<void>((resolve) => {
+        releaseSteer = resolve;
+      });
+      let steerRequested: () => void = () => {};
+      const steerStarted = new Promise<void>((resolve) => {
+        steerRequested = resolve;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', () =>
+          HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-14',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          )
+        ),
+        http.post('/api/v1/chat/turns/:turnId/cancel', () =>
+          HttpResponse.json({
+            turn_id: 'running-turn-14',
+            conversation_id: 'web_conv_stopped_adopt',
+            status: 'cancelling',
+          })
+        ),
+        http.post('/api/v1/chat/turns/:turnId/steer', async () => {
+          steerRequested();
+          await steerGate;
+          return HttpResponse.json(
+            { detail: 'Turn is not running; start a new turn instead.' },
+            { status: 409 }
+          );
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          throw new Error('must not subscribe: the turn was cancelled');
+        })
+      );
+
+      const completions: Array<{ undeliveredPrompt: string | null }> = [];
+      const { result } = renderHook(() =>
+        useStreamingResponse({
+          onComplete: (report: { undeliveredPrompt: string | null }) => completions.push(report),
+        })
+      );
+      const sending = result.current.sendStreamingMessage({
+        prompt: 'and the dentist too',
+        conversationId: 'web_conv_stopped_adopt',
+      });
+
+      await steerStarted;
+      await expect(result.current.stopTurn()).resolves.toBe(true);
+      releaseSteer();
+      await sending;
+
+      // Nothing to recover: the send is abandoned with the turn it joined.
+      expect(completions).toHaveLength(1);
+      expect(completions[0].undeliveredPrompt).toBeNull();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'hands back an accepted steer when the stream never sees the turn end',
+    async () => {
+      // The stream gave up before the turn echoed this steer, so whether the
+      // turn drained it is unknowable from here: resending could repeat an
+      // instruction the assistant already acted on, dropping would delete a
+      // message the composer cleared. Hand the text back instead — and settle it
+      // now, rather than leaving it to fire against some later turn.
+      const originalTuning = { ...streamResumeTuning };
+      let turnsPosts = 0;
+      try {
+        streamResumeTuning.livenessMs = 0;
+        streamResumeTuning.initialDelayMs = 1;
+        streamResumeTuning.maxDelayMs = 2;
+
+        const encoder = new TextEncoder();
+        const turnIdRef = { current: '' };
+        const conversationIdRef = { current: '' };
+        let streamLegs = 0;
+        let resolveFirstLeg: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+        const firstLeg = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+          resolveFirstLeg = r;
+        });
+
+        server.use(
+          http.post('/api/v1/chat/turns', async ({ request }) => {
+            turnsPosts += 1;
+            const body = (await request.json()) as {
+              turn_id: string;
+              conversation_id?: string;
+            };
+            turnIdRef.current = body.turn_id;
+            conversationIdRef.current = body.conversation_id || 'web_conv_giveup';
+            return HttpResponse.json({
+              turn_id: body.turn_id,
+              conversation_id: conversationIdRef.current,
+              first_seq: 0,
+            });
+          }),
+          http.post('/api/v1/chat/turns/:turnId/steer', () =>
+            HttpResponse.json({ accepted: true, queued_after_seq: 0 })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+            HttpResponse.json({ messages: [] })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+            if (String(params.conversationId) !== conversationIdRef.current) {
+              return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
+                headers: { 'Content-Type': 'text/event-stream' },
+              });
+            }
+            streamLegs += 1;
+            if (streamLegs === 1) {
+              return new HttpResponse(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+                      )
+                    );
+                    resolveFirstLeg(controller);
+                  },
+                }),
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              );
+            }
+            // Every resume fails, so the bounded loop gives up without ever
+            // seeing turn_ended.
+            return HttpResponse.json({ detail: 'upstream error' }, { status: 503 });
+          })
+        );
+
+        const user = userEvent.setup();
+        await renderChatApp({ waitForReady: true });
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'Plan my week');
+        await user.keyboard('{Enter}');
+
+        const controller = await firstLeg;
+        const steerInput = screen.getByTestId('chat-input');
+        await user.type(steerInput, 'and book the dentist');
+        await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+        await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+        // The connection drops with the steer accepted but never echoed.
+        controller.close();
+
+        // The text comes back to the user rather than being resent for them,
+        // and it survives the history reload this path triggers.
+        await waitFor(() => {
+          expect(
+            screen.getByText(/Couldn't confirm the assistant received this/i)
+          ).toBeInTheDocument();
+        }, WAIT);
+        expect(screen.getByText(/and book the dentist/)).toBeInTheDocument();
+        expect(turnsPosts).toBe(1);
+      } finally {
+        Object.assign(streamResumeTuning, originalTuning);
+      }
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'hands back an adopted prompt when the stream never sees the turn end',
+    async () => {
+      // The adopted prompt is the one message with no copy anywhere: the
+      // backend persists a steer only once the loop drains it, the composer has
+      // cleared, and the history reload this path triggers replaces its
+      // optimistic bubble. If the stream gives up before the echo, it has to
+      // come back to the user.
+      const originalTuning = { ...streamResumeTuning };
+      let turnsPosts = 0;
+      try {
+        streamResumeTuning.livenessMs = 0;
+        streamResumeTuning.initialDelayMs = 1;
+        streamResumeTuning.maxDelayMs = 2;
+
+        server.use(
+          http.post('/api/v1/chat/turns', () => {
+            turnsPosts += 1;
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-16',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }),
+          http.post('/api/v1/chat/turns/:turnId/steer', () =>
+            HttpResponse.json({ accepted: true, queued_after_seq: 4 })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+            HttpResponse.json({ messages: [] })
+          ),
+          // Every leg fails, so the adopted turn is followed and then lost
+          // without its echo or a turn_ended ever arriving.
+          http.get('/api/v1/chat/conversations/:conversationId/stream', () =>
+            HttpResponse.json({ detail: 'upstream error' }, { status: 503 })
+          )
+        );
+
+        const user = userEvent.setup();
+        await renderChatApp({ waitForReady: true });
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'and the dentist too');
+        await user.keyboard('{Enter}');
+
+        await waitFor(() => {
+          expect(
+            screen.getByText(/Couldn't confirm the assistant received this/i)
+          ).toBeInTheDocument();
+        }, WAIT);
+        expect(screen.getByText(/and the dentist too/)).toBeInTheDocument();
+        // Handed back, not resent for the user.
+        expect(turnsPosts).toBe(1);
+      } finally {
+        Object.assign(streamResumeTuning, originalTuning);
+      }
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'sends a queued follow-up even when the stream it was queued behind gives up',
+    async () => {
+      // A steer that hit an already-finished turn is queued as a normal
+      // follow-up rather than sent immediately, so it doesn't race the stream
+      // that is still settling. If that stream then gives up, nothing else
+      // drains the queue — and unlike an un-echoed steer this one is not
+      // ambiguous: a 409 means it reached no turn, so it is simply sent.
+      const originalTuning = { ...streamResumeTuning };
+      const kickoffPrompts: string[] = [];
+      try {
+        streamResumeTuning.livenessMs = 0;
+        streamResumeTuning.initialDelayMs = 1;
+        streamResumeTuning.maxDelayMs = 2;
+
+        const encoder = new TextEncoder();
+        const turnIdRef = { current: '' };
+        const conversationIdRef = { current: '' };
+        let streamLegs = 0;
+        let resolveFirstLeg: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+        const firstLeg = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+          resolveFirstLeg = r;
+        });
+
+        server.use(
+          http.post('/api/v1/chat/turns', async ({ request }) => {
+            const body = (await request.json()) as {
+              turn_id: string;
+              conversation_id?: string;
+              prompt: string;
+            };
+            kickoffPrompts.push(body.prompt);
+            turnIdRef.current = body.turn_id;
+            conversationIdRef.current = body.conversation_id || 'web_conv_drain';
+            return HttpResponse.json({
+              turn_id: body.turn_id,
+              conversation_id: conversationIdRef.current,
+              first_seq: 0,
+            });
+          }),
+          // The turn finished between typing and submitting: not steerable, so
+          // the client queues the text as a follow-up.
+          http.post('/api/v1/chat/turns/:turnId/steer', () =>
+            HttpResponse.json(
+              { detail: 'Turn is not running; start a new turn instead.' },
+              { status: 409 }
+            )
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/messages', () =>
+            HttpResponse.json({ messages: [] })
+          ),
+          http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+            if (String(params.conversationId) !== conversationIdRef.current) {
+              return new HttpResponse(new ReadableStream<Uint8Array>({ start() {} }), {
+                headers: { 'Content-Type': 'text/event-stream' },
+              });
+            }
+            streamLegs += 1;
+            if (streamLegs === 1) {
+              return new HttpResponse(
+                new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnIdRef.current, seq: 0 })}\n\n`
+                      )
+                    );
+                    resolveFirstLeg(controller);
+                  },
+                }),
+                { headers: { 'Content-Type': 'text/event-stream' } }
+              );
+            }
+            // The follow-up's own turn (and every resume of the first) fails.
+            return HttpResponse.json({ detail: 'upstream error' }, { status: 503 });
+          })
+        );
+
+        const user = userEvent.setup();
+        await renderChatApp({ waitForReady: true });
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'Plan my week');
+        await user.keyboard('{Enter}');
+
+        const controller = await firstLeg;
+        const steerInput = screen.getByTestId('chat-input');
+        await user.type(steerInput, 'and book the dentist');
+        await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+        // Accepted as a queued follow-up: the composer clears.
+        await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+        // The stream this follow-up was queued behind now gives up.
+        controller.close();
+
+        await waitFor(() => {
+          expect(kickoffPrompts).toContain('and book the dentist');
+        }, WAIT);
+      } finally {
+        Object.assign(streamResumeTuning, originalTuning);
+      }
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'never lets a retrying Stop land on a turn the user started later',
+    async () => {
+      // A Stop that is still retrying when its turn finishes must not follow the
+      // conversation onto whatever turn comes next: the user asked to stop the
+      // message they were looking at, not the one they sent afterwards. Only the
+      // kickoff-to-adopted-turn transition is followed, and this is not it.
+      const cancelledTurnIds: string[] = [];
+      let secondSendStarted = false;
+      let startSecondSend: () => void = () => {};
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          const body = (await request.json()) as { turn_id: string };
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: 'web_conv_stop_pin',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/cancel', ({ params }) => {
+          cancelledTurnIds.push(String(params.turnId));
+          // After the first attempt the user sends again, so the live-turn ref
+          // moves to a turn this Stop was never about.
+          if (!secondSendStarted) {
+            secondSendStarted = true;
+            startSecondSend();
+          }
+          return new HttpResponse(null, { status: 503 });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start() {
+              // Parked: both turns stay live for the duration.
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const { result } = renderHook(() => useStreamingResponse({}));
+      void result.current.sendStreamingMessage({
+        prompt: 'the first thing',
+        conversationId: 'web_conv_stop_pin',
+        turnId: 'turn-first',
+      });
+      await waitFor(() => expect(result.current.isStreaming).toBe(true), WAIT);
+
+      startSecondSend = () => {
+        void result.current.sendStreamingMessage({
+          prompt: 'the second thing',
+          conversationId: 'web_conv_stop_pin',
+          turnId: 'turn-second',
+        });
+      };
+
+      // Every attempt is refused, so the retries run to exhaustion.
+      await expect(result.current.stopTurn()).resolves.toBe(false);
+
+      expect(cancelledTurnIds.length).toBeGreaterThan(1);
+      expect(new Set(cancelledTurnIds)).toEqual(new Set(['turn-first']));
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'replays a lost kickoff before the steer that was typed after it',
+    async () => {
+      // A steer submitted while the kickoff POST is still pending 404s (the turn
+      // is not registered) and queues as a follow-up. If the kickoff then adopts
+      // a turn that is already gone, its own prompt is recovered too — and it
+      // has to go out FIRST, since the user typed it first.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+      let releaseKickoff: () => void = () => {};
+      const kickoffGate = new Promise<void>((resolve) => {
+        releaseKickoff = resolve;
+      });
+      // Each recovery turn must end for the next queued one to fire, so the
+      // stream has to name the turn the client actually started.
+      let recoveredTurnId = 'recovered';
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          if (turnsPosts === 1) {
+            // Held open so the steer below is submitted against a turn the
+            // server has never heard of, then refused.
+            await kickoffGate;
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-15',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          recoveredTurnId = body.turn_id;
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_order',
+            first_seq: 0,
+          });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', ({ params }) => {
+          // The steer typed during the kickoff targets the unregistered turn.
+          if (params.turnId !== 'running-turn-15') {
+            return HttpResponse.json({ detail: 'not found' }, { status: 404 });
+          }
+          // The adoption steer finds the running turn already finished.
+          return HttpResponse.json(
+            { detail: 'Turn is not running; start a new turn instead.' },
+            { status: 409 }
+          );
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                sse('turn_ended', { turn_id: recoveredTurnId, status: 'complete', seq: 1 })
+              );
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'book the dentist');
+      await user.keyboard('{Enter}');
+      await waitFor(() => expect(turnsPosts).toBe(1), WAIT);
+
+      // Typed while the kickoff is still in flight; it queues as a follow-up.
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'make it a Friday');
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+      releaseKickoff();
+
+      // Both are resent, oldest first.
+      await waitFor(() => {
+        expect(kickoffPrompts).toHaveLength(3);
+      }, WAIT);
+      expect(kickoffPrompts).toEqual(['book the dentist', 'book the dentist', 'make it a Friday']);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'starts its own turn when the adopted turn is already gone by the steer',
+    async () => {
+      // The named turn can finish between the kickoff's 409 and the steer. Then
+      // the prompt reached nothing: the kickoff was refused, the steer rejected,
+      // and the composer already cleared. The conversation is idle now, so it
+      // goes out as its own turn rather than being surfaced as a dead end.
+      const kickoffPrompts: string[] = [];
+      let turnsPosts = 0;
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as {
+            turn_id: string;
+            conversation_id?: string;
+            prompt: string;
+          };
+          kickoffPrompts.push(body.prompt);
+          if (turnsPosts === 1) {
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-10',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          return HttpResponse.json({
+            turn_id: body.turn_id,
+            conversation_id: body.conversation_id || 'web_conv_lostrace',
+            first_seq: 0,
+          });
+        }),
+        // The turn finished in the gap: not steerable any more.
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json(
+            { detail: 'Turn is not running; start a new turn instead.' },
+            { status: 409 }
+          )
+        ),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                sse('turn_ended', { turn_id: 'new-turn', status: 'complete', seq: 1 })
+              );
+              controller.close();
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'is the dentist still on');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      expect(kickoffPrompts[1]).toBe('is the dentist still on');
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'hands back the text when an adopted steer fails ambiguously',
+    async () => {
+      // A 5xx may or may not have queued the steer, so it must not auto-resend.
+      // The composer has already cleared and nothing persisted the prompt, so
+      // the error has to carry the text or the message is only in a bubble a
+      // refresh discards.
+      let steers = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', () =>
+          HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-11',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          )
+        ),
+        http.post('/api/v1/chat/turns/:turnId/steer', () => {
+          steers += 1;
+          return new HttpResponse(null, { status: 503 });
+        })
+      );
+
+      const errors: Error[] = [];
+      const { result } = renderHook(() =>
+        useStreamingResponse({ onError: (e: Error) => errors.push(e) })
+      );
+      await result.current.sendStreamingMessage({
+        prompt: 'move the dentist to Friday',
+        conversationId: 'web_conv_ambiguous',
+      });
+
+      expect(steers).toBe(1);
+      expect(errors).toHaveLength(1);
+      // The text comes back with the error, and it renders as written.
+      expect(errors[0].message).toContain('move the dentist to Friday');
+      expect((errors[0] as Error & { userFacing?: boolean }).userFacing).toBe(true);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'refuses to adopt a running turn when the send carried attachments',
+    async () => {
+      // Steering carries text only. Adopting here would answer the prompt with
+      // its files silently missing, so the send fails and the user keeps them.
+      let steers = 0;
+      server.use(
+        http.post('/api/v1/chat/turns', () =>
+          HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-4',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          )
+        ),
+        http.post('/api/v1/chat/turns/:turnId/steer', () => {
+          steers += 1;
+          return HttpResponse.json({ accepted: true, queued_after_seq: 2 });
+        }),
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          throw new Error('must not subscribe: the send was never delivered');
+        })
+      );
+
+      const errors: Error[] = [];
+      const { result } = renderHook(() =>
+        useStreamingResponse({ onError: (e: Error) => errors.push(e) })
+      );
+      await result.current.sendStreamingMessage({
+        prompt: 'what is in this scan?',
+        conversationId: 'web_conv_attach',
+        attachments: [{ attachment_id: 'att-1' }],
+      });
+
+      expect(steers).toBe(0);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toMatch(/attachments could not be sent/);
+      // Flagged for verbatim rendering: the caller shows this text as written
+      // instead of the generic "I encountered an error" line, which would hide
+      // the only part that says what to do.
+      expect((errors[0] as Error & { userFacing?: boolean }).userFacing).toBe(true);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'retargets an in-flight Stop at the turn the refused send adopted',
+    async () => {
+      // Stop clicked while the kickoff POST is still pending: the POST is then
+      // refused and adopts the conversation's running turn, so the cancel must
+      // follow. Cancelling the client-generated id we started with would 404
+      // forever while the real turn kept running.
+      const cancelledTurnIds: string[] = [];
+      let releaseKickoff: () => void = () => {};
+      const kickoffGate = new Promise<void>((resolve) => {
+        releaseKickoff = resolve;
+      });
+      let resolveStreamController: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const streamReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((resolve) => {
+        resolveStreamController = resolve;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', async () => {
+          await kickoffGate;
+          return HttpResponse.json(
+            {
+              detail: {
+                message: 'This conversation already has a running turn.',
+                active_turn_id: 'running-turn-5',
+                active_turn_first_seq: 2,
+              },
+            },
+            { status: 409 }
+          );
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ accepted: true, queued_after_seq: 2 })
+        ),
+        http.post('/api/v1/chat/turns/:turnId/cancel', ({ params }) => {
+          cancelledTurnIds.push(String(params.turnId));
+          // Only the adopted turn exists server-side; the rejected kickoff id
+          // is the 404 the retry loop is meant to grow out of.
+          if (params.turnId !== 'running-turn-5') {
+            return new HttpResponse(null, { status: 404 });
+          }
+          return HttpResponse.json({
+            turn_id: 'running-turn-5',
+            conversation_id: 'web_conv_stopadopt',
+            status: 'cancelling',
+          });
+        }),
+        // The adopted turn stays open, as it would while the cancel is still
+        // being retried: a turn that ended first would clear the live identity
+        // and leave nothing to retarget.
+        http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(sse('turn_started', { turn_id: 'running-turn-5', seq: 2 }));
+              resolveStreamController(controller);
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const { result } = renderHook(() => useStreamingResponse({}));
+      const sending = result.current.sendStreamingMessage({
+        prompt: 'stop that',
+        conversationId: 'web_conv_stopadopt',
+      });
+      // Stop while the kickoff is still in flight, then let the 409 land.
+      const stopping = result.current.stopTurn();
+      releaseKickoff();
+
+      await expect(stopping).resolves.toBe(true);
+      // The first attempt targeted the id the kickoff was rejected under; the
+      // retry followed the adoption instead of 404ing until it gave up.
+      expect(cancelledTurnIds[0]).not.toBe('running-turn-5');
+      expect(cancelledTurnIds[cancelledTurnIds.length - 1]).toBe('running-turn-5');
+
+      const controller = await streamReady;
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-5', status: 'cancelled', seq: 3 })
+      );
+      controller.close();
+      await sending;
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'does not resend a steer the turn consumed before the retry found it finished',
+    async () => {
+      // The first POST queues the steer but its response is lost; steerStream
+      // retries, and by then the turn has drained the message and ended, so the
+      // retry gets 409 ('finished'). Falling back to a new turn there would make
+      // the assistant act on the same instruction twice.
+      const { ready, turnIdRef, turnsPostsRef } = installOwnOpenStream();
+      let steerInputId = '';
+      let steerPosts = 0;
+      let releaseSteer: () => void = () => {};
+      const steerGate = new Promise<void>((resolve) => {
+        releaseSteer = resolve;
+      });
+      server.use(
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          steerPosts += 1;
+          if (steerPosts === 1) {
+            const body = (await request.json()) as { input_id: string };
+            steerInputId = body.input_id;
+            await steerGate;
+            return new HttpResponse(null, { status: 503 });
+          }
+          return HttpResponse.json({ detail: 'Turn is not running.' }, { status: 409 });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'focus on tomorrow');
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+
+      await waitFor(() => expect(steerInputId).not.toBe(''), WAIT);
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: turnIdRef.current,
+          content: 'focus on tomorrow',
+          input_id: steerInputId,
+          seq: 1,
+        })
+      );
+      await waitFor(() => {
+        expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
+      }, WAIT);
+      releaseSteer();
+
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+
+      // End the turn: a steer treated as undelivered is queued rather than sent
+      // immediately, and drains here. Wait for the app to leave the streaming
+      // state so that drain has had its chance before counting kickoffs.
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
+      );
+      controller.close();
+      await waitFor(() => {
+        expect(screen.queryByTestId('stop-button')).toBeNull();
+      }, WAIT);
+      // Only the original kickoff: the steer was not resent as a new turn.
+      expect(turnsPostsRef.current).toBe(1);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'still recognises an adopted echo from a backend that sends no input_id',
+    async () => {
+      // Older backend: the echo carries no id, so it is matched on text and
+      // cursor as before. Failing to recognise it would hold back the whole
+      // adopted reply and resend the prompt as a second turn.
+      const { ready, steerBodies } = installConflictingTurn('running-turn-13', 3, 5);
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'continue');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      await waitFor(() => expect(steerBodies).toHaveLength(1), WAIT);
+      controller.enqueue(
+        sse('user_input', { turn_id: 'running-turn-13', content: 'continue', seq: 6 })
+      );
+      controller.enqueue(
+        sse('text', { turn_id: 'running-turn-13', content: 'Carrying on.', seq: 7 })
+      );
+
+      // The reply flows, and the prompt is rendered once.
+      await waitFor(() => {
+        expect(screen.getByText('Carrying on.')).toBeInTheDocument();
+      }, WAIT);
+      const bubbles = screen
+        .getAllByTestId('user-message-content')
+        .filter((el) => el.textContent?.includes('continue'));
+      expect(bubbles).toHaveLength(1);
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-13', status: 'complete', seq: 8 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'keeps a recovered prompt in the thread when its own kickoff fails',
+    async () => {
+      // A recovered prompt is resent once; if that send fails outright there is
+      // nothing to retry into, so it must at least stay in front of the user —
+      // its bubble, and an error saying the send failed — the same as any other
+      // failed send. Silently swallowing it would delete the message.
+      let turnsPosts = 0;
+      const conversationIdRef = { current: '' };
+      let resolveAdopted: (c: ReadableStreamDefaultController<Uint8Array>) => void;
+      const adoptedReady = new Promise<ReadableStreamDefaultController<Uint8Array>>((r) => {
+        resolveAdopted = r;
+      });
+
+      server.use(
+        http.post('/api/v1/chat/turns', async ({ request }) => {
+          turnsPosts += 1;
+          const body = (await request.json()) as { conversation_id?: string };
+          conversationIdRef.current = body.conversation_id ?? '';
+          if (turnsPosts === 1) {
+            return HttpResponse.json(
+              {
+                detail: {
+                  message: 'This conversation already has a running turn.',
+                  active_turn_id: 'running-turn-12',
+                  active_turn_first_seq: 2,
+                },
+              },
+              { status: 409 }
+            );
+          }
+          // The recovery kickoff fails outright.
+          return new HttpResponse(null, { status: 500 });
+        }),
+        http.post('/api/v1/chat/turns/:turnId/steer', () =>
+          HttpResponse.json({ accepted: true, queued_after_seq: 4 })
+        ),
+        // Scoped to this test's conversation: a stray stream request left over
+        // from an earlier test would otherwise hand back a controller nothing
+        // is reading.
+        http.get('/api/v1/chat/conversations/:conversationId/stream', ({ params }) => {
+          const mine = String(params.conversationId) === conversationIdRef.current;
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              if (mine) {
+                resolveAdopted(controller);
+              }
+            },
+          });
+          return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'and the dentist too');
+      await user.keyboard('{Enter}');
+
+      // The adopted turn ends without ever consuming the prompt, so it is
+      // resent — and that send fails.
+      const controller = await adoptedReady;
+      controller.enqueue(
+        sse('turn_ended', { turn_id: 'running-turn-12', status: 'complete', seq: 5 })
+      );
+      controller.close();
+
+      await waitFor(() => {
+        expect(turnsPosts).toBe(2);
+      }, WAIT);
+      await waitFor(() => {
+        expect(screen.getByText(/encountered an error/i)).toBeInTheDocument();
+      }, WAIT);
+      const bubbles = screen
+        .getAllByTestId('user-message-content')
+        .filter((el) => el.textContent?.includes('and the dentist too'));
+      expect(bubbles).toHaveLength(1);
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'clears the composer when a steer whose response was lost is echoed back',
+    async () => {
+      // The turn can drain the steer and publish its echo while the POST is
+      // still failing. Seeing that echo is what lets the composer clear instead
+      // of asking the user to resend an instruction the turn already acted on.
+      const { ready, turnIdRef } = installOwnOpenStream();
+      let steerInputId = '';
+      // The POST is held open until the test has seen the echo rendered, so the
+      // ordering under test — echo observed, THEN the request fails — is fixed
+      // rather than a race against the retry backoff.
+      let releaseSteer: () => void = () => {};
+      const steerGate = new Promise<void>((resolve) => {
+        releaseSteer = resolve;
+      });
+      server.use(
+        http.post('/api/v1/chat/turns/:turnId/steer', async ({ request }) => {
+          const body = (await request.json()) as { input_id: string };
+          steerInputId = body.input_id;
+          await steerGate;
+          return new HttpResponse(null, { status: 503 });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'focus on tomorrow');
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+
+      await waitFor(() => expect(steerInputId).not.toBe(''), WAIT);
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: turnIdRef.current,
+          content: 'focus on tomorrow',
+          input_id: steerInputId,
+          seq: 1,
+        })
+      );
+
+      // The echo rendered, so the client has processed it; only now does the
+      // request fail.
+      await waitFor(() => {
+        expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
+      }, WAIT);
+      releaseSteer();
+
+      // Delivered after all: the composer clears and no steer error is shown.
+      await waitFor(() => expect(steerInput).toHaveValue(''), WAIT);
+      expect(screen.queryByText(/Could not steer the assistant/)).toBeNull();
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
+      );
+      controller.close();
+    },
+    { timeout: 30000 }
+  );
+
+  it(
+    'keeps the text when the echo belongs to someone else',
+    async () => {
+      // Same failing POST, but the echo names a submission this client never
+      // made — another interface sent the same words. Reading it as delivery
+      // would clear the composer and lose the only copy of this message.
+      const { ready, turnIdRef } = installOwnOpenStream();
+      let steerPosts = 0;
+      let releaseSteer: () => void = () => {};
+      const steerGate = new Promise<void>((resolve) => {
+        releaseSteer = resolve;
+      });
+      server.use(
+        http.post('/api/v1/chat/turns/:turnId/steer', async () => {
+          steerPosts += 1;
+          await steerGate;
+          return new HttpResponse(null, { status: 503 });
+        })
+      );
+
+      const user = userEvent.setup();
+      await renderChatApp({ waitForReady: true });
+
+      const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+      await user.type(messageInput, 'Plan my week');
+      await user.keyboard('{Enter}');
+
+      const controller = await ready;
+      const steerInput = screen.getByTestId('chat-input');
+      await user.type(steerInput, 'focus on tomorrow');
+      await user.click(await screen.findByTestId('steer-button', undefined, WAIT));
+
+      await waitFor(() => expect(steerPosts).toBeGreaterThan(0), WAIT);
+      controller.enqueue(
+        sse('user_input', {
+          turn_id: turnIdRef.current,
+          content: 'focus on tomorrow',
+          input_id: 'some-other-clients-submission',
+          seq: 1,
+        })
+      );
+      await waitFor(() => {
+        expect(screen.getByText('focus on tomorrow')).toBeInTheDocument();
+      }, WAIT);
+      releaseSteer();
+
+      await waitFor(() => {
+        expect(screen.getByText(/Could not steer the assistant/)).toBeInTheDocument();
+      }, WAIT);
+      expect(steerInput).toHaveValue('focus on tomorrow');
+
+      controller.enqueue(
+        sse('turn_ended', { turn_id: turnIdRef.current, status: 'complete', seq: 2 })
+      );
+      controller.close();
     },
     { timeout: 30000 }
   );

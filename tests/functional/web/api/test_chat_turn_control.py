@@ -32,10 +32,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import (
     AssistantMessage,
+    ContentPartDict,
     MessageReasoningInfo,
     ToolMessage,
     UserMessage,
+    text_content,
 )
+from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -49,6 +52,8 @@ from family_assistant.storage.repositories.message_history import (
     MessageHistoryRepository,
 )
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.models import ChatPromptRequest
+from family_assistant.web.routers import chat_api
 from family_assistant.web.turn_producer import persist_stopped_reply
 from family_assistant.web.web_mid_turn_controller import WebMidTurnController
 from tests.helpers import wait_for_condition
@@ -1000,6 +1005,7 @@ async def test_steer_running_turn_injects_user_input(
     """
     user_prompt = "Steer me mid-turn"
     steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
 
     # Iteration 2: once the injected [MID-TURN USER UPDATE] is in the messages,
     # reply with final text. Listed first so it wins over the tool-call rule.
@@ -1053,7 +1059,11 @@ async def test_steer_running_turn_injects_user_input(
 
         steer = await api_test_client.post(
             f"/api/v1/chat/turns/{turn_id}/steer",
-            json={"conversation_id": conversation_id, "prompt": steer_text},
+            json={
+                "conversation_id": conversation_id,
+                "prompt": steer_text,
+                "input_id": steer_input_id,
+            },
         )
         assert steer.status_code == 200, steer.text
         assert steer.json()["accepted"] is True
@@ -1064,8 +1074,13 @@ async def test_steer_running_turn_injects_user_input(
         )
 
         events = _drain(handle)
+        # The echo names the submission it consumed, which is how the sending
+        # client recognises its own message rather than an identical one from
+        # somewhere else.
         assert any(
-            e.type == "user_input" and e.payload.get("content") == steer_text
+            e.type == "user_input"
+            and e.payload.get("content") == steer_text
+            and e.payload.get("input_id") == steer_input_id
             for e in events
         ), f"Expected a user_input event carrying the steer text, got {events}"
     finally:
@@ -1089,6 +1104,281 @@ async def test_steer_running_turn_injects_user_input(
     assert all(
         "MID-TURN USER UPDATE" not in str(row["content"]) for row in steer_rows
     ), "Steering message must persist as raw text, not the internal wrapper"
+
+
+async def test_retried_steer_with_the_same_input_id_is_queued_once(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client whose steer response was lost retries with the same input_id.
+
+    The turn must act on the message once: queueing both copies would feed the
+    instruction to the model twice and can repeat whatever tool work it asks
+    for. Both requests answer 200, since the retry is asking whether its message
+    landed, not to say the same thing twice.
+    """
+    user_prompt = "Steer me twice"
+    steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
+
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        _reply("Okay, focusing on tomorrow."),
+    ))
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        LLMOutput(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_steer_twice",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerdup_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    handle = await hub.subscribe(conversation_id, from_seq=0)
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        body = {
+            "conversation_id": conversation_id,
+            "prompt": steer_text,
+            "input_id": steer_input_id,
+        }
+        first = await api_test_client.post(
+            f"/api/v1/chat/turns/{turn_id}/steer", json=body
+        )
+        # The retry a lost response provokes, byte-identical to the first.
+        second = await api_test_client.post(
+            f"/api/v1/chat/turns/{turn_id}/steer", json=body
+        )
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert second.json()["accepted"] is True
+
+        release.set()
+        await wait_for_condition(
+            _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+        )
+
+        events = _drain(handle)
+        echoes = [
+            event
+            for event in events
+            if event.type == "user_input"
+            and event.payload.get("input_id") == steer_input_id
+        ]
+        assert len(echoes) == 1, f"Expected the steer to be consumed once, got {echoes}"
+    finally:
+        hub.unsubscribe(conversation_id, handle.queue)
+
+
+async def test_retried_steer_after_the_turn_ends_is_still_accepted(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A steer retry can outlive the turn it was sent to.
+
+    The controller holding the accepted ids is dropped when the producer
+    finishes, so recognition has to live on the turn record. Refusing the retry
+    with 409 would send the client down the resend path and repeat an
+    instruction the turn already acted on.
+    """
+    user_prompt = "Steer me then finish"
+    steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
+
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, "MID-TURN USER UPDATE"),
+        _reply("Okay, focusing on tomorrow."),
+    ))
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        LLMOutput(
+            content="",
+            tool_calls=[
+                ToolCallItem(
+                    id="call_steer_late",
+                    type="function",
+                    function=ToolCallFunction(name="list_notes", arguments="{}"),
+                )
+            ],
+            reasoning_info=MessageReasoningInfo(
+                prompt_tokens=10, completion_tokens=10, total_tokens=20
+            ),
+        ),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerlate_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await asyncio.wait_for(started.wait(), timeout=5.0)
+
+    body = {
+        "conversation_id": conversation_id,
+        "prompt": steer_text,
+        "input_id": steer_input_id,
+    }
+    accepted = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/steer", json=body
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    release.set()
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    # The retry arrives once the turn is over and its controller is gone.
+    late_retry = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/steer", json=body
+    )
+    assert late_retry.status_code == 200, late_retry.text
+    assert late_retry.json()["accepted"] is True
+    # The floor the FIRST attempt was given, not the current head: the turn has
+    # published this message's echo (and its whole reply) since, and a client
+    # replaying from the head would start after the event it is waiting for.
+    assert (
+        late_retry.json()["queued_after_seq"] == accepted.json()["queued_after_seq"]
+    ), "A retry must be told the cursor its submission was queued behind"
+    assert late_retry.json()["queued_after_seq"] < hub.latest_seq(conversation_id)
+
+    # A message the turn never saw still gets the 409 that tells the client to
+    # start a new turn.
+    unknown = await api_test_client.post(
+        f"/api/v1/chat/turns/{turn_id}/steer",
+        json={
+            "conversation_id": conversation_id,
+            "prompt": "and one more thing",
+            "input_id": f"input_{uuid.uuid4().hex[:8]}",
+        },
+    )
+    assert unknown.status_code == 409, unknown.text
+
+
+async def test_steer_that_lands_as_the_turn_ends_is_not_recorded_as_delivered(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The turn can finish between the running check and the enqueue.
+
+    The message then sits on a controller nobody will drain. Recording it as
+    accepted would have a later retry told it was delivered, when no echo and no
+    persisted row can ever exist; leaving it unrecorded lets that retry take the
+    409 that starts a new turn instead.
+    """
+    user_prompt = "Steer me at the buzzer"
+    steer_text = "actually, focus on tomorrow"
+    steer_input_id = f"input_{uuid.uuid4().hex[:8]}"
+
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("All done."),
+    ))
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerbuzzer_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+    # Reopen the window the race leaves: the endpoint sees a running turn, and
+    # the producer finishes while the enqueue is in flight.
+    turn = hub.get_turn(conversation_id, turn_id)
+    assert turn is not None
+    controller = WebMidTurnController()
+    turn.mid_turn_controller = controller
+    turn.status = "running"
+
+    original_add_input = controller.add_input
+
+    async def end_turn_mid_enqueue(user_input: MidTurnUserInput) -> bool:
+        turn.status = "complete"
+        return await original_add_input(user_input)
+
+    monkeypatch.setattr(controller, "add_input", end_turn_mid_enqueue)
+
+    body = {
+        "conversation_id": conversation_id,
+        "prompt": steer_text,
+        "input_id": steer_input_id,
+    }
+    raced = await api_test_client.post(f"/api/v1/chat/turns/{turn_id}/steer", json=body)
+    assert raced.status_code == 200, raced.text
+    assert steer_input_id not in turn.accepted_steer_inputs, (
+        "A message queued onto a controller that will never be drained must not "
+        "be recorded as delivered"
+    )
+
+    # So the retry is refused rather than told it landed, and the client starts
+    # a new turn with it.
+    retry = await api_test_client.post(f"/api/v1/chat/turns/{turn_id}/steer", json=body)
+    assert retry.status_code == 409, retry.text
 
 
 async def test_steer_finished_turn_returns_409(
@@ -1138,6 +1428,294 @@ async def test_steer_unknown_turn_returns_404(
         json={"conversation_id": conversation_id, "prompt": "hello?"},
     )
     assert response.status_code == 404, response.text
+
+
+async def test_second_turn_while_one_is_running_returns_409(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conversation runs one turn at a time; the rival turn is refused.
+
+    Two concurrent turns interleave their writes on one history, and the second
+    replays tool calls the first has not answered yet. The 409 hands back the
+    running turn's id so the client can steer it instead.
+    """
+    user_prompt = "Start something long"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_overlap_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        rival = await api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": str(uuid.uuid4()),
+                "conversation_id": conversation_id,
+                "prompt": "and another thing",
+                "interface_type": "web",
+            },
+        )
+    finally:
+        release.set()
+
+    assert rival.status_code == 409, rival.text
+    detail = rival.json()["detail"]
+    assert detail["active_turn_id"] == turn_id
+    # The client resubscribes from here, so it follows the running turn alone
+    # instead of replaying the conversation from seq 0.
+    running = hub.get_turn(conversation_id, turn_id)
+    assert running is not None
+    assert detail["active_turn_first_seq"] == running.first_seq
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+
+async def test_retrying_the_running_turn_id_is_still_idempotent(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The overlap guard must not break the kickoff retry it sits next to.
+
+    A client that retries the SAME turn id (a dropped kickoff response) is
+    resending one turn, not starting a rival, so it gets that turn's identity
+    back rather than a 409.
+    """
+    user_prompt = "Retry my kickoff"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_retry_{uuid.uuid4().hex[:8]}"
+    body = {
+        "turn_id": turn_id,
+        "conversation_id": conversation_id,
+        "prompt": user_prompt,
+        "interface_type": "web",
+    }
+    post = await api_test_client.post("/api/v1/chat/turns", json=body)
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        retry = await api_test_client.post("/api/v1/chat/turns", json=body)
+    finally:
+        release.set()
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["turn_id"] == turn_id
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+
+async def test_turn_admitted_during_attachment_setup_is_still_refused(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The overlap guard holds across the setup this endpoint awaits.
+
+    A request carrying attachments checks for a running turn, then uploads them
+    — and a rival turn can be admitted while it does. Rechecking would only
+    narrow the window, so registration itself refuses under the hub's lock: the
+    request that parked in setup loses even though it checked first.
+    """
+    user_prompt = "The rival that got in first"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    llm_started = asyncio.Event()
+    llm_release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(
+            api_mock_llm_client.generate_response, llm_started, llm_release
+        ),
+    )
+
+    upload_started = asyncio.Event()
+    upload_release = asyncio.Event()
+
+    async def gated_process_attachments(
+        payload: ChatPromptRequest,
+        _conversation_id: str,
+        _attachment_registry: object,
+        _db_context: object,
+        _user_id: str,
+    ) -> tuple[list[ContentPartDict], None]:
+        upload_started.set()
+        await upload_release.wait()
+        return [text_content(payload.prompt)], None
+
+    monkeypatch.setattr(
+        chat_api, "_process_user_attachments", gated_process_attachments
+    )
+
+    conversation_id = f"conv_setup_race_{uuid.uuid4().hex[:8]}"
+    parked_turn_id = str(uuid.uuid4())
+    rival_turn_id = str(uuid.uuid4())
+
+    # Parks inside attachment setup, having already passed the early check.
+    parked = asyncio.ensure_future(
+        api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": parked_turn_id,
+                "conversation_id": conversation_id,
+                "prompt": "look at this scan",
+                "interface_type": "web",
+                "attachments": [
+                    {
+                        "type": "image",
+                        "content": "eA==",
+                        "mime_type": "image/png",
+                        "filename": "scan.png",
+                    }
+                ],
+            },
+        )
+    )
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(upload_started.wait(), timeout=5.0)
+
+        # No turn is registered yet, so this one is admitted and starts running.
+        rival = await api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": rival_turn_id,
+                "conversation_id": conversation_id,
+                "prompt": user_prompt,
+                "interface_type": "web",
+            },
+        )
+        assert rival.status_code == 200, rival.text
+        await asyncio.wait_for(llm_started.wait(), timeout=5.0)
+    finally:
+        upload_release.set()
+
+    try:
+        parked_response = await asyncio.wait_for(parked, timeout=5.0)
+    finally:
+        llm_release.set()
+
+    assert parked_response.status_code == 409, parked_response.text
+    assert parked_response.json()["detail"]["active_turn_id"] == rival_turn_id
+    assert hub.get_turn(conversation_id, parked_turn_id) is None
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, rival_turn_id),
+        description="rival turn complete",
+    )
+
+
+async def test_steer_reports_the_stream_head_it_was_queued_after(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``queued_after_seq`` is a floor: the steer's echo is published above it.
+
+    A client replaying a turn it has just adopted uses this to tell its own
+    echo from identical text the turn consumed earlier.
+    """
+    user_prompt = "Tell me about seqs"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_steerseq_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        steer = await api_test_client.post(
+            f"/api/v1/chat/turns/{turn_id}/steer",
+            json={"conversation_id": conversation_id, "prompt": "actually, hurry"},
+        )
+    finally:
+        release.set()
+
+    assert steer.status_code == 200, steer.text
+    queued_after_seq = steer.json()["queued_after_seq"]
+    assert queued_after_seq == hub.latest_seq(conversation_id)
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+    # Everything the turn published after the steer — including its echo — sits
+    # above the floor the client was handed.
+    turn = hub.get_turn(conversation_id, turn_id)
+    assert turn is not None
+    assert turn.latest_seq > queued_after_seq
 
 
 async def test_steer_rejects_conversation_owned_by_another_user(

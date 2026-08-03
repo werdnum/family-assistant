@@ -56,6 +56,7 @@ from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionConte
 from family_assistant.web.confirmation_manager import web_confirmation_manager
 from family_assistant.web.conversation_stream_hub import (
     ConversationStreamHub,
+    ConversationTurnRunningError,
     OutOfBufferError,
     StreamEvent,
     TurnAlreadyExistsError,
@@ -668,6 +669,15 @@ class ChatTurnSteerRequest(BaseModel):
     prompt: str = Field(
         ..., description="Steering message to inject into the running turn"
     )
+    input_id: str | None = Field(
+        default=None,
+        description=(
+            "Client-generated identifier for this submission. The turn's echo of "
+            "the message carries it back on the ``user_input`` event, so a client "
+            "whose steer response was lost can tell whether the turn consumed "
+            "*its* message rather than an identical one from another client."
+        ),
+    )
 
 
 class ChatTurnSteerResponse(BaseModel):
@@ -677,6 +687,15 @@ class ChatTurnSteerResponse(BaseModel):
     conversation_id: str = Field(..., description="Conversation identifier")
     accepted: bool = Field(
         ..., description="True once the steering message was queued for injection"
+    )
+    queued_after_seq: int = Field(
+        ...,
+        description=(
+            "Seq of the conversation's most recent event when the steer was "
+            "queued (-1 if none). The turn's echo of this message is published "
+            "later, so it carries a strictly greater seq — a client replaying "
+            "the turn uses this to tell the echo from identical earlier input."
+        ),
     )
 
 
@@ -697,6 +716,37 @@ def _get_hub(request: Request) -> ConversationStreamHub:
     hub = ConversationStreamHub()
     request.app.state.conversation_stream_hub = hub
     return hub
+
+
+def _running_turn_conflict(
+    conversation_id: str, rejected_turn_id: str, running_turn: TurnRecord
+) -> HTTPException:
+    """Build the 409 that refuses a rival turn and names the running one.
+
+    Raised from two places — the early check in ``POST /turns`` and the
+    authoritative one inside ``start_turn`` — so the client sees one shape
+    regardless of where the rival lost.
+    """
+    logger.info(
+        "Rejecting turn %s: conversation %s already has running turn %s.",
+        rejected_turn_id,
+        conversation_id,
+        running_turn.turn_id,
+    )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "message": (
+                "This conversation already has a running turn. Steer that "
+                "turn instead of starting a new one."
+            ),
+            "active_turn_id": running_turn.turn_id,
+            # Where that turn's events start in the hub buffer, so a client
+            # that lost its stream resubscribes to the running turn alone
+            # rather than replaying the whole conversation from seq 0.
+            "active_turn_first_seq": running_turn.first_seq,
+        },
+    )
 
 
 # Lifecycle/control frames that an ``event_types`` allow-list must never filter
@@ -1038,6 +1088,34 @@ async def api_chat_create_turn(
             incomplete=not turn_has_terminal_reply,
         )
 
+    # One turn at a time per conversation. A second turn started while the first
+    # is mid-tool overlaps two LLM loops on one history: they interleave their
+    # writes, and the new turn replays a tool call whose result the running turn
+    # has not written yet. Clients reach here by mistake, not by intent — the
+    # composer means to STEER a running turn, and falls back to a plain send only
+    # when it has lost track of the turn (e.g. across an app suspend). Hand back
+    # the turn id it lost so it can steer that instead of starting a rival turn.
+    #
+    # This is the early, cheap rejection: it spares the attachment upload work
+    # below in the common case. It is NOT the guarantee — the setup between here
+    # and ``start_turn`` awaits, so a rival POST can pass this check too. The
+    # authoritative check is ``reject_if_running`` on ``start_turn``, which runs
+    # under the same lock as the registration; both raise the same 409.
+    # Any running turn blocks, not just one whose raw user_id matches: ownership
+    # was already settled above (sole canonical owner), and one person reaching
+    # the conversation through two linked raw identities would otherwise slip a
+    # rival turn past this.
+    running_turn = next(
+        (
+            turn
+            for turn in hub.active_turns(conversation_id)
+            if turn.status == "running"
+        ),
+        None,
+    )
+    if running_turn is not None:
+        raise _running_turn_conflict(conversation_id, payload.turn_id, running_turn)
+
     # Resolve processing service profile.
     selected_processing_service: ProcessingService = default_processing_service
     if payload.profile_id:
@@ -1103,7 +1181,15 @@ async def api_chat_create_turn(
             user_id=user_id,
             started_at=datetime.now(UTC),
             mid_turn_controller=mid_turn_controller,
+            reject_if_running=True,
         )
+    except ConversationTurnRunningError as exc:
+        # A rival turn was admitted while this request did its setup (attachment
+        # processing awaits above). The hub refused registration under its lock,
+        # so exactly one of the two racing kickoffs proceeds.
+        raise _running_turn_conflict(
+            conversation_id, payload.turn_id, exc.turn
+        ) from exc
     except TurnAlreadyExistsError as exc:
         # Lost a race with another concurrent POST: treat it as idempotent. The
         # loser returns here WITHOUT inserting the user message (the winner does
@@ -1719,6 +1805,19 @@ async def api_chat_steer_turn(
     turn = hub.get_turn(payload.conversation_id, turn_id)
     if turn is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if payload.input_id is not None and payload.input_id in turn.accepted_steer_inputs:
+        # A retry of a submission this turn already accepted, arriving after it
+        # finished. Answering 409 would send the client down the resend path and
+        # repeat an instruction the turn has already acted on. It gets the floor
+        # the original request was told, not the current head: the turn may have
+        # published this message's echo since, and a client replaying from the
+        # head would start after the very event it is waiting for.
+        return ChatTurnSteerResponse(
+            turn_id=turn_id,
+            conversation_id=payload.conversation_id,
+            accepted=True,
+            queued_after_seq=turn.accepted_steer_inputs[payload.input_id],
+        )
     controller = turn.mid_turn_controller
     if turn.status != "running" or not isinstance(controller, WebMidTurnController):
         raise HTTPException(
@@ -1726,16 +1825,49 @@ async def api_chat_steer_turn(
             detail="Turn is not running; start a new turn instead.",
         )
 
-    await controller.add_input(
+    # Read the stream head BEFORE queueing, so the floor is conservative: the
+    # echo of this message is published strictly after it, while every event
+    # already on the stream sits at or below it.
+    queued_after_seq = hub.latest_seq(payload.conversation_id)
+    queued = await controller.add_input(
         MidTurnUserInput(
             content=payload.prompt,
             user_name=_user_name_for_chat(current_user),
+            interface_message_id=payload.input_id,
         )
     )
+    if payload.input_id is not None and turn.status == "running":
+        # Recorded on the turn, which outlives the controller, so a retry that
+        # arrives after the turn ends is still recognised as already delivered.
+        # setdefault, not assignment: a retry the controller deduped must keep
+        # the floor its first attempt was given.
+        #
+        # Re-checked after the enqueue, because the producer can finish between
+        # the status check above and this point — the message then sits on a
+        # controller nobody will drain. Recording it anyway would have a later
+        # retry told "delivered" for something that will never be acted on;
+        # leaving it unrecorded lets that retry take the 409 that starts a new
+        # turn. This narrows the window rather than closing it: a turn can also
+        # be inside its final, tool-free iteration, past the drain but not yet
+        # ended. The client's un-echoed-steer recovery is the guarantee there,
+        # which is why an echo — not this 200 — is what settles a submission.
+        turn.accepted_steer_inputs.setdefault(payload.input_id, queued_after_seq)
+    if not queued:
+        # A retry that raced the turn rather than outliving it: the controller
+        # is still live and had already taken this submission. Answering 200
+        # without queueing it again is what the client is asking for — it is
+        # retrying because the first response was lost, not because it wants to
+        # say the same thing twice.
+        logger.info(
+            "Steer input %s already queued for turn %s; not queueing it again",
+            payload.input_id,
+            turn_id,
+        )
     return ChatTurnSteerResponse(
         turn_id=turn_id,
         conversation_id=payload.conversation_id,
         accepted=True,
+        queued_after_seq=queued_after_seq,
     )
 
 

@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
+import { generateUUID } from '../utils/uuid';
 import { conversationStreamUrl, redirectToLogin } from './conversationStream';
 
 // Resume tuning for a dropped/interrupted reply stream. The producer keeps
@@ -29,17 +30,17 @@ export const streamResumeTuning = {
 /**
  * Hook for handling streaming responses from the chat API
  * @param {Object} options - Hook options
- * @param {Function} options.onMessage - Callback when content is streamed (receives accumulated content)
- * @param {Function} options.onToolCall - Callback when tool calls are updated (receives array of all tool calls)
- * @param {Function} options.onToolConfirmationRequest - Callback when tool confirmation is requested
- * @param {Function} options.onToolConfirmationResult - Callback when tool confirmation result is received
- * @param {Function} options.onError - Callback when an error occurs (receives Error object)
- * @param {Function} options.onComplete - Callback when stream completes (receives { content, toolCalls })
- * @param {Function} options.onUserInput - Callback when a mid-turn steering message is injected into the running turn (receives the message content). Lets the UI render the steering message as a user bubble while the turn continues.
- * @param {Function} options.onCancelled - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
- * @param {Function} options.onReloadHistory - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
- * @param {Function} options.onCheckTurnActive - Async (conversationId, turnId) => boolean: whether the server still reports this turn running. Used so a held-open resume leg held open by a concurrent turn doesn't reset the give-up streak.
- * @returns {Object} { sendStreamingMessage, cancelStream, isStreaming }
+ * @param {Function} [options.onMessage] - Callback when content is streamed (receives accumulated content)
+ * @param {Function} [options.onToolCall] - Callback when tool calls are updated (receives array of all tool calls)
+ * @param {Function} [options.onToolConfirmationRequest] - Callback when tool confirmation is requested
+ * @param {Function} [options.onToolConfirmationResult] - Callback when tool confirmation result is received
+ * @param {Function} [options.onError] - Callback when an error occurs (receives Error object)
+ * @param {Function} [options.onComplete] - Callback when stream completes (receives { content, toolCalls, completed, turnId, streamedTurnId }). `turnId` is the id this send was kicked off with, so caller-side bookkeeping keyed at send time still matches; `streamedTurnId` is the turn actually followed, which differs only when a refused send adopted the conversation's running turn.
+ * @param {Function} [options.onUserInput] - Callback when a mid-turn steering message is injected into the running turn (receives the message content and the submitting client's `input_id`, or null when it sent none). Lets the UI render the steering message as a user bubble while the turn continues, and tells a sender that this turn consumed its own submission.
+ * @param {Function} [options.onCancelled] - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
+ * @param {Function} [options.onReloadHistory] - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
+ * @param {Function} [options.onCheckTurnActive] - Async (conversationId, turnId) => boolean: whether the server still reports this turn running. Used so a held-open resume leg held open by a concurrent turn doesn't reset the give-up streak.
+ * @returns {{sendStreamingMessage: Function, cancelStream: Function, stopTurn: Function, steerStream: Function, isStreaming: boolean}}
  */
 export const useStreamingResponse = ({
   onMessage = () => {},
@@ -64,6 +65,16 @@ export const useStreamingResponse = ({
   // target the live server-side turn. Set once the turn is kicked off and
   // cleared when the stream settles.
   const activeTurnRef = useRef(null);
+  // Set once the user asks to stop the live turn, cleared when a new send
+  // begins. A send still placing itself when Stop lands has no stream to carry
+  // the turn_ended(cancelled) event, so this is the only record that the user
+  // asked for the interaction to end.
+  const stopRequestedRef = useRef(false);
+  // The one identity change a request in flight is allowed to follow: a kickoff
+  // refused with 409 continues as the conversation's running turn. Recorded as
+  // the exact pair so a retry follows THAT transition and nothing else — a
+  // later, unrelated turn in the same conversation must not inherit a Stop.
+  const adoptionRedirectRef = useRef(null);
 
   const sendStreamingMessage = useCallback(
     async ({
@@ -75,6 +86,8 @@ export const useStreamingResponse = ({
       turnId = undefined,
     }) => {
       setIsStreaming(true);
+      stopRequestedRef.current = false;
+      adoptionRedirectRef.current = null;
       abortControllerRef.current = new AbortController();
 
       let currentMessage = '';
@@ -93,14 +106,41 @@ export const useStreamingResponse = ({
       // attach_to_response tool call so queued attachments render in the UI.
       const autoAttachments = [];
 
+      // The echo of a prompt delivered to an adopted turn, cleared once that
+      // echo arrives. Declared out here so the completion report below can see
+      // whether it ever did: a turn that was already streaming its final,
+      // tool-free response never drains what the steer queued, and an adopted
+      // prompt left unconsumed at turn_ended has to be resent or it is simply
+      // lost. `{ prompt, afterSeq }` — see the adoption branch.
+      let pendingAdoptedEcho = null;
+      // Set when a message reached nothing at all: the kickoff was refused and
+      // the steer it was rerouted to was then rejected outright. The caller
+      // resends it unconditionally — unlike the cases below there is no doubt
+      // about delivery, so a resend cannot duplicate it.
+      let undeliveredPrompt = null;
+      // True once the turn's event stream has been opened at least once. Lets
+      // the completion report distinguish a send that died during setup (the
+      // kickoff POST failed) from one that was detached mid-stream — both end
+      // with completed: false, but only the first means nothing is running
+      // server-side and the caller's queue should keep moving.
+      let streamStarted = false;
+      // Set when the stream stopped following this turn without ever seeing it
+      // end — a bounded resume gave up, or the hub had evicted its events (410).
+      // Persisted history becomes the record of what happened, so anything the
+      // client was still waiting to observe on the stream will never be observed.
+      let reconciledWithoutEnd = false;
+
       // Client-generated turn id makes the kickoff idempotent: a retried POST
       // with the same id returns the existing turn instead of starting a
       // second producer.
-      const effectiveTurnId =
+      // Reassigned only when the server refuses this turn because the
+      // conversation already has one running and we adopt that turn instead.
+      const kickoffTurnId =
         turnId ||
         (typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()
           : `turn_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+      let effectiveTurnId = kickoffTurnId;
 
       // Record the live turn up front (the turn id and conversation id are
       // already known) so a Stop/Steer click during the kickoff POST — the
@@ -154,7 +194,47 @@ export const useStreamingResponse = ({
           signal: abortControllerRef.current.signal,
         });
 
-        if (!startResponse.ok) {
+        // A conversation runs one turn at a time, so the server refuses this one
+        // if it already has a running turn (409) and names the turn instead. We
+        // only get here having believed nothing was running — the composer falls
+        // back to a plain send when it has lost its turn handle (its stream
+        // dropped, the tab was hidden and resumed) — so this is that same
+        // message arriving at the wrong door. Deliver it to the running turn as
+        // a steer and follow that turn, rather than failing in front of the user.
+        let adoptedSteer = null;
+        if (startResponse.status === 409) {
+          const conflict = await startResponse.json().catch(() => ({}));
+          const runningTurnId = conflict?.detail?.active_turn_id;
+          // Steering carries text only, so a refused send that had files cannot
+          // be adopted: the running turn would answer a prompt whose
+          // attachments were never uploaded or associated with the history.
+          // Surface it as a failed send — which names the running turn as the
+          // reason and asks for a resend — rather than quietly delivering a
+          // message with its files stripped off.
+          if (runningTurnId && attachments?.length) {
+            const refusal = new Error(
+              'This conversation is still working on the previous message, so the ' +
+                'attachments could not be sent. Wait for it to finish, then send them again.'
+            );
+            // Tells the caller to show this text as-is. It is an instruction to
+            // the user, not a fault report, so replacing it with the generic
+            // "I encountered an error" line would hide the only thing that says
+            // what to do — and point at diagnostics for a non-bug.
+            refusal.userFacing = true;
+            throw refusal;
+          }
+          if (runningTurnId) {
+            adoptedSteer = {
+              turnId: runningTurnId,
+              // Subscribe from where the running turn began, not seq 0, so its
+              // own events replay without dragging in earlier turns'.
+              fromSeq: conflict.detail.active_turn_first_seq ?? 0,
+              prompt,
+            };
+          }
+        }
+
+        if (!startResponse.ok && !adoptedSteer) {
           if (startResponse.status === 401) {
             redirectToLogin();
             return;
@@ -163,19 +243,131 @@ export const useStreamingResponse = ({
           throw new Error(errorData.detail || `HTTP error! status: ${startResponse.status}`);
         }
 
-        const {
-          conversation_id: streamConversationId,
-          first_seq: firstSeq,
-          already_complete: alreadyComplete,
-          incomplete: durableIncomplete,
-        } = await startResponse.json();
-        const resolvedConversationId = streamConversationId || conversationId;
-        // Refine the live-turn record now that the server has resolved the
-        // conversation id (it generates one when the client omits it).
-        activeTurnRef.current = {
-          turnId: effectiveTurnId,
-          conversationId: resolvedConversationId,
-        };
+        let resolvedConversationId;
+        let firstSeq;
+        // Set only on the normal kickoff path; an adopted turn is live in the
+        // hub by definition, so it is never resolved from the durable record.
+        let durableTurnState = null;
+        // `pendingAdoptedEcho` (declared above the try) is the one steer echo to
+        // swallow, because the caller already rendered this prompt optimistically
+        // as a normal send. afterSeq is the stream head when the steer was
+        // queued, so the echo is published above it.
+        if (adoptedSteer) {
+          effectiveTurnId = adoptedSteer.turnId;
+          resolvedConversationId = conversationId;
+          activeTurnRef.current = {
+            turnId: effectiveTurnId,
+            conversationId: resolvedConversationId,
+          };
+          adoptionRedirectRef.current = {
+            from: kickoffTurnId,
+            to: effectiveTurnId,
+            conversationId: resolvedConversationId,
+          };
+          // The text has to come back with any ambiguous failure: the kickoff
+          // was refused, the composer has cleared, and nothing persisted this
+          // prompt, so an error without it leaves the message only in a bubble
+          // that a refresh discards.
+          const ambiguousDeliveryError = () => {
+            const ambiguous = new Error(
+              "Your message may not have reached the assistant, and it's still working on the " +
+                'previous one. Check the reply, then send it again if it was missed:\n\n' +
+                `> ${adoptedSteer.prompt}`
+            );
+            ambiguous.userFacing = true;
+            return ambiguous;
+          };
+          const steerUrl = `/api/v1/chat/turns/${encodeURIComponent(effectiveTurnId)}/steer`;
+          // Identifies this submission on the echo the turn publishes when it
+          // consumes the message, so the echo is recognised as ours rather than
+          // by matching text that another client could have sent too.
+          const steerInputId = generateUUID();
+          let steerResponse;
+          try {
+            steerResponse = await fetch(steerUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                conversation_id: resolvedConversationId,
+                prompt: adoptedSteer.prompt,
+                input_id: steerInputId,
+              }),
+              signal: abortControllerRef.current.signal,
+            });
+          } catch (steerFetchError) {
+            if (steerFetchError?.name === 'AbortError') {
+              throw steerFetchError;
+            }
+            // A dropped connection is as ambiguous as a 5xx — the request may
+            // have reached the server — and it is the likeliest failure here,
+            // since a flaky connection is what makes a client lose its turn
+            // handle and land on this path at all.
+            throw ambiguousDeliveryError();
+          }
+          if (!steerResponse.ok) {
+            if (steerResponse.status === 401) {
+              redirectToLogin();
+              return;
+            }
+            if (steerResponse.status === 404 || steerResponse.status === 409) {
+              // The turn finished in the gap between the kickoff's 409 and this
+              // steer, so it is definitively gone. The prompt reached nothing:
+              // the kickoff was refused, the steer was rejected, and the
+              // composer has already cleared. Report it as undelivered so the
+              // caller starts it as its own turn — the conversation is idle now,
+              // so that kickoff will be accepted. Throwing here would leave the
+              // message existing nowhere at all.
+              //
+              // Unless the user pressed Stop while this send was still placing
+              // itself: the cancel is why the turn is gone, and resending would
+              // restart the interaction they just ended. No stream ever opened
+              // here, so no turn_ended(cancelled) will say so — only this flag.
+              if (!stopRequestedRef.current) {
+                undeliveredPrompt = adoptedSteer.prompt;
+              }
+              return;
+            }
+            // A 5xx is ambiguous — the steer may have been queued before the
+            // response failed — so it must NOT be auto-resent.
+            throw ambiguousDeliveryError();
+          }
+          const steerBody = await steerResponse.json().catch(() => ({}));
+          pendingAdoptedEcho = {
+            prompt: adoptedSteer.prompt,
+            inputId: steerInputId,
+            // Absent (an older backend): fall back to the turn's start, which
+            // restores the previous replay-the-whole-turn behaviour.
+            afterSeq:
+              typeof steerBody.queued_after_seq === 'number'
+                ? steerBody.queued_after_seq
+                : adoptedSteer.fromSeq - 1,
+          };
+          // Follow the adopted turn from just after our message was queued, NOT
+          // from where the turn began. The turn has usually been working for a
+          // while — its earlier text and tool calls would replay into the bubble
+          // the composer just opened for THIS message, showing the previous
+          // answer again underneath it (and twice over, when history had already
+          // rendered that turn before the tab was resumed). What the turn does
+          // in response to this message starts here; the rest is reconciled from
+          // persisted history when the turn ends.
+          firstSeq = pendingAdoptedEcho.afterSeq + 1;
+        } else {
+          const {
+            conversation_id: streamConversationId,
+            first_seq: startFirstSeq,
+            already_complete: alreadyComplete,
+            incomplete: durableIncomplete,
+          } = await startResponse.json();
+          resolvedConversationId = streamConversationId || conversationId;
+          firstSeq = startFirstSeq;
+          durableTurnState = { alreadyComplete, durableIncomplete };
+          // Refine the live-turn record now that the server has resolved the
+          // conversation id (it generates one when the client omits it).
+          activeTurnRef.current = {
+            turnId: effectiveTurnId,
+            conversationId: resolvedConversationId,
+          };
+        }
 
         // The turn was resolved from the durable record (turn_id found in the
         // DB but not in the in-memory hub: restart / pruned / evicted). It is
@@ -183,8 +375,8 @@ export const useStreamingResponse = ({
         // history. If the durable record has no reply (incomplete: the turn was
         // interrupted by a crash/restart mid-turn), surface a recovery error
         // instead of silently showing the prompt alone.
-        if (alreadyComplete) {
-          if (durableIncomplete) {
+        if (durableTurnState?.alreadyComplete) {
+          if (durableTurnState.durableIncomplete) {
             onReloadHistory(resolvedConversationId, {
               errorIfNoReply: true,
               turnId: effectiveTurnId,
@@ -241,6 +433,7 @@ export const useStreamingResponse = ({
               // path (errorIfNoReply + turnId): if active_turns shows it running
               // we wait for its turn_ended, if a reply is persisted we show it,
               // and only a finished turn with no reply surfaces the marker.
+              reconciledWithoutEnd = true;
               onReloadHistory(resolvedConversationId, {
                 errorIfNoReply: true,
                 turnId: effectiveTurnId,
@@ -428,7 +621,66 @@ export const useStreamingResponse = ({
               // isn't appended to the assistant's streamed reply.
               if (eventType === 'user_input' || payload.type === 'user_input') {
                 if (payload.content) {
-                  onUserInput(payload.content);
+                  // A prompt we sent as a plain message and then re-routed into
+                  // the running turn echoes back here, but the caller already
+                  // rendered it optimistically when the send began. Swallow that
+                  // one echo so it doesn't appear twice; every other input on
+                  // this turn — later steers, and anything another client sent —
+                  // carries a different id and still shows.
+                  //
+                  // An echo with no id at all comes from a backend that predates
+                  // the field (the same skew `afterSeq` covers above). Fall back
+                  // to the old text-and-cursor match there: failing to swallow it
+                  // would hold back the whole adopted reply and resend the prompt.
+                  const isOurAdoptedEcho =
+                    pendingAdoptedEcho !== null &&
+                    (payload.input_id
+                      ? payload.input_id === pendingAdoptedEcho.inputId
+                      : payload.content.trim() === pendingAdoptedEcho.prompt.trim() &&
+                        typeof payload.seq === 'number' &&
+                        payload.seq > pendingAdoptedEcho.afterSeq);
+                  if (isOurAdoptedEcho) {
+                    pendingAdoptedEcho = null;
+                  } else {
+                    onUserInput(payload.content, payload.input_id ?? null);
+                  }
+                }
+                continue;
+              }
+
+              // Everything below renders into the assistant bubble the composer
+              // opened for THIS message. While an adopted turn has not yet
+              // echoed our prompt it is still finishing the response that was
+              // already in flight — `queued_after_seq` marks when the steer was
+              // queued, not when the turn got to it — so those events belong to
+              // the previous answer and would appear beneath a message they do
+              // not answer. Skip them; the turn's real reply starts after the
+              // echo. If turn_ended arrives first the prompt was never consumed
+              // at all, and the caller resends it (see unconsumedAdoptedPrompt)
+              // and reconciles the old turn from persisted history.
+              if (pendingAdoptedEcho !== null) {
+                // Errors and tool confirmations still pass: a confirmation is a
+                // live prompt whose tool stalls without an answer, and an error
+                // is never silently dropped.
+                if (payload.request_id && payload.tool_name) {
+                  onToolConfirmationRequest({
+                    request_id: payload.request_id,
+                    tool_name: payload.tool_name,
+                    tool_call_id: payload.tool_call_id,
+                    confirmation_prompt: payload.confirmation_prompt,
+                    timeout_seconds: payload.timeout_seconds,
+                    args: payload.args,
+                    created_at: new Date().toISOString(),
+                  });
+                }
+                if (payload.request_id !== undefined && payload.approved !== undefined) {
+                  onToolConfirmationResult({
+                    request_id: payload.request_id,
+                    approved: payload.approved,
+                  });
+                }
+                if (payload.error) {
+                  onError(new Error(payload.error || 'Unknown error'));
                 }
                 continue;
               }
@@ -559,6 +811,7 @@ export const useStreamingResponse = ({
         // closes and is bounded). The bubble's spinner honestly reflects "still
         // working", and the user can cancel — preferred over giving up on a slow
         // legitimate tool call.
+        streamStarted = true;
         let outcome = await consumeStream(firstSeq ?? 0);
         let noProgressResumes = 0;
         let resumeDelayMs = streamResumeTuning.initialDelayMs;
@@ -623,6 +876,7 @@ export const useStreamingResponse = ({
           // reconcile fetch itself fails — we have tried hard and the optimistic
           // partial (if any) is not proof the reply finished. (A 410 reconcile,
           // by contrast, did NOT exhaust the loop and routes without this flag.)
+          reconciledWithoutEnd = true;
           onReloadHistory(resolvedConversationId, {
             errorIfNoReply: true,
             turnId: effectiveTurnId,
@@ -643,7 +897,37 @@ export const useStreamingResponse = ({
           content: currentMessage,
           toolCalls,
           completed: turnEnded,
-          turnId: effectiveTurnId,
+          // The KICKOFF id, not the streamed one: the caller keyed this send's
+          // optimistic conversation row by the id it passed in (or, for a
+          // generated id, tracks nothing), so adopting a running turn must not
+          // move the key out from under it and strand the row for the session.
+          // The turn actually followed is reported separately.
+          turnId: kickoffTurnId,
+          streamedTurnId: effectiveTurnId,
+          // Still set means the adopted turn ended without ever consuming this
+          // prompt — it was already streaming a final, tool-free response when
+          // the steer landed, so the loop broke before its drain. Nothing else
+          // tracks it (the caller's awaiting-echo list only covers steers it
+          // sent itself), so the caller must resend it as a new turn or the
+          // message is lost — the exact failure this whole change is about.
+          unconsumedAdoptedPrompt: pendingAdoptedEcho?.prompt ?? null,
+          // A prompt that reached nothing: recover it whatever the outcome,
+          // since no turn ever saw it and no stream was followed.
+          undeliveredPrompt,
+          // The send failed before any stream was followed, so there is no
+          // server-side turn to wait on — terminal for this send, unlike a
+          // local detach.
+          kickoffFailed: !streamStarted && !turnEnded,
+          // True when this send followed a turn it adopted rather than one it
+          // started. The stream withholds that turn's output until it echoes
+          // our prompt, so its earlier tail is missing from the thread and has
+          // to be reconciled from persisted history when the stream ends.
+          adopted: effectiveTurnId !== kickoffTurnId,
+          // The stream stopped following this turn without seeing it end, so
+          // nothing it was still waiting to observe (a steer's echo) ever will
+          // be. The caller has to settle that here rather than carry it into an
+          // unrelated later turn.
+          reconciledWithoutEnd,
         });
         abortControllerRef.current = null;
         activeTurnRef.current = null;
@@ -684,12 +968,11 @@ export const useStreamingResponse = ({
   // after retries. The caller should surface a false so the user knows a pending
   // approval may still be live.
   const stopTurn = useCallback(async () => {
-    const active = activeTurnRef.current;
+    stopRequestedRef.current = true;
+    let active = activeTurnRef.current;
     if (!active) {
       return true;
     }
-    const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
-    const body = JSON.stringify({ conversation_id: active.conversationId });
     // Stop must fully secure the turn (the server also rejects the turn's
     // pending tool confirmations, returning 503 if it can't). Retry with a small
     // backoff on transient 5xx/network failures AND on 404: clicking Stop right
@@ -698,6 +981,28 @@ export const useStreamingResponse = ({
     // idempotent.
     const attempts = 5;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      // Re-read the live identity every attempt rather than capturing it once:
+      // a kickoff still in flight when Stop was clicked can be refused (409)
+      // and adopt the conversation's running turn, which repoints this ref.
+      // Cancelling the client-generated id we started with would then 404
+      // forever while the real turn kept running.
+      //
+      // Follow ONLY that adoption, identified by the exact turn pair. Following
+      // the live ref generally would be wrong twice over: the user can switch
+      // conversations during the backoff, and — even in this conversation — the
+      // turn being cancelled can finish and the user start another, which a
+      // pending Stop would then cancel instead. Keep the last known identity in
+      // both cases, and when the ref has been cleared (the stream settled).
+      const redirect = adoptionRedirectRef.current;
+      if (
+        redirect &&
+        redirect.from === active.turnId &&
+        redirect.conversationId === active.conversationId
+      ) {
+        active = { turnId: redirect.to, conversationId: redirect.conversationId };
+      }
+      const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/cancel`;
+      const body = JSON.stringify({ conversation_id: active.conversationId });
       let retryable = false;
       try {
         const response = await fetch(url, {
@@ -738,19 +1043,36 @@ export const useStreamingResponse = ({
   //  - 'error'     : transient failure (5xx/network). The turn may still be
   //                  running and the steer may even have been accepted, so the
   //                  caller must NOT auto-resend; surface it and keep the draft.
-  const steerStream = useCallback(async ({ prompt }) => {
+  const steerStream = useCallback(async ({ prompt, inputId }) => {
     const active = activeTurnRef.current;
     if (!active) {
       return 'finished';
     }
-    const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
-    const body = JSON.stringify({ conversation_id: active.conversationId, prompt });
     // Retry 404 (the kickoff POST may not have registered the turn yet — same
     // race as Stop) and transient 5xx/network with a small backoff. A 404 that
     // persists means the turn really finished → 'finished' (resend as a normal
     // message); a persistent 5xx/network is 'error' (don't auto-resend).
     const attempts = 5;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      // Deliberately pinned to the turn this steer was submitted against, NOT
+      // re-read from activeTurnRef the way Stop is. The ref moves on for
+      // reasons that have nothing to do with adoption: a turn ending drains the
+      // recovery queue, which starts a NEW turn carrying this very prompt as
+      // its kickoff — following the ref there would steer the same text into
+      // the turn already sending it, and the user would see it twice.
+      //
+      // The cost is that a steer submitted while a kickoff is still in flight
+      // 404s to exhaustion and comes back 'finished', so the caller resends it
+      // as a normal follow-up. The message still gets through; it just arrives
+      // as its own turn instead of steering the running one.
+      const url = `/api/v1/chat/turns/${encodeURIComponent(active.turnId)}/steer`;
+      // The same input_id on every attempt: a retry after an ambiguous failure
+      // must be recognisable as the same submission, not a second one.
+      const body = JSON.stringify({
+        conversation_id: active.conversationId,
+        prompt,
+        input_id: inputId,
+      });
       let lastWas404 = false;
       try {
         const response = await fetch(url, {

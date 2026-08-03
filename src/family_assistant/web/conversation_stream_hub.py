@@ -138,6 +138,18 @@ class TurnRecord:
     # endpoints look this up to request a graceful interrupt or inject a
     # mid-turn user message. Cleared alongside ``task`` when the producer ends.
     mid_turn_controller: "MidTurnInputProvider | None" = None
+    # Steering messages this turn has accepted, ``input_id`` -> the stream head
+    # reported when it was first queued. Held on the record rather than only on
+    # the controller because the controller is dropped the moment the producer
+    # finishes, while the record lingers: a client retrying a steer whose
+    # response was lost can arrive after the turn ended, and answering that 409
+    # would have it resend an instruction the turn already acted on. The stored
+    # head is what a retry must be told -- the current head has moved past the
+    # message's own echo, and a client replaying from it would never see the
+    # echo it is waiting for. Write-once per id, and read only once the turn is
+    # no longer running: while it runs, the controller's own lock-guarded set is
+    # what makes accept-or-drop atomic.
+    accepted_steer_inputs: dict[str, int] = field(default_factory=dict)
     # Invoked by the done-callback safety net if the producer task finished while
     # the turn was still 'running' AND it was cancelled (a Stop before the
     # producer's first slice). Lets the web layer persist a durable stopped
@@ -181,6 +193,19 @@ class TurnAlreadyExistsError(Exception):
 
     def __init__(self, turn: TurnRecord) -> None:
         super().__init__(f"Turn {turn.turn_id} already exists")
+        self.turn = turn
+
+
+class ConversationTurnRunningError(Exception):
+    """Raised by ``start_turn(reject_if_running=True)`` when the conversation
+    already has a different turn running.
+
+    Callers hand the running turn back to the client so it can steer that turn
+    instead of starting a rival one.
+    """
+
+    def __init__(self, turn: TurnRecord) -> None:
+        super().__init__(f"Conversation already has running turn {turn.turn_id}")
         self.turn = turn
 
 
@@ -352,6 +377,20 @@ class ConversationStreamHub:
         if state is None:
             return []
         return list(state.turns.values())
+
+    def latest_seq(self, conversation_id: str) -> int:
+        """Return the seq of the most recently published event, or -1 if the
+        conversation has published none.
+
+        Read as a floor: every event published after this call carries a
+        strictly greater seq. The steer endpoint hands it to the client so a
+        replayed historical event can't be mistaken for the echo of the steer
+        that was just queued.
+        """
+        state = self._get_state(conversation_id)
+        if state is None:
+            return -1
+        return state.next_seq - 1
 
     # ------------------------------------------------------------------ #
     # Publishing
@@ -550,6 +589,7 @@ class ConversationStreamHub:
         user_id: str,
         started_at: datetime,
         mid_turn_controller: "MidTurnInputProvider | None" = None,
+        reject_if_running: bool = False,
     ) -> TurnRecord:
         """Register a new turn and publish ``turn_started`` synchronously.
 
@@ -561,6 +601,19 @@ class ConversationStreamHub:
         ``mid_turn_controller`` is the cooperative interrupt/steer handle for
         this turn; it is stored on the record atomically so the cancel/steer
         endpoints can never observe a running turn without its controller.
+
+        ``reject_if_running`` enforces one turn at a time per conversation:
+        registration is refused with ``ConversationTurnRunningError`` if ANY turn
+        on the conversation is still running. The check happens under the same
+        lock as the registration, so two concurrent kickoffs with different turn
+        ids cannot both find the conversation idle and both be admitted.
+
+        Deliberately not scoped to ``user_id``. A conversation the hub serves has
+        exactly one canonical owner (the endpoint's sole-owner check refuses the
+        rest), but one person can reach it through several raw identities — web
+        and API tokens resolve to the same human, and turn records carry the raw
+        id. Comparing raw ids would let that person's second identity register a
+        rival turn, which is the interleaved history this guard exists to stop.
         """
         # Check-then-act idempotency: grab the per-conversation lock once we
         # know the conversation exists.
@@ -569,6 +622,14 @@ class ConversationStreamHub:
             existing = state.turns.get(turn_id)
             if existing is not None:
                 raise TurnAlreadyExistsError(existing)
+
+            if reject_if_running:
+                running = next(
+                    (turn for turn in state.turns.values() if turn.status == "running"),
+                    None,
+                )
+                if running is not None:
+                    raise ConversationTurnRunningError(running)
 
             event = self._append_and_fanout_under_lock(
                 state,
