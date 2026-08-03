@@ -171,6 +171,31 @@ POST /api/v1/chat/send_message
 returns the already-persisted reply instead of re-driving the LLM and persisting a second copy. The
 retry's response carries `already_complete: true`. Omit `turn_id` to always generate a fresh reply.
 
+**409 Conflict — the conversation already has a running turn.** `/send_message` takes the same
+one-turn-per-conversation reservation as `POST /v1/chat/turns`, so a send that lands while a turn is
+already running on that conversation — from the web UI, another device, or another API client — is
+refused rather than started alongside it. The refusal carries the same payload as the streaming
+path:
+
+```json
+{
+  "detail": {
+    "message": "This conversation already has a running turn. Steer that turn instead of starting a new one.",
+    "active_turn_id": "uuid-of-the-running-turn",
+    "active_turn_first_seq": 12
+  }
+}
+```
+
+A non-streaming turn is not steerable — it publishes no event stream to carry a steer echo — so a
+client refused by one should wait for it to finish and resend, or send into a different
+conversation. Turns started by `/send_message` are short-lived; there is no lingering reservation to
+wait out once the reply is returned.
+
+A `turn_id` that this backend has already run but that produced no persisted reply (its turn failed)
+is also refused with 409, carrying `turn_id` and `turn_status` instead of `active_turn_id`. Retry
+that message under a fresh `turn_id`.
+
 **Response:**
 
 ```json

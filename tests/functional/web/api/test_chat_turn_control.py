@@ -1738,3 +1738,195 @@ async def test_steer_rejects_conversation_owned_by_another_user(
         json={"conversation_id": conversation_id, "prompt": "let me steer"},
     )
     assert response.status_code == 404, response.text
+
+
+async def test_send_message_while_a_turn_is_running_returns_409(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-streaming send takes the same one-turn-per-conversation guard.
+
+    A Siri/App Intent send landing while the GUI has a turn running would
+    otherwise drive a second LLM loop over the same history: the two interleave
+    their writes, and the newcomer answers the running turn's in-flight tool
+    call with the 'abandoned' placeholder.
+    """
+    user_prompt = "Start something long"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    turn_id = str(uuid.uuid4())
+    conversation_id = f"conv_sendoverlap_{uuid.uuid4().hex[:8]}"
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        rival = await api_test_client.post(
+            "/api/v1/chat/send_message",
+            json={
+                "conversation_id": conversation_id,
+                "prompt": "and another thing",
+                "interface_type": "web",
+            },
+        )
+    finally:
+        release.set()
+
+    assert rival.status_code == 409, rival.text
+    detail = rival.json()["detail"]
+    assert detail["active_turn_id"] == turn_id
+    running = hub.get_turn(conversation_id, turn_id)
+    assert running is not None
+    assert detail["active_turn_first_seq"] == running.first_seq
+
+    await wait_for_condition(
+        _turn_complete(hub, conversation_id, turn_id), description="turn complete"
+    )
+
+
+async def test_turn_while_a_send_message_is_running_returns_409(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard holds in the other direction too: a send_message turn is visible
+    in the hub, so a streaming kickoff racing it is refused rather than admitted.
+    """
+    user_prompt = "Siri is talking"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, user_prompt),
+        _reply("done"),
+    ))
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    monkeypatch.setattr(
+        api_mock_llm_client,
+        "generate_response",
+        _gate_first_llm_call(api_mock_llm_client.generate_response, started, release),
+    )
+
+    conversation_id = f"conv_sendholds_{uuid.uuid4().hex[:8]}"
+    send_turn_id = str(uuid.uuid4())
+    send = asyncio.ensure_future(
+        api_test_client.post(
+            "/api/v1/chat/send_message",
+            json={
+                "turn_id": send_turn_id,
+                "conversation_id": conversation_id,
+                "prompt": user_prompt,
+                "interface_type": "web",
+            },
+        )
+    )
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+
+        rival = await api_test_client.post(
+            "/api/v1/chat/turns",
+            json={
+                "turn_id": str(uuid.uuid4()),
+                "conversation_id": conversation_id,
+                "prompt": "meanwhile, in the GUI",
+                "interface_type": "web",
+            },
+        )
+        assert rival.status_code == 409, rival.text
+        assert rival.json()["detail"]["active_turn_id"] == send_turn_id
+    finally:
+        release.set()
+
+    send_response = await asyncio.wait_for(send, timeout=10.0)
+    assert send_response.status_code == 200, send_response.text
+
+    # The reservation exists only for the duration of the send: once it ends the
+    # record is discarded, so the conversation is free and the turn id is reusable.
+    assert hub.get_turn(conversation_id, send_turn_id) is None
+    follow_up = await api_test_client.post(
+        "/api/v1/chat/send_message",
+        json={
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert follow_up.status_code == 200, follow_up.text
+
+
+async def test_failed_send_message_releases_its_reservation(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A send that blows up mid-turn must not wedge the conversation.
+
+    Without a terminal ``end_turn`` in a ``finally`` the record would sit at
+    'running' forever — pruning and eviction both skip running turns — and every
+    later turn on that conversation would take a 409.
+    """
+    user_prompt = "This one explodes"
+
+    working_generate = api_mock_llm_client.generate_response
+
+    async def _explode(*_args: object, **_kwargs: object) -> LLMOutput:
+        raise RuntimeError("LLM unavailable")
+
+    monkeypatch.setattr(api_mock_llm_client, "generate_response", _explode)
+
+    conversation_id = f"conv_sendfails_{uuid.uuid4().hex[:8]}"
+    failed = await api_test_client.post(
+        "/api/v1/chat/send_message",
+        json={
+            "conversation_id": conversation_id,
+            "prompt": user_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert failed.status_code == 500, failed.text
+
+    hub: ConversationStreamHub = app_fixture.state.conversation_stream_hub
+    assert not [
+        turn for turn in hub.active_turns(conversation_id) if turn.status == "running"
+    ]
+
+    recovery_prompt = "Now it works"
+    api_mock_llm_client.rules.append((
+        lambda args: _user_message_contains(args, recovery_prompt),
+        _reply("done"),
+    ))
+    monkeypatch.setattr(api_mock_llm_client, "generate_response", working_generate)
+    retry = await api_test_client.post(
+        "/api/v1/chat/send_message",
+        json={
+            "conversation_id": conversation_id,
+            "prompt": recovery_prompt,
+            "interface_type": "web",
+        },
+    )
+    assert retry.status_code == 200, retry.text

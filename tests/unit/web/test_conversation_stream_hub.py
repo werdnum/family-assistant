@@ -7,6 +7,7 @@ producer task lives in tests/functional/web/api/test_chat_streaming.py.
 """
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime
 
 import pytest
@@ -720,6 +721,66 @@ async def test_reject_if_running_still_reports_a_duplicate_turn_id() -> None:
             started_at=_now(),
             reject_if_running=True,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_discard_turn_frees_the_turn_id_for_a_retry() -> None:
+    """``discard_turn`` forgets an ended record entirely.
+
+    A non-streaming send holds its hub record only as the reservation. Keeping
+    it after the send would burn the ``turn_id``: ``start_turn`` refuses a
+    duplicate id, so a client retrying a turn that failed without persisting a
+    reply could never re-drive it.
+    """
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.end_turn("conv", turn_id="t1", status="failed")
+
+    await hub.discard_turn("conv", "t1")
+
+    assert hub.get_turn("conv", "t1") is None
+    retried = await hub.start_turn(
+        "conv",
+        turn_id="t1",
+        user_id="u1",
+        started_at=_now(),
+        reject_if_running=True,
+    )
+    assert retried.turn_id == "t1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_discard_turn_keeps_a_record_whose_producer_is_still_live() -> None:
+    """The record holds the hub's only strong reference to the producer task, so
+    discarding one still in flight would let that task be collected mid-turn."""
+    hub = ConversationStreamHub()
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+
+    async def parks() -> None:
+        await asyncio.Event().wait()
+
+    task = asyncio.ensure_future(parks())
+    hub.attach_producer_task("conv", "t1", task)
+    try:
+        await hub.discard_turn("conv", "t1")
+        assert hub.get_turn("conv", "t1") is not None
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_discard_turn_is_a_no_op_for_unknown_ids() -> None:
+    """Safe in a ``finally`` that may run after the record was already dropped."""
+    hub = ConversationStreamHub()
+    await hub.discard_turn("nonexistent", "t1")
+    await hub.start_turn("conv", turn_id="t1", user_id="u1", started_at=_now())
+    await hub.discard_turn("conv", "unknown")
+    assert hub.get_turn("conv", "t1") is not None
 
 
 @pytest.mark.asyncio
