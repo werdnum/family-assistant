@@ -23,19 +23,32 @@ an event occurs — and whenever they want to inspect, change, or remove an auto
 have. Loading it activates the automation management tools plus the tools for testing a trigger or
 action before you commit to it.
 
+## What the woken turn will actually be able to do
+
+Work this out before you choose the action type — the answer differs between schedule and event
+automations, and getting it wrong produces an automation that fires on time and then can't do the
+job.
+
 **Create automations yourself.** Do not delegate automation creation to another profile. An
-automation records the profile that created it, and a `wake_llm` automation wakes into that profile
-— so an automation created inside a narrow specialist wakes with that specialist's narrow tool set
-and cannot do the work. Creating it here means it wakes as the main assistant, with the full tool
-set and the ability to delegate at wake time.
+automation records the profile that created it, and for a scheduled `wake_llm` that stamp decides
+what the woken turn can reach — an automation created inside a narrow specialist wakes with that
+specialist's narrow tool set.
 
-Two consequences worth knowing:
+**Scheduled wakes run under the creating profile.** Created here, they wake as the main assistant,
+with the full tool set and the ability to delegate. So a weekly check that involves browsing a
+website works: say so in the wake context, and the woken turn delegates to the browser profile
+itself. Whatever it will need, it needs at wake time, not now.
 
-- An automation owned by a different profile cannot be updated from here. `update_automation` fails
-  with an ownership error naming the owning profile. Recreate it here instead.
-- Whatever the woken turn will need, it needs at wake time, not now. If a weekly check involves
-  browsing a website, the wake context should say so — the woken turn delegates to the browser
-  profile itself.
+**Event wakes always run under `event_handler`,** whoever created them — the triggering event is
+untrusted content and the woken turn reads it, so it is deliberately confined. It can read notes,
+search the calendar and documents, query recent events, publish MQTT, and message the user. It
+cannot browse, delegate, run scripts, or touch the calendar and automations. Scope an event
+`wake_llm` to that list. If the response needs more, use `action_type="script"` instead — event
+scripts do run under the creating profile, so they keep the full tool set.
+
+One more thing worth knowing: an automation owned by a different profile cannot be updated from
+here. `update_automation` fails with an ownership error naming the owning profile. Recreate it here
+instead.
 
 ## Procedure
 
@@ -92,8 +105,11 @@ with known content, data collection. Scripts run immediately, cost nothing per r
 identically every time.
 
 Use `action_type="wake_llm"` when the response needs judgement — when what to do depends on reading
-the situation. A script can also call `wake_llm()` conditionally, which is often the best of both:
-cheap deterministic filtering, waking only when something is actually worth the user's attention.
+the situation. For an event automation, check the wake against what `event_handler` can reach (see
+above) before choosing it.
+
+A script can also call `wake_llm()` conditionally, which is often the best of both: cheap
+deterministic filtering, waking only when something is actually worth the user's attention.
 
 Prefer a script where a script suffices.
 

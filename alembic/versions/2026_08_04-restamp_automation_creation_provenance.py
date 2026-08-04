@@ -23,8 +23,18 @@ the narrow authoring profile and could not reach the tools the task needed. For
 executed against, from the authoring profile's to the main assistant's. That is a
 deliberate, accepted trade-off: both profiles are full-trust [BC], and
 ``default_assistant`` is a superset of what ``automation_creation`` could reach.
+
+The automation rows are not the whole story. A recurring schedule automation
+enqueues its *next* occurrence as soon as the previous one finishes, and
+``schedule_action`` enqueues one-time work the same way, both copying the
+provenance into the task payload. So a deployment upgrading with an existing
+automation also has a queued ``tasks`` row carrying the removed profile id, which
+would fail the same fail-loud resolution -- silently missing the next occurrence
+after its retries, or never running the one-time action at all. Live task
+payloads are re-stamped too.
 """
 
+import json
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -38,7 +48,19 @@ depends_on: str | Sequence[str] | None = None
 
 _OLD_PROFILE_ID = "automation_creation"
 _NEW_PROFILE_ID = "default_assistant"
+_PROFILE_KEY = "processing_profile_id"
 _TABLES = ("event_listeners", "schedule_automations")
+# Statuses from which a task can still execute: "pending" runs next, "processing"
+# is returned to the queue when a worker dies mid-task, and "failed" becomes
+# pending again on manual retry. Terminal-success rows are history and left be.
+_LIVE_TASK_STATUSES = ("pending", "processing", "failed")
+
+_tasks_table = sa.table(
+    "tasks",
+    sa.column("id", sa.Integer),
+    sa.column("payload", sa.JSON),
+    sa.column("status", sa.String),
+)
 
 
 def _profile_column(table_name: str) -> sa.Table:
@@ -47,6 +69,40 @@ def _profile_column(table_name: str) -> sa.Table:
         table_name,
         sa.column("processing_profile_id", sa.String),
     )
+
+
+def _restamp_live_task_payloads(bind: sa.Connection) -> None:
+    """Rewrite the provenance inside queued task payloads.
+
+    Done in Python rather than with a JSON update expression because the two
+    supported backends spell that differently (``jsonb_set`` vs ``json_set``),
+    and the row count here is small -- only tasks that have not finished yet.
+    """
+    rows = bind.execute(
+        sa.select(_tasks_table.c.id, _tasks_table.c.payload).where(
+            _tasks_table.c.status.in_(_LIVE_TASK_STATUSES)
+        )
+    ).all()
+
+    for task_id, raw_payload in rows:
+        payload = raw_payload
+        # SQLite hands back the stored text when the column was created without
+        # the JSON type by an older migration.
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except ValueError:
+                continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get(_PROFILE_KEY) != _OLD_PROFILE_ID:
+            continue
+        bind.execute(
+            _tasks_table
+            .update()
+            .where(_tasks_table.c.id == task_id)
+            .values(payload={**payload, _PROFILE_KEY: _NEW_PROFILE_ID})
+        )
 
 
 def upgrade() -> None:
@@ -58,6 +114,8 @@ def upgrade() -> None:
             .where(table.c.processing_profile_id == _OLD_PROFILE_ID)
             .values(processing_profile_id=_NEW_PROFILE_ID)
         )
+
+    _restamp_live_task_payloads(op.get_bind())
 
 
 def downgrade() -> None:

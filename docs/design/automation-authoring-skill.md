@@ -57,9 +57,15 @@ Two configuration changes make that reachable:
 2. The same tools are added to the default profile's `tools_policy` allow rules. Activation
    re-checks policy before marking a tool active, so a policy grant is required as well.
 
-Automations created this way are stamped `default_assistant` and wake with the full tool set,
-including `delegate_to_service` — the woken turn delegates the browsing (or research, or media work)
-it needs at wake time.
+Scheduled automations created this way are stamped `default_assistant` and wake with the full tool
+set, including `delegate_to_service` — the woken turn delegates the browsing (or research, or media
+work) it needs at wake time.
+
+Event automations are unchanged by this: a `wake_llm` event listener still routes to `event_handler`
+regardless of who authored it, because the triggering event is untrusted (see
+[Corrected invariant](#corrected-invariant) below). The skill states that limit and its allowed tool
+set explicitly, so the authoring model scopes an event wake to what `event_handler` can reach rather
+than assuming the capabilities a scheduled wake gets.
 
 ### Security
 
