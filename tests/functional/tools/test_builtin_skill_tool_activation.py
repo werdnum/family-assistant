@@ -109,6 +109,35 @@ def test_automation_creation_profile_is_gone() -> None:
     assert "automation_creation" not in {profile.id for profile in profiles}
 
 
+def test_complex_tasks_can_create_automations() -> None:
+    """`/complex` is the documented route for automations the main assistant finds hard.
+
+    It replaces the default policy wholesale rather than extending it, so the
+    authoring grant has to be repeated there or the skill loads with nothing to
+    call.
+    """
+    _, profiles = _load_resolved_profiles()
+    complex_tasks = {profile.id: profile for profile in profiles}["complex_tasks"]
+    engine = PolicyEngine.from_policy_config(complex_tasks.tools_policy)
+    descriptors_by_name = {
+        descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS
+    }
+
+    skills_by_name = {skill.name: skill for skill in _builtin_skills()}
+    skill = skills_by_name[_AUTOMATION_SKILL_NAME]
+    on_demand = set(complex_tasks.tools_config.on_demand_local_tools)
+
+    for tool_name in skill.activate_tools:
+        assert tool_name in on_demand, tool_name
+        assert (
+            engine.evaluate_for_advertisement(
+                descriptors_by_name[tool_name],
+                can_confirm=False,
+            ).decision
+            == ToolPolicyDecision.ALLOW
+        ), tool_name
+
+
 def test_default_profile_can_create_automations_without_confirmation() -> None:
     """A profile that authors automations needs the write tools, not just reads.
 

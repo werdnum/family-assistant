@@ -38,6 +38,23 @@ task payload carries only the ``delegation_id``, and the target profile lives in
 ``delegation_runs.target_service_id``, which ``handle_delegated_profile_run``
 resolves separately and fails the run over. Non-terminal runs are re-stamped as
 well so an in-flight authoring request survives the upgrade.
+
+A fourth: an outstanding confirmation records its requesting profile on
+``confirmation_requests.processing_profile_id``, and the deferred
+``confirmation_tool_execution`` payload carries only the request id, so
+``_resolve_confirmation_processing_service`` reads that column and raises when it
+no longer resolves -- an action the user approves would never run. Non-terminal
+requests (``pending``, ``approved``) are re-stamped.
+
+Two profile-bearing tables are deliberately *not* touched. ``taint_audit`` and
+``message_history`` are records of what actually happened, and rewriting them
+would falsify that history; ``delegation_runs.source_profile_id`` is likewise
+only ever written as a label, never resolved against the registry.
+``_resolve_confirmation_processing_service`` can fall back to the source
+message's profile when a confirmation predates the provenance column, but that
+needs a NULL-provenance confirmation still outstanding at upgrade time, and it
+fails loudly and retryably rather than silently -- not worth falsifying a
+conversation log over.
 """
 
 import json
@@ -68,6 +85,16 @@ _LIVE_DELEGATION_STATUSES = ("queued", "running")
 _delegation_runs_table = sa.table(
     "delegation_runs",
     sa.column("target_service_id", sa.String),
+    sa.column("status", sa.String),
+)
+
+# The status check constraint allows pending/approved/rejected/expired; only the
+# first two can still reach deferred execution.
+_LIVE_CONFIRMATION_STATUSES = ("pending", "approved")
+
+_confirmation_requests_table = sa.table(
+    "confirmation_requests",
+    sa.column("processing_profile_id", sa.String),
     sa.column("status", sa.String),
 )
 
@@ -137,6 +164,14 @@ def upgrade() -> None:
         .where(_delegation_runs_table.c.target_service_id == _OLD_PROFILE_ID)
         .where(_delegation_runs_table.c.status.in_(_LIVE_DELEGATION_STATUSES))
         .values(target_service_id=_NEW_PROFILE_ID)
+    )
+
+    op.execute(
+        _confirmation_requests_table
+        .update()
+        .where(_confirmation_requests_table.c.processing_profile_id == _OLD_PROFILE_ID)
+        .where(_confirmation_requests_table.c.status.in_(_LIVE_CONFIRMATION_STATUSES))
+        .values(processing_profile_id=_NEW_PROFILE_ID)
     )
 
     _restamp_live_task_payloads(op.get_bind())

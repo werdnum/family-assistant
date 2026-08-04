@@ -56,6 +56,11 @@ Two configuration changes make that reachable:
    tool that is not on-demand cannot be activated by a skill.
 2. The same tools are added to the default profile's `tools_policy` allow rules. Activation
    re-checks policy before marking a tool active, so a policy grant is required as well.
+3. And to `complex_tasks`. A profile's own `tools_policy` *replaces* `default_profile_settings`
+   rather than merging with it, so a grant on the default profile does not reach a profile that
+   defines its own policy. `complex_tasks` is the documented route for automations the main
+   assistant finds hard, so without repeating the grant there the skill would load under `/complex`
+   with nothing it could call.
 
 Scheduled automations created this way are stamped `default_assistant` and wake with the full tool
 set, including `delegate_to_service` — the woken turn delegates the browsing (or research, or media

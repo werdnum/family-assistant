@@ -1421,6 +1421,17 @@ service_profiles:
               - "list_automations"
               - "get_automation"
               - "get_automation_stats"
+              # Authoring tools too: complex_tasks is the documented route for
+              # automations the main assistant finds hard, and it is full-trust
+              # [BC], so a wake_llm automation it stamps also wakes with full
+              # tools. Without these the Automation Creation skill loads here
+              # but cannot create anything.
+              - "create_automation"
+              - "update_automation"
+              - "enable_automation"
+              - "disable_automation"
+              - "delete_automation"
+              - "test_event_listener"
               - "generate_image"
               - "transform_image"
               - "generate_video"

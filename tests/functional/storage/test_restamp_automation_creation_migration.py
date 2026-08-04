@@ -13,6 +13,7 @@ from alembic.config import Config
 from sqlalchemy import Connection, Table, create_engine, select
 
 from alembic import command
+from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.events import event_listeners_table
 from family_assistant.storage.schedule_automations import schedule_automations_table
@@ -42,6 +43,24 @@ def _delegation_row(
         "request_text": "make me an automation",
         "content_parts_json": [],
         "created_at": _CREATED_AT,
+    }
+
+
+def _confirmation_row(
+    request_id: str, processing_profile_id: str, status: str
+) -> dict[str, object]:
+    """A confirmation_requests row with the columns the table requires."""
+    return {
+        "id": request_id,
+        "target_user_id": "user-123",
+        "status": status,
+        "tool_name": "add_calendar_event",
+        "tool_args_json": {"title": "dentist"},
+        "confirmation_prompt": "Add this event?",
+        "processing_profile_id": processing_profile_id,
+        "expires_at": _CREATED_AT,
+        "created_at": _CREATED_AT,
+        "updated_at": _CREATED_AT,
     }
 
 
@@ -192,6 +211,62 @@ def test_restamps_in_flight_delegation_targets(tmp_path: Path) -> None:
         # the work actually ran.
         assert targets["completed-to-removed"] == "automation_creation"
         assert targets["queued-to-other"] == "research"
+    finally:
+        engine.dispose()
+
+
+def test_restamps_outstanding_confirmation_profiles(tmp_path: Path) -> None:
+    """An approval the user has yet to act on still executes after the upgrade.
+
+    The deferred execution task carries only the request id, so the profile is
+    read back off the request and resolved fail-loud.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'restamp_confirmations.db'}")
+    try:
+        config = Config(str(_ALEMBIC_INI))
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            command.upgrade(config, _PRIOR_HEAD)
+
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
+        with engine.begin() as conn:
+            conn.execute(
+                confirmation_requests_table.insert(),
+                [
+                    _confirmation_row("pending-req", "automation_creation", "pending"),
+                    _confirmation_row(
+                        "approved-req", "automation_creation", "approved"
+                    ),
+                    _confirmation_row(
+                        "rejected-req", "automation_creation", "rejected"
+                    ),
+                    _confirmation_row("other-profile-req", "ops_automation", "pending"),
+                ],
+            )
+
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            command.upgrade(config, _RESTAMP_HEAD)
+
+        with engine.connect() as conn:
+            profiles = {
+                str(request_id): str(profile)
+                for request_id, profile in conn.execute(
+                    select(
+                        confirmation_requests_table.c.id,
+                        confirmation_requests_table.c.processing_profile_id,
+                    )
+                ).all()
+            }
+
+        assert profiles["pending-req"] == "default_assistant"
+        assert profiles["approved-req"] == "default_assistant"
+        # Rejected is terminal — it will never execute, and its profile is the
+        # record of who asked.
+        assert profiles["rejected-req"] == "automation_creation"
+        assert profiles["other-profile-req"] == "ops_automation"
     finally:
         engine.dispose()
 
