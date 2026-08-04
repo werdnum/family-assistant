@@ -32,6 +32,12 @@ automation also has a queued ``tasks`` row carrying the removed profile id, whic
 would fail the same fail-loud resolution -- silently missing the next occurrence
 after its retries, or never running the one-time action at all. Live task
 payloads are re-stamped too.
+
+An async delegation that was in flight across the upgrade is a third case: its
+task payload carries only the ``delegation_id``, and the target profile lives in
+``delegation_runs.target_service_id``, which ``handle_delegated_profile_run``
+resolves separately and fails the run over. Non-terminal runs are re-stamped as
+well so an in-flight authoring request survives the upgrade.
 """
 
 import json
@@ -54,6 +60,16 @@ _TABLES = ("event_listeners", "schedule_automations")
 # is returned to the queue when a worker dies mid-task, and "failed" becomes
 # pending again on manual retry. Terminal-success rows are history and left be.
 _LIVE_TASK_STATUSES = ("pending", "processing", "failed")
+# A delegation run stores its target profile in its own column rather than the
+# task payload, and handle_delegated_profile_run fails the run when that target
+# no longer resolves. Only non-terminal runs can still be dispatched.
+_LIVE_DELEGATION_STATUSES = ("queued", "running")
+
+_delegation_runs_table = sa.table(
+    "delegation_runs",
+    sa.column("target_service_id", sa.String),
+    sa.column("status", sa.String),
+)
 
 _tasks_table = sa.table(
     "tasks",
@@ -114,6 +130,14 @@ def upgrade() -> None:
             .where(table.c.processing_profile_id == _OLD_PROFILE_ID)
             .values(processing_profile_id=_NEW_PROFILE_ID)
         )
+
+    op.execute(
+        _delegation_runs_table
+        .update()
+        .where(_delegation_runs_table.c.target_service_id == _OLD_PROFILE_ID)
+        .where(_delegation_runs_table.c.status.in_(_LIVE_DELEGATION_STATUSES))
+        .values(target_service_id=_NEW_PROFILE_ID)
+    )
 
     _restamp_live_task_payloads(op.get_bind())
 

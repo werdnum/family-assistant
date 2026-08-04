@@ -13,6 +13,7 @@ from alembic.config import Config
 from sqlalchemy import Connection, Table, create_engine, select
 
 from alembic import command
+from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.events import event_listeners_table
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import tasks_table
@@ -23,6 +24,25 @@ _RESTAMP_HEAD = "restamp_automation_creation"
 # The migration-built SQLite schema carries a ``now()`` server default for
 # ``created_at`` that SQLite cannot evaluate, so rows set it explicitly.
 _CREATED_AT = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+
+
+def _delegation_row(
+    delegation_id: str, target_service_id: str, status: str
+) -> dict[str, object]:
+    """A delegation_runs row with the columns the table requires as NOT NULL."""
+    return {
+        "delegation_id": delegation_id,
+        "task_id": f"task-{delegation_id}",
+        "status": status,
+        "source_profile_id": "default_assistant",
+        "target_service_id": target_service_id,
+        "interface_type": "telegram",
+        "conversation_id": f"conv-{delegation_id}",
+        "subconversation_id": f"sub-{delegation_id}",
+        "request_text": "make me an automation",
+        "content_parts_json": [],
+        "created_at": _CREATED_AT,
+    }
 
 
 def _profiles_by_name(conn: Connection, table: Table) -> dict[str, str | None]:
@@ -114,6 +134,64 @@ def test_restamps_only_automation_creation_rows(tmp_path: Path) -> None:
         assert listeners["legacy-unstamped"] is None
         assert schedules["weekly-check"] == "default_assistant"
         assert schedules["ops-diagnostics"] == "ops_automation"
+    finally:
+        engine.dispose()
+
+
+def test_restamps_in_flight_delegation_targets(tmp_path: Path) -> None:
+    """A delegation still in flight across the upgrade keeps its target resolvable.
+
+    The target profile lives in its own column, not the task payload, and the
+    delegation handler fails the run outright when it no longer resolves.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'restamp_delegations.db'}")
+    try:
+        config = Config(str(_ALEMBIC_INI))
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            command.upgrade(config, _PRIOR_HEAD)
+
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
+        with engine.begin() as conn:
+            conn.execute(
+                delegation_runs_table.insert(),
+                [
+                    _delegation_row(
+                        "queued-to-removed", "automation_creation", "queued"
+                    ),
+                    _delegation_row(
+                        "running-to-removed", "automation_creation", "running"
+                    ),
+                    _delegation_row(
+                        "completed-to-removed", "automation_creation", "completed"
+                    ),
+                    _delegation_row("queued-to-other", "research", "queued"),
+                ],
+            )
+
+        # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
+        with engine.begin() as conn:
+            config.attributes["connection"] = conn
+            command.upgrade(config, _RESTAMP_HEAD)
+
+        with engine.connect() as conn:
+            targets = {
+                str(delegation_id): str(target)
+                for delegation_id, target in conn.execute(
+                    select(
+                        delegation_runs_table.c.delegation_id,
+                        delegation_runs_table.c.target_service_id,
+                    )
+                ).all()
+            }
+
+        assert targets["queued-to-removed"] == "default_assistant"
+        assert targets["running-to-removed"] == "default_assistant"
+        # Terminal runs are history; rewriting their target would misreport where
+        # the work actually ran.
+        assert targets["completed-to-removed"] == "automation_creation"
+        assert targets["queued-to-other"] == "research"
     finally:
         engine.dispose()
 
