@@ -12,8 +12,8 @@ action:
   for logging, simple notifications, and data collection. A script can also call the model or reach
   external services, and then those guarantees no longer hold.
 
-Use the `/automate` command for a mode focused on building and validating automations, or just ask
-in an ordinary conversation.
+Just ask in an ordinary conversation. The assistant validates the trigger against real data and
+tests the action before creating anything, so say what you want and it will check its own work.
 
 ## Event automations
 
