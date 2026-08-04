@@ -573,10 +573,7 @@ def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
             "tester", "Context with literal braces: {name}"
         )
 
-        assert rendered_prompt
-
-        if profile_id == "automation_creation":
-            assert 'f"Hello {name}"' in rendered_prompt
+        assert rendered_prompt, profile_id
 
 
 @pytest.mark.no_db

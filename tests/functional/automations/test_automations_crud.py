@@ -143,7 +143,7 @@ async def test_create_event_automation_records_creator_provenance(
     exec_context = _exec_context_with_profile(
         db_ctx,
         conversation_id="prov_event_conv",
-        processing_profile_id="automation_creation",
+        processing_profile_id="complex_tasks",
         user_id="user-123",
     )
     result = await create_automation_tool(
@@ -160,7 +160,7 @@ async def test_create_event_automation_records_creator_provenance(
 
     listener = await db_ctx.events.get_event_listener_by_id(listener_id)
     assert listener is not None
-    assert listener["processing_profile_id"] == "automation_creation"
+    assert listener["processing_profile_id"] == "complex_tasks"
     assert listener["created_by_user_id"] == "user-123"
 
 
@@ -173,7 +173,7 @@ async def test_create_schedule_automation_records_creator_provenance(
     exec_context = _exec_context_with_profile(
         db_ctx,
         conversation_id="prov_sched_conv",
-        processing_profile_id="automation_creation",
+        processing_profile_id="complex_tasks",
         user_id="user-456",
     )
     result = await create_automation_tool(
@@ -190,7 +190,7 @@ async def test_create_schedule_automation_records_creator_provenance(
 
     automation = await db_ctx.schedule_automations.get_by_id(automation_id)
     assert automation is not None
-    assert automation["processing_profile_id"] == "automation_creation"
+    assert automation["processing_profile_id"] == "complex_tasks"
     assert automation["created_by_user_id"] == "user-456"
 
 
@@ -201,7 +201,7 @@ async def test_update_automation_revalidates_script(db_engine: AsyncEngine) -> N
     exec_context = _exec_context_with_profile(
         db_ctx,
         conversation_id="revalidate_conv",
-        processing_profile_id="automation_creation",
+        processing_profile_id="complex_tasks",
         user_id="user-789",
     )
     created = await create_automation_tool(
@@ -240,7 +240,7 @@ async def test_update_automation_rejects_missing_stored_script(
     exec_context = _exec_context_with_profile(
         db_ctx,
         conversation_id="stored_script_conv",
-        processing_profile_id="automation_creation",
+        processing_profile_id="complex_tasks",
         user_id="user-789",
     )
     created = await create_automation_tool(
@@ -278,7 +278,7 @@ async def test_update_wake_llm_automation_skips_script_validation(
     exec_context = _exec_context_with_profile(
         db_ctx,
         conversation_id="wake_llm_update_conv",
-        processing_profile_id="automation_creation",
+        processing_profile_id="complex_tasks",
         user_id="user-789",
     )
     created = await create_automation_tool(
