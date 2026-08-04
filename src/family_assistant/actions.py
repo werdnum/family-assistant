@@ -28,13 +28,17 @@ class ActionType(StrEnum):
 class WakeLlmProfileError(RuntimeError):
     """Raised when a profile that may not wake the LLM attempts to.
 
-    ``wake_llm`` (whether an ``action_type="wake_llm"`` automation or a script's
-    built-in ``wake_llm()`` call) does NOT honor the calling profile at execution
-    time: the llm_callback runs under the task worker's default trusted profile.
-    A confined profile that could trigger a wake would therefore silently
-    escalate to full tools and no label confinement. Profiles that must stay
-    confined set ``allow_wake_llm=False``; attempting to wake from such a profile
-    fails loudly rather than escalating.
+    A woken turn does not necessarily run under the profile that scheduled it.
+    Schedule automations, ``schedule_action`` and a script's built-in
+    ``wake_llm()`` stamp their originating profile and ``handle_llm_callback``
+    resolves it, but event listeners deliberately route to the restricted
+    ``event_handler`` profile because the triggering event is untrusted.
+
+    Either way a confined profile must not be able to enqueue a wake: via an
+    event listener it would escalate to ``event_handler``, and via a stamped wake
+    it would fail at fire time, when ``handle_llm_callback`` re-checks the flag.
+    Profiles that must stay confined set ``allow_wake_llm=False`` and are refused
+    here, at creation, instead of either.
     """
 
 
@@ -54,9 +58,9 @@ def assert_wake_llm_allowed(
     if not allow_wake_llm:
         raise WakeLlmProfileError(
             "This profile is not permitted to wake the LLM (allow_wake_llm is "
-            "disabled). wake_llm runs under the default trusted profile, which "
-            'would bypass this profile\'s confinement. Use action_type="script" '
-            "and keep results in data (notes) instead of waking the assistant."
+            "disabled). A woken turn would not stay inside this profile's "
+            'confinement. Use action_type="script" and keep results in data '
+            "(notes) instead of waking the assistant."
         )
 
 
@@ -89,22 +93,24 @@ async def execute_action(
         context: Additional context (e.g., event data, trigger info)
         scheduled_at: When to execute the action (None for immediate)
         recurrence_rule: RRULE for recurring tasks (None for one-time)
-        processing_profile_id: Creating profile for script actions; scripts
-            execute under this profile so validation and execution agree.
-            wake_llm actions do NOT honor this profile (they run under the task
-            worker's default profile); confined profiles set allow_wake_llm=False
-            so a wake_llm action from them is refused below.
+        processing_profile_id: The profile the resulting turn or script runs
+            under. Scripts execute under their creating profile so validation and
+            execution agree. wake_llm carries it too -- handle_llm_callback
+            resolves it fail-loud -- except for event listeners, which the event
+            processor stamps with the restricted event_handler profile instead,
+            because the triggering event is untrusted.
         created_by_user_id: Creating user for script actions; confirm-gated
             tool calls from the script are addressed to this user.
         allow_wake_llm: Whether the acting profile may wake the LLM. When False,
             a wake_llm action is refused loudly (see assert_wake_llm_allowed)
-            rather than silently running under the default trusted profile.
+            rather than being enqueued for a turn that would escape the profile's
+            confinement.
     """
     if context is None:
         context = {}
 
-    # wake_llm ignores the acting profile at execution time (it runs under the
-    # default profile), so a confined profile must not be able to enqueue one.
+    # A woken turn does not stay inside a confined profile, so such a profile
+    # must not be able to enqueue one at all.
     assert_wake_llm_allowed(action_type, allow_wake_llm)
 
     if action_type == ActionType.WAKE_LLM:

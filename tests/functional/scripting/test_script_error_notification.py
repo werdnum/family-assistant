@@ -425,12 +425,12 @@ async def test_stamped_profile_carried_into_notification(
     tools_provider = await _make_tools_provider()
     creator_service = _make_processing_service(
         tools_provider,
-        service_id="automation_creation",
+        service_id="complex_tasks",
     )
     default_service = _make_processing_service(
         tools_provider,
         service_id="default_assistant",
-        processing_services_registry={"automation_creation": creator_service},
+        processing_services_registry={"complex_tasks": creator_service},
     )
 
     worker, new_task_event, shutdown_event = task_worker_manager(
@@ -449,7 +449,7 @@ async def test_stamped_profile_carried_into_notification(
             "script_code": "this is not valid python!!!",
             "conversation_id": "test_conv",
             "interface_type": "telegram",
-            "processing_profile_id": "automation_creation",
+            "processing_profile_id": "complex_tasks",
             "config": {},
         },
         max_retries_override=0,
@@ -466,4 +466,4 @@ async def test_stamped_profile_carried_into_notification(
     assert len(notification_tasks) == 1
     notif_payload = notification_tasks[0]["payload"]
     assert notif_payload is not None
-    assert notif_payload["processing_profile_id"] == "automation_creation"
+    assert notif_payload["processing_profile_id"] == "complex_tasks"

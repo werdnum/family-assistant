@@ -57,10 +57,6 @@ service_profiles:
     processing_config:
       provider: "openai"
       llm_model: "deepseek/deepseek-v4-flash"
-  - id: "automation_creation"
-    processing_config:
-      provider: "openai"
-      llm_model: "deepseek/deepseek-v4-flash"
   - id: "artist"
     processing_config:
       provider: "openai"

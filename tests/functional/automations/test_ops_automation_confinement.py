@@ -440,12 +440,12 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
     """The trigger text of a profile-routed wake uses the routed profile's
     timezone, not the worker default's."""
     routed_service = _worker_service(
-        service_id="automation_creation",
+        service_id="complex_tasks",
         timezone=ZoneInfo("Australia/Sydney"),
     )
     default_service = _worker_service(
         service_id="default_assistant",
-        registry={"automation_creation": routed_service},
+        registry={"complex_tasks": routed_service},
     )
 
     worker, new_task_event, _shutdown_event = task_worker_manager(
@@ -465,7 +465,7 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
             "interface_type": "telegram",
             "callback_context": "scheduled follow-up",
             "scheduling_timestamp": datetime.now(UTC).isoformat(),
-            "processing_profile_id": "automation_creation",
+            "processing_profile_id": "complex_tasks",
         },
         max_retries_override=0,
     )

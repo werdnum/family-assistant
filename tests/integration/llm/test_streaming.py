@@ -444,11 +444,11 @@ async def test_anthropic_streaming_thinking_round_trip(
         pytest.skip("Recording this test requires ANTHROPIC_API_KEY")
 
     # Pinned to the shipped model and the shipped thinking shape. Both matter:
-    # `claude-sonnet-5` is what automation_creation and engineer run, and it
-    # rejects the `enabled` + `budget_tokens` form this test used to pass with a
-    # 400. Verifying replay against a model/shape combination no profile uses
-    # would leave the mechanism those two profiles depend on unexercised, which
-    # is the one thing this test exists to prevent.
+    # `claude-sonnet-5` is what the engineer profile runs, and it rejects the
+    # `enabled` + `budget_tokens` form this test used to pass with a 400.
+    # Verifying replay against a model/shape combination no profile uses would
+    # leave the mechanism that profile depends on unexercised, which is the one
+    # thing this test exists to prevent.
     #
     # `display` is the one field set here that the profiles do not set. Sonnet 5
     # defaults it to `omitted`, which still returns thinking blocks carrying the

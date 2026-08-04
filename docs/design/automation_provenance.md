@@ -7,8 +7,7 @@ different one, so a script could pass validation at creation time and then behav
 fail outright) when it ran.
 
 - **Validation** (`create_automation_tool` in `tools/automations.py`) generated tool stubs from the
-  tools provider of whatever profile was *creating* the automation (typically `automation_creation`
-  or `default_assistant`).
+  tools provider of whatever profile was *creating* the automation (typically `default_assistant`).
 - **Execution** (`handle_script_execution` in `task_worker.py`) always used
   `exec_context.processing_service`, which the task worker builds from its **default** processing
   service. The docstring claimed scripts ran under the restricted `event_handler` profile, but no

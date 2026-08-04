@@ -3924,11 +3924,11 @@ async def _process_script_wake_llm(
         listener_id: ID of the event listener that ran the script
     """
 
-    # A script's built-in wake_llm() enqueues an llm_callback that runs under the
-    # worker's default trusted profile (handle_llm_callback does not honor the
-    # stored profile). A script running under a confined profile (allow_wake_llm
-    # disabled) must therefore not be able to wake the default LLM. Refuse loudly
-    # rather than escalate, mirroring the create_automation/execute_action guard.
+    # A script's built-in wake_llm() enqueues an llm_callback stamped with the
+    # script's own profile (see the payload below). A script running under a
+    # confined profile (allow_wake_llm disabled) must not be able to wake at all:
+    # handle_llm_callback re-checks the flag and would raise at fire time. Refuse
+    # here, mirroring the create_automation/execute_action guard.
     assert_wake_llm_allowed(ActionType.WAKE_LLM, exec_context.allow_wake_llm)
 
     listener_id = listener_id or "scheduled"

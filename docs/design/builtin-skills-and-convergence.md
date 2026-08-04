@@ -12,7 +12,6 @@ resolution time. Static, per-profile.
 Used by:
 
 - `data_visualization` profile → `data_visualization.md`, `vega_lite_reference.md`
-- `automation_creation` profile → `scripting.md`
 
 ### 2. `get_user_documentation_content` tool (tools/documents.py)
 

@@ -25,7 +25,6 @@ Which commands exist depends on how your deployment is configured; these are the
 | `/complex`                  | Multi-step reasoning and planning that needs a long chain of work           |
 | `/visualize` or `/chart`    | Charts and graphs from data you provide or attach                           |
 | `/artist`                   | Generating or editing images and video                                      |
-| `/automate`                 | Creating and validating automations                                         |
 | `/camera` or `/investigate` | Searching and reviewing security camera footage                             |
 | `/engineer`                 | Read-only diagnostics: "why did the assistant do that?"                     |
 | `/interrupt`                | (Telegram) stop the request currently being processed in that chat          |
