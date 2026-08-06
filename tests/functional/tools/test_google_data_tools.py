@@ -683,6 +683,128 @@ async def test_gmail_get_attachment_part_id_survives_rotated_attachment_id(
 
 
 @pytest.mark.asyncio
+async def test_gmail_get_attachment_id_wins_over_a_mismatched_part_id(
+    db_engine: AsyncEngine,
+) -> None:
+    """A wrong part_id must not override a still-resolvable attachment id.
+
+    Part ids are positional, so a model that mixed two attachments up names a
+    real but wrong part rather than missing — which would store one file's bytes
+    under the other's name and type.
+    """
+    content = b"%PDF-1.4\ninvoice\n"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "partId": "1",
+                    "mimeType": "image/jpeg",
+                    "filename": "photo.jpg",
+                    "body": {"attachmentId": "att-photo", "size": 10},
+                },
+                {
+                    "partId": "2",
+                    "mimeType": "application/pdf",
+                    "filename": "invoice.pdf",
+                    "body": {"attachmentId": "att-invoice", "size": len(content)},
+                },
+            ],
+        },
+    }
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-invoice"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-invoice", part_id="1"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+    assert stored.description == "Gmail attachment invoice.pdf"
+
+
+@pytest.mark.asyncio
+async def test_gmail_get_attachment_sniffs_past_declared_octet_stream(
+    db_engine: AsyncEngine,
+) -> None:
+    """A part declared application/octet-stream is not the last word.
+
+    Gmail echoes the sender's Content-Type and many mailers declare every
+    attachment generically, which the registry allowlist rejects.
+    """
+    content = b"%PDF-1.4\nQBE CTP certificate\n"
+    payload = {"data": base64.urlsafe_b64encode(content).decode("ascii").rstrip("=")}
+    message = {
+        "id": "msg-1",
+        "payload": {
+            "mimeType": "multipart/mixed",
+            "filename": "",
+            "body": {},
+            "parts": [
+                {
+                    "partId": "1",
+                    "mimeType": "application/octet-stream",
+                    "filename": "certificate.pdf",
+                    "body": {"attachmentId": "att-1", "size": len(content)},
+                }
+            ],
+        },
+    }
+    resolver = FakeCredentialResolver(tokens={"user-a": "token-a"})
+    backend = FakeApiBackend(
+        routes={
+            "token-a": {
+                ("GET", "/attachments/att-1"): payload,
+                ("GET", "/messages/msg-1"): message,
+            }
+        }
+    )
+    registry = _registry(db_engine)
+    db = Database(engine=db_engine)
+    context = _make_context(
+        db,
+        user_id="user-a",
+        resolver=resolver,
+        backend=backend,
+        attachment_registry=registry,
+    )
+    result = await gmail_get_attachment_tool(
+        context, message_id="msg-1", attachment_id="att-1", part_id="1"
+    )
+    data = result.get_data()
+    assert isinstance(data, dict), f"expected attachment reference, got {data}"
+    stored = await registry.get_attachment(
+        db, data["attachment_id"], acting_user_id="user-a"
+    )
+    assert stored is not None
+    assert stored.mime_type == "application/pdf"
+
+
+@pytest.mark.asyncio
 async def test_gmail_get_attachment_sniffs_type_when_part_is_unmatchable(
     db_engine: AsyncEngine,
 ) -> None:

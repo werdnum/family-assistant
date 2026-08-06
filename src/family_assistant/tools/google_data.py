@@ -52,6 +52,9 @@ type GoogleJson = dict[str, Any]
 
 _GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 _DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
+# What a sender's mailer declares when it has nothing useful to say about a
+# file's type; the attachment registry's allowlist rejects it.
+_GENERIC_CONTENT_TYPE = "application/octet-stream"
 
 # Result-size bounds so a hostile mailbox/Drive cannot blow out the context.
 _GMAIL_SEARCH_CAP = 25
@@ -151,8 +154,9 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "by its id (as returned by gmail_search). Returns the parsed headers, "
                 "the plain-text body (HTML is converted to text; long bodies are "
                 "truncated with a marker), and a list of attachment metadata "
-                "(attachment_id, filename, mime type, size). Use gmail_get_attachment "
-                "to download a specific attachment."
+                "(attachment_id, part_id, filename, mime type, size). Use "
+                "gmail_get_attachment to download a specific attachment, passing "
+                "both its attachment_id and its part_id."
             ),
             "parameters": {
                 "type": "object",
@@ -777,12 +781,7 @@ async def gmail_get_attachment_tool(
         part_filename, part_mime = await _lookup_attachment_part(
             exec_context, message_id, attachment_id, part_id
         )
-        content_type = (
-            part_mime
-            or (mimetypes.guess_type(part_filename)[0] if part_filename else None)
-            or await _sniff_content_type(content)
-            or "application/octet-stream"
-        )
+        content_type = await _resolve_content_type(content, part_filename, part_mime)
         stored_name = part_filename or (
             f"gmail_attachment_{attachment_id}"
             f"{mimetypes.guess_extension(content_type) or ''}"
@@ -842,25 +841,46 @@ def _match_attachment_part(
     attachment_id: str,
     part_id: str | None,
 ) -> GoogleJson | None:
-    """Find the part an attachment id / part id pair refers to."""
+    """Find the part an attachment id / part id pair refers to.
+
+    The attachment id wins when it still resolves: it identifies exactly one
+    part, whereas a part id is positional and a model that mixed two
+    attachments up would name a real but wrong part rather than missing.
+    The part id is the fallback for the case it exists to cover — the
+    attachment id having rotated out from under the caller.
+    """
+    for attachment in attachments:
+        if attachment.get("attachment_id") == attachment_id:
+            return attachment
     if part_id:
         for attachment in attachments:
             if attachment.get("part_id") == part_id:
                 return attachment
-    for attachment in attachments:
-        if attachment.get("attachment_id") == attachment_id:
-            return attachment
     return None
 
 
-async def _sniff_content_type(content: bytes) -> str | None:
-    """Detect a content type from the bytes themselves.
+async def _resolve_content_type(
+    content: bytes,
+    part_filename: str | None,
+    part_mime: str | None,
+) -> str:
+    """Decide what type an attachment's bytes should be stored as.
 
-    Used only when the part metadata could not be recovered; the bytes are a
-    trustworthy source of the type in a way the caller-supplied filename is not.
+    Gmail echoes the sender's ``Content-Type``, and plenty of mailers label
+    every attachment ``application/octet-stream``, so a declared generic type is
+    treated as no answer at all rather than a truthy one — the registry's
+    allowlist rejects it, and the bytes usually say what the file really is.
+    Sniffing beats the part filename because it cannot be talked into
+    reclassifying content: only formats with no magic number (CSV, plain text)
+    fall through to the sender-supplied name.
     """
+    if part_mime and part_mime != _GENERIC_CONTENT_TYPE:
+        return part_mime
     kind = await asyncio.to_thread(filetype.guess, content)
-    return str(kind.mime) if kind is not None else None
+    if kind is not None:
+        return str(kind.mime)
+    guessed = mimetypes.guess_type(part_filename)[0] if part_filename else None
+    return guessed or _GENERIC_CONTENT_TYPE
 
 
 def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
