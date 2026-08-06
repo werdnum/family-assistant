@@ -1051,15 +1051,19 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    # The image backends take a prompt and a style; the endpoint is fixed at
+    # construction and no argument selects a recipient. A fixed recipient is
+    # what LOW_BANDWIDTH_EXTERNAL denotes, whereas EXTERNAL_COMM means the
+    # model controls the destination -- which these tools cannot do.
     "generate_image": _metadata(
         ToolTag.STATE_CHANGING,
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "transform_image": _metadata(
         ToolTag.STATE_CHANGING,
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1074,15 +1078,16 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DATA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    # Fixed vendor endpoint with no recipient argument, as for generate_image.
     "generate_video": _metadata(
         ToolTag.STATE_CHANGING,
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "download_media": _metadata(
         ToolTag.READ_ONLY,
-        ToolTag.EXTERNAL_COMM,
+        ToolTag.LOW_BANDWIDTH_EXTERNAL,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),

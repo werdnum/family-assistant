@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from family_assistant.tools.metadata import ToolDescriptor
 
@@ -20,6 +20,46 @@ logger = logging.getLogger(__name__)
 TAINT_METADATA_VERSION = "runtime_v1"
 A2A_TAINT_METADATA_KEY = "family_assistant_taint_metadata"
 LEGACY_MISSING_TAINT_METADATA_LABEL = "legacy_missing_taint_metadata"
+
+_HOME_ASSISTANT_ACTION_TOOL = "call_home_assistant_action"
+
+# Home Assistant domains that act on household devices and state only. This is
+# an allowlist on purpose: HA also exposes domains that message people, call
+# webhooks, or run code, and only a domain verified to stay inside the
+# household belongs here. Deliberately excluded, with reasons:
+#   script / automation  — run operator-defined sequences that may themselves
+#                          notify or call a REST endpoint
+#   media_player         — play_media fetches a caller-supplied URL
+#   notify / rest_command / tts / conversation — leave the household by design
+_HOUSEHOLD_LOCAL_HA_DOMAINS = frozenset({
+    "alarm_control_panel",
+    "button",
+    "climate",
+    "cover",
+    "fan",
+    "humidifier",
+    "input_boolean",
+    "input_button",
+    "input_datetime",
+    "input_number",
+    "input_select",
+    "input_text",
+    "lawn_mower",
+    "light",
+    "lock",
+    "number",
+    "scene",
+    "select",
+    "siren",
+    "switch",
+    "vacuum",
+    "valve",
+    "water_heater",
+})
+
+# HA domains that run operator-supplied code on the Home Assistant host, which
+# is the sandbox_network sink rather than any kind of household-local action.
+_CODE_EXECUTING_HA_DOMAINS = frozenset({"python_script", "shell_command"})
 
 
 class SourceTrustTier(IntEnum):
@@ -512,11 +552,12 @@ class TaintPolicyEvaluator:
         *,
         descriptor: ToolDescriptor,
         state: TurnTaintState,
+        arguments: Mapping[str, object] | None = None,
     ) -> TaintPolicyEvaluation:
         """Resolve a tool sink class from metadata and evaluate it."""
         return self.evaluate(
             state=state,
-            sink_class=resolve_tool_sink_class(descriptor),
+            sink_class=resolve_tool_sink_class(descriptor, arguments),
         )
 
     def _configured_outcome(
@@ -629,8 +670,38 @@ def _reject_relaxed_base_policy(
                 raise ValueError(msg)
 
 
-def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
-    """Resolve a conservative sink class from tool metadata tags."""
+def _home_assistant_action_sink_class(
+    arguments: Mapping[str, object] | None,
+) -> SinkClass:
+    """Classify a Home Assistant action by its domain rather than blanket-tagging.
+
+    ``home_auto`` alone would understate the risk, because HA exposes domains
+    that deliver messages, invoke webhooks, or run code on the HA host. The
+    household-local set is therefore an allowlist: an unrecognised or absent
+    domain keeps the conservative external classification, so a domain added by
+    a future HA release is never silently downgraded.
+    """
+    domain = (arguments or {}).get("domain")
+    if not isinstance(domain, str):
+        return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    normalized = domain.strip().lower()
+    if normalized in _CODE_EXECUTING_HA_DOMAINS:
+        return SinkClass.SANDBOX_NETWORK
+    if normalized in _HOUSEHOLD_LOCAL_HA_DOMAINS:
+        return SinkClass.HOME_LOCAL
+    return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+
+
+def resolve_tool_sink_class(
+    descriptor: ToolDescriptor,
+    arguments: Mapping[str, object] | None = None,
+) -> SinkClass:
+    """Resolve a conservative sink class from tool metadata tags.
+
+    ``arguments`` lets a tool that spans several sink classes be classified by
+    the call rather than by its registration, which the taint design requires
+    for Home Assistant actions. Omitting it keeps the tag-only classification.
+    """
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
     if "sensitive_data" in tag_values and "read_only" in tag_values:
         return SinkClass.SENSITIVE_READ_BROADENING
@@ -644,6 +715,8 @@ def resolve_tool_sink_class(descriptor: ToolDescriptor) -> SinkClass:
         # high-risk read/code/browser rules so a tool that also carried one of
         # those tags is never downgraded to user_local by this rule.
         return SinkClass.USER_LOCAL
+    if descriptor.name == _HOME_ASSISTANT_ACTION_TOOL:
+        return _home_assistant_action_sink_class(arguments)
     if "external_comm" in tag_values:
         return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     if "delegation" in tag_values:

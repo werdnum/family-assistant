@@ -28,6 +28,7 @@ from family_assistant.security.taint import (
     TaintMetadata,
     TaintMetadataSource,
     TaintPolicyConfig,
+    TaintPolicyEvaluator,
     TaintPolicyMode,
     TaintPolicyOutcome,
     TaintSource,
@@ -1320,8 +1321,8 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
         resolve_tool_sink_class(registered_descriptor("mqtt_publish"))
         is SinkClass.HOME_LOCAL
     )
-    # Home Assistant actions stay conservatively classified because HA
-    # services can deliver messages or invoke webhooks outside the household.
+    # Without arguments a Home Assistant action cannot be classified by domain,
+    # so it keeps the conservative class. See the domain-aware tests below.
     assert (
         resolve_tool_sink_class(registered_descriptor("call_home_assistant_action"))
         is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
@@ -1332,6 +1333,144 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
         resolve_tool_sink_class(registered_descriptor("jq_query"))
         is SinkClass.SENSITIVE_READ_BROADENING
     )
+    # The image and video backends take a prompt with no recipient argument, so
+    # the destination is fixed and they are not arbitrary external messaging.
+    for fixed_destination_tool in (
+        "generate_image",
+        "transform_image",
+        "generate_video",
+    ):
+        assert (
+            resolve_tool_sink_class(registered_descriptor(fixed_destination_tool))
+            is SinkClass.LOW_BANDWIDTH_EXTERNAL
+        ), fixed_destination_tool
+    # Tools whose destination the model does choose keep the arbitrary class.
+    for model_addressed_tool in ("send_message_to_user", "ingest_document_from_url"):
+        assert (
+            resolve_tool_sink_class(registered_descriptor(model_addressed_tool))
+            is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+        ), model_addressed_tool
+
+
+@pytest.mark.parametrize(
+    ("domain", "expected"),
+    [
+        ("light", SinkClass.HOME_LOCAL),
+        ("switch", SinkClass.HOME_LOCAL),
+        ("climate", SinkClass.HOME_LOCAL),
+        ("lock", SinkClass.HOME_LOCAL),
+        # Case is normalized, so a differently-cased domain is still household.
+        ("LIGHT", SinkClass.HOME_LOCAL),
+        # Domains that leave the household keep the conservative class.
+        ("notify", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        ("rest_command", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        # script and automation run operator-defined sequences that may
+        # themselves notify or call out, so they are not household-local.
+        ("script", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        ("automation", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        # play_media fetches a caller-supplied URL.
+        ("media_player", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+        # These run code on the Home Assistant host.
+        ("shell_command", SinkClass.SANDBOX_NETWORK),
+        ("python_script", SinkClass.SANDBOX_NETWORK),
+        # The allowlist fails safe: a domain it does not know is not downgraded.
+        ("domain_added_by_a_future_ha_release", SinkClass.ARBITRARY_EXTERNAL_MESSAGE),
+    ],
+)
+def test_home_assistant_action_sink_class_depends_on_domain(
+    domain: str,
+    expected: SinkClass,
+) -> None:
+    metadata = LOCAL_TOOL_METADATA_BY_NAME["call_home_assistant_action"]
+    descriptor = ToolDescriptor(
+        name="call_home_assistant_action",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_home_assistant_action",
+                    "description": "Run a Home Assistant action.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+
+    resolved = resolve_tool_sink_class(descriptor, {"domain": domain, "action": "x"})
+
+    assert resolved is expected
+
+
+def test_home_assistant_action_without_a_usable_domain_stays_conservative() -> None:
+    """A malformed or absent domain must not fall through to household-local."""
+    metadata = LOCAL_TOOL_METADATA_BY_NAME["call_home_assistant_action"]
+    descriptor = ToolDescriptor(
+        name="call_home_assistant_action",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_home_assistant_action",
+                    "description": "Run a Home Assistant action.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+
+    for arguments in ({"action": "turn_on"}, {"domain": None}, {"domain": 42}, {}):
+        assert (
+            resolve_tool_sink_class(descriptor, arguments)
+            is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+        ), arguments
+
+
+def test_evaluate_tool_threads_arguments_into_sink_resolution() -> None:
+    """The evaluator must pass call arguments through, or domains never apply."""
+    metadata = LOCAL_TOOL_METADATA_BY_NAME["call_home_assistant_action"]
+    descriptor = ToolDescriptor(
+        name="call_home_assistant_action",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "call_home_assistant_action",
+                    "description": "Run a Home Assistant action.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=metadata.tags,
+        origin="local",
+    )
+    evaluator = TaintPolicyEvaluator(
+        TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="web_page",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="Untrusted page content entered the turn.",
+        )
+    )
+
+    evaluation = evaluator.evaluate_tool(
+        descriptor=descriptor,
+        state=state,
+        arguments={"domain": "light", "action": "turn_on"},
+    )
+
+    assert evaluation.sink_class is SinkClass.HOME_LOCAL
+    assert evaluation.requested_outcome is TaintPolicyOutcome.ALLOW
 
 
 @pytest.mark.asyncio
