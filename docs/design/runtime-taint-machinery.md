@@ -112,17 +112,17 @@ A `TaintSource` explains why taint changed:
 
 `SinkClass` describes what a requested operation can do with tainted context:
 
-| Sink class                    | Meaning                                                                                             | Examples                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `user_local`                  | Sends output only to the active authenticated user or current local UI.                             | Chat reply, web stream text, voice reply.                                           |
-| `home_local`                  | Acts inside the household trust boundary without arbitrary destination selection.                   | Home Assistant action, MQTT to configured broker.                                   |
-| `artifact_write`              | Persists content into the assistant's own stores.                                                   | Note write, task/ticket write, automation write, attachment registration.           |
-| `low_bandwidth_external`      | External communication with fixed recipient or fixed template.                                      | Fixed-template push notification, owner-addressed durable confirmation.             |
-| `known_user_message`          | Free-form message to a server-validated configured user; destination is not attacker-selectable.    | Future server-validated known-user messaging.                                       |
-| `arbitrary_external_message`  | Free-form external communication where destination is model-controlled or outside configured users. | Email sending, shared tracker body, calendar invite with guests.                    |
-| `attacker_addressable_egress` | High-bandwidth outbound data to attacker-selectable destinations.                                   | URL fetch, browser navigation, browser form submit, arbitrary webhook call.         |
-| `sandbox_network`             | Code or CLI with network access.                                                                    | Worker agent network, Monty extension command, future skills-plus-CLI egress.       |
-| `sensitive_read_broadening`   | New access to private corpus after high-tier taint entered context.                                 | Semantic document search, note search, message-history search, full document fetch. |
+| Sink class                    | Meaning                                                                                             | Examples                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `user_local`                  | Sends output only to the active authenticated user or current local UI.                             | Chat reply, web stream text, voice reply.                                                                                       |
+| `home_local`                  | Acts inside the household trust boundary without arbitrary destination selection.                   | Home Assistant action, MQTT to configured broker.                                                                               |
+| `artifact_write`              | Persists content into the assistant's own stores.                                                   | Note write, task/ticket write, automation write, attachment registration.                                                       |
+| `low_bandwidth_external`      | External communication with fixed recipient or fixed template.                                      | Fixed-template push notification, owner-addressed durable confirmation, image/video generation against a fixed vendor endpoint. |
+| `known_user_message`          | Free-form message to a server-validated configured user; destination is not attacker-selectable.    | Future server-validated known-user messaging.                                                                                   |
+| `arbitrary_external_message`  | Free-form external communication where destination is model-controlled or outside configured users. | Email sending, shared tracker body, calendar invite with guests.                                                                |
+| `attacker_addressable_egress` | High-bandwidth outbound data to attacker-selectable destinations.                                   | URL fetch, browser navigation, browser form submit, arbitrary webhook call.                                                     |
+| `sandbox_network`             | Code or CLI with network access.                                                                    | Worker agent network, Monty extension command, future skills-plus-CLI egress.                                                   |
+| `sensitive_read_broadening`   | New access to private corpus after high-tier taint entered context.                                 | Semantic document search, note search, message-history search, full document fetch.                                             |
 
 Sink class is not identical to tool tag. A single tool may map to different sink classes by
 arguments or runtime state. For example, browser navigation to a configured origin and browser
@@ -548,11 +548,26 @@ them adds friction without preventing exfiltration. Home-local actions are bound
 household systems; they can still be state-changing, so the static profile policy and existing
 confirmation rules remain in force, but runtime taint does not automatically block them.
 
-The sink resolver must classify Home Assistant actions by service, not blanket every HA call as
-`home_local`. Lights, sensors, and local scenes fit `home_local`; HA services that deliver messages,
-invoke webhooks, call `rest_command`, or otherwise move data outside the household should map to
-`low_bandwidth_external`, `arbitrary_external_message`, or `attacker_addressable_egress` as
-appropriate.
+The sink resolver classifies Home Assistant actions by domain rather than blanket-classifying every
+HA call, using the `domain` argument of `call_home_assistant_action`. The household-local set is an
+**allowlist** (`_HOUSEHOLD_LOCAL_HA_DOMAINS`), so an unrecognised domain — including one added by a
+future HA release — keeps the conservative `arbitrary_external_message` classification rather than
+being silently downgraded. A call whose `domain` is missing or not a string is treated the same way.
+
+Three groups are deliberately excluded from the allowlist:
+
+- `script` and `automation` run operator-defined sequences that may themselves notify or call a REST
+  endpoint, so they cannot be assumed household-local.
+- `media_player` accepts a caller-supplied URL via `play_media`.
+- `notify`, `rest_command`, `tts`, and `conversation` leave the household by design.
+
+`shell_command` and `python_script` run operator-supplied code on the HA host and map to
+`sandbox_network`, not to any household-local class.
+
+This is the general mechanism for the "a single tool may map to different sink classes by arguments"
+case above: `resolve_tool_sink_class` takes an optional `arguments` mapping, and
+`TaintPolicyEvaluator.evaluate_tool` forwards the call's arguments to it. Omitting the argument
+keeps the tag-only classification, so callers that do not have arguments to hand are unaffected.
 
 ### Why Arbitrary Egress Concentrates Friction
 

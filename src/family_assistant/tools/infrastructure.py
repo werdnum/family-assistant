@@ -1159,6 +1159,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             evaluation = self._taint_evaluator.evaluate_tool(
                 descriptor=descriptor,
                 state=state,
+                arguments=arguments,
             )
             logger.info(
                 "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
