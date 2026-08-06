@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 
 from family_assistant.context_providers import KnownUsersContextProvider
 from family_assistant.llm import ToolCallFunction, ToolCallItem
-from family_assistant.llm.messages import ToolMessage
+from family_assistant.llm.messages import ToolMessage, UserMessage
 from tests.mocks.mock_llm import (
     LLMOutput,
     MatcherArgs,
@@ -111,6 +111,16 @@ async def test_send_message_to_user_tool(
     # Make a copy of the list to avoid modifying the original fixture's list if it's shared
     original_providers = list(fix.processing_service.context_providers)
     fix.processing_service.context_providers.append(known_users_provider)
+
+    # Bob is only a legitimate target because he has already talked to the
+    # assistant -- the tool refuses conversations it has no user message for.
+    await fix.database.message_history.add_message(
+        UserMessage(content="Hi assistant"),
+        interface_type="telegram",
+        conversation_id=str(bob_chat_id),
+        timestamp=datetime.now(UTC),
+        user_id=str(bob_chat_id),
+    )
 
     user_a_text = (
         f"Hey assistant, please tell {bob_name} that 'the meeting is at 3 PM'."

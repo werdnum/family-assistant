@@ -23,6 +23,7 @@ from family_assistant.tools.attachments import attach_to_response_tool
 from family_assistant.tools.communication import send_message_to_user_tool
 from family_assistant.tools.image_tools import highlight_image_tool
 from family_assistant.tools.types import ToolExecutionContext
+from tests.helpers import seed_known_conversation
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -198,6 +199,7 @@ class TestAttachToResponseTool:
         """Test attach_to_response without attachment registry."""
 
         db_context = Database(db_engine)
+        await seed_known_conversation(db_engine, "456789")
         exec_context = ToolExecutionContext(
             conversation_id="test_conversation",
             interface_type="telegram",
@@ -265,6 +267,7 @@ class TestSendMessageToUserWithAttachments:
             storage_path=mock_attachment_metadata.storage_path,
             conversation_id=mock_attachment_metadata.conversation_id,
         )
+        await seed_known_conversation(db_engine, "456789")
 
         exec_context = ToolExecutionContext(
             conversation_id="test_conversation",
@@ -317,6 +320,7 @@ class TestSendMessageToUserWithAttachments:
         mock_chat_interface.send_message = AsyncMock(return_value="message_123")
 
         db_context = Database(db_engine)
+        await seed_known_conversation(db_engine, "456789")
         exec_context = ToolExecutionContext(
             conversation_id="test_conversation",
             interface_type="telegram",

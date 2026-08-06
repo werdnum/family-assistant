@@ -35,7 +35,7 @@ from family_assistant.tools import (
 )
 from family_assistant.tools import AVAILABLE_FUNCTIONS as local_tool_implementations
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
-from tests.helpers import wait_for_tasks_to_complete
+from tests.helpers import seed_known_conversation, wait_for_tasks_to_complete
 from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
 
 if TYPE_CHECKING:
@@ -338,6 +338,7 @@ class TestAttachmentWorkflows:
         # Step 3: Send processed image to another user
         # We'll use a fake target chat ID for testing
         target_chat_id = 987654321
+        await seed_known_conversation(db_engine, str(target_chat_id))
 
         # Create a mock chat interface for testing
         mock_chat_interface = AsyncMock()

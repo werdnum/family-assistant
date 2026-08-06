@@ -23,6 +23,7 @@ from sqlalchemy.sql.functions import (
     count as sql_count,
 )
 
+from family_assistant.llm.messages import UserMessage
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 
@@ -407,9 +408,35 @@ async def wait_for_server(
     )
 
 
+async def seed_known_conversation(
+    engine: AsyncEngine,
+    conversation_id: str,
+    *,
+    interface_type: str = "telegram",
+    user_id: str = "known-user",
+    text: str = "Hello",
+) -> None:
+    """Persist a user message so ``conversation_id`` is a known message target.
+
+    ``send_message_to_user`` only delivers to conversations an authorized user
+    has already talked to the assistant in, which is how a real conversation
+    comes to exist. Tests that send to a conversation they did not otherwise
+    drive traffic through need this to make the target legitimate.
+    """
+    db = Database(engine)
+    await db.message_history.add_message(
+        UserMessage(content=text),
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id=user_id,
+    )
+
+
 __all__ = [
     "find_free_port",
     "require_executable",
+    "seed_known_conversation",
     "wait_for_condition",
     "wait_for_server",
     "wait_for_tasks_to_complete",

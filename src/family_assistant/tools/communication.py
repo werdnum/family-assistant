@@ -134,10 +134,12 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "For normal reminders, simply write the text in your response and it will be delivered to the current user automatically. "
                 "You MUST use the recipient's Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
                 "Optionally, you can include attachments with the message.\n\n"
+                "The target must be an existing conversation that an authorized user has already used to talk to the assistant; invented or guessed IDs are rejected.\n\n"
                 "Returns: A string indicating the result. "
                 "On success, returns 'Message sent successfully to user with Chat ID [chat_id].'. "
                 "If message is sent but history recording fails, returns 'Message sent to user with Chat ID [chat_id], but failed to record in history.'. "
                 "On error, returns 'Error: Could not send message to Chat ID [chat_id]. Details: [error details]', 'Error: Chat interface not available.',"
+                " 'Error: Chat ID [chat_id] is not a known conversation with an authorized user of this assistant.',"
                 " or 'Error: Cannot use send_message_to_user tool to send a message to the user you are already replying to. The user will receive your final response directly in this conversation.'."
             ),
             "parameters": {
@@ -145,7 +147,7 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "properties": {
                     "target_chat_id": {
                         "type": "string",
-                        "description": "The conversation ID of the recipient. For Telegram conversations, this is the numeric Chat ID. For web conversations, this is a UUID. The ID must be from a known conversation provided in the system context.",
+                        "description": "The conversation ID of the recipient. For Telegram conversations, this is the numeric Chat ID. For web conversations, this is a UUID. The ID must be from a known conversation provided in the system context, and must belong to an authorized user who has already talked to the assistant.",
                     },
                     "message_content": {
                         "type": "string",
@@ -510,6 +512,57 @@ def _parse_optional_datetime(value: str | None, field_name: str) -> datetime | N
         raise ValueError(f"{field_name} must be an ISO datetime.") from exc
 
 
+class UnknownMessageTargetError(ValueError):
+    """Raised when a ``send_message_to_user`` target is not a known conversation."""
+
+
+async def _resolve_send_message_target(
+    exec_context: ToolExecutionContext,
+    target_chat_id: str,
+) -> str:
+    """Resolve the interface type of a validated ``send_message_to_user`` target.
+
+    A conversation is a legitimate target only if an authorized user has already
+    talked to the assistant in it: every interface refuses to persist user
+    messages from identities it cannot authorize, so a conversation carrying a
+    user message is one the bot is allowed to reply into. Without this check the
+    model can name any conversation identifier it likes -- an arbitrary Telegram
+    chat ID, or a UUID belonging to nobody -- which turns the tool into an
+    exfiltration channel for injected instructions.
+
+    Returns:
+        The interface type the target conversation belongs to.
+
+    Raises:
+        UnknownMessageTargetError: If the target is not a conversation an
+            authorized user has talked to the assistant in.
+    """
+    message_history = exec_context.db_context.message_history
+    target_interface_type = await message_history.get_interface_type_for_conversation(
+        target_chat_id
+    )
+    owner_ids = (
+        await message_history.get_conversation_owner_ids(target_chat_id)
+        if target_interface_type is not None
+        else set()
+    )
+    if target_interface_type is None or not owner_ids:
+        logger.warning(
+            "Rejected send_message_to_user to unknown conversation %s "
+            "(interface_type=%s, owners=%d)",
+            target_chat_id,
+            target_interface_type,
+            len(owner_ids),
+        )
+        raise UnknownMessageTargetError(
+            f"Error: Chat ID {target_chat_id} is not a known conversation with an "
+            "authorized user of this assistant. Only use IDs from the 'Known users' "
+            "section of your context, and only for users who have already messaged "
+            "the assistant."
+        )
+    return target_interface_type
+
+
 async def send_message_to_user_tool(
     exec_context: ToolExecutionContext,
     target_chat_id: str,
@@ -544,21 +597,25 @@ async def send_message_to_user_tool(
     # This is useful for linking the sent message back to the originating interaction.
     requesting_turn_id = exec_context.turn_id
 
-    # Detect the interface type for the target conversation
-    target_interface_type = (
-        await db_context.message_history.get_interface_type_for_conversation(
-            target_chat_id
-        )
-    )
-
-    # If no history exists for this conversation, fall back to current interface type
-    # This allows sending first messages to new conversations
-    if not target_interface_type:
-        target_interface_type = exec_context.interface_type
+    # Validate that the user is not trying to send a message to themselves
+    current_conversation_id = exec_context.conversation_id
+    if target_chat_id == current_conversation_id:
         logger.warning(
-            f"No message history found for conversation {target_chat_id}. "
-            f"Defaulting to current interface type: {target_interface_type}."
+            f"Attempt to send message to self: target_chat_id={target_chat_id}, current_conversation_id={current_conversation_id}"
         )
+        return (
+            "Error: Cannot use send_message_to_user tool to send a message to the user you are "
+            "already replying to. The user will receive your final response directly in this conversation."
+        )
+
+    # Detect the interface type for the target conversation, rejecting any
+    # conversation that no authorized user has ever talked to the bot in.
+    try:
+        target_interface_type = await _resolve_send_message_target(
+            exec_context, target_chat_id
+        )
+    except UnknownMessageTargetError as exc:
+        return str(exc)
 
     # Get the appropriate ChatInterface for this interface type
     # Try chat_interfaces dict first (new way), fall back to single chat_interface (old way)
@@ -577,17 +634,6 @@ async def send_message_to_user_tool(
                 "ChatInterface not available in ToolExecutionContext for send_message_to_user_tool."
             )
             return "Error: Chat interface not available."
-
-    # Validate that the user is not trying to send a message to themselves
-    current_conversation_id = exec_context.conversation_id
-    if target_chat_id == current_conversation_id:
-        logger.warning(
-            f"Attempt to send message to self: target_chat_id={target_chat_id}, current_conversation_id={current_conversation_id}"
-        )
-        return (
-            "Error: Cannot use send_message_to_user tool to send a message to the user you are "
-            "already replying to. The user will receive your final response directly in this conversation."
-        )
 
     # Validate attachment IDs if provided
     validated_attachment_ids: list[str] | None = None
