@@ -170,7 +170,9 @@ clearly. When the request originated somewhere less trusted — a forwarded emai
 to approve the message first. See [confirmations-and-safety.md](confirmations-and-safety.md).
 
 This only reaches people set up as users of your Family Assistant — it isn't a way to send ordinary
-SMS or email to arbitrary contacts.
+SMS or email to arbitrary contacts. The assistant can only message someone in a conversation they
+have already used to talk to it, so a new household member needs to message the assistant once
+before anyone can have a message passed to them.
 
 ## Push notifications
 
