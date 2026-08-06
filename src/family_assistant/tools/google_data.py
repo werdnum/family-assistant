@@ -24,6 +24,7 @@ from email.message import EmailMessage
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import filetype  # type: ignore[import-untyped]
 from markdownify import markdownify
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
@@ -172,8 +173,9 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
             "description": (
                 "Download one attachment from a message in the requesting user's own "
                 "mailbox and store it as an attachment you can then attach to your "
-                "reply or read back. Provide the message_id and the attachment_id from "
-                "gmail_get_message. The stored file is private to the requesting user."
+                "reply or read back. Provide the message_id, the attachment_id and "
+                "the part_id from gmail_get_message. The stored file is private to "
+                "the requesting user."
             ),
             "parameters": {
                 "type": "object",
@@ -189,6 +191,16 @@ GOOGLE_DATA_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "The attachment id from gmail_get_message's attachments "
                             "list."
+                        ),
+                    },
+                    "part_id": {
+                        "type": "string",
+                        "description": (
+                            "The part id from gmail_get_message's attachments list. "
+                            "Always pass this when you have it: Gmail can hand out a "
+                            "fresh attachment id every time a message is fetched, "
+                            "and the part id is what reliably identifies the file's "
+                            "name and type."
                         ),
                     },
                     "filename": {
@@ -651,6 +663,7 @@ def _render_message_text(
         # Include the ids the LLM needs to call gmail_get_attachment.
         rendered = ", ".join(
             f"{att.get('filename')} (attachment_id: {att.get('attachment_id')}, "
+            f"part_id: {att.get('part_id')}, "
             f"{att.get('mime_type')}, {att.get('size')} bytes)"
             for att in attachments
         )
@@ -698,6 +711,7 @@ def _collect_parts(
     if filename:
         attachments.append({
             "attachment_id": body.get("attachmentId"),
+            "part_id": part.get("partId"),
             "filename": filename,
             "mime_type": mime_type,
             "size": body.get("size"),
@@ -733,6 +747,7 @@ async def gmail_get_attachment_tool(
     exec_context: ToolExecutionContext,
     message_id: str,
     attachment_id: str,
+    part_id: str | None = None,
     filename: str | None = None,
 ) -> ToolResult:
     """Download one Gmail attachment into the attachment registry."""
@@ -760,11 +775,12 @@ async def gmail_get_attachment_tool(
         # "invoice.txt" would be served as text/plain). The filename argument
         # survives only as display metadata in the description.
         part_filename, part_mime = await _lookup_attachment_part(
-            exec_context, message_id, attachment_id
+            exec_context, message_id, attachment_id, part_id
         )
         content_type = (
             part_mime
             or (mimetypes.guess_type(part_filename)[0] if part_filename else None)
+            or await _sniff_content_type(content)
             or "application/octet-stream"
         )
         stored_name = part_filename or (
@@ -788,13 +804,18 @@ async def _lookup_attachment_part(
     exec_context: ToolExecutionContext,
     message_id: str,
     attachment_id: str,
+    part_id: str | None,
 ) -> tuple[str | None, str | None]:
     """Recover an attachment's filename and MIME type from its message's parts.
 
-    Gmail's attachment download endpoint returns only the raw bytes, so when the
-    caller omitted the filename the part metadata is the only source for a real
-    name and content type (a bare fallback name would guess
-    ``application/octet-stream``, which the attachment allowlist rejects).
+    Gmail's attachment download endpoint returns only the raw bytes, so the part
+    metadata is the source for a real name and content type.
+
+    The part is matched by ``partId`` when the caller supplied one, because
+    Gmail hands out a fresh ``attachmentId`` token on each ``messages.get`` for
+    the same message: matching on the attachment id alone finds nothing whenever
+    the token rotated between the caller's fetch and this one, and the file then
+    gets stored as ``application/octet-stream``, which the allowlist rejects.
     """
     message = (
         await _google_request(
@@ -805,16 +826,41 @@ async def _lookup_attachment_part(
         )
     ).json()
     _, attachments = await _walk_message_payload(message.get("payload", {}))
+    match = _match_attachment_part(attachments, attachment_id, part_id)
+    if match is None:
+        return (None, None)
+    part_filename = match.get("filename")
+    part_mime = match.get("mime_type")
+    return (
+        part_filename if isinstance(part_filename, str) and part_filename else None,
+        part_mime if isinstance(part_mime, str) and part_mime else None,
+    )
+
+
+def _match_attachment_part(
+    attachments: list[GoogleJson],
+    attachment_id: str,
+    part_id: str | None,
+) -> GoogleJson | None:
+    """Find the part an attachment id / part id pair refers to."""
+    if part_id:
+        for attachment in attachments:
+            if attachment.get("part_id") == part_id:
+                return attachment
     for attachment in attachments:
-        if attachment.get("attachment_id") != attachment_id:
-            continue
-        part_filename = attachment.get("filename")
-        part_mime = attachment.get("mime_type")
-        return (
-            part_filename if isinstance(part_filename, str) and part_filename else None,
-            part_mime if isinstance(part_mime, str) and part_mime else None,
-        )
-    return (None, None)
+        if attachment.get("attachment_id") == attachment_id:
+            return attachment
+    return None
+
+
+async def _sniff_content_type(content: bytes) -> str | None:
+    """Detect a content type from the bytes themselves.
+
+    Used only when the part metadata could not be recovered; the bytes are a
+    trustworthy source of the type in a way the caller-supplied filename is not.
+    """
+    kind = await asyncio.to_thread(filetype.guess, content)
+    return str(kind.mime) if kind is not None else None
 
 
 def _decode_attachment_payload(payload: GoogleJson) -> bytes | None:
