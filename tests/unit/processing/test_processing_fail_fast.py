@@ -524,7 +524,7 @@ def test_render_system_prompt_raises_on_unknown_placeholder() -> None:
         ValueError,
         match="System prompt template contains unknown placeholders: automation_id",
     ):
-        service._format_system_prompt(user_name="tester")
+        service.format_system_prompt(user_name="tester")
 
 
 @pytest.mark.no_db
@@ -534,7 +534,7 @@ def test_render_system_prompt_allows_escaped_literal_braces() -> None:
         "Link: {server_url}/automations/{{automation_id}}"
     )
 
-    rendered_prompt = service._format_system_prompt(user_name="tester")
+    rendered_prompt = service.format_system_prompt(user_name="tester")
 
     assert "http://testserver/automations/{automation_id}" in rendered_prompt
 
@@ -544,7 +544,7 @@ def test_render_system_prompt_supports_placeholder_adjacent_to_escaped_braces() 
     service = _make_service()
     service.service_config.prompts["system_prompt"] = "Wrapped: {{{server_url}}}"
 
-    rendered_prompt = service._format_system_prompt(user_name="tester")
+    rendered_prompt = service.format_system_prompt(user_name="tester")
 
     assert "{http://testserver}" in rendered_prompt
 
@@ -572,7 +572,7 @@ def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
 
         service.validate_system_prompt_renders()
 
-        assert service._format_system_prompt(user_name="tester"), profile_id
+        assert service.format_system_prompt(user_name="tester"), profile_id
 
 
 @pytest.mark.no_db

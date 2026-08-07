@@ -31,7 +31,7 @@ from .attachments import AttachmentProcessor
 from .context import ContextPreparer
 from .llm_loop import LLMStreamingLoop
 from .tool_execution import ToolExecutor
-from .turn_context import SYSTEM_PROMPT_GUIDANCE, build_turn_context_message
+from .turn_context import build_turn_context_message, turn_context_guidance
 from .types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
@@ -69,6 +69,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+# How the current time is spelled inside the <turn_context> block. Defined once
+# so the surfaces that report the block (the context viewer) cannot render a
+# different clock format from the one the model is handed.
+DEFAULT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S %Z"
 
 # Stand-in result for a tool call whose real result was never recorded, so the
 # history stays representable to providers that require every call to be
@@ -551,7 +556,7 @@ class ProcessingService:
         this profile. The user name is the only per-conversation input and any
         value exercises the same code path, so a stand-in is enough.
         """
-        self._format_system_prompt(user_name="startup validation")
+        self.format_system_prompt(user_name="startup validation")
 
     @staticmethod
     def _build_system_message(content: str) -> SystemMessage:
@@ -566,15 +571,20 @@ class ProcessingService:
         """
         return SystemMessage(content=content, stable_prefix_len=len(content) or None)
 
-    def _current_time_str(self) -> str:
-        return (
-            self.clock
-            .now()
-            .astimezone(self.service_config.timezone)
-            .strftime("%Y-%m-%d %H:%M:%S %Z")
-        )
+    def current_time_str(self, *, fmt: str = DEFAULT_TIME_FORMAT) -> str:
+        """Now, in the profile's timezone, as the model is shown it.
 
-    def _format_system_prompt(self, *, user_name: str) -> str:
+        Public because the surfaces that report or re-render the turn-context
+        block -- the context viewer and the two Live API paths -- must not spell
+        this out for themselves and drift from what the model actually receives.
+        It reads the injected clock, so a test that pins the clock pins these too.
+
+        *fmt* exists for telephony, which has the model speak the time aloud and
+        wants a more speakable rendering than the machine-readable default.
+        """
+        return self.clock.now().astimezone(self.service_config.timezone).strftime(fmt)
+
+    def format_system_prompt(self, *, user_name: str) -> str:
         """Render the system prompt template with strict placeholder validation.
 
         ``current_time`` and ``aggregated_other_context`` are deliberately absent
@@ -652,11 +662,17 @@ class ProcessingService:
                 final_system_prompt = system_prompt_docs.strip()
 
         # Appended here rather than written into each profile's template, since
-        # every profile that receives the block needs to be told what it is.
+        # every profile that receives the block needs to be told what it is -- and
+        # told accurately: a profile without the aggregated-context grant must not
+        # be led to believe its notes and calendar are in there.
         if self.sends_turn_context_block:
-            final_system_prompt = (
-                f"{final_system_prompt}\n\n{SYSTEM_PROMPT_GUIDANCE}".strip()
+            guidance = turn_context_guidance(
+                includes_aggregated_context=(
+                    self.service_config.include_aggregated_context
+                ),
+                placement="appended",
             )
+            final_system_prompt = f"{final_system_prompt}\n\n{guidance}".strip()
 
         return self.context_preparer.prepend_profile_preamble(final_system_prompt)
 
@@ -920,7 +936,7 @@ class ProcessingService:
                 else:
                     aggregated_other_context_str = thread_attachments_context
 
-        final_system_prompt = self._format_system_prompt(user_name=user_name)
+        final_system_prompt = self.format_system_prompt(user_name=user_name)
         delegation_addition = await self.delegation_catalog_addition()
         if delegation_addition:
             # Config-derived, so it is as stable as the rest of the prompt and
@@ -949,7 +965,7 @@ class ProcessingService:
         # list onto this block instead of onto the trigger.
         messages_for_llm.append(
             build_turn_context_message(
-                current_time_str=self._current_time_str(),
+                current_time_str=self.current_time_str(),
                 aggregated_context=aggregated_other_context_str,
             )
         )

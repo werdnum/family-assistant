@@ -61,6 +61,17 @@ After the change:
 The cacheable prefix becomes the entire system prompt plus the entire history. Only the
 `<turn_context>` block itself, plus genuinely new messages, are uncached.
 
+**This lands on OpenAI and Gemini, which cache implicitly by prefix. It does not yet reach
+Anthropic**, which caches only up to an explicit `cache_control` breakpoint, and the only breakpoint
+we set is on the system block (`anthropic_client.py:_build_system_blocks`). An Anthropic profile
+therefore still re-reads the whole history every request; making the history prefix-stable is a
+precondition for fixing that, not the fix. `engineer` is the only Anthropic profile, and with
+`max_iterations: 100` it has the longest histories in the system, so the follow-up is worth doing:
+add a second breakpoint on the last message before the block, which
+[prompt-caching.md](prompt-caching.md) already tracks as deferred. It is deliberately not in this
+change — it would help equally without it, so bundling it would only make both harder to review and
+to revert.
+
 ### Why a user message and not a system message
 
 The block must be a `UserMessage`:
@@ -77,6 +88,22 @@ A `UserMessage` behaves identically across all three providers with no provider 
 Trust framing is handled in the text: the block is wrapped in `<turn_context>` tags and the system
 prompt states that it is system-generated and not user-authored, the same treatment
 `<attachment_metadata>` already gets.
+
+Two things follow from making that claim, both of which the code has to honour or the framing does
+harm rather than good.
+
+The block's contents are not trusted just because the block is: they are notes, calendar summaries
+and Home Assistant state, and email intake can reach notes. A note body containing `</turn_context>`
+would end the block early, leaving whatever followed it looking like ordinary conversation to a
+model that has just been told everything inside the block is system-generated.
+`render_turn_context_block` therefore escapes both tags out of provider output.
+
+And the description has to match the grant. `turn_context_guidance` takes
+`includes_aggregated_context`, because telling a profile its notes and calendar are in the block
+when the block holds only a clock invites it to answer "nothing scheduled" from an empty block
+rather than saying it has no calendar access — the opposite of the deny the flag exists to express.
+It also takes a `placement`, since a Live API session has no message list and inlines the block into
+its system instruction instead of appending it.
 
 ### Why it is placed once per turn, not repositioned per iteration
 
@@ -122,6 +149,13 @@ flag without re-reading why it was off.
 The current time is injected for **every** profile regardless of the flag. It is not sensitive, all
 but two profiles already interpolate it, and the two that do not (`research`, `research_max`) are
 better off with it.
+
+Those two are also the case where "every profile" takes work. Deep Research collapses the prompt
+into a single `input` string and the client drops scaffolding on the way, so no block reaches the
+model on either of its paths; `DeepResearchProcessingService` therefore folds the clock back into
+the system prompt. That is the thing this design moved away from, and it is right here for the same
+reason it is wrong elsewhere: what makes prompt interpolation costly is the cache prefix it
+invalidates, and a single-shot research submission has no prefix to protect.
 
 ### Placeholder removal is a hard error, not a silent no-op
 

@@ -294,3 +294,20 @@ def test_turn_context_block_is_kept_out_of_the_research_query() -> None:
 
     assert "Compare heat pump models" in str(kwargs["input"])
     assert "turn_context" not in str(kwargs["input"])
+
+
+@pytest.mark.no_db
+def test_deep_research_prompt_carries_the_clock() -> None:
+    """No turn-context block survives to Deep Research, so the prompt must.
+
+    Research grounded on live web results is the case that most needs a date;
+    dropping the block without folding the time in would leave "the latest on X
+    this week" unanswerable.
+    """
+    service = _make_service(
+        GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+    )
+
+    prompt = service.format_system_prompt(user_name="tester")
+
+    assert "Current time:" in prompt

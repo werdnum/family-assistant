@@ -4,7 +4,6 @@ This module provides endpoints for exporting diagnostic data useful for debuggin
 including error logs, LLM request/response records, and message history.
 """
 
-import json
 import platform
 import sys
 from collections import Counter
@@ -339,15 +338,12 @@ def _summarize_prompt_cache(
 
     for messages in message_rows.values():
         for msg in messages:
+            # Already deserialized by _process_message_row_as_dict; a str here
+            # would mean the repository stopped doing that, and silently
+            # reporting zeroes would hide it from the very summary meant to
+            # measure cache behaviour.
             reasoning_info = msg.get("reasoning_info")
-            if isinstance(reasoning_info, str):
-                try:
-                    reasoning_info = json.loads(reasoning_info)
-                except json.JSONDecodeError:
-                    continue
-            if not isinstance(reasoning_info, dict):
-                continue
-            if "prompt_tokens" not in reasoning_info:
+            if reasoning_info is None or "prompt_tokens" not in reasoning_info:
                 continue
 
             profile_id = msg.get("processing_profile_id")

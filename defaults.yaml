@@ -1026,11 +1026,12 @@ service_profiles:
     # and answers in text. That also makes it safe to delegate to from anywhere,
     # including profiles handling untrusted input.
     #
-    # Denying [B] takes more than an empty tool policy. Context providers inject
-    # the user's notes, calendar and known users into the system prompt for every
-    # profile by default, so they are excluded explicitly here -- a transcription
-    # job has no use for any of it, and combining it with attacker-controlled
-    # audio is exactly the pairing the Rule of Two exists to prevent.
+    # Denying [B] takes more than an empty tool policy. Context providers are what
+    # put the user's notes, calendar and known users into a profile's per-turn
+    # context block, so they are excluded explicitly here on top of leaving
+    # include_aggregated_context off -- a transcription job has no use for any of
+    # it, and combining it with attacker-controlled audio is exactly the pairing
+    # the Rule of Two exists to prevent.
     #
     # On [C]: an empty tool policy is not literally no tools either.
     # global_tools_policy grants three tools to every profile, and a profile's

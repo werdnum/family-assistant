@@ -107,6 +107,10 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="chat_api_test_profile",
+        # Matches default_assistant, the profile these tests stand in for. The
+        # retryable-turn test needs it: the setup step it fails is the context
+        # taint aggregation, which only runs for a profile granted the context.
+        include_aggregated_context=True,
     )
 
 
@@ -884,9 +888,6 @@ async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
     ))
 
     service = app_fixture.state.processing_service
-    # The setup step this test fails is only reached when the profile actually
-    # receives the aggregated context.
-    monkeypatch.setattr(service.service_config, "include_aggregated_context", True)
     preparer = service.context_preparer
     real_aggregate = preparer.aggregate_context_taint_sources
     calls = {"n": 0}

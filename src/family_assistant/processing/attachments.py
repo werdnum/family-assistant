@@ -276,8 +276,13 @@ class AttachmentProcessor:
                     for part_dict in converted_dicts
                 ]
 
-                # Create new UserMessage with converted content
-                converted_messages.append(UserMessage(content=converted_parts))
+                # model_copy rather than a fresh UserMessage: constructing one
+                # keeps only the content and silently drops every other field --
+                # taint_metadata, and is_turn_scaffolding, which four separate
+                # scans rely on to tell machinery from what the user said.
+                converted_messages.append(
+                    msg.model_copy(update={"content": converted_parts})
+                )
             else:
                 # Keep non-user messages and string-content messages as-is
                 converted_messages.append(msg)

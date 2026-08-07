@@ -580,9 +580,9 @@ NOTES_INTEGRATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "include_in_prompt": {
                         "type": "boolean",
                         "description": (
-                            "Optional. Whether to include this note in system prompts. "
-                            "Takes precedence over file frontmatter; defaults to true "
-                            "if neither specified."
+                            "Optional. Whether to auto-load this note into your "
+                            "context on every turn. Takes precedence over file "
+                            "frontmatter; defaults to true if neither specified."
                         ),
                     },
                 },
@@ -708,8 +708,9 @@ async def workspace_import_note_tool(
         exec_context: The tool execution context
         path: Relative path to the file within workspace
         title: Optional title for the note (defaults to filename)
-        include_in_prompt: Whether to include in system prompts (default True,
-            but frontmatter value takes precedence if not explicitly specified)
+        include_in_prompt: Whether to auto-load the note into the assistant's
+            per-turn context (default True, but frontmatter value takes precedence
+            if not explicitly specified)
 
     Returns:
         ToolResult with import details

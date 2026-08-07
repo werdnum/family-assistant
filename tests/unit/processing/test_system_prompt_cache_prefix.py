@@ -104,7 +104,7 @@ class TestSystemPromptIsFullyStable:
     def test_prompt_carries_no_timestamp(self) -> None:
         service = _make_service()
 
-        rendered = service._format_system_prompt(user_name="tester")
+        rendered = service.format_system_prompt(user_name="tester")
 
         assert "2026-07-25 10:00:00" not in rendered
 
@@ -117,25 +117,30 @@ class TestSystemPromptIsFullyStable:
             clock=MockClock(datetime(2026, 7, 25, 23, 59, 59, tzinfo=UTC))
         )
 
-        assert early._format_system_prompt(
+        assert early.format_system_prompt(
             user_name="tester"
-        ) == later._format_system_prompt(user_name="tester")
+        ) == later.format_system_prompt(user_name="tester")
 
-    def test_prompt_is_identical_regardless_of_available_context(self) -> None:
-        without = _make_service(include_aggregated_context=False)
-        with_context = _make_service(
+    def test_prompt_is_identical_regardless_of_what_providers_report(self) -> None:
+        """Provider output is per-turn; it must not reach the prompt at all.
+
+        Both services are granted the context, so the only difference is what the
+        providers have to say -- which is exactly what used to be interpolated.
+        """
+        empty = _make_service(include_aggregated_context=True)
+        full = _make_service(
             context_fragment="Calendar:\n- 09:00 standup",
             include_aggregated_context=True,
         )
 
-        assert without._format_system_prompt(
+        assert empty.format_system_prompt(
             user_name="tester"
-        ) == with_context._format_system_prompt(user_name="tester")
+        ) == full.format_system_prompt(user_name="tester")
 
     def test_breakpoint_covers_the_whole_prompt(self) -> None:
         service = _make_service()
 
-        rendered = service._format_system_prompt(user_name="tester")
+        rendered = service.format_system_prompt(user_name="tester")
         message = service._build_system_message(rendered)
 
         assert message.stable_prefix_len == len(rendered)
@@ -157,7 +162,7 @@ class TestRemovedPlaceholdersFailLoudly:
         service = _make_service(template=f"You are a helper. {placeholder}")
 
         with pytest.raises(ValueError, match="unknown placeholders"):
-            service._format_system_prompt(user_name="tester")
+            service.format_system_prompt(user_name="tester")
 
     def test_startup_validation_rejects_a_removed_placeholder(self) -> None:
         service = _make_service(template="You are a helper. {current_time}")

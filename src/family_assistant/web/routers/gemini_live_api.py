@@ -17,7 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from family_assistant.processing import ProcessingService
-from family_assistant.processing.turn_context import render_turn_context_block
+from family_assistant.processing.turn_context import (
+    render_turn_context_block,
+    turn_context_guidance,
+)
 from family_assistant.tools import get_tool_definitions_for_advertisement
 from family_assistant.tools.types import normalize_json_schema_type
 from family_assistant.web.auth import get_user_from_request
@@ -223,15 +226,22 @@ async def _get_formatted_system_prompt(
         # A Live API session hands the model one system instruction and then only
         # audio, so there is no message list to carry the turn-context block the
         # chat path appends. It is inlined at the tail instead, where its
-        # <turn_context> tags keep it distinct from the instructions above it.
-        now = datetime.datetime.now(datetime.UTC)
-        local_now = now.astimezone(service_config.timezone)
+        # <turn_context> tags keep it distinct from the instructions above it --
+        # preceded by the same guidance the chat path puts in the system prompt,
+        # without which a voice model reads the literal tags out loud.
+        guidance = turn_context_guidance(
+            includes_aggregated_context=service_config.include_aggregated_context,
+            placement="inline",
+        )
         turn_context = render_turn_context_block(
-            current_time_str=local_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            current_time_str=processing_service.current_time_str(),
             aggregated_context=aggregated_context,
         )
 
-        return f"{formatted.strip()}\n\n{voice_instruction}\n\n{turn_context}"
+        return (
+            f"{formatted.strip()}\n\n{voice_instruction}\n\n{guidance}\n\n"
+            f"{turn_context}"
+        )
 
     except Exception as e:
         logger.exception(f"Error getting system prompt: {e}")

@@ -50,7 +50,10 @@ from google.genai.types import (
 from starlette.websockets import WebSocketState
 
 from family_assistant.paths import WEB_RESOURCES_DIR
-from family_assistant.processing.turn_context import render_turn_context_block
+from family_assistant.processing.turn_context import (
+    render_turn_context_block,
+    turn_context_guidance,
+)
 from family_assistant.security.taint import InMemoryTurnTaintTracker
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
@@ -1551,11 +1554,15 @@ async def asterisk_live_endpoint(
                 )
 
                 aggregated_context = ""
+                includes_aggregated_context = False
                 if isinstance(telephone_service, ProcessingService):
                     addition = await telephone_service.delegation_catalog_addition()
                     if addition:
                         system_instruction = f"{system_instruction}\n\n{addition}"
-                    if telephone_service.service_config.include_aggregated_context:
+                    includes_aggregated_context = (
+                        telephone_service.service_config.include_aggregated_context
+                    )
+                    if includes_aggregated_context:
                         aggregated_context = (
                             await telephone_service.context_preparer.aggregate_context()
                         )
@@ -1563,14 +1570,23 @@ async def asterisk_live_endpoint(
                 # A Live API session carries no message list, so the turn-context
                 # block the chat path appends as a trailing message is inlined at
                 # the end of the system instruction; its tags keep it delimited.
-                tz = telephone_service.service_config.timezone
+                # The guidance in front of it is what stops the model reading the
+                # tags out to the caller, which on a phone call is all they hear.
+                guidance = turn_context_guidance(
+                    includes_aggregated_context=includes_aggregated_context,
+                    placement="inline",
+                )
+                # A spoken time, not the machine-readable one the chat path uses:
+                # the model reads this aloud.
                 turn_context = render_turn_context_block(
-                    current_time_str=datetime.now(tz).strftime(
-                        "%I:%M %p, %A, %B %d, %Y"
+                    current_time_str=telephone_service.current_time_str(
+                        fmt="%I:%M %p, %A, %B %d, %Y"
                     ),
                     aggregated_context=aggregated_context,
                 )
-                system_instruction = f"{system_instruction}\n\n{turn_context}"
+                system_instruction = (
+                    f"{system_instruction}\n\n{guidance}\n\n{turn_context}"
+                )
 
             # Get tools
             if telephone_service.tools_provider:

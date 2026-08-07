@@ -58,6 +58,18 @@ class DeepResearchProcessingService(ProcessingService):
     # on either the interactive or the submit-then-poll path.
     sends_turn_context_block: bool = False
 
+    def format_system_prompt(self, *, user_name: str) -> str:
+        """Fold the clock into the prompt, since no block survives to carry it.
+
+        Research grounded on live web results needs a date more than most work
+        does -- "the latest on X this week" is unanswerable without one. Putting
+        it in the prompt is what the rest of the codebase moved away from, but
+        the reason not to is a cache prefix, and a single-shot Deep Research
+        submission has none.
+        """
+        prompt = super().format_system_prompt(user_name=user_name)
+        return f"{prompt}\n\nCurrent time: {self.current_time_str()}".strip()
+
     def _google_client(self) -> GoogleGenAIClient:
         client = self.llm_client
         if not isinstance(client, GoogleGenAIClient):
@@ -91,7 +103,7 @@ class DeepResearchProcessingService(ProcessingService):
         """Start a Deep Research interaction without blocking on its result.
 
         Builds the same system prompt as a direct turn (via the inherited
-        ``_format_system_prompt``) plus the delegated content as input text.
+        ``format_system_prompt``) plus the delegated content as input text.
         No ``<turn_context>`` block is appended: research profiles aggregate no
         context, and a single-shot submission has no cache prefix to protect.
         Chains onto the prior delegation's
@@ -100,7 +112,7 @@ class DeepResearchProcessingService(ProcessingService):
         in the background.
         """
         _ = initial_taint_sources
-        system_prompt = self._format_system_prompt(user_name=user_name)
+        system_prompt = self.format_system_prompt(user_name=user_name)
         user_text = self._extract_user_content_for_history(content_parts)
         messages: list[LLMMessage] = []
         if system_prompt:
