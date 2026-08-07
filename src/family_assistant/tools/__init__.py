@@ -1085,9 +1085,11 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    # Unlike the generation tools above, this one takes a URL: the model picks
+    # the destination, so it is EXTERNAL_COMM and must stay that way.
     "download_media": _metadata(
         ToolTag.READ_ONLY,
-        ToolTag.LOW_BANDWIDTH_EXTERNAL,
+        ToolTag.EXTERNAL_COMM,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),

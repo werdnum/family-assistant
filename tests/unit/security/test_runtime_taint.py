@@ -1345,7 +1345,14 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
             is SinkClass.LOW_BANDWIDTH_EXTERNAL
         ), fixed_destination_tool
     # Tools whose destination the model does choose keep the arbitrary class.
-    for model_addressed_tool in ("send_message_to_user", "ingest_document_from_url"):
+    # download_media belongs here, not with the generation tools above: it
+    # takes a URL. It sits next to them in the metadata table and was swept
+    # into their reclassification once, so it is pinned explicitly.
+    for model_addressed_tool in (
+        "send_message_to_user",
+        "ingest_document_from_url",
+        "download_media",
+    ):
         assert (
             resolve_tool_sink_class(registered_descriptor(model_addressed_tool))
             is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
