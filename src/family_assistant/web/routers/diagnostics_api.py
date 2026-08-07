@@ -4,6 +4,7 @@ This module provides endpoints for exporting diagnostic data useful for debuggin
 including error logs, LLM request/response records, and message history.
 """
 
+import json
 import platform
 import sys
 from collections import Counter
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.storage.database import Database
+from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools.types import ToolDefinition
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
 
@@ -70,12 +72,38 @@ class MessageHistoryExport(BaseModel):
     interface_type: str
 
 
+class PromptCacheProfileUsage(BaseModel):
+    """Prompt-token buckets for one processing profile over the export window."""
+
+    processing_profile_id: str | None
+    assistant_messages: int
+    prompt_tokens: int
+    cached_prompt_tokens: int
+    cache_write_tokens: int
+
+
+class PromptCacheSummary(BaseModel):
+    """Prompt-cache token usage, broken down by processing profile.
+
+    Reported as raw buckets rather than a hit rate because the two are not
+    comparable across providers: Anthropic's ``prompt_tokens`` excludes the
+    cached and cache-write tokens, while OpenAI's and Google's includes them
+    (see ``MessageReasoningInfo``). Grouping by profile is what makes the numbers
+    interpretable -- a profile is pinned to one provider -- so the reader can
+    apply the right arithmetic instead of being handed an average of two
+    different definitions.
+    """
+
+    by_profile: list[PromptCacheProfileUsage]
+
+
 class ExportSummary(BaseModel):
     """Summary of exported data counts."""
 
     error_count: int
     llm_request_count: int
     message_count: int
+    prompt_cache: PromptCacheSummary
 
 
 class DiagnosticsExportResponse(BaseModel):
@@ -277,10 +305,76 @@ def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
         lines.append("_No messages in time window_")
 
     lines.append("")
+    lines.append("## Prompt Cache (whole window, by profile)")
+    if data.summary.prompt_cache.by_profile:
+        lines.append("| Profile | Requests | Prompt | Cached | Cache writes |")
+        lines.append("| --- | ---: | ---: | ---: | ---: |")
+        for usage in data.summary.prompt_cache.by_profile:
+            lines.append(
+                f"| {usage.processing_profile_id or '(none)'} "
+                f"| {usage.assistant_messages} "
+                f"| {usage.prompt_tokens} "
+                f"| {usage.cached_prompt_tokens} "
+                f"| {usage.cache_write_tokens} |"
+            )
+    else:
+        lines.append("_No token usage recorded in time window_")
+
+    lines.append("")
     lines.append("---")
     lines.append("Generated with Family Assistant Diagnostics Export")
 
     return "\n".join(lines)
+
+
+def _summarize_prompt_cache(
+    message_rows: dict[tuple[str, str], list[MessageHistoryRow]],
+) -> PromptCacheSummary:
+    """Total the prompt-token buckets per processing profile.
+
+    Messages without usage stats (user, tool, and any assistant row written
+    before the provider reported usage) contribute nothing.
+    """
+    totals: dict[str | None, PromptCacheProfileUsage] = {}
+
+    for messages in message_rows.values():
+        for msg in messages:
+            reasoning_info = msg.get("reasoning_info")
+            if isinstance(reasoning_info, str):
+                try:
+                    reasoning_info = json.loads(reasoning_info)
+                except json.JSONDecodeError:
+                    continue
+            if not isinstance(reasoning_info, dict):
+                continue
+            if "prompt_tokens" not in reasoning_info:
+                continue
+
+            profile_id = msg.get("processing_profile_id")
+            entry = totals.setdefault(
+                profile_id,
+                PromptCacheProfileUsage(
+                    processing_profile_id=profile_id,
+                    assistant_messages=0,
+                    prompt_tokens=0,
+                    cached_prompt_tokens=0,
+                    cache_write_tokens=0,
+                ),
+            )
+            entry.assistant_messages += 1
+            entry.prompt_tokens += int(reasoning_info.get("prompt_tokens") or 0)
+            entry.cached_prompt_tokens += int(
+                reasoning_info.get("cached_prompt_tokens") or 0
+            )
+            entry.cache_write_tokens += int(
+                reasoning_info.get("cache_write_tokens") or 0
+            )
+
+    return PromptCacheSummary(
+        by_profile=sorted(
+            totals.values(), key=lambda usage: usage.prompt_tokens, reverse=True
+        )
+    )
 
 
 @diagnostics_api_router.get("/export", response_model=None)
@@ -402,6 +496,9 @@ async def export_diagnostics(
             error_count=len(error_logs),
             llm_request_count=len(llm_requests),
             message_count=len(all_messages),
+            # Computed over every message in the window, not the truncated
+            # export list, so the totals do not silently depend on max_messages.
+            prompt_cache=_summarize_prompt_cache(message_rows),
         ),
     )
 

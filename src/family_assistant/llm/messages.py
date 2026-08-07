@@ -201,6 +201,17 @@ class UserMessage(BaseModel):
     # Excluded from serialization as it's only used during provider conversion
     parts: list[Any] | None = Field(default=None, exclude=True)
 
+    is_turn_scaffolding: bool = Field(default=False, exclude=True)
+    """Whether this message is machinery for the current request, not conversation content.
+
+    Set on synthetic user messages the system appends to steer a single request --
+    the per-turn ``<turn_context>`` block and the final-iteration instruction. They
+    are rebuilt from scratch on every request, so they must never be persisted
+    (hence ``exclude``), and code that reasons about what the *user* said has to
+    skip them: scanning back for "the original user query" would otherwise match
+    the scaffolding, and turn-based context pruning would count it as a turn.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
 

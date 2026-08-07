@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from family_assistant.llm.messages import SystemMessage, UserMessage
+from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
     is_interaction_terminal_error_status,
@@ -86,25 +86,20 @@ class DeepResearchProcessingService(ProcessingService):
         """Start a Deep Research interaction without blocking on its result.
 
         Builds the same system prompt as a direct turn (via the inherited
-        ``_render_system_prompt``; research profiles have no context
-        providers, so there's no other context to aggregate) plus the
-        delegated content as input text, chains onto the prior delegation's
+        ``_format_system_prompt``) plus the delegated content as input text.
+        No ``<turn_context>`` block is appended: research profiles aggregate no
+        context, and a single-shot submission has no cache prefix to protect.
+        Chains onto the prior delegation's
         interaction (if this is a resumed run — see
         ``DelegationRunsRepository.get_latest_completed_run``), and submits
         in the background.
         """
         _ = initial_taint_sources
-        system_prompt, stable_prefix_len = self._render_system_prompt(
-            user_name=user_name, aggregated_other_context_str=""
-        )
+        system_prompt = self._format_system_prompt(user_name=user_name)
         user_text = self._extract_user_content_for_history(content_parts)
         messages: list[LLMMessage] = []
         if system_prompt:
-            messages.append(
-                SystemMessage(
-                    content=system_prompt, stable_prefix_len=stable_prefix_len
-                )
-            )
+            messages.append(self._build_system_message(system_prompt))
         messages.append(UserMessage(content=user_text))
 
         previous_interaction_id: str | None = None

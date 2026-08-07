@@ -20,11 +20,17 @@ from family_assistant.calendar_integration import (
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
+from family_assistant.llm import (
+    LLMInterface,
+    ToolCallFunction,
+    ToolCallItem,
+    UserMessage,
+)
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.processing.turn_context import TURN_CONTEXT_TAG
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -57,6 +63,24 @@ TEST_CHAT_ID = "cal_test_chat_123"
 TEST_USER_NAME = "CalendarTestUser"
 TEST_TIMEZONE_STR = "Europe/Berlin"  # Example timezone for tests
 TEST_TIMEZONE = ZoneInfo(TEST_TIMEZONE_STR)
+
+
+def latest_turn_context(llm_client: RuleBasedMockLLMClient) -> str:
+    """The ``<turn_context>`` block from the most recent request to the LLM.
+
+    This is where the context providers' output is delivered now, so it is what
+    the model actually sees of the household's calendar.
+    """
+    for call in reversed(llm_client.get_calls()):
+        for message in reversed(call["kwargs"]["messages"]):
+            if (
+                isinstance(message, UserMessage)
+                and message.is_turn_scaffolding
+                and isinstance(message.content, str)
+                and message.content.startswith(f"<{TURN_CONTEXT_TAG}>")
+            ):
+                return message.content
+    raise AssertionError("No <turn_context> block was sent to the LLM")
 
 
 def get_radicale_client(
@@ -157,7 +181,7 @@ async def test_modify_event(
     2. LLM decides to modify this event.
     3. ProcessingService executes modify_calendar_event_tool.
     4. Verify event is modified in Radicale.
-    5. Verify modified event appears correctly in the system prompt.
+    5. Verify modified event reaches the model in the next turn's <turn_context> block.
     """
     radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
     logger.info(
@@ -238,9 +262,7 @@ async def test_modify_event(
             "ical": {"urls": []},
         },
     )
-    dummy_prompts_for_add = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
-    }
+    dummy_prompts_for_add = {"system_prompt": "You are a helpful assistant."}
     local_provider_for_add = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
@@ -444,7 +466,7 @@ async def test_modify_event(
         tool_calls=None,
     )
 
-    llm_client_for_modify: LLMInterface = RuleBasedMockLLMClient(
+    llm_client_for_modify = RuleBasedMockLLMClient(
         rules=[
             (modify_event_matcher, modify_event_response),
             (final_response_matcher_for_modify, final_llm_response_for_modify),
@@ -467,9 +489,7 @@ async def test_modify_event(
     # --- Setup ProcessingService (similar to add_event test) ---
     # Use the same config that was used for creating the event
     test_calendar_config = test_calendar_config_for_add
-    dummy_prompts = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
-    }
+    dummy_prompts = {"system_prompt": "You are a helpful assistant."}
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
@@ -494,6 +514,7 @@ async def test_modify_event(
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        include_aggregated_context=True,
     )
     processing_service = ProcessingService(
         llm_client=llm_client,
@@ -543,28 +564,41 @@ async def test_modify_event(
         f"Event with original summary '{original_summary}' still found in Radicale calendar {radicale_server[3]} after modification."
     )
 
-    # --- Verify Modified Event in System Prompt ---
+    # --- Verify Modified Event in the Turn Context Given to the Model ---
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar sync to context providers
     await asyncio.sleep(0.5)
-    aggregated_context_str_mod = (
-        await processing_service.context_preparer.aggregate_context()
+    # The context block is built once per turn, so the turn that modified the
+    # event still carries the pre-modification calendar. Take another turn and
+    # read what the model was given.
+    db_context = Database(engine=pg_vector_db_engine)
+    follow_up = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": "What is on my calendar?"}],
+        trigger_interface_message_id="msg_mod_context_check",
+        user_name=TEST_USER_NAME,
     )
-    logger.info(
-        f"Generated aggregated context after modification:\n{aggregated_context_str_mod}"
+    assert follow_up.error_traceback is None, (
+        f"Error during follow-up interaction: {follow_up.error_traceback}"
     )
+
+    turn_context_block_mod = latest_turn_context(llm_client_for_modify)
+    logger.info(f"Turn context block after modification:\n{turn_context_block_mod}")
 
     formatted_day_after_tomorrow = format_datetime_or_date(
         day_after_tomorrow.date(), TEST_TIMEZONE
     )
     expected_time_str_in_prompt_mod = f"{formatted_day_after_tomorrow} 15:00"  # 3 PM
-    assert modified_summary in aggregated_context_str_mod, (
-        "Modified event summary not found in aggregated context string."
+    assert modified_summary in turn_context_block_mod, (
+        "Modified event summary not found in the turn context block."
     )
-    assert expected_time_str_in_prompt_mod in aggregated_context_str_mod, (
-        f"Expected modified time '{expected_time_str_in_prompt_mod}' not found in aggregated context string."
+    assert expected_time_str_in_prompt_mod in turn_context_block_mod, (
+        f"Expected modified time '{expected_time_str_in_prompt_mod}' not found in the turn context block."
     )
-    assert original_summary not in aggregated_context_str_mod, (
-        "Original event summary still found in aggregated context string after modification."
+    assert original_summary not in turn_context_block_mod, (
+        "Original event summary still found in the turn context block after modification."
     )
 
     logger.info("Test Modify Event PASSED.")
@@ -582,7 +616,7 @@ async def test_delete_event(
     2. LLM decides to delete this event.
     3. ProcessingService executes delete_calendar_event_tool.
     4. Verify event is deleted from Radicale.
-    5. Verify event no longer appears in the system prompt.
+    5. Verify event no longer reaches the model in the next turn's <turn_context> block.
     """
     radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
     logger.info(
@@ -654,9 +688,7 @@ async def test_delete_event(
             "ical": {"urls": []},
         },
     )
-    dummy_prompts = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
-    }  # type: ignore
+    dummy_prompts = {"system_prompt": "You are a helpful assistant."}  # type: ignore
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
@@ -681,6 +713,7 @@ async def test_delete_event(
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        include_aggregated_context=True,
     )
     processing_service = ProcessingService(
         llm_client=MagicMock(),  # Will be replaced
@@ -781,12 +814,13 @@ async def test_delete_event(
     )
 
     # Update LLM client for the deletion part
-    processing_service.llm_client = RuleBasedMockLLMClient(
+    llm_client_for_delete = RuleBasedMockLLMClient(
         rules=[
             (delete_event_matcher, delete_event_response),
             (final_response_matcher_for_delete, final_llm_response_for_delete),
         ]
     )
+    processing_service.llm_client = llm_client_for_delete
 
     # --- Simulate User Interaction to Delete ---
     user_message_delete = f"Please delete event {event_to_delete_summary}."
@@ -819,18 +853,39 @@ async def test_delete_event(
         f"Event '{event_to_delete_summary}' still found in Radicale calendar {radicale_server[3]} after deletion."
     )
 
-    # --- Verify Event NOT in System Prompt ---
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar sync to context providers
-    await asyncio.sleep(0.5)
-    aggregated_context_str_del = (
-        await processing_service.context_preparer.aggregate_context()
-    )
-    logger.info(
-        f"Generated aggregated context after deletion:\n{aggregated_context_str_del}"
+    # --- Verify Event NOT in the Turn Context Given to the Model ---
+    # The delete turn's own context block was built while the event still
+    # existed, so it is the control that proves the absence below means the
+    # deletion took effect rather than that no calendar reached the model.
+    turn_context_before_delete = latest_turn_context(llm_client_for_delete)
+    assert event_to_delete_summary in turn_context_before_delete, (
+        "Event summary was not in the turn context block before deletion, so a "
+        "later absence would prove nothing."
     )
 
-    assert event_to_delete_summary not in aggregated_context_str_del, (
-        "Deleted event summary still found in aggregated context string."
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar sync to context providers
+    await asyncio.sleep(0.5)
+    # The context block is built once per turn, so the turn that deleted the
+    # event still carries it. Take another turn and read what the model was given.
+    db_context = Database(engine=pg_vector_db_engine)
+    follow_up = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": "What is on my calendar?"}],
+        trigger_interface_message_id="msg_del_context_check",
+        user_name=TEST_USER_NAME,
+    )
+    assert follow_up.error_traceback is None, (
+        f"Error during follow-up interaction: {follow_up.error_traceback}"
+    )
+
+    turn_context_after_delete = latest_turn_context(llm_client_for_delete)
+    logger.info(f"Turn context block after deletion:\n{turn_context_after_delete}")
+
+    assert event_to_delete_summary not in turn_context_after_delete, (
+        "Deleted event summary still found in the turn context block."
     )
 
     logger.info("Test Delete Event PASSED.")
@@ -883,9 +938,7 @@ async def test_search_events(
         },
     )
     # ast-grep-ignore: no-dict-any - prompt template dict has dynamic string fields by convention
-    dummy_prompts: dict[str, Any] = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
-    }
+    dummy_prompts: dict[str, Any] = {"system_prompt": "You are a helpful assistant."}
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
         implementations=local_tool_implementations,
@@ -1341,9 +1394,7 @@ async def test_similarity_based_search_finds_similar_events(
     )
 
     # ast-grep-ignore: no-dict-any - prompt template dict has dynamic string fields by convention
-    dummy_prompts: dict[str, Any] = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
-    }
+    dummy_prompts: dict[str, Any] = {"system_prompt": "You are a helpful assistant."}
 
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,

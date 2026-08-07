@@ -35,7 +35,7 @@ from family_assistant.tools.events import (
 )
 from family_assistant.tools.types import ToolExecutionContext
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from tests.mocks.mock_llm import RuleBasedMockLLMClient, last_real_message
 
 
 def safe_json_loads(data: str | dict | list) -> Any:  # noqa: ANN401  # JSON can be any type
@@ -299,8 +299,8 @@ async def test_end_to_end_event_listener_wakes_llm(
         messages = kwargs.get("messages", [])
         if not messages:
             return False
-        last_message = messages[-1]
-        if last_message.role == "user":
+        last_message = last_real_message(messages)
+        if last_message is not None and last_message.role == "user":
             content = last_message.content or ""
             return (
                 "System Callback Trigger:" in content

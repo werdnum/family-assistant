@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from family_assistant.processing import ProcessingService
+from family_assistant.processing.turn_context import render_turn_context_block
 from family_assistant.tools import get_tool_definitions_for_advertisement
 from family_assistant.tools.types import normalize_json_schema_type
 from family_assistant.web.auth import get_user_from_request
@@ -180,13 +181,16 @@ async def _get_formatted_system_prompt(
 ) -> str:
     """Get the formatted system prompt with context injected."""
     try:
-        # Get aggregated context from providers
-        aggregated_context = (
-            await processing_service.context_preparer.aggregate_context()
-        )
+        service_config = processing_service.service_config
+
+        aggregated_context = ""
+        if service_config.include_aggregated_context:
+            aggregated_context = (
+                await processing_service.context_preparer.aggregate_context()
+            )
 
         # Get system prompt template
-        system_prompt_template = processing_service.service_config.prompts.get(
+        system_prompt_template = service_config.prompts.get(
             "system_prompt", "You are a helpful assistant."
         )
 
@@ -195,14 +199,10 @@ async def _get_formatted_system_prompt(
         user_name = user.get("name") if user else "User"
 
         # Format the system prompt
-        now = datetime.datetime.now(datetime.UTC)
-        local_now = now.astimezone(processing_service.service_config.timezone)
         format_args = {
             "user_name": user_name,
-            "current_time": local_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-            "aggregated_other_context": aggregated_context,
             "server_url": processing_service.server_url,
-            "profile_id": processing_service.service_config.id,
+            "profile_id": service_config.id,
         }
 
         # Simple placeholder replacement
@@ -216,11 +216,22 @@ async def _get_formatted_system_prompt(
 
         # Add voice mode specific instruction
         voice_instruction = (
-            "\n\n[Voice Mode Active] You are currently in voice conversation mode. "
+            "[Voice Mode Active] You are currently in voice conversation mode. "
             "Keep responses concise and conversational. Speak naturally as if talking to the user."
         )
 
-        return formatted.strip() + voice_instruction
+        # A Live API session hands the model one system instruction and then only
+        # audio, so there is no message list to carry the turn-context block the
+        # chat path appends. It is inlined at the tail instead, where its
+        # <turn_context> tags keep it distinct from the instructions above it.
+        now = datetime.datetime.now(datetime.UTC)
+        local_now = now.astimezone(service_config.timezone)
+        turn_context = render_turn_context_block(
+            current_time_str=local_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            aggregated_context=aggregated_context,
+        )
+
+        return f"{formatted.strip()}\n\n{voice_instruction}\n\n{turn_context}"
 
     except Exception as e:
         logger.exception(f"Error getting system prompt: {e}")

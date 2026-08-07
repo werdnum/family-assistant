@@ -1,5 +1,11 @@
 # Prompt Caching
 
+> **Partly superseded by [prompt-cache-turn-context.md](prompt-cache-turn-context.md)**, which
+> carried out the first "Deferred" item below. `current_time` and `aggregated_other_context` are no
+> longer system-prompt placeholders, so the sentinel-probe derivation described under
+> [Stable-prefix boundary](#stable-prefix-boundary) is gone: the rendered prompt is wholly static
+> and `stable_prefix_len` is simply its length. Everything else here still holds.
+
 ## Problem
 
 Every provider we use caches prompts as a **prefix match**: the request is hashed from the start
@@ -117,12 +123,13 @@ provider instead of only the ones that instrument themselves.
 ## Deferred
 
 **Move `current_time` and `aggregated_other_context` out of the system prompt entirely**, to the end
-of the message list. The breakpoint split already lets the static instructions cache across turns,
-so this is now an incremental gain: it would additionally let `system_prompt_docs` and the
-delegation catalogue — currently rendered *after* the volatile context, and therefore stranded on
-the uncached side — join the cached prefix. Reordering changes where the model sees this content, so
-unlike everything above it needs validation against the eval suite. Worth doing only if the
-telemetry shows the uncached tail is material.
+of the message list. *Since done — see
+[prompt-cache-turn-context.md](prompt-cache-turn-context.md).* The breakpoint split already lets the
+static instructions cache across turns, so this is now an incremental gain: it would additionally
+let `system_prompt_docs` and the delegation catalogue — currently rendered *after* the volatile
+context, and therefore stranded on the uncached side — join the cached prefix. Reordering changes
+where the model sees this content, so unlike everything above it needs validation against the eval
+suite. Worth doing only if the telemetry shows the uncached tail is material.
 
 **A breakpoint on the trailing conversation content.** The system-block breakpoint caches `tools` +
 the static system prompt, but nothing in `messages`. During a tool loop the accumulated assistant

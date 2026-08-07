@@ -11,8 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
+from family_assistant.llm import (
+    LLMInterface,
+    LLMMessage,
+    ToolCallFunction,
+    ToolCallItem,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.utils import is_turn_scaffolding
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -138,9 +144,7 @@ async def test_list_home_assistant_entities_with_filter(
     )
 
     # --- Setup ProcessingService ---
-    dummy_prompts = {
-        "system_prompt": "You are a helpful assistant. Current time: {current_time}"
-    }
+    dummy_prompts = {"system_prompt": "You are a helpful assistant."}
 
     enabled_tools = ["list_home_assistant_entities"]
     filtered_definitions = [
@@ -255,11 +259,17 @@ async def test_list_home_assistant_entities_with_area_filter(
 
     # --- LLM Rules ---
     def area_filter_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
+        messages: list[LLMMessage] = [
+            message
+            for message in kwargs.get("messages", [])
+            if not is_turn_scaffolding(message)
+        ]
         last_text = get_last_message_text(messages).lower()
         # Gate on the user turn: the tool result mentions the pool area too, so
         # without this the initial call matches again on the next iteration and
-        # the loop spins until it runs out of iterations.
+        # the loop spins until it runs out of iterations. Turn scaffolding is
+        # dropped first because the trailing <turn_context> block is a user
+        # message and would make every iteration look like a user turn.
         return (
             bool(messages)
             and messages[-1].role == "user"

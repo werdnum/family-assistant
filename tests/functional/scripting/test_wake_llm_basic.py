@@ -33,7 +33,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
 )
 from tests.helpers import wait_for_tasks_to_complete
-from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient, last_real_message
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +105,8 @@ if temp > 25.0:
     def wake_llm_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
         if messages:
-            last_msg = messages[-1]
-            content = str(last_msg.content or "")
+            last_msg = last_real_message(messages)
+            content = str(getattr(last_msg, "content", "") or "")
             return (
                 "Script wake_llm call" in content
                 and "High temperature detected" in content
@@ -292,8 +292,8 @@ if air_quality < 50:
     def multi_wake_matcher(args: dict) -> bool:
         messages = args.get("messages", [])
         if messages:
-            last_msg = messages[-1]
-            content = str(last_msg.content or "")
+            last_msg = last_real_message(messages)
+            content = str(getattr(last_msg, "content", "") or "")
             return (
                 "Script wake_llm call" in content
                 and "Multiple wake requests" in content

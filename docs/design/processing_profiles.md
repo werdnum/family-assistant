@@ -50,7 +50,7 @@ structure of an individual profile's settings.
 default_profile_settings:
   processing_config:
     prompts: # Loaded from prompts.yaml by default, or inline here
-      system_prompt: "You are a helpful assistant. Current time is {current_time}."
+      system_prompt: "You are a helpful assistant. You are talking to {user_name}."
       # ... other default prompt keys ...
     calendar_config:
       # ... default calendar_config ...
@@ -139,7 +139,7 @@ service_profiles:
     description: "Assistant with a specific system prompt and fewer tools."
     processing_config:
       prompts: # MERGES with default_profile_settings.processing_config.prompts
-        system_prompt: "You are a focused assistant. Current time is {current_time}."
+        system_prompt: "You are a focused assistant helping {user_name}."
       max_history_messages: 3 # REPLACES default
       llm_model: "gpt-4-turbo" # REPLACES default, uses a more powerful model
       delegation_security_level: "unrestricted" # This profile allows unrestricted delegation

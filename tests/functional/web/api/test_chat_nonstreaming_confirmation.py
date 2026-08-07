@@ -68,7 +68,7 @@ def mock_llm_client() -> RuleBasedMockLLMClient:
 @pytest.fixture
 def processing_service_config() -> ProcessingServiceConfig:
     return ProcessingServiceConfig(
-        prompts={"system_prompt": "Test assistant. {current_time} {server_url}"},
+        prompts={"system_prompt": "Test assistant. {server_url}"},
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
         history_max_age_hours=24,

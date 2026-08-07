@@ -1578,6 +1578,47 @@ global_tools_policy:
 
 ______________________________________________________________________
 
+### include_aggregated_context
+
+Per-profile `processing_config` flag deciding whether the profile receives the context providers'
+output at all.
+
+| Property  | Value            |
+| --------- | ---------------- |
+| Required  | No               |
+| Default   | `false`          |
+| Sensitive | No               |
+| Values    | `true` / `false` |
+
+Context providers gather the household's notes, calendar, known users, weather and Home Assistant
+state. When this is `true`, that material reaches the model in the trailing `<turn_context>` block
+appended to the end of every request. When it is `false` — the default — the profile receives none
+of it.
+
+The default is off so that a profile nobody has explicitly considered is denied the household's
+private data rather than granted it — a profile that reads untrusted input should not also hold
+sensitive data. Turning it on for such a profile is the combination the Rule of Two exists to
+prevent.
+
+`excluded_context_providers` is the finer-grained control underneath it — it drops individual
+providers from a profile that has this flag on, and has no effect on a profile that does not.
+
+The current time is injected for **every** profile regardless of this flag; it is not sensitive.
+
+Shipped `defaults.yaml` sets it on six profiles: `default_assistant`, `data_visualization`,
+`camera_analyst`, `event_handler`, `complex_tasks` and `engineer`. Every other profile — including
+`telephone_external`, which serves external callers, and `media_analyst`, which reads
+attacker-controlled media — gets no aggregated context.
+
+```yaml
+service_profiles:
+  - id: "my_profile"
+    processing_config:
+      include_aggregated_context: true
+```
+
+______________________________________________________________________
+
 ### excluded_context_providers
 
 Per-profile `processing_config` list naming context providers to drop for that profile.
@@ -1589,14 +1630,17 @@ Per-profile `processing_config` list naming context providers to drop for that p
 | Sensitive | No                                                              |
 | Values    | `notes`, `calendar`, `known_users`, `weather`, `home_assistant` |
 
-Context providers inject the user's own data into the system prompt, and they are attached to every
-profile by default (`weather` and `home_assistant` only when configured). An unrecognised name is a
-startup error rather than a no-op, since a silently-ignored entry would leave a profile holding data
-the config says it doesn't.
+Context providers inject the user's own data into the trailing `<turn_context>` block. They apply
+only to profiles that set `include_aggregated_context: true`; within such a profile every applicable
+provider is attached by default (`weather` and `home_assistant` only when configured). An
+unrecognised name is a startup error rather than a no-op, since a silently-ignored entry would leave
+a profile holding data the config says it doesn't.
 
-Use it to keep private data out of a profile that has no need for it. The shipped `media_analyst`
-profile excludes all five: it exists to transcribe attacker-controlled media, so pairing the user's
-notes with that input is precisely the combination the Rule of Two is meant to prevent.
+Use it to keep private data out of a profile that needs some context but not all of it. The shipped
+`media_analyst` profile excludes all five as a second layer on top of leaving
+`include_aggregated_context` at its default: it exists to transcribe attacker-controlled media, so
+pairing the user's notes with that input is precisely the combination the Rule of Two is meant to
+prevent.
 
 ```yaml
 service_profiles:
@@ -1700,11 +1744,24 @@ Every configured entry should also declare `output_trusted` or `output_untrusted
 
 ### prompts.yaml
 
-LLM prompts with template variables:
+LLM prompts with template variables. A profile's `system_prompt` may reference:
 
-- `{current_time}` - Current timestamp
 - `{user_name}` - User's display name
-- `{aggregated_other_context}` - Context from providers
+- `{server_url}` - Public base URL of the deployment (see [SERVER_URL](#server_url))
+- `{profile_id}` - ID of the profile the prompt is being rendered for
+
+That is the complete list. Any other placeholder is an error, and every profile's prompt is rendered
+once at startup, so a template naming an unknown one fails the boot rather than the first
+conversation with that profile. Escape literal braces as `{{` and `}}`.
+
+> **⚠️ BREAKING CHANGE for custom prompts**: `{current_time}` and `{aggregated_other_context}` are
+> no longer template variables. The current time and the context providers' output are delivered in
+> the trailing `<turn_context>` block appended to each request instead of being interpolated into
+> the system prompt, so that the system prompt and conversation history stay byte-stable and can be
+> cached by the provider. A `system_prompt` still referencing either placeholder fails at startup.
+> Delete the reference; if the profile needs the providers' output, set
+> [include_aggregated_context](#include_aggregated_context) on it. The current time needs no opt-in.
+> See [docs/design/prompt-cache-turn-context.md](../design/prompt-cache-turn-context.md).
 
 ______________________________________________________________________
 

@@ -49,6 +49,7 @@ from tests.mocks.mock_llm import (
     RuleBasedMockLLMClient,
     extract_text_from_content,
     get_message_content,
+    last_real_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,9 @@ if motion_detected:
         def attachment_wake_matcher(args: dict) -> bool:
             messages = args.get("messages", [])
             if messages:
-                last_msg = messages[-1]
+                last_msg = last_real_message(messages)
+                if last_msg is None:
+                    return False
                 # Use helper functions to work with typed messages
                 msg_content = get_message_content(last_msg)
                 content = extract_text_from_content(msg_content)
@@ -349,7 +352,9 @@ wake_llm({
             nonlocal received_attachment_id
             messages = args.get("messages", [])
             if messages:
-                last_msg = messages[-1]
+                last_msg = last_real_message(messages)
+                if last_msg is None:
+                    return False
                 # Use helper functions to work with typed messages
                 msg_content = get_message_content(last_msg)
                 content = extract_text_from_content(msg_content)

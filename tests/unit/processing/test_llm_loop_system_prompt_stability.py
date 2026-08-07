@@ -120,7 +120,7 @@ def _make_service(
         llm_client=llm_client,
         tools_provider=_EchoToolsProvider(),
         service_config=ProcessingServiceConfig(
-            prompts={"system_prompt": "You are a test assistant. {current_time}"},
+            prompts={"system_prompt": "You are a test assistant."},
             timezone=ZoneInfo("UTC"),
             max_history_messages=5,
             history_max_age_hours=1,

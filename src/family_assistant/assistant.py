@@ -1282,6 +1282,9 @@ class Assistant:
                     profile_proc_conf.allowed_note_visibility_labels
                 ),
                 allow_wake_llm=profile_proc_conf.allow_wake_llm,
+                include_aggregated_context=(
+                    profile_proc_conf.include_aggregated_context
+                ),
                 note_registry=note_registry,
                 greeting_wav_path=profile_proc_conf.greeting_wav_path,
                 poll_interval_seconds=profile_proc_conf.poll_interval_seconds,
@@ -1353,6 +1356,17 @@ class Assistant:
                 credential_resolvers=self.credential_resolvers,
                 api_backend=self.api_backend,
             )
+
+            # Render once now so a template referencing a placeholder that no
+            # longer exists -- {current_time} and {aggregated_other_context} moved
+            # into the turn-context block -- is a startup failure rather than an
+            # error the first time somebody talks to this profile.
+            try:
+                processing_service_instance.validate_system_prompt_renders()
+            except ValueError as exc:
+                raise SystemExit(
+                    f"Profile '{profile_id}' has an invalid system_prompt: {exc}"
+                ) from exc
 
             self.processing_services_registry[profile_id] = processing_service_instance
 

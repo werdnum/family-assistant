@@ -232,6 +232,9 @@ class ProcessingServiceConfig:
     allow_wake_llm: bool = True
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
+    # Whether the context providers' output reaches this profile at all. See
+    # ProcessingConfig.include_aggregated_context.
+    include_aggregated_context: bool = False
     # Submit-then-poll tuning for a pollable local profile (e.g. Deep
     # Research) delegated to via delegate_to_service. None means "use the
     # worker's module defaults" (mirrors RemoteServiceConfig's fields of the

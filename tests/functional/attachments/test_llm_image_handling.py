@@ -29,6 +29,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment
+from tests.mocks.mock_llm import last_real_message
 
 
 class MockLLMClient:
@@ -168,7 +169,7 @@ async def test_image_handling_with_real_db(
         assert len(mock_llm.captured_messages) > 0
 
         # Find the user message (should be the last one)
-        last_message = mock_llm.captured_messages[-1]
+        last_message = last_real_message(mock_llm.captured_messages)
         assert isinstance(last_message, UserMessage)
 
         # Inspect content parts

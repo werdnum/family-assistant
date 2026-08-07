@@ -27,6 +27,7 @@ from family_assistant.llm import (
     UserMessageDict,
 )
 from family_assistant.llm.messages import UserMessage, message_to_json_dict
+from family_assistant.processing.utils import is_turn_scaffolding
 from family_assistant.storage.database import in_transaction
 from family_assistant.tools.types import ToolDefinition
 
@@ -518,15 +519,31 @@ def extract_text_from_content(content: str | list | None) -> str:
 
 # --- Helper function to extract text from messages ---
 # (Useful for writing matchers)
+def last_real_message(messages: list[LLMMessage]) -> LLMMessage | None:
+    """The newest message that is not turn scaffolding, or None.
+
+    Tests that want "the message the turn is about" need this rather than
+    ``messages[-1]``: the prompt ends with the ``<turn_context>`` block, and on a
+    final iteration with the loop's instruction after that.
+    """
+    return next(
+        (msg for msg in reversed(messages) if not is_turn_scaffolding(msg)), None
+    )
+
+
 def get_last_message_text(messages: list[LLMMessage]) -> str:
-    """Extracts and concatenates text from the last message in a list."""
-    if not messages:
+    """Extracts and concatenates text from the last message in a list.
+
+    Turn scaffolding is skipped, so matchers keyed on "what was just asked" see
+    the request rather than the trailing ``<turn_context>`` block or the
+    final-iteration instruction. This mirrors the real loop, which skips the
+    same messages when it looks back for the user's query.
+    """
+    last_message = last_real_message(messages)
+    if last_message is None:
         return ""
 
-    last_message = messages[-1]
-    last_message_content = get_message_content(last_message)
-
-    return extract_text_from_content(last_message_content)
+    return extract_text_from_content(get_message_content(last_message))
 
 
 def get_system_prompt(messages: list[LLMMessage]) -> str | None:
@@ -554,4 +571,5 @@ __all__ = [
     "get_message_content",
     "get_message_role",
     "get_system_prompt",
+    "last_real_message",
 ]

@@ -133,7 +133,7 @@ paste it, use the composer's photo button, or share from Files. Long-pressing th
 **Voice** asks for microphone permission and shows a level meter while capturing audio.
 
 **Notes** lets you search, read, create, edit, and delete notes, including whether a note is
-included in the assistant's system prompt.
+included in the assistant's context automatically.
 
 **Connection indicator:** a small indicator in the Chat toolbar shows the live-update state and
 offers the right fix in one tap — *degraded* (updates lagging, tap to reconnect), *offline* (tap to

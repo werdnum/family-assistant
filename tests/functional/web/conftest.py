@@ -1109,11 +1109,7 @@ def api_mock_processing_service_config() -> ProcessingServiceConfig:
     """Provides a mock ProcessingServiceConfig for API tests."""
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Current time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,

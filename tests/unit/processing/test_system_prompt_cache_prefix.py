@@ -1,9 +1,11 @@
-"""Tests for the request-stable prefix of the rendered system prompt.
+"""Tests for the system prompt's request-stable prefix.
 
-The prefix drives where providers place a prompt-cache breakpoint. If it ever
-covers per-turn material the cache silently stops hitting, so these tests pin
-the property that actually matters: the prefix does not move or change when the
-per-turn inputs do.
+The prefix drives where providers place a prompt-cache breakpoint, and for the
+providers that cache implicitly it is simply how much of the request survives
+from one turn to the next. Per-turn material now rides in the trailing
+``<turn_context>`` block instead of the prompt, so what these tests pin is that
+nothing volatile has crept back into the prompt: it must render identically no
+matter what the clock says or what the context providers report.
 """
 
 from __future__ import annotations
@@ -46,15 +48,28 @@ class SimpleToolsProvider:
         pass
 
 
-DEFAULT_TEMPLATE = (
-    "You are a helper with a long stable preamble.\n\n"
-    "# Context\nCurrent time: {current_time}\n\n{aggregated_other_context}\n"
-)
+class StaticContextProvider:
+    """A context provider whose fragments the test controls."""
+
+    def __init__(self, fragment: str) -> None:
+        self._fragment = fragment
+
+    @property
+    def name(self) -> str:
+        return "notes"
+
+    async def get_context_fragments(self) -> list[str]:
+        return [self._fragment]
+
+
+DEFAULT_TEMPLATE = "You are a helper with a long stable preamble for {user_name}."
 
 
 def _make_service(
     template: str = DEFAULT_TEMPLATE,
     clock: MockClock | None = None,
+    context_fragment: str | None = None,
+    include_aggregated_context: bool = False,
 ) -> ProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": template},
@@ -65,6 +80,7 @@ def _make_service(
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="cache_prefix_test",
         max_iterations=5,
+        include_aggregated_context=include_aggregated_context,
     )
     return ProcessingService(
         llm_client=RuleBasedMockLLMClient(
@@ -72,7 +88,11 @@ def _make_service(
         ),
         tools_provider=SimpleToolsProvider(),
         service_config=config,
-        context_providers=[],
+        context_providers=(
+            [StaticContextProvider(context_fragment)]
+            if context_fragment is not None
+            else []
+        ),
         server_url="http://testserver",
         app_config=AppConfig(),
         clock=clock or MockClock(datetime(2026, 7, 25, 10, 0, 0, tzinfo=UTC)),
@@ -80,17 +100,15 @@ def _make_service(
 
 
 @pytest.mark.no_db
-class TestStableSystemPromptPrefix:
-    def test_prefix_excludes_the_timestamp(self) -> None:
+class TestSystemPromptIsFullyStable:
+    def test_prompt_carries_no_timestamp(self) -> None:
         service = _make_service()
 
-        rendered, prefix_len = service._render_system_prompt("tester", "")
+        rendered = service._format_system_prompt(user_name="tester")
 
-        assert prefix_len is not None
-        assert "2026-07-25 10:00:00" in rendered
-        assert "2026-07-25 10:00:00" not in rendered[:prefix_len]
+        assert "2026-07-25 10:00:00" not in rendered
 
-    def test_prefix_is_identical_across_different_clock_times(self) -> None:
+    def test_prompt_is_identical_across_different_clock_times(self) -> None:
         """The whole point: the cached block must survive the clock advancing."""
         early = _make_service(
             clock=MockClock(datetime(2026, 7, 25, 10, 0, 0, tzinfo=UTC))
@@ -99,50 +117,55 @@ class TestStableSystemPromptPrefix:
             clock=MockClock(datetime(2026, 7, 25, 23, 59, 59, tzinfo=UTC))
         )
 
-        early_rendered, early_len = early._render_system_prompt("tester", "")
-        later_rendered, later_len = later._render_system_prompt("tester", "")
+        assert early._format_system_prompt(
+            user_name="tester"
+        ) == later._format_system_prompt(user_name="tester")
 
-        assert early_len == later_len
-        assert early_rendered[:early_len] == later_rendered[:later_len]
-        assert early_rendered != later_rendered
-
-    def test_prefix_is_identical_across_different_aggregated_context(self) -> None:
-        service = _make_service()
-
-        empty_rendered, empty_len = service._render_system_prompt("tester", "")
-        full_rendered, full_len = service._render_system_prompt(
-            "tester", "Calendar:\n- 09:00 standup"
+    def test_prompt_is_identical_regardless_of_available_context(self) -> None:
+        without = _make_service(include_aggregated_context=False)
+        with_context = _make_service(
+            context_fragment="Calendar:\n- 09:00 standup",
+            include_aggregated_context=True,
         )
 
-        assert empty_len == full_len
-        assert empty_rendered[:empty_len] == full_rendered[:full_len]
+        assert without._format_system_prompt(
+            user_name="tester"
+        ) == with_context._format_system_prompt(user_name="tester")
 
-    def test_prefix_covers_the_bulk_of_a_realistic_prompt(self) -> None:
-        """A breakpoint that lands early enough to be worthless is a silent bug."""
+    def test_breakpoint_covers_the_whole_prompt(self) -> None:
         service = _make_service()
 
-        rendered, prefix_len = service._render_system_prompt(
-            "tester", "Calendar:\n- 09:00 standup"
-        )
+        rendered = service._format_system_prompt(user_name="tester")
+        message = service._build_system_message(rendered)
 
-        assert prefix_len is not None
-        assert prefix_len > len(rendered) * 0.5
+        assert message.stable_prefix_len == len(rendered)
 
-    def test_template_without_volatile_placeholders_is_fully_stable(self) -> None:
-        service = _make_service(template="You are a helper. Nothing varies here.")
+    def test_empty_prompt_reports_no_breakpoint(self) -> None:
+        """A zero-length prefix is not a breakpoint; it must be None, not 0."""
+        message = ProcessingService._build_system_message("")
 
-        rendered, prefix_len = service._render_system_prompt("tester", "")
+        assert message.stable_prefix_len is None
 
-        assert prefix_len == len(rendered)
 
-    def test_boundary_stops_at_the_first_volatile_byte(self) -> None:
-        """With the timestamp first in the template, only the profile preamble
-        (which the service prepends ahead of it) is stable, and the boundary
-        must land there rather than swallowing the timestamp."""
-        service = _make_service(template="{current_time} then the rest of the prompt.")
+@pytest.mark.no_db
+class TestRemovedPlaceholdersFailLoudly:
+    @pytest.mark.parametrize(
+        "placeholder", ["{current_time}", "{aggregated_other_context}"]
+    )
+    def test_rendering_a_removed_placeholder_raises(self, placeholder: str) -> None:
+        """Silently rendering these would put volatile text back in the prompt."""
+        service = _make_service(template=f"You are a helper. {placeholder}")
 
-        rendered, prefix_len = service._render_system_prompt("tester", "")
+        with pytest.raises(ValueError, match="unknown placeholders"):
+            service._format_system_prompt(user_name="tester")
 
-        assert prefix_len is not None
-        assert "2026-07-25 10:00:00" not in rendered[:prefix_len]
-        assert rendered[prefix_len:].startswith("2026-07-25 10:00:00")
+    def test_startup_validation_rejects_a_removed_placeholder(self) -> None:
+        service = _make_service(template="You are a helper. {current_time}")
+
+        with pytest.raises(ValueError, match="current_time"):
+            service.validate_system_prompt_renders()
+
+    def test_startup_validation_accepts_a_good_template(self) -> None:
+        service = _make_service(template="Helping {user_name} at {server_url}.")
+
+        service.validate_system_prompt_renders()

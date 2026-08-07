@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from family_assistant.processing import ProcessingService
+from family_assistant.processing.turn_context import render_turn_context_block
 from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
 
@@ -59,7 +60,7 @@ async def view_context_page(
         # Get the system prompt template and format arguments
         system_prompt_template = processing_service.service_config.prompts.get(
             "system_prompt",
-            "You are a helpful assistant. Current time is {current_time}.",
+            "You are a helpful assistant.",
         )
 
         return templates.TemplateResponse(
@@ -155,11 +156,6 @@ async def _get_context_data(
 
         format_args = {
             "user_name": user_name,
-            "current_time": datetime
-            .now(UTC)
-            .astimezone(target_service.service_config.timezone)
-            .strftime("%Y-%m-%d %H:%M:%S %Z"),
-            "aggregated_other_context": aggregated_context,
             "server_url": target_service.server_url,
             "profile_id": target_service.service_config.id,
         }
@@ -217,9 +213,27 @@ async def _get_context_data(
                     f"{formatted_system_prompt}\n\n{addition}".strip()
                 )
 
+        # The time and the aggregated context no longer sit inside the system
+        # prompt, so reporting only the prompt would show half of what the model
+        # gets. The block below is the other half, delivered at the end of the turn.
+        turn_context_block = render_turn_context_block(
+            current_time_str=datetime
+            .now(UTC)
+            .astimezone(target_service.service_config.timezone)
+            .strftime("%Y-%m-%d %H:%M:%S %Z"),
+            aggregated_context=(
+                aggregated_context
+                if target_service.service_config.include_aggregated_context
+                else ""
+            ),
+        )
+
         return {
             "profile_id": target_service.service_config.id,
             "aggregated_context": aggregated_context,
+            "include_aggregated_context": (
+                target_service.service_config.include_aggregated_context
+            ),
             "context_providers": context_data,
             "total_fragments": sum(cd["fragment_count"] for cd in context_data),
             "providers_with_errors": [
@@ -227,6 +241,7 @@ async def _get_context_data(
             ],
             "system_prompt_template": system_prompt_template,
             "formatted_system_prompt": formatted_system_prompt,
+            "turn_context_block": turn_context_block,
         }
     except Exception as e:
         logger.exception(f"Error in context API: {e}")
