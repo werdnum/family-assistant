@@ -1349,7 +1349,6 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
     # takes a URL. It sits next to them in the metadata table and was swept
     # into their reclassification once, so it is pinned explicitly.
     for model_addressed_tool in (
-        "send_message_to_user",
         "ingest_document_from_url",
         "download_media",
     ):
@@ -1357,6 +1356,22 @@ def test_registered_tool_metadata_resolves_expected_sink_classes() -> None:
             resolve_tool_sink_class(registered_descriptor(model_addressed_tool))
             is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
         ), model_addressed_tool
+    # send_message_to_user communicates outward, but the server rejects any
+    # target that is not an existing conversation owned by an authorized user,
+    # so the model cannot pick the destination.
+    assert (
+        resolve_tool_sink_class(registered_descriptor("send_message_to_user"))
+        is SinkClass.KNOWN_USER_MESSAGE
+    )
+    # The refinement must not leak to tools that only carry the broader tag.
+    assert (
+        ToolTag.KNOWN_USER_COMM
+        not in LOCAL_TOOL_METADATA_BY_NAME["ucp_add_to_cart"].tags
+    )
+    assert (
+        resolve_tool_sink_class(registered_descriptor("ucp_add_to_cart"))
+        is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
 
 
 @pytest.mark.parametrize(

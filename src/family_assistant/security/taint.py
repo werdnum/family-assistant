@@ -717,6 +717,13 @@ def resolve_tool_sink_class(
         return SinkClass.USER_LOCAL
     if descriptor.name == _HOME_ASSISTANT_ACTION_TOOL:
         return _home_assistant_action_sink_class(arguments)
+    if "known_user_comm" in tag_values:
+        # Outward communication whose recipient the server validates against
+        # configured users. Checked before external_comm so the refinement
+        # wins, since a tool carries both: the broader tag keeps tool policies
+        # that match on it working, while the sink class reflects that the
+        # model cannot choose the destination.
+        return SinkClass.KNOWN_USER_MESSAGE
     if "external_comm" in tag_values:
         return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
     if "delegation" in tag_values:

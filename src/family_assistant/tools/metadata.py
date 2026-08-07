@@ -29,6 +29,11 @@ class ToolTag(StrEnum):
     STATE_CHANGING = "state_changing"
     STATE_PERSISTING = "state_persisting"
     EXTERNAL_COMM = "external_comm"
+    # Refines EXTERNAL_COMM: the tool communicates outward, but the server
+    # validates the recipient against configured users, so the destination is
+    # not model-selectable. Carry it alongside EXTERNAL_COMM rather than
+    # instead of it, so tool policies matching the broader tag still apply.
+    KNOWN_USER_COMM = "known_user_comm"
     LOW_BANDWIDTH_EXTERNAL = "low_bandwidth_external"
     DESTRUCTIVE = "destructive"
     CODE_EXECUTION = "code_execution"
