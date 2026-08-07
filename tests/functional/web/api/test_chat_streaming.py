@@ -883,7 +883,11 @@ async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
         ),
     ))
 
-    preparer = app_fixture.state.processing_service.context_preparer
+    service = app_fixture.state.processing_service
+    # The setup step this test fails is only reached when the profile actually
+    # receives the aggregated context.
+    monkeypatch.setattr(service.service_config, "include_aggregated_context", True)
+    preparer = service.context_preparer
     real_aggregate = preparer.aggregate_context_taint_sources
     calls = {"n": 0}
 
