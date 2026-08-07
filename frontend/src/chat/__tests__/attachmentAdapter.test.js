@@ -46,6 +46,21 @@ function createMockFile(name, type, size, content = 'test content') {
   return file;
 }
 
+// add() reports the upload through a series of attachment states, exactly as
+// the composer runtime consumes them.
+async function collectAddStates(adapter, file) {
+  const states = [];
+  for await (const state of adapter.add({ file })) {
+    states.push(state);
+  }
+  return states;
+}
+
+async function finalAddState(adapter, file) {
+  const states = await collectAddStates(adapter, file);
+  return states[states.length - 1];
+}
+
 describe('FileAttachmentAdapter', () => {
   let adapter;
 
@@ -82,13 +97,98 @@ describe('FileAttachmentAdapter', () => {
     test('successfully adds valid image file', async () => {
       const file = createMockFile('test.png', 'image/png', 1024 * 1024); // 1MB
 
-      const result = await adapter.add({ file });
+      const result = await finalAddState(adapter, file);
 
       expect(result.id).toBe('test-uuid-123');
       expect(result.type).toBe('image');
       expect(result.name).toBe('test.png');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(result.status.type).toBe('complete');
+    });
+
+    // The composer refuses to send while an attachment is uploading, so an
+    // attachment that never reaches 'complete' locks the composer: the file
+    // reads "Uploading..." forever and the message can never be sent.
+    test('uploads on add, ending in a complete attachment', async () => {
+      const file = createMockFile('test.png', 'image/png', 1024);
+
+      const states = await collectAddStates(adapter, file);
+
+      expect(states.map((state) => state.status.type)).toEqual(['running', 'complete']);
+      expect(states[0].status.reason).toBe('uploading');
+      expect(states[1].content).toEqual([
+        { type: 'image', image: '/api/attachments/server-uuid-456' },
+      ]);
+      expect(states[1].uploadedId).toBe('server-uuid-456');
+    });
+
+    test('sends non-image attachments as a url data part', async () => {
+      const file = createMockFile('document.pdf', 'application/pdf', 1024);
+
+      const result = await finalAddState(adapter, file);
+
+      expect(result.content).toEqual([
+        { type: 'data', name: 'url', data: '/api/attachments/server-uuid-456' },
+      ]);
+    });
+
+    test('reports an upload failure on the attachment', async () => {
+      server.use(
+        http.post('/api/attachments/upload', () =>
+          HttpResponse.json({ error: 'Upload failed' }, { status: 500 })
+        )
+      );
+      const file = createMockFile('test.png', 'image/png', 1024);
+
+      const result = await finalAddState(adapter, file);
+
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.reason).toBe('error');
+      expect(result.status.message).toContain('Failed to upload file');
+    });
+
+    // The upload can't be recalled once it's in flight, so a file the user
+    // removed mid-upload has to be deleted rather than left on the server --
+    // and it must not reappear in the composer when the upload lands.
+    test('deletes an upload the user cancelled while it was in flight', async () => {
+      const deleted = [];
+      server.use(
+        http.delete('/api/attachments/:attachmentId', ({ params }) => {
+          deleted.push(params.attachmentId);
+          return HttpResponse.json({ success: true });
+        })
+      );
+      const file = createMockFile('test.png', 'image/png', 1024);
+
+      const states = [];
+      for await (const state of adapter.add({ file })) {
+        states.push(state);
+        if (state.status.type === 'running') {
+          await adapter.remove(state);
+        }
+      }
+
+      expect(states.map((state) => state.status.type)).toEqual(['running']);
+      expect(deleted).toEqual(['server-uuid-456']);
+    });
+
+    test('reports nothing for an upload that failed after being cancelled', async () => {
+      server.use(
+        http.post('/api/attachments/upload', () =>
+          HttpResponse.json({ error: 'Upload failed' }, { status: 500 })
+        )
+      );
+      const file = createMockFile('test.png', 'image/png', 1024);
+
+      const states = [];
+      for await (const state of adapter.add({ file })) {
+        states.push(state);
+        if (state.status.type === 'running') {
+          await adapter.remove(state);
+        }
+      }
+
+      expect(states.map((state) => state.status.type)).toEqual(['running']);
     });
 
     // The backend processes image, video, audio and document and ignores
@@ -106,7 +206,7 @@ describe('FileAttachmentAdapter', () => {
       ]) {
         const file = createMockFile(`clip.${expected}`, mimeType, 1024);
 
-        const result = await adapter.add({ file });
+        const result = await finalAddState(adapter, file);
 
         expect(result.type).toBe(expected);
       }
@@ -115,36 +215,36 @@ describe('FileAttachmentAdapter', () => {
     test('successfully adds valid text file', async () => {
       const file = createMockFile('document.txt', 'text/plain', 1024);
 
-      const result = await adapter.add({ file });
+      const result = await finalAddState(adapter, file);
 
       expect(result.id).toBe('test-uuid-123');
       expect(result.type).toBe('document');
       expect(result.name).toBe('document.txt');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(result.status.type).toBe('complete');
     });
 
     test('successfully adds valid PDF file', async () => {
       const file = createMockFile('document.pdf', 'application/pdf', 1024);
 
-      const result = await adapter.add({ file });
+      const result = await finalAddState(adapter, file);
 
       expect(result.id).toBe('test-uuid-123');
       expect(result.type).toBe('document');
       expect(result.name).toBe('document.pdf');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(result.status.type).toBe('complete');
     });
 
     test('returns error for oversized file', async () => {
       const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024); // 150MB (exceeds 100MB limit)
 
-      const result = await adapter.add({ file });
+      const result = await finalAddState(adapter, file);
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('large.png');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('size exceeds');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('size exceeds');
     });
 
     test('returns error for invalid file type', async () => {
@@ -154,24 +254,41 @@ describe('FileAttachmentAdapter', () => {
         1024
       );
 
-      const result = await adapter.add({ file });
+      const result = await finalAddState(adapter, file);
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Unsupported file type');
     });
 
     test('returns error for file with empty name', async () => {
       const file = createMockFile('', 'image/png', 1024);
 
-      const result = await adapter.add({ file });
+      const result = await finalAddState(adapter, file);
 
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('valid name');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('valid name');
+    });
+
+    test('does not upload a file it rejects', async () => {
+      const uploads = [];
+      server.use(
+        http.post('/api/attachments/upload', () => {
+          uploads.push('upload');
+          return HttpResponse.json({ attachment_id: 'x', url: '/api/attachments/x' });
+        })
+      );
+      const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024);
+
+      await finalAddState(adapter, file);
+
+      expect(uploads).toEqual([]);
     });
   });
 
+  // The runtime only calls send() for an attachment that isn't already
+  // complete, which after add() means one whose upload failed: sending retries.
   describe('send method', () => {
     test('successfully processes attachment', async () => {
       const file = createMockFile('test.png', 'image/png', 1024);
@@ -180,7 +297,7 @@ describe('FileAttachmentAdapter', () => {
         type: 'image',
         name: 'test.png',
         file,
-        status: { type: 'running' },
+        status: { type: 'incomplete', reason: 'error', message: 'Failed to upload file' },
       };
 
       // MSW will handle the API call
@@ -214,14 +331,14 @@ describe('FileAttachmentAdapter', () => {
         type: 'image',
         name: 'test.png',
         file,
-        status: { type: 'running' },
+        status: { type: 'incomplete', reason: 'error', message: 'Failed to upload file' },
       };
 
       const result = await adapter.send(attachment);
 
       expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Failed to upload file');
     });
 
     test('handles network error gracefully', async () => {
@@ -238,14 +355,14 @@ describe('FileAttachmentAdapter', () => {
         type: 'image',
         name: 'test.png',
         file,
-        status: { type: 'running' },
+        status: { type: 'incomplete', reason: 'error', message: 'Failed to upload file' },
       };
 
       const result = await adapter.send(attachment);
 
       expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Failed to upload file');
     });
   });
 
@@ -282,17 +399,23 @@ describe('FileAttachmentAdapter', () => {
     });
 
     test('skips server deletion for non-uploaded attachment', async () => {
+      const deleted = [];
+      server.use(
+        http.delete('/api/attachments/:attachmentId', ({ params }) => {
+          deleted.push(params.attachmentId);
+          return HttpResponse.json({ success: true });
+        })
+      );
       const attachment = {
         id: 'test-id',
         type: 'image',
         name: 'test.png',
-        status: { type: 'error' },
+        status: { type: 'incomplete', reason: 'error', message: 'Unsupported file type' },
       };
 
       await adapter.remove(attachment);
 
-      // Should not call fetch
-      // Attachment was not uploaded, so no server call should be made
+      expect(deleted).toEqual([]);
     });
   });
 });
@@ -337,10 +460,28 @@ describe('CompositeAttachmentAdapter', () => {
       const expectedResult = { id: 'test', type: 'image' };
       mockImageAdapter.add.mockResolvedValue(expectedResult);
 
-      const result = await compositeAdapter.add({ file });
+      const states = await collectAddStates(compositeAdapter, file);
 
-      expect(result).toBe(expectedResult);
+      expect(states).toEqual([expectedResult]);
       expect(mockImageAdapter.add).toHaveBeenCalledWith({ file });
+    });
+
+    // Our own adapter reports the upload through several states; each has to
+    // reach the runtime as it arrives, or the composer never learns the upload
+    // finished.
+    test('passes through every state of a progress-reporting adapter', async () => {
+      const file = createMockFile('test.png', 'image/png', 1024);
+      const progressStates = [
+        { id: 'test', type: 'image', status: { type: 'running' } },
+        { id: 'test', type: 'image', status: { type: 'complete' } },
+      ];
+      mockImageAdapter.add.mockImplementation(async function* () {
+        yield* progressStates;
+      });
+
+      const states = await collectAddStates(compositeAdapter, file);
+
+      expect(states).toEqual(progressStates);
     });
 
     test('returns error for unsupported file type', async () => {
@@ -350,12 +491,12 @@ describe('CompositeAttachmentAdapter', () => {
         1024
       );
 
-      const result = await compositeAdapter.add({ file });
+      const result = await finalAddState(compositeAdapter, file);
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Unsupported file type');
     });
   });
 
@@ -389,8 +530,8 @@ describe('CompositeAttachmentAdapter', () => {
       const result = await compositeAdapter.send(attachment);
 
       expect(result.id).toBe('test');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('No adapter available');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('No adapter available');
     });
   });
 });
@@ -405,27 +546,27 @@ describe('defaultAttachmentAdapter', () => {
   test('supports image files', async () => {
     const file = createMockFile('test.jpg', 'image/jpeg', 1024);
 
-    const result = await defaultAttachmentAdapter.add({ file });
+    const result = await finalAddState(defaultAttachmentAdapter, file);
 
     expect(result.type).toBe('image');
-    expect(result.status.type).toBe('running');
+    expect(result.status.type).toBe('complete');
   });
 
   test('supports text files', async () => {
     const file = createMockFile('readme.txt', 'text/plain', 1024);
 
-    const result = await defaultAttachmentAdapter.add({ file });
+    const result = await finalAddState(defaultAttachmentAdapter, file);
 
     expect(result.type).toBe('document');
-    expect(result.status.type).toBe('running');
+    expect(result.status.type).toBe('complete');
   });
 
   test('supports PDF files', async () => {
     const file = createMockFile('document.pdf', 'application/pdf', 1024);
 
-    const result = await defaultAttachmentAdapter.add({ file });
+    const result = await finalAddState(defaultAttachmentAdapter, file);
 
     expect(result.type).toBe('document');
-    expect(result.status.type).toBe('running');
+    expect(result.status.type).toBe('complete');
   });
 });

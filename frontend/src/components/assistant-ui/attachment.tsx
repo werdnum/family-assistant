@@ -142,13 +142,13 @@ const AttachmentUI: FC = () => {
     }
   });
 
-  // Check if attachment has an error status
-  // @ts-expect-error - status.type may include 'error' at runtime
-  const hasError = status?.type === 'error';
-  const errorMessage = (status as { error?: string })?.error;
+  // Validation and upload failures land here: the runtime's terminal state for
+  // an attachment that will not complete.
+  const hasError = status?.type === 'incomplete' && status.reason === 'error';
+  const errorMessage = hasError ? status.message : undefined;
 
   // Check if attachment is currently uploading
-  const isLoading = status?.type === 'running' && !hasError;
+  const isLoading = status?.type === 'running';
 
   return (
     <Tooltip>

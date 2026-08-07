@@ -58,6 +58,19 @@ const uploadFileToService = async (file) => {
 };
 
 /**
+ * Deletes a previously uploaded file from the attachment service
+ * @param {string} attachmentId - Server-side attachment id
+ * @returns {Promise<void>}
+ */
+const deleteUploadedFile = async (attachmentId) => {
+  const response = await fetch(`/api/attachments/${attachmentId}`, { method: 'DELETE' });
+
+  if (!response.ok) {
+    console.error(`Failed to delete attachment ${attachmentId} from server`);
+  }
+};
+
+/**
  * Validates a file against size and type constraints
  * @param {File} file - The file to validate
  * @throws {Error} If validation fails
@@ -80,6 +93,72 @@ const validateFile = (file) => {
 };
 
 /**
+ * Determines the attachment type the backend will process the file as.
+ *
+ * chat_api handles image, video, audio and document and ignores anything else,
+ * so a type left as 'file' is uploaded and then dropped from the turn -- the
+ * model answers without ever seeing it.
+ *
+ * @param {File} file - The file being attached
+ * @returns {string} Attachment type
+ */
+const classifyAttachment = (file) => {
+  if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+    return 'image';
+  }
+  if (file.type.startsWith('audio/')) {
+    return 'audio';
+  }
+  if (file.type.startsWith('video/')) {
+    return 'video';
+  }
+  if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
+    return 'document';
+  }
+  return 'file';
+};
+
+/**
+ * Builds a complete attachment pointing at the uploaded file
+ * @param {Object} params - id, type, file and the upload service response
+ * @returns {Object} Complete attachment
+ */
+const completeAttachment = ({ id, type, file, uploadResponse }) => {
+  const url = uploadResponse.url;
+
+  // Content is an array of ThreadUserMessagePart objects, as
+  // @assistant-ui/react requires, rather than a plain string URL. Non-images
+  // use a data part carrying the URL so the runtime passes it through to our
+  // handleNew callback.
+  const content =
+    type === 'image' ? [{ type: 'image', image: url }] : [{ type: 'data', name: 'url', data: url }];
+
+  return {
+    id,
+    type,
+    name: file.name,
+    file, // Kept so remove() can route back to this adapter and delete the file
+    content,
+    uploadedId: uploadResponse.attachment_id, // Server-side ID, for cleanup
+    status: { type: 'complete' },
+  };
+};
+
+/**
+ * Builds an attachment carrying an error the composer renders on the file
+ * @param {Object} params - id, type, file and the message to show
+ * @returns {Object} Attachment in the runtime's incomplete/error state
+ */
+const errorAttachment = ({ id, type, file, message }) => ({
+  id,
+  type,
+  name: file.name,
+  file,
+  content: [],
+  status: { type: 'incomplete', reason: 'error', message },
+});
+
+/**
  * File Attachment Adapter for assistant-ui
  * Handles file validation, processing, and upload to backend service
  */
@@ -87,105 +166,102 @@ export class FileAttachmentAdapter {
   constructor() {
     // Accept all supported file types
     this.accept = SUPPORTED_FILE_TYPES.join(',');
+    // Attachments removed from the composer while their upload was still in
+    // flight. The upload can't be recalled, so the finished file is deleted
+    // server-side instead of reappearing in the composer.
+    this.cancelledUploads = new Set();
   }
 
   /**
-   * Process a file when it's added to the composer
+   * Upload a file as soon as it is added to the composer, reporting progress
+   * through the attachment's status.
+   *
+   * The composer refuses to send while an attachment is 'running', so the
+   * upload has to finish here: an attachment that stays pending until send
+   * time locks the composer open with nothing able to clear it.
+   *
    * @param {Object} params - The parameters object
    * @param {File} params.file - The file being added
-   * @returns {Promise<Object>} Attachment object
+   * @yields {Object} Attachment object, first pending and then complete
    */
-  async add({ file }) {
+  async *add({ file }) {
+    const id = generateUUID();
+
     try {
-      // Validate the file
       validateFile(file);
-
-      // Determine attachment type based on file MIME type. The backend processes
-      // image, video, audio and document and ignores anything else, so a type
-      // left as 'file' is uploaded and then dropped from the turn -- the model
-      // answers without ever seeing it.
-      let attachmentType = 'file';
-      if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
-        attachmentType = 'image';
-      } else if (file.type.startsWith('audio/')) {
-        attachmentType = 'audio';
-      } else if (file.type.startsWith('video/')) {
-        attachmentType = 'video';
-      } else if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
-        attachmentType = 'document';
-      }
-
-      // Create initial attachment object
-      const attachment = {
-        id: generateUUID(),
-        type: attachmentType,
-        name: file.name,
-        file,
-        status: { type: 'running' },
-      };
-
-      return attachment;
     } catch (error) {
-      // Return attachment with error status
-      return {
-        id: generateUUID(),
-        type: 'file',
-        name: file.name,
-        file,
-        status: {
-          type: 'error',
-          error: error.message,
-        },
-      };
+      yield errorAttachment({ id, type: 'file', file, message: error.message });
+      return;
     }
+
+    const type = classifyAttachment(file);
+    yield {
+      id,
+      type,
+      name: file.name,
+      file,
+      status: { type: 'running', reason: 'uploading', progress: 0 },
+    };
+
+    let uploadResponse;
+    let uploadError;
+    try {
+      uploadResponse = await uploadFileToService(file);
+    } catch (error) {
+      uploadError = error;
+    }
+
+    // Checked before reporting either outcome: an attachment the runtime has
+    // already dropped would be re-added by yielding anything for it now.
+    if (this.cancelledUploads.delete(id)) {
+      if (uploadResponse) {
+        await deleteUploadedFile(uploadResponse.attachment_id);
+      }
+      return;
+    }
+
+    if (uploadError) {
+      console.error('Error uploading attachment:', uploadError);
+      yield errorAttachment({
+        id,
+        type,
+        file,
+        message: `Failed to upload file: ${uploadError.message}`,
+      });
+      return;
+    }
+
+    yield completeAttachment({ id, type, file, uploadResponse });
   }
 
   /**
-   * Process attachment for sending (upload to service)
+   * Process an attachment for sending.
+   *
+   * The runtime only calls this for attachments that aren't already complete,
+   * which after add() means one whose upload failed -- so sending retries it.
+   *
    * @param {Object} attachment - The attachment to process
    * @returns {Promise<Object>} Processed attachment with content parts array
    */
   async send(attachment) {
     try {
-      // Upload file to attachment service
       const uploadResponse = await uploadFileToService(attachment.file);
 
-      const url = uploadResponse.url;
-
-      // Build content as an array of ThreadUserMessagePart objects.
-      // @assistant-ui/react 0.12.15+ requires CompleteAttachment.content to be
-      // ThreadUserMessagePart[] rather than a plain string URL.
-      let contentParts;
-      if (attachment.type === 'image') {
-        contentParts = [{ type: 'image', image: url }];
-      } else {
-        // For documents and other file types, use a data part with the URL so
-        // the runtime can pass it through to our handleNew callback.
-        contentParts = [{ type: 'data', name: 'url', data: url }];
-      }
-
-      return {
+      return completeAttachment({
         id: attachment.id,
-        type: attachment.type, // Use the type determined during add()
-        name: attachment.name,
-        content: contentParts,
-        uploadedId: uploadResponse.attachment_id, // Store server-side ID for potential cleanup
-        status: { type: 'complete' },
-      };
+        type: attachment.type,
+        file: attachment.file,
+        uploadResponse,
+      });
     } catch (error) {
       console.error('Error processing attachment for sending:', error);
 
-      // Return attachment with error status
-      return {
+      return errorAttachment({
         id: attachment.id,
         type: attachment.type || 'file',
-        name: attachment.name,
-        content: [],
-        status: {
-          type: 'error',
-          error: `Failed to upload file: ${error.message}`,
-        },
-      };
+        file: attachment.file,
+        message: `Failed to upload file: ${error.message}`,
+      });
     }
   }
 
@@ -198,13 +274,10 @@ export class FileAttachmentAdapter {
     try {
       // If the attachment was successfully uploaded, clean it up from the server
       if (attachment.uploadedId && attachment.status?.type === 'complete') {
-        const response = await fetch(`/api/attachments/${attachment.uploadedId}`, {
-          method: 'DELETE',
-        });
-
-        if (!response.ok) {
-          console.error(`Failed to delete attachment ${attachment.uploadedId} from server`);
-        }
+        await deleteUploadedFile(attachment.uploadedId);
+      } else if (attachment.status?.type === 'running') {
+        // Its upload is still in flight; add() deletes the file once it lands.
+        this.cancelledUploads.add(attachment.id);
       }
     } catch (error) {
       console.error(`Error removing attachment from server: ${error.message}`);
@@ -262,28 +335,35 @@ export class CompositeAttachmentAdapter {
   }
 
   /**
-   * Add a file using the appropriate adapter
+   * Add a file using the appropriate adapter.
+   *
+   * Yields rather than returns so an adapter that reports upload progress
+   * through several attachment states reaches the runtime as those states
+   * arrive; an adapter that resolves once is yielded once.
+   *
    * @param {Object} params - The parameters object
    * @param {File} params.file - The file being added
-   * @returns {Promise<Object>} Attachment object
+   * @yields {Object} Attachment object
    */
-  async add({ file }) {
+  async *add({ file }) {
     const adapter = this.getAdapterForType(file.type);
 
     if (!adapter) {
-      return {
+      yield errorAttachment({
         id: generateUUID(),
         type: 'file',
-        name: file.name,
         file,
-        status: {
-          type: 'error',
-          error: `Unsupported file type: ${file.type}`,
-        },
-      };
+        message: `Unsupported file type: ${file.type}`,
+      });
+      return;
     }
 
-    return adapter.add({ file });
+    const added = adapter.add({ file });
+    if (added && Symbol.asyncIterator in added) {
+      yield* added;
+    } else {
+      yield await added;
+    }
   }
 
   /**
@@ -298,9 +378,11 @@ export class CompositeAttachmentAdapter {
     if (!adapter) {
       return {
         ...attachment,
+        content: [],
         status: {
-          type: 'error',
-          error: 'No adapter available for this file type',
+          type: 'incomplete',
+          reason: 'error',
+          message: 'No adapter available for this file type',
         },
       };
     }

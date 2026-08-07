@@ -66,6 +66,30 @@ describe('AttachmentUI Loading States', () => {
     );
   }, 20000);
 
+  // The composer disables sending while an attachment is still uploading, so an
+  // attachment that never leaves the uploading state locks the composer: the
+  // file reads "Uploading..." forever and the message can never be sent.
+  it('finishes uploading an attached file and re-enables sending', async () => {
+    await renderChatApp({ waitForReady: true });
+
+    const fileInput = (await screen.findByTestId('file-input')) as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['test content'], 'test.png', { type: 'image/png' })] },
+    });
+
+    // Wait for the file to reach the composer before asserting it leaves the
+    // uploading state, so the assertion can't pass before the upload starts.
+    await screen.findByTestId('remove-attachment-button', {}, { timeout: 15000 });
+
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Uploading...')).not.toBeInTheDocument();
+      },
+      { timeout: 15000 }
+    );
+    expect(screen.getByTestId('send-button')).toBeEnabled();
+  }, 20000);
+
   // Note: These tests verify the UI components exist and are properly structured
   // The actual upload flow is tested in integration tests
   it('AttachmentUI component renders with proper data-testid attributes', async () => {
