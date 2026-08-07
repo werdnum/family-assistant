@@ -387,6 +387,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // synchronously check whether the conversation changed before it fires.
   const conversationIdRef = useRef<string | null>(null);
   conversationIdRef.current = conversationId;
+  // True while the open conversation exists only in this client and holds no
+  // turns: an id minted by handleNewChat (or at startup) that has never been
+  // sent. Tracked explicitly rather than inferred from an empty `messages`,
+  // which also reads empty while a real conversation's history is loading.
+  const conversationIsUnsentDraftRef = useRef(true);
   // Set to a conversation id while it has a turn that gave up but is still running
   // server-side, to drive the fallback reconcile poll. Cleared once the turn
   // resolves (reply lands or it finishes with none).
@@ -1837,6 +1842,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Cancel any active streaming before switching conversations
       cancelStream();
 
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(convId);
       setMobileShowList(false);
       localStorage.setItem('lastConversationId', convId);
@@ -1976,6 +1982,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     setCurrentProfileId(preferredProfileId);
 
     const newConvId = `web_conv_${generateUUID()}`;
+    conversationIsUnsentDraftRef.current = true;
     setConversationId(newConvId);
     setMobileShowList(false);
     setMessages([]);
@@ -1989,6 +1996,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     setMobileShowList(true);
   }, [cancelStream]);
 
+  // Set when a conversation switch is triggered by a profile change, where the
+  // draft the user is composing must survive into the fresh conversation.
+  const preserveComposerOnConversationSwitchRef = useRef(false);
+
+  // Always-current mirror of "a turn is in flight", so callbacks can read it
+  // without taking it as a dependency. Same value the runtime reports as
+  // isRunning below.
+  const turnIsRunningRef = useRef(false);
+  turnIsRunningRef.current = isLoading || isStreaming;
+
   // Handle profile changes
   const handleProfileChange = useCallback(
     (newProfileId: string) => {
@@ -1996,11 +2013,30 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Persist selection to localStorage
       localStorage.setItem('selectedProfileId', newProfileId);
 
-      // Optionally start a new conversation when switching profiles
-      // to maintain clear context separation
-      if (currentProfileId !== newProfileId && conversationId) {
-        handleNewChat();
+      if (currentProfileId === newProfileId || !conversationId) {
+        return;
       }
+      // An unsent draft has no turns to separate from, so switching in place is
+      // enough — minting a new conversation would only churn the id (and reset
+      // the composer's surroundings) for no gain.
+      if (conversationIsUnsentDraftRef.current) {
+        return;
+      }
+      // Otherwise start a new conversation to keep each profile's context
+      // clearly separated. The user is mid-composing the same message they'll
+      // send under the new profile, so this switch must not wipe the composer
+      // the way a real conversation switch does — UNLESS a turn is running, in
+      // which case the composer holds steer text aimed at THAT turn (which
+      // handleNewChat is about to cancel). Carrying it over would drop it into
+      // an empty thread under a different profile, ready to send as a
+      // standalone message: exactly the leak the clear exists to prevent.
+      //
+      // Read the running state from a ref, NOT from the deps: ProfileSelector
+      // re-runs its profile fetch whenever onProfileChange changes identity, so
+      // depending on state that flips every turn would refetch profiles mid-turn
+      // and blank the picker.
+      preserveComposerOnConversationSwitchRef.current = !turnIsRunningRef.current;
+      handleNewChat();
     },
     [currentProfileId, conversationId, handleNewChat]
   );
@@ -2080,6 +2116,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       };
 
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
+
+      // The conversation now holds a turn, so it is no longer a switch-in-place
+      // draft: a later profile change has real context to separate from.
+      conversationIsUnsentDraftRef.current = false;
 
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
 
@@ -2226,12 +2266,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // across conversation changes. On a real conversation switch, clear it so
   // steer text typed for the previous turn can't leak into — and be sent in —
   // the newly selected thread. Guarded on an actual id change so an unrelated
-  // runtime re-render never wipes text the user is typing.
+  // runtime re-render never wipes text the user is typing. A switch caused by
+  // a profile change is exempt: the user keeps composing the same draft, just
+  // under a different profile.
   const prevConversationIdRef = useRef(conversationId);
   useEffect(() => {
     if (prevConversationIdRef.current !== conversationId) {
       prevConversationIdRef.current = conversationId;
-      runtime.thread.composer.setText('');
+      if (preserveComposerOnConversationSwitchRef.current) {
+        preserveComposerOnConversationSwitchRef.current = false;
+      } else {
+        runtime.thread.composer.setText('');
+      }
     }
   }, [conversationId, runtime]);
 
@@ -2342,9 +2388,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages([]);
       localStorage.setItem('lastConversationId', newConvId);
     } else if (urlConversationId) {
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(urlConversationId);
       loadConversationMessages(urlConversationId);
     } else if (lastConversationId) {
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(lastConversationId);
       loadConversationMessages(lastConversationId);
       window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);

@@ -473,6 +473,12 @@ final class ChatViewModel {
             self.conversationID = Self.generateConversationID()
             conversationSelection = self.conversationID
             composerFocusRequestID = UUID()
+            // Same client-minted, server-less thread as the fresh-launch branch
+            // below: without the sentinel, `bootstrap` would load messages and
+            // open a follow stream against an id that has no server row, which
+            // 404-loops the reconnect backoff and pins the connection indicator
+            // to `.degraded`.
+            opensGeneratedLaunchDraft = true
         } else if let initialPrompt, !initialPrompt.isEmpty {
             // Launched to start a brand-new chat (share extension / App Intent).
             self.conversationID = Self.generateConversationID()
@@ -885,7 +891,7 @@ final class ChatViewModel {
         selectedProfileID = conversationProfile ?? preferredProfileID
     }
 
-    func startNewConversation() {
+    func startNewConversation(preservingDraft: Bool = false) {
         cancelStream()
         syncCoordinator.cancelFollowStream(reason: .newConversation)
         highestAppliedSeq = nil
@@ -897,9 +903,11 @@ final class ChatViewModel {
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
-        draftText = ""
-        cleanupTemporaryImports(for: draftAttachments)
-        draftAttachments = []
+        if !preservingDraft {
+            draftText = ""
+            cleanupTemporaryImports(for: draftAttachments)
+            draftAttachments = []
+        }
         composerFocusRequestID = UUID()
         mobileShowsConversationList = false
         // A brand-new conversation has no history to load, so it is never in a
@@ -957,8 +965,29 @@ final class ChatViewModel {
         }
         preferredProfileID = profileID
         UserDefaults.standard.set(profileID, forKey: Keys.selectedProfileID)
+        if isEmptyUnsentConversation {
+            // Nothing has been said yet, so there is no context to separate and a
+            // fresh conversation would only churn the id. Switch in place.
+            selectedProfileID = profileID
+            return
+        }
         // startNewConversation sets `selectedProfileID` to the preferred profile.
-        startNewConversation()
+        // The user is mid-composing the message they'll send under the new
+        // profile, so the draft (text and attachments) carries over.
+        startNewConversation(preservingDraft: true)
+    }
+
+    /// True for a conversation that exists only on this client and holds no turns:
+    /// a launch draft or one from `startNewConversation`, before its first send.
+    ///
+    /// `opensGeneratedLaunchDraft` is the load-bearing part. `messages.isEmpty`
+    /// alone is not enough: an existing thread reads as empty for the window
+    /// between `selectConversation` and its `loadMessages` returning, and treating
+    /// that as fresh would pin a real thread to a new profile — which
+    /// `adoptConversationProfile` would then immediately contradict when the
+    /// history landed.
+    private var isEmptyUnsentConversation: Bool {
+        opensGeneratedLaunchDraft && messages.isEmpty && !isLoadingMessages && !isStreaming
     }
 
     func loadMessages(conversationID: String? = nil, userInitiated: Bool = true) async {

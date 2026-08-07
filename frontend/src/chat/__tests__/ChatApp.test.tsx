@@ -108,6 +108,98 @@ describe('ChatApp', () => {
     // This tests the basic profile switching functionality
   });
 
+  // Radix Select relies on pointer-capture and scroll APIs jsdom lacks. Stub them
+  // per-test and restore afterwards: leaving them installed would give every
+  // later test a defined no-op where jsdom has nothing, silently changing the
+  // branch taken by code that feature-detects them.
+  const profilePickerStubs: Array<() => void> = [];
+  const setupProfilePickerUser = () => {
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    for (const method of ['hasPointerCapture', 'releasePointerCapture', 'scrollIntoView']) {
+      const hadOwn = Object.prototype.hasOwnProperty.call(proto, method);
+      const original = proto[method];
+      proto[method] = vi.fn();
+      profilePickerStubs.push(() => {
+        if (hadOwn) {
+          proto[method] = original;
+        } else {
+          delete proto[method];
+        }
+      });
+    }
+    return userEvent.setup({ pointerEventsCheck: 0 });
+  };
+
+  afterEach(() => {
+    while (profilePickerStubs.length > 0) {
+      profilePickerStubs.pop()?.();
+    }
+  });
+
+  // handleNewChat is the only path that writes a conversation id to localStorage
+  // after startup, so a new write is the signal that a fresh conversation began.
+  const conversationIdWrites = () =>
+    mockLocalStorage.setItem.mock.calls.filter(([key]) => key === 'lastConversationId').length;
+
+  const switchProfileToResearch = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: /research/i }));
+    await waitFor(() => {
+      expect(mockLocalStorage.setItem).toHaveBeenCalledWith('selectedProfileId', 'research');
+    });
+  };
+
+  it('switches profile in place on an unsent conversation, keeping the draft', async () => {
+    const user = setupProfilePickerUser();
+    await renderChatApp({ waitForReady: true });
+
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Draft in progress');
+
+    const writesBeforeSwitch = conversationIdWrites();
+    await switchProfileToResearch(user);
+
+    // Nothing has been sent, so there is no context to separate: the switch must
+    // not mint a new conversation, and the draft is untouched.
+    expect(conversationIdWrites()).toBe(writesBeforeSwitch);
+    expect(screen.getByTestId('chat-input')).toHaveValue('Draft in progress');
+  });
+
+  it('starts a new conversation but preserves the draft when switching profile mid-thread', async () => {
+    const user = setupProfilePickerUser();
+    await renderChatApp({ waitForReady: true });
+
+    // Send a message so the conversation holds a real turn, and let it finish:
+    // while a turn runs the composer is the steer box, which is deliberately
+    // NOT carried over (see the TurnControl steer-leak test).
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'First message');
+    await user.keyboard('{Enter}');
+    await waitForMessageSent(screen.getByTestId('chat-input'));
+    await waitFor(
+      () => {
+        expect(screen.queryAllByTestId('assistant-message').length).toBeGreaterThan(0);
+        expect(screen.getByTestId('chat-input')).toHaveAttribute(
+          'placeholder',
+          'Message Family Assistant...'
+        );
+      },
+      { timeout: 10000 }
+    );
+
+    await user.type(screen.getByTestId('chat-input'), 'Draft in progress');
+
+    const writesBeforeSwitch = conversationIdWrites();
+    await switchProfileToResearch(user);
+
+    // The thread has context now, so the switch starts a fresh conversation...
+    await waitFor(() => {
+      expect(conversationIdWrites()).toBeGreaterThan(writesBeforeSwitch);
+    });
+    // ...but must not discard the message the user was composing.
+    expect(screen.getByTestId('chat-input')).toHaveValue('Draft in progress');
+  }, 30000);
+
   it('handles multiple messages in a conversation', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });

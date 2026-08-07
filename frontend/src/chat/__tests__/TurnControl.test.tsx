@@ -2483,4 +2483,65 @@ describe('Web turn control (Stop / Steer)', () => {
     },
     { timeout: 30000 }
   );
+
+  it(
+    'does not carry steer text into the new conversation when a profile switch cancels a running turn',
+    async () => {
+      // Radix Select needs pointer-capture/scroll APIs jsdom lacks; restored below.
+      const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+      const restores: Array<() => void> = [];
+      for (const method of ['hasPointerCapture', 'releasePointerCapture', 'scrollIntoView']) {
+        const hadOwn = Object.prototype.hasOwnProperty.call(proto, method);
+        const original = proto[method];
+        proto[method] = vi.fn();
+        restores.push(() => {
+          if (hadOwn) {
+            proto[method] = original;
+          } else {
+            delete proto[method];
+          }
+        });
+      }
+
+      try {
+        const { ready, turnIdRef } = installOpenStream();
+        const user = userEvent.setup({ pointerEventsCheck: 0 });
+        await renderChatApp({ waitForReady: true });
+
+        const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+        await user.type(messageInput, 'Do something slow');
+        await user.keyboard('{Enter}');
+        const controller = await ready;
+
+        // While the turn runs the composer is the STEER box: this text targets
+        // the running turn, not the next conversation.
+        await screen.findByTestId('stop-button', undefined, WAIT);
+        await user.type(screen.getByTestId('chat-input'), 'actually, focus on next week');
+
+        // Switching profile cancels that turn and starts a fresh conversation.
+        await user.click(screen.getByRole('combobox'));
+        await user.click(await screen.findByRole('option', { name: /research/i }));
+
+        // The steer text must not survive into the new, empty thread, where
+        // Enter would send it as a standalone first message under a different
+        // profile.
+        await waitFor(() => {
+          expect(screen.getByTestId('chat-input')).toHaveValue('');
+        }, WAIT);
+
+        // Settle the abandoned turn and close the stream. Leaving it open parks
+        // an unresolved SSE response for the rest of the run, which starves the
+        // other test files sharing this worker.
+        controller.enqueue(
+          sse('turn_ended', { turn_id: turnIdRef.current, status: 'cancelled', seq: 1 })
+        );
+        controller.close();
+      } finally {
+        while (restores.length > 0) {
+          restores.pop()?.();
+        }
+      }
+    },
+    { timeout: 30000 }
+  );
 });
